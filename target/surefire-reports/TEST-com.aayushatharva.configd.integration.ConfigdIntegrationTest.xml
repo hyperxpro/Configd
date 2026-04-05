@@ -1,0 +1,699 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="https://maven.apache.org/surefire/maven-surefire-plugin/xsd/surefire-test-report.xsd" version="3.0.2" name="com.aayushatharva.configd.integration.ConfigdIntegrationTest" time="53.725" tests="5" errors="0" skipped="0" failures="0">
+  <properties>
+    <property name="java.specification.version" value="25"/>
+    <property name="sun.jnu.encoding" value="UTF-8"/>
+    <property name="java.class.path" value="/home/ubuntu/Programming/Configd/target/test-classes:/home/ubuntu/Programming/Configd/target/classes:/home/ubuntu/.m2/repository/org/rocksdb/rocksdbjni/9.7.3/rocksdbjni-9.7.3.jar:/home/ubuntu/.m2/repository/io/netty/netty-all/4.1.116.Final/netty-all-4.1.116.Final.jar:/home/ubuntu/.m2/repository/io/netty/netty-buffer/4.1.116.Final/netty-buffer-4.1.116.Final.jar:/home/ubuntu/.m2/repository/io/netty/netty-codec/4.1.116.Final/netty-codec-4.1.116.Final.jar:/home/ubuntu/.m2/repository/io/netty/netty-codec-dns/4.1.116.Final/netty-codec-dns-4.1.116.Final.jar:/home/ubuntu/.m2/repository/io/netty/netty-codec-haproxy/4.1.116.Final/netty-codec-haproxy-4.1.116.Final.jar:/home/ubuntu/.m2/repository/io/netty/netty-codec-http/4.1.116.Final/netty-codec-http-4.1.116.Final.jar:/home/ubuntu/.m2/repository/io/netty/netty-codec-http2/4.1.116.Final/netty-codec-http2-4.1.116.Final.jar:/home/ubuntu/.m2/repository/io/netty/netty-codec-memcache/4.1.116.Final/netty-codec-memcache-4.1.116.Final.jar:/home/ubuntu/.m2/repository/io/netty/netty-codec-mqtt/4.1.116.Final/netty-codec-mqtt-4.1.116.Final.jar:/home/ubuntu/.m2/repository/io/netty/netty-codec-redis/4.1.116.Final/netty-codec-redis-4.1.116.Final.jar:/home/ubuntu/.m2/repository/io/netty/netty-codec-smtp/4.1.116.Final/netty-codec-smtp-4.1.116.Final.jar:/home/ubuntu/.m2/repository/io/netty/netty-codec-socks/4.1.116.Final/netty-codec-socks-4.1.116.Final.jar:/home/ubuntu/.m2/repository/io/netty/netty-codec-stomp/4.1.116.Final/netty-codec-stomp-4.1.116.Final.jar:/home/ubuntu/.m2/repository/io/netty/netty-codec-xml/4.1.116.Final/netty-codec-xml-4.1.116.Final.jar:/home/ubuntu/.m2/repository/io/netty/netty-common/4.1.116.Final/netty-common-4.1.116.Final.jar:/home/ubuntu/.m2/repository/io/netty/netty-handler/4.1.116.Final/netty-handler-4.1.116.Final.jar:/home/ubuntu/.m2/repository/io/netty/netty-transport-native-unix-common/4.1.116.Final/netty-transport-native-unix-common-4.1.116.Final.jar:/home/ubuntu/.m2/repository/io/netty/netty-handler-proxy/4.1.116.Final/netty-handler-proxy-4.1.116.Final.jar:/home/ubuntu/.m2/repository/io/netty/netty-handler-ssl-ocsp/4.1.116.Final/netty-handler-ssl-ocsp-4.1.116.Final.jar:/home/ubuntu/.m2/repository/io/netty/netty-resolver/4.1.116.Final/netty-resolver-4.1.116.Final.jar:/home/ubuntu/.m2/repository/io/netty/netty-resolver-dns/4.1.116.Final/netty-resolver-dns-4.1.116.Final.jar:/home/ubuntu/.m2/repository/io/netty/netty-transport/4.1.116.Final/netty-transport-4.1.116.Final.jar:/home/ubuntu/.m2/repository/io/netty/netty-transport-rxtx/4.1.116.Final/netty-transport-rxtx-4.1.116.Final.jar:/home/ubuntu/.m2/repository/io/netty/netty-transport-sctp/4.1.116.Final/netty-transport-sctp-4.1.116.Final.jar:/home/ubuntu/.m2/repository/io/netty/netty-transport-udt/4.1.116.Final/netty-transport-udt-4.1.116.Final.jar:/home/ubuntu/.m2/repository/io/netty/netty-transport-classes-epoll/4.1.116.Final/netty-transport-classes-epoll-4.1.116.Final.jar:/home/ubuntu/.m2/repository/io/netty/netty-transport-classes-kqueue/4.1.116.Final/netty-transport-classes-kqueue-4.1.116.Final.jar:/home/ubuntu/.m2/repository/io/netty/netty-resolver-dns-classes-macos/4.1.116.Final/netty-resolver-dns-classes-macos-4.1.116.Final.jar:/home/ubuntu/.m2/repository/io/netty/netty-transport-native-epoll/4.1.116.Final/netty-transport-native-epoll-4.1.116.Final-linux-x86_64.jar:/home/ubuntu/.m2/repository/io/netty/netty-transport-native-epoll/4.1.116.Final/netty-transport-native-epoll-4.1.116.Final-linux-aarch_64.jar:/home/ubuntu/.m2/repository/io/netty/netty-transport-native-epoll/4.1.116.Final/netty-transport-native-epoll-4.1.116.Final-linux-riscv64.jar:/home/ubuntu/.m2/repository/io/netty/netty-transport-native-kqueue/4.1.116.Final/netty-transport-native-kqueue-4.1.116.Final-osx-x86_64.jar:/home/ubuntu/.m2/repository/io/netty/netty-transport-native-kqueue/4.1.116.Final/netty-transport-native-kqueue-4.1.116.Final-osx-aarch_64.jar:/home/ubuntu/.m2/repository/io/netty/netty-resolver-dns-native-macos/4.1.116.Final/netty-resolver-dns-native-macos-4.1.116.Final-osx-x86_64.jar:/home/ubuntu/.m2/repository/io/netty/netty-resolver-dns-native-macos/4.1.116.Final/netty-resolver-dns-native-macos-4.1.116.Final-osx-aarch_64.jar:/home/ubuntu/.m2/repository/com/google/guava/guava/33.4.0-jre/guava-33.4.0-jre.jar:/home/ubuntu/.m2/repository/com/google/guava/failureaccess/1.0.2/failureaccess-1.0.2.jar:/home/ubuntu/.m2/repository/com/google/guava/listenablefuture/9999.0-empty-to-avoid-conflict-with-guava/listenablefuture-9999.0-empty-to-avoid-conflict-with-guava.jar:/home/ubuntu/.m2/repository/com/google/code/findbugs/jsr305/3.0.2/jsr305-3.0.2.jar:/home/ubuntu/.m2/repository/org/checkerframework/checker-qual/3.43.0/checker-qual-3.43.0.jar:/home/ubuntu/.m2/repository/com/google/errorprone/error_prone_annotations/2.36.0/error_prone_annotations-2.36.0.jar:/home/ubuntu/.m2/repository/com/google/j2objc/j2objc-annotations/3.0.0/j2objc-annotations-3.0.0.jar:/home/ubuntu/.m2/repository/com/fasterxml/jackson/core/jackson-databind/2.18.2/jackson-databind-2.18.2.jar:/home/ubuntu/.m2/repository/com/fasterxml/jackson/core/jackson-annotations/2.18.2/jackson-annotations-2.18.2.jar:/home/ubuntu/.m2/repository/com/fasterxml/jackson/core/jackson-core/2.18.2/jackson-core-2.18.2.jar:/home/ubuntu/.m2/repository/org/xerial/snappy/snappy-java/1.1.10.7/snappy-java-1.1.10.7.jar:/home/ubuntu/.m2/repository/org/slf4j/slf4j-api/2.0.16/slf4j-api-2.0.16.jar:/home/ubuntu/.m2/repository/ch/qos/logback/logback-classic/1.5.14/logback-classic-1.5.14.jar:/home/ubuntu/.m2/repository/ch/qos/logback/logback-core/1.5.14/logback-core-1.5.14.jar:/home/ubuntu/.m2/repository/org/junit/jupiter/junit-jupiter/5.11.4/junit-jupiter-5.11.4.jar:/home/ubuntu/.m2/repository/org/junit/jupiter/junit-jupiter-api/5.11.4/junit-jupiter-api-5.11.4.jar:/home/ubuntu/.m2/repository/org/opentest4j/opentest4j/1.3.0/opentest4j-1.3.0.jar:/home/ubuntu/.m2/repository/org/junit/platform/junit-platform-commons/1.11.4/junit-platform-commons-1.11.4.jar:/home/ubuntu/.m2/repository/org/apiguardian/apiguardian-api/1.1.2/apiguardian-api-1.1.2.jar:/home/ubuntu/.m2/repository/org/junit/jupiter/junit-jupiter-params/5.11.4/junit-jupiter-params-5.11.4.jar:/home/ubuntu/.m2/repository/org/junit/jupiter/junit-jupiter-engine/5.11.4/junit-jupiter-engine-5.11.4.jar:/home/ubuntu/.m2/repository/org/junit/platform/junit-platform-engine/1.11.4/junit-platform-engine-1.11.4.jar:/home/ubuntu/.m2/repository/org/assertj/assertj-core/3.27.2/assertj-core-3.27.2.jar:/home/ubuntu/.m2/repository/net/bytebuddy/byte-buddy/1.15.11/byte-buddy-1.15.11.jar:/home/ubuntu/.m2/repository/org/awaitility/awaitility/4.2.2/awaitility-4.2.2.jar:/home/ubuntu/.m2/repository/org/hamcrest/hamcrest/2.1/hamcrest-2.1.jar:"/>
+    <property name="java.vm.vendor" value="Amazon.com Inc."/>
+    <property name="sun.arch.data.model" value="64"/>
+    <property name="java.vendor.url" value="https://aws.amazon.com/corretto/"/>
+    <property name="user.timezone" value="Etc/UTC"/>
+    <property name="os.name" value="Linux"/>
+    <property name="java.vm.specification.version" value="25"/>
+    <property name="sun.java.launcher" value="SUN_STANDARD"/>
+    <property name="sun.boot.library.path" value="/home/ubuntu/.sdkman/candidates/java/25.0.2-amzn/lib"/>
+    <property name="sun.java.command" value="/home/ubuntu/Programming/Configd/target/surefire/surefirebooter-20260405124741616_3.jar /home/ubuntu/Programming/Configd/target/surefire 2026-04-05T12-47-41_500-jvmRun1 surefire-20260405124741616_1tmp surefire_0-20260405124741616_2tmp"/>
+    <property name="jdk.debug" value="release"/>
+    <property name="surefire.test.class.path" value="/home/ubuntu/Programming/Configd/target/test-classes:/home/ubuntu/Programming/Configd/target/classes:/home/ubuntu/.m2/repository/org/rocksdb/rocksdbjni/9.7.3/rocksdbjni-9.7.3.jar:/home/ubuntu/.m2/repository/io/netty/netty-all/4.1.116.Final/netty-all-4.1.116.Final.jar:/home/ubuntu/.m2/repository/io/netty/netty-buffer/4.1.116.Final/netty-buffer-4.1.116.Final.jar:/home/ubuntu/.m2/repository/io/netty/netty-codec/4.1.116.Final/netty-codec-4.1.116.Final.jar:/home/ubuntu/.m2/repository/io/netty/netty-codec-dns/4.1.116.Final/netty-codec-dns-4.1.116.Final.jar:/home/ubuntu/.m2/repository/io/netty/netty-codec-haproxy/4.1.116.Final/netty-codec-haproxy-4.1.116.Final.jar:/home/ubuntu/.m2/repository/io/netty/netty-codec-http/4.1.116.Final/netty-codec-http-4.1.116.Final.jar:/home/ubuntu/.m2/repository/io/netty/netty-codec-http2/4.1.116.Final/netty-codec-http2-4.1.116.Final.jar:/home/ubuntu/.m2/repository/io/netty/netty-codec-memcache/4.1.116.Final/netty-codec-memcache-4.1.116.Final.jar:/home/ubuntu/.m2/repository/io/netty/netty-codec-mqtt/4.1.116.Final/netty-codec-mqtt-4.1.116.Final.jar:/home/ubuntu/.m2/repository/io/netty/netty-codec-redis/4.1.116.Final/netty-codec-redis-4.1.116.Final.jar:/home/ubuntu/.m2/repository/io/netty/netty-codec-smtp/4.1.116.Final/netty-codec-smtp-4.1.116.Final.jar:/home/ubuntu/.m2/repository/io/netty/netty-codec-socks/4.1.116.Final/netty-codec-socks-4.1.116.Final.jar:/home/ubuntu/.m2/repository/io/netty/netty-codec-stomp/4.1.116.Final/netty-codec-stomp-4.1.116.Final.jar:/home/ubuntu/.m2/repository/io/netty/netty-codec-xml/4.1.116.Final/netty-codec-xml-4.1.116.Final.jar:/home/ubuntu/.m2/repository/io/netty/netty-common/4.1.116.Final/netty-common-4.1.116.Final.jar:/home/ubuntu/.m2/repository/io/netty/netty-handler/4.1.116.Final/netty-handler-4.1.116.Final.jar:/home/ubuntu/.m2/repository/io/netty/netty-transport-native-unix-common/4.1.116.Final/netty-transport-native-unix-common-4.1.116.Final.jar:/home/ubuntu/.m2/repository/io/netty/netty-handler-proxy/4.1.116.Final/netty-handler-proxy-4.1.116.Final.jar:/home/ubuntu/.m2/repository/io/netty/netty-handler-ssl-ocsp/4.1.116.Final/netty-handler-ssl-ocsp-4.1.116.Final.jar:/home/ubuntu/.m2/repository/io/netty/netty-resolver/4.1.116.Final/netty-resolver-4.1.116.Final.jar:/home/ubuntu/.m2/repository/io/netty/netty-resolver-dns/4.1.116.Final/netty-resolver-dns-4.1.116.Final.jar:/home/ubuntu/.m2/repository/io/netty/netty-transport/4.1.116.Final/netty-transport-4.1.116.Final.jar:/home/ubuntu/.m2/repository/io/netty/netty-transport-rxtx/4.1.116.Final/netty-transport-rxtx-4.1.116.Final.jar:/home/ubuntu/.m2/repository/io/netty/netty-transport-sctp/4.1.116.Final/netty-transport-sctp-4.1.116.Final.jar:/home/ubuntu/.m2/repository/io/netty/netty-transport-udt/4.1.116.Final/netty-transport-udt-4.1.116.Final.jar:/home/ubuntu/.m2/repository/io/netty/netty-transport-classes-epoll/4.1.116.Final/netty-transport-classes-epoll-4.1.116.Final.jar:/home/ubuntu/.m2/repository/io/netty/netty-transport-classes-kqueue/4.1.116.Final/netty-transport-classes-kqueue-4.1.116.Final.jar:/home/ubuntu/.m2/repository/io/netty/netty-resolver-dns-classes-macos/4.1.116.Final/netty-resolver-dns-classes-macos-4.1.116.Final.jar:/home/ubuntu/.m2/repository/io/netty/netty-transport-native-epoll/4.1.116.Final/netty-transport-native-epoll-4.1.116.Final-linux-x86_64.jar:/home/ubuntu/.m2/repository/io/netty/netty-transport-native-epoll/4.1.116.Final/netty-transport-native-epoll-4.1.116.Final-linux-aarch_64.jar:/home/ubuntu/.m2/repository/io/netty/netty-transport-native-epoll/4.1.116.Final/netty-transport-native-epoll-4.1.116.Final-linux-riscv64.jar:/home/ubuntu/.m2/repository/io/netty/netty-transport-native-kqueue/4.1.116.Final/netty-transport-native-kqueue-4.1.116.Final-osx-x86_64.jar:/home/ubuntu/.m2/repository/io/netty/netty-transport-native-kqueue/4.1.116.Final/netty-transport-native-kqueue-4.1.116.Final-osx-aarch_64.jar:/home/ubuntu/.m2/repository/io/netty/netty-resolver-dns-native-macos/4.1.116.Final/netty-resolver-dns-native-macos-4.1.116.Final-osx-x86_64.jar:/home/ubuntu/.m2/repository/io/netty/netty-resolver-dns-native-macos/4.1.116.Final/netty-resolver-dns-native-macos-4.1.116.Final-osx-aarch_64.jar:/home/ubuntu/.m2/repository/com/google/guava/guava/33.4.0-jre/guava-33.4.0-jre.jar:/home/ubuntu/.m2/repository/com/google/guava/failureaccess/1.0.2/failureaccess-1.0.2.jar:/home/ubuntu/.m2/repository/com/google/guava/listenablefuture/9999.0-empty-to-avoid-conflict-with-guava/listenablefuture-9999.0-empty-to-avoid-conflict-with-guava.jar:/home/ubuntu/.m2/repository/com/google/code/findbugs/jsr305/3.0.2/jsr305-3.0.2.jar:/home/ubuntu/.m2/repository/org/checkerframework/checker-qual/3.43.0/checker-qual-3.43.0.jar:/home/ubuntu/.m2/repository/com/google/errorprone/error_prone_annotations/2.36.0/error_prone_annotations-2.36.0.jar:/home/ubuntu/.m2/repository/com/google/j2objc/j2objc-annotations/3.0.0/j2objc-annotations-3.0.0.jar:/home/ubuntu/.m2/repository/com/fasterxml/jackson/core/jackson-databind/2.18.2/jackson-databind-2.18.2.jar:/home/ubuntu/.m2/repository/com/fasterxml/jackson/core/jackson-annotations/2.18.2/jackson-annotations-2.18.2.jar:/home/ubuntu/.m2/repository/com/fasterxml/jackson/core/jackson-core/2.18.2/jackson-core-2.18.2.jar:/home/ubuntu/.m2/repository/org/xerial/snappy/snappy-java/1.1.10.7/snappy-java-1.1.10.7.jar:/home/ubuntu/.m2/repository/org/slf4j/slf4j-api/2.0.16/slf4j-api-2.0.16.jar:/home/ubuntu/.m2/repository/ch/qos/logback/logback-classic/1.5.14/logback-classic-1.5.14.jar:/home/ubuntu/.m2/repository/ch/qos/logback/logback-core/1.5.14/logback-core-1.5.14.jar:/home/ubuntu/.m2/repository/org/junit/jupiter/junit-jupiter/5.11.4/junit-jupiter-5.11.4.jar:/home/ubuntu/.m2/repository/org/junit/jupiter/junit-jupiter-api/5.11.4/junit-jupiter-api-5.11.4.jar:/home/ubuntu/.m2/repository/org/opentest4j/opentest4j/1.3.0/opentest4j-1.3.0.jar:/home/ubuntu/.m2/repository/org/junit/platform/junit-platform-commons/1.11.4/junit-platform-commons-1.11.4.jar:/home/ubuntu/.m2/repository/org/apiguardian/apiguardian-api/1.1.2/apiguardian-api-1.1.2.jar:/home/ubuntu/.m2/repository/org/junit/jupiter/junit-jupiter-params/5.11.4/junit-jupiter-params-5.11.4.jar:/home/ubuntu/.m2/repository/org/junit/jupiter/junit-jupiter-engine/5.11.4/junit-jupiter-engine-5.11.4.jar:/home/ubuntu/.m2/repository/org/junit/platform/junit-platform-engine/1.11.4/junit-platform-engine-1.11.4.jar:/home/ubuntu/.m2/repository/org/assertj/assertj-core/3.27.2/assertj-core-3.27.2.jar:/home/ubuntu/.m2/repository/net/bytebuddy/byte-buddy/1.15.11/byte-buddy-1.15.11.jar:/home/ubuntu/.m2/repository/org/awaitility/awaitility/4.2.2/awaitility-4.2.2.jar:/home/ubuntu/.m2/repository/org/hamcrest/hamcrest/2.1/hamcrest-2.1.jar:"/>
+    <property name="sun.cpu.endian" value="little"/>
+    <property name="user.home" value="/home/ubuntu"/>
+    <property name="user.language" value="en"/>
+    <property name="java.specification.vendor" value="Oracle Corporation"/>
+    <property name="java.version.date" value="2026-01-20"/>
+    <property name="java.home" value="/home/ubuntu/.sdkman/candidates/java/25.0.2-amzn"/>
+    <property name="file.separator" value="/"/>
+    <property name="basedir" value="/home/ubuntu/Programming/Configd"/>
+    <property name="java.vm.compressedOopsMode" value="32-bit"/>
+    <property name="line.separator" value="&#10;"/>
+    <property name="java.specification.name" value="Java Platform API Specification"/>
+    <property name="java.vm.specification.vendor" value="Oracle Corporation"/>
+    <property name="surefire.real.class.path" value="/home/ubuntu/Programming/Configd/target/surefire/surefirebooter-20260405124741616_3.jar"/>
+    <property name="sun.management.compiler" value="HotSpot 64-Bit Tiered Compilers"/>
+    <property name="java.runtime.version" value="25.0.2+10-LTS"/>
+    <property name="user.name" value="ubuntu"/>
+    <property name="stdout.encoding" value="UTF-8"/>
+    <property name="path.separator" value=":"/>
+    <property name="os.version" value="6.17.0-1009-aws"/>
+    <property name="java.runtime.name" value="OpenJDK Runtime Environment"/>
+    <property name="file.encoding" value="UTF-8"/>
+    <property name="java.vm.name" value="OpenJDK 64-Bit Server VM"/>
+    <property name="java.vendor.version" value="Corretto-25.0.2.10.1"/>
+    <property name="localRepository" value="/home/ubuntu/.m2/repository"/>
+    <property name="java.vendor.url.bug" value="https://github.com/corretto/corretto-25/issues/"/>
+    <property name="java.io.tmpdir" value="/tmp"/>
+    <property name="java.version" value="25.0.2"/>
+    <property name="user.dir" value="/home/ubuntu/Programming/Configd"/>
+    <property name="os.arch" value="amd64"/>
+    <property name="java.vm.specification.name" value="Java Virtual Machine Specification"/>
+    <property name="native.encoding" value="UTF-8"/>
+    <property name="java.library.path" value="/usr/java/packages/lib:/usr/lib64:/lib64:/lib:/usr/lib"/>
+    <property name="java.vm.info" value="mixed mode, sharing"/>
+    <property name="stderr.encoding" value="UTF-8"/>
+    <property name="java.vendor" value="Amazon.com Inc."/>
+    <property name="java.vm.version" value="25.0.2+10-LTS"/>
+    <property name="stdin.encoding" value="UTF-8"/>
+    <property name="sun.io.unicode.encoding" value="UnicodeLittle"/>
+    <property name="java.class.version" value="69.0"/>
+  </properties>
+  <testcase name="writeOnRootReadableLocally" classname="com.aayushatharva.configd.integration.ConfigdIntegrationTest" time="1.643">
+    <system-out><![CDATA[12:47:42.747 [main] INFO  c.a.configd.ConfigdInstance - Starting Configd instance 'root' as ROOT/REPLICA in test-dc
+12:47:42.935 [main] INFO  c.a.configd.store.RocksDBStore - RocksDB opened at /tmp/junit-17514027404380474309/root-data/root with version 0
+12:47:42.967 [main] INFO  c.a.c.txlog.RocksDBTransactionLog - Transaction log opened at /tmp/junit-17514027404380474309/root-txlog/root — latest=0, oldest=0
+12:47:42.972 [main] INFO  c.a.configd.cache.CacheManager - CacheManager initialized: mode=REPLICA, L1=256MB
+12:47:42.973 [main] INFO  c.a.c.replication.ReplicationManager - Replication manager started: mode=REPLICA, upstreams=0
+12:47:43.146 [main] INFO  c.a.configd.network.NetworkServer - Network server listening on port 17400
+12:47:43.336 [main] INFO  c.a.configd.discovery.HealthMonitor - Health monitor started
+12:47:43.337 [main] INFO  c.a.configd.discovery.GossipProtocol - Gossip protocol started on port 17402 with 0 seed(s)
+12:47:43.338 [main] INFO  c.a.configd.api.RestApiServer - REST API server listening on port 17401
+12:47:43.338 [main] INFO  c.a.configd.ConfigdInstance - Configd instance 'root' started successfully
+12:47:43.338 [main] INFO  c.a.configd.ConfigdInstance - Starting Configd instance 'proxy' as LEAF/PROXY in test-dc
+12:47:43.380 [main] INFO  c.a.configd.store.RocksDBStore - RocksDB opened at /tmp/junit-17514027404380474309/proxy-data/proxy with version 0
+12:47:43.413 [main] INFO  c.a.c.txlog.RocksDBTransactionLog - Transaction log opened at /tmp/junit-17514027404380474309/proxy-txlog/proxy — latest=0, oldest=0
+12:47:43.457 [main] INFO  c.a.configd.cache.PersistentLRUCache - Persistent LRU cache opened at /tmp/junit-17514027404380474309/proxy-data/persistent-cache, estimated size: 0 bytes
+12:47:43.458 [main] INFO  c.a.configd.cache.CacheManager - CacheManager initialized: mode=PROXY, L1=256MB
+12:47:43.463 [main] INFO  c.a.c.replication.ReplicationPuller - Replication puller started, pulling every 100ms from 1 upstream(s)
+12:47:43.464 [main] INFO  c.a.c.replication.ReplicationManager - Replication manager started: mode=PROXY, upstreams=1
+12:47:43.467 [main] INFO  c.a.configd.network.NetworkServer - Network server listening on port 17410
+12:47:43.468 [main] INFO  c.a.configd.discovery.HealthMonitor - Health monitor started
+12:47:43.469 [main] INFO  c.a.configd.discovery.GossipProtocol - Gossip protocol started on port 17412 with 1 seed(s)
+12:47:43.471 [main] INFO  c.a.configd.api.RestApiServer - REST API server listening on port 17411
+12:47:43.471 [main] INFO  c.a.configd.ConfigdInstance - Configd instance 'proxy' started successfully
+12:47:43.488 [cd-replication-puller] INFO  c.a.configd.network.NetworkClient - Connected to 127.0.0.1:17400
+12:47:43.970 [cd-batch-writer] DEBUG c.a.c.t.BatchingTransactionLogWriter - Flushing batch of 1 writes
+12:47:44.037 [cd-replication-puller] DEBUG c.a.c.replication.ReplicationPuller - Applied 1 entries, version now 1
+12:47:44.038 [cd-replication-puller] DEBUG c.a.configd.cache.ReactivePrefetcher - Prefetched 1 entries into local cache
+12:47:44.039 [nioEventLoopGroup-3-1] DEBUG c.a.c.replication.ReplicationServer - Served 1 entries to /127.0.0.1:44044 (afterSeq=0)
+12:47:44.039 [main] INFO  c.a.configd.ConfigdInstance - Shutting down Configd instance 'proxy'
+12:47:44.043 [main] INFO  c.a.configd.api.RestApiServer - REST API server stopped
+12:47:44.043 [main] INFO  c.a.configd.discovery.GossipProtocol - Gossip protocol stopped
+12:47:44.046 [main] INFO  c.a.configd.network.NetworkServer - Network server stopped
+12:47:44.047 [main] INFO  c.a.c.replication.ReplicationManager - Replication manager stopped
+12:47:44.048 [main] INFO  c.a.configd.cache.CacheManager - CacheManager closed. Stats: CacheStats[l1Hits=0, l2Hits=0, l3Hits=0, misses=0, localCacheEntries=1, localCacheUtilization=1.825392246246338E-7]
+12:47:44.083 [main] INFO  c.a.c.txlog.RocksDBTransactionLog - Transaction log closed
+12:47:44.084 [main] INFO  c.a.configd.store.RocksDBStore - RocksDB closed at /tmp/junit-17514027404380474309/proxy-data/proxy
+12:47:44.086 [main] INFO  c.a.configd.network.ConnectionPool - Connection pool closed
+12:47:44.086 [main] INFO  c.a.configd.ConfigdInstance - Configd instance 'proxy' shut down
+12:47:44.087 [main] INFO  c.a.configd.ConfigdInstance - Shutting down Configd instance 'root'
+12:47:44.096 [main] INFO  c.a.configd.api.RestApiServer - REST API server stopped
+12:47:44.096 [main] INFO  c.a.configd.discovery.GossipProtocol - Gossip protocol stopped
+12:47:44.099 [main] INFO  c.a.configd.network.NetworkServer - Network server stopped
+12:47:44.099 [main] INFO  c.a.c.replication.ReplicationManager - Replication manager stopped
+12:47:44.099 [main] INFO  c.a.configd.cache.CacheManager - CacheManager closed. Stats: CacheStats[l1Hits=0, l2Hits=0, l3Hits=0, misses=0, localCacheEntries=0, localCacheUtilization=0.0]
+12:47:44.100 [main] INFO  c.a.c.txlog.RocksDBTransactionLog - Transaction log closed
+12:47:44.103 [main] INFO  c.a.configd.store.RocksDBStore - RocksDB closed at /tmp/junit-17514027404380474309/root-data/root
+12:47:44.103 [main] INFO  c.a.configd.network.ConnectionPool - Connection pool closed
+12:47:44.103 [main] INFO  c.a.configd.ConfigdInstance - Configd instance 'root' shut down
+]]></system-out>
+  </testcase>
+  <testcase name="rootTransactionLogRecordsWrites" classname="com.aayushatharva.configd.integration.ConfigdIntegrationTest" time="1.133">
+    <system-out><![CDATA[12:47:44.145 [main] INFO  c.a.configd.ConfigdInstance - Starting Configd instance 'root' as ROOT/REPLICA in test-dc
+12:47:44.190 [main] INFO  c.a.configd.store.RocksDBStore - RocksDB opened at /tmp/junit-8801881316452992617/root-data/root with version 0
+12:47:44.220 [main] INFO  c.a.c.txlog.RocksDBTransactionLog - Transaction log opened at /tmp/junit-8801881316452992617/root-txlog/root — latest=0, oldest=0
+12:47:44.221 [main] INFO  c.a.configd.cache.CacheManager - CacheManager initialized: mode=REPLICA, L1=256MB
+12:47:44.221 [main] INFO  c.a.c.replication.ReplicationManager - Replication manager started: mode=REPLICA, upstreams=0
+12:47:44.222 [main] INFO  c.a.configd.network.NetworkServer - Network server listening on port 17400
+12:47:44.224 [main] INFO  c.a.configd.discovery.HealthMonitor - Health monitor started
+12:47:44.224 [main] INFO  c.a.configd.discovery.GossipProtocol - Gossip protocol started on port 17402 with 0 seed(s)
+12:47:44.225 [main] INFO  c.a.configd.api.RestApiServer - REST API server listening on port 17401
+12:47:44.226 [main] INFO  c.a.configd.ConfigdInstance - Configd instance 'root' started successfully
+12:47:44.226 [main] INFO  c.a.configd.ConfigdInstance - Starting Configd instance 'proxy' as LEAF/PROXY in test-dc
+12:47:44.264 [main] INFO  c.a.configd.store.RocksDBStore - RocksDB opened at /tmp/junit-8801881316452992617/proxy-data/proxy with version 0
+12:47:44.292 [main] INFO  c.a.c.txlog.RocksDBTransactionLog - Transaction log opened at /tmp/junit-8801881316452992617/proxy-txlog/proxy — latest=0, oldest=0
+12:47:44.328 [main] INFO  c.a.configd.cache.PersistentLRUCache - Persistent LRU cache opened at /tmp/junit-8801881316452992617/proxy-data/persistent-cache, estimated size: 0 bytes
+12:47:44.329 [main] INFO  c.a.configd.cache.CacheManager - CacheManager initialized: mode=PROXY, L1=256MB
+12:47:44.329 [main] INFO  c.a.c.replication.ReplicationPuller - Replication puller started, pulling every 100ms from 1 upstream(s)
+12:47:44.329 [main] INFO  c.a.c.replication.ReplicationManager - Replication manager started: mode=PROXY, upstreams=1
+12:47:44.331 [main] INFO  c.a.configd.network.NetworkServer - Network server listening on port 17410
+12:47:44.331 [cd-replication-puller] INFO  c.a.configd.network.NetworkClient - Connected to 127.0.0.1:17400
+12:47:44.333 [main] INFO  c.a.configd.discovery.HealthMonitor - Health monitor started
+12:47:44.333 [main] INFO  c.a.configd.discovery.GossipProtocol - Gossip protocol started on port 17412 with 1 seed(s)
+12:47:44.335 [main] INFO  c.a.configd.api.RestApiServer - REST API server listening on port 17411
+12:47:44.336 [main] INFO  c.a.configd.ConfigdInstance - Configd instance 'proxy' started successfully
+12:47:44.721 [cd-batch-writer] DEBUG c.a.c.t.BatchingTransactionLogWriter - Flushing batch of 1 writes
+12:47:44.744 [cd-replication-puller] DEBUG c.a.c.replication.ReplicationPuller - Applied 1 entries, version now 1
+12:47:44.745 [cd-replication-puller] DEBUG c.a.configd.cache.ReactivePrefetcher - Prefetched 1 entries into local cache
+12:47:44.744 [nioEventLoopGroup-14-1] DEBUG c.a.c.replication.ReplicationServer - Served 1 entries to /127.0.0.1:44058 (afterSeq=0)
+12:47:45.221 [cd-batch-writer] DEBUG c.a.c.t.BatchingTransactionLogWriter - Flushing batch of 1 writes
+12:47:45.243 [main] INFO  c.a.configd.ConfigdInstance - Shutting down Configd instance 'proxy'
+12:47:45.246 [main] INFO  c.a.configd.api.RestApiServer - REST API server stopped
+12:47:45.247 [main] INFO  c.a.configd.discovery.GossipProtocol - Gossip protocol stopped
+12:47:45.249 [main] INFO  c.a.configd.network.NetworkServer - Network server stopped
+12:47:45.249 [main] INFO  c.a.c.replication.ReplicationManager - Replication manager stopped
+12:47:45.250 [main] INFO  c.a.configd.cache.CacheManager - CacheManager closed. Stats: CacheStats[l1Hits=0, l2Hits=0, l3Hits=0, misses=0, localCacheEntries=1, localCacheUtilization=1.2665987014770508E-7]
+12:47:45.258 [main] INFO  c.a.c.txlog.RocksDBTransactionLog - Transaction log closed
+12:47:45.258 [main] INFO  c.a.configd.store.RocksDBStore - RocksDB closed at /tmp/junit-8801881316452992617/proxy-data/proxy
+12:47:45.259 [main] INFO  c.a.configd.network.ConnectionPool - Connection pool closed
+12:47:45.259 [main] INFO  c.a.configd.ConfigdInstance - Configd instance 'proxy' shut down
+12:47:45.259 [main] INFO  c.a.configd.ConfigdInstance - Shutting down Configd instance 'root'
+12:47:45.261 [main] INFO  c.a.configd.api.RestApiServer - REST API server stopped
+12:47:45.262 [main] INFO  c.a.configd.discovery.GossipProtocol - Gossip protocol stopped
+12:47:45.267 [main] INFO  c.a.configd.network.NetworkServer - Network server stopped
+12:47:45.267 [main] INFO  c.a.c.replication.ReplicationManager - Replication manager stopped
+12:47:45.267 [main] INFO  c.a.configd.cache.CacheManager - CacheManager closed. Stats: CacheStats[l1Hits=0, l2Hits=0, l3Hits=0, misses=0, localCacheEntries=0, localCacheUtilization=0.0]
+12:47:45.268 [main] INFO  c.a.c.txlog.RocksDBTransactionLog - Transaction log closed
+12:47:45.268 [main] INFO  c.a.configd.store.RocksDBStore - RocksDB closed at /tmp/junit-8801881316452992617/root-data/root
+12:47:45.268 [main] INFO  c.a.configd.network.ConnectionPool - Connection pool closed
+12:47:45.268 [main] INFO  c.a.configd.ConfigdInstance - Configd instance 'root' shut down
+]]></system-out>
+  </testcase>
+  <testcase name="proxyNodeInitializesCleanly" classname="com.aayushatharva.configd.integration.ConfigdIntegrationTest" time="0.202">
+    <system-out><![CDATA[12:47:45.279 [main] INFO  c.a.configd.ConfigdInstance - Starting Configd instance 'root' as ROOT/REPLICA in test-dc
+12:47:45.323 [main] INFO  c.a.configd.store.RocksDBStore - RocksDB opened at /tmp/junit-3302782856696489625/root-data/root with version 0
+12:47:45.353 [main] INFO  c.a.c.txlog.RocksDBTransactionLog - Transaction log opened at /tmp/junit-3302782856696489625/root-txlog/root — latest=0, oldest=0
+12:47:45.354 [main] INFO  c.a.configd.cache.CacheManager - CacheManager initialized: mode=REPLICA, L1=256MB
+12:47:45.354 [main] INFO  c.a.c.replication.ReplicationManager - Replication manager started: mode=REPLICA, upstreams=0
+12:47:45.356 [main] INFO  c.a.configd.network.NetworkServer - Network server listening on port 17400
+12:47:45.359 [main] INFO  c.a.configd.discovery.HealthMonitor - Health monitor started
+12:47:45.359 [main] INFO  c.a.configd.discovery.GossipProtocol - Gossip protocol started on port 17402 with 0 seed(s)
+12:47:45.360 [main] INFO  c.a.configd.api.RestApiServer - REST API server listening on port 17401
+12:47:45.360 [main] INFO  c.a.configd.ConfigdInstance - Configd instance 'root' started successfully
+12:47:45.360 [main] INFO  c.a.configd.ConfigdInstance - Starting Configd instance 'proxy' as LEAF/PROXY in test-dc
+12:47:45.397 [main] INFO  c.a.configd.store.RocksDBStore - RocksDB opened at /tmp/junit-3302782856696489625/proxy-data/proxy with version 0
+12:47:45.427 [main] INFO  c.a.c.txlog.RocksDBTransactionLog - Transaction log opened at /tmp/junit-3302782856696489625/proxy-txlog/proxy — latest=0, oldest=0
+12:47:45.458 [main] INFO  c.a.configd.cache.PersistentLRUCache - Persistent LRU cache opened at /tmp/junit-3302782856696489625/proxy-data/persistent-cache, estimated size: 0 bytes
+12:47:45.458 [main] INFO  c.a.configd.cache.CacheManager - CacheManager initialized: mode=PROXY, L1=256MB
+12:47:45.459 [main] INFO  c.a.c.replication.ReplicationPuller - Replication puller started, pulling every 100ms from 1 upstream(s)
+12:47:45.459 [main] INFO  c.a.c.replication.ReplicationManager - Replication manager started: mode=PROXY, upstreams=1
+12:47:45.460 [main] INFO  c.a.configd.network.NetworkServer - Network server listening on port 17410
+12:47:45.461 [cd-replication-puller] INFO  c.a.configd.network.NetworkClient - Connected to 127.0.0.1:17400
+12:47:45.462 [main] INFO  c.a.configd.discovery.HealthMonitor - Health monitor started
+12:47:45.462 [main] INFO  c.a.configd.discovery.GossipProtocol - Gossip protocol started on port 17412 with 1 seed(s)
+12:47:45.466 [main] INFO  c.a.configd.api.RestApiServer - REST API server listening on port 17411
+12:47:45.466 [main] INFO  c.a.configd.ConfigdInstance - Configd instance 'proxy' started successfully
+12:47:45.467 [main] INFO  c.a.configd.ConfigdInstance - Shutting down Configd instance 'proxy'
+12:47:45.468 [main] INFO  c.a.configd.api.RestApiServer - REST API server stopped
+12:47:45.468 [main] INFO  c.a.configd.discovery.GossipProtocol - Gossip protocol stopped
+12:47:45.469 [main] INFO  c.a.configd.network.NetworkServer - Network server stopped
+12:47:45.470 [main] INFO  c.a.c.replication.ReplicationManager - Replication manager stopped
+12:47:45.470 [main] INFO  c.a.configd.cache.CacheManager - CacheManager closed. Stats: CacheStats[l1Hits=0, l2Hits=0, l3Hits=0, misses=0, localCacheEntries=0, localCacheUtilization=0.0]
+12:47:45.470 [main] INFO  c.a.c.txlog.RocksDBTransactionLog - Transaction log closed
+12:47:45.471 [main] INFO  c.a.configd.store.RocksDBStore - RocksDB closed at /tmp/junit-3302782856696489625/proxy-data/proxy
+12:47:45.471 [main] INFO  c.a.configd.network.ConnectionPool - Connection pool closed
+12:47:45.471 [main] INFO  c.a.configd.ConfigdInstance - Configd instance 'proxy' shut down
+12:47:45.471 [main] INFO  c.a.configd.ConfigdInstance - Shutting down Configd instance 'root'
+12:47:45.473 [main] INFO  c.a.configd.api.RestApiServer - REST API server stopped
+12:47:45.473 [main] INFO  c.a.configd.discovery.GossipProtocol - Gossip protocol stopped
+12:47:45.474 [main] INFO  c.a.configd.network.NetworkServer - Network server stopped
+12:47:45.474 [main] INFO  c.a.c.replication.ReplicationManager - Replication manager stopped
+12:47:45.474 [main] INFO  c.a.configd.cache.CacheManager - CacheManager closed. Stats: CacheStats[l1Hits=0, l2Hits=0, l3Hits=0, misses=0, localCacheEntries=0, localCacheUtilization=0.0]
+12:47:45.475 [main] INFO  c.a.c.txlog.RocksDBTransactionLog - Transaction log closed
+12:47:45.475 [main] INFO  c.a.configd.store.RocksDBStore - RocksDB closed at /tmp/junit-3302782856696489625/root-data/root
+12:47:45.475 [main] INFO  c.a.configd.network.ConnectionPool - Connection pool closed
+12:47:45.475 [main] INFO  c.a.configd.ConfigdInstance - Configd instance 'root' shut down
+]]></system-out>
+  </testcase>
+  <testcase name="cacheManagerServesReads" classname="com.aayushatharva.configd.integration.ConfigdIntegrationTest" time="0.595">
+    <system-out><![CDATA[12:47:45.485 [main] INFO  c.a.configd.ConfigdInstance - Starting Configd instance 'root' as ROOT/REPLICA in test-dc
+12:47:45.525 [main] INFO  c.a.configd.store.RocksDBStore - RocksDB opened at /tmp/junit-12574788546653902422/root-data/root with version 0
+12:47:45.555 [main] INFO  c.a.c.txlog.RocksDBTransactionLog - Transaction log opened at /tmp/junit-12574788546653902422/root-txlog/root — latest=0, oldest=0
+12:47:45.555 [main] INFO  c.a.configd.cache.CacheManager - CacheManager initialized: mode=REPLICA, L1=256MB
+12:47:45.555 [main] INFO  c.a.c.replication.ReplicationManager - Replication manager started: mode=REPLICA, upstreams=0
+12:47:45.556 [main] INFO  c.a.configd.network.NetworkServer - Network server listening on port 17400
+12:47:45.557 [main] INFO  c.a.configd.discovery.HealthMonitor - Health monitor started
+12:47:45.558 [main] INFO  c.a.configd.discovery.GossipProtocol - Gossip protocol started on port 17402 with 0 seed(s)
+12:47:45.559 [main] INFO  c.a.configd.api.RestApiServer - REST API server listening on port 17401
+12:47:45.559 [main] INFO  c.a.configd.ConfigdInstance - Configd instance 'root' started successfully
+12:47:45.559 [main] INFO  c.a.configd.ConfigdInstance - Starting Configd instance 'proxy' as LEAF/PROXY in test-dc
+12:47:45.596 [main] INFO  c.a.configd.store.RocksDBStore - RocksDB opened at /tmp/junit-12574788546653902422/proxy-data/proxy with version 0
+12:47:45.626 [main] INFO  c.a.c.txlog.RocksDBTransactionLog - Transaction log opened at /tmp/junit-12574788546653902422/proxy-txlog/proxy — latest=0, oldest=0
+12:47:45.661 [main] INFO  c.a.configd.cache.PersistentLRUCache - Persistent LRU cache opened at /tmp/junit-12574788546653902422/proxy-data/persistent-cache, estimated size: 0 bytes
+12:47:45.662 [main] INFO  c.a.configd.cache.CacheManager - CacheManager initialized: mode=PROXY, L1=256MB
+12:47:45.662 [main] INFO  c.a.c.replication.ReplicationPuller - Replication puller started, pulling every 100ms from 1 upstream(s)
+12:47:45.662 [main] INFO  c.a.c.replication.ReplicationManager - Replication manager started: mode=PROXY, upstreams=1
+12:47:45.663 [main] INFO  c.a.configd.network.NetworkServer - Network server listening on port 17410
+12:47:45.664 [cd-replication-puller] INFO  c.a.configd.network.NetworkClient - Connected to 127.0.0.1:17400
+12:47:45.667 [main] INFO  c.a.configd.discovery.HealthMonitor - Health monitor started
+12:47:45.667 [main] INFO  c.a.configd.discovery.GossipProtocol - Gossip protocol started on port 17412 with 1 seed(s)
+12:47:45.669 [main] INFO  c.a.configd.api.RestApiServer - REST API server listening on port 17411
+12:47:45.669 [main] INFO  c.a.configd.ConfigdInstance - Configd instance 'proxy' started successfully
+12:47:46.055 [cd-batch-writer] DEBUG c.a.c.t.BatchingTransactionLogWriter - Flushing batch of 1 writes
+12:47:46.056 [main] INFO  c.a.configd.ConfigdInstance - Shutting down Configd instance 'proxy'
+12:47:46.058 [main] INFO  c.a.configd.api.RestApiServer - REST API server stopped
+12:47:46.059 [main] INFO  c.a.configd.discovery.GossipProtocol - Gossip protocol stopped
+12:47:46.060 [main] INFO  c.a.configd.network.NetworkServer - Network server stopped
+12:47:46.060 [main] INFO  c.a.c.replication.ReplicationManager - Replication manager stopped
+12:47:46.061 [main] INFO  c.a.configd.cache.CacheManager - CacheManager closed. Stats: CacheStats[l1Hits=0, l2Hits=0, l3Hits=0, misses=0, localCacheEntries=0, localCacheUtilization=0.0]
+12:47:46.063 [main] INFO  c.a.c.txlog.RocksDBTransactionLog - Transaction log closed
+12:47:46.063 [main] INFO  c.a.configd.store.RocksDBStore - RocksDB closed at /tmp/junit-12574788546653902422/proxy-data/proxy
+12:47:46.064 [main] INFO  c.a.configd.network.ConnectionPool - Connection pool closed
+12:47:46.064 [main] INFO  c.a.configd.ConfigdInstance - Configd instance 'proxy' shut down
+12:47:46.064 [main] INFO  c.a.configd.ConfigdInstance - Shutting down Configd instance 'root'
+12:47:46.066 [main] INFO  c.a.configd.api.RestApiServer - REST API server stopped
+12:47:46.066 [main] INFO  c.a.configd.discovery.GossipProtocol - Gossip protocol stopped
+12:47:46.068 [main] INFO  c.a.configd.network.NetworkServer - Network server stopped
+12:47:46.068 [main] INFO  c.a.c.replication.ReplicationManager - Replication manager stopped
+12:47:46.068 [main] INFO  c.a.configd.cache.CacheManager - CacheManager closed. Stats: CacheStats[l1Hits=0, l2Hits=0, l3Hits=0, misses=0, localCacheEntries=0, localCacheUtilization=0.0]
+12:47:46.069 [main] INFO  c.a.c.txlog.RocksDBTransactionLog - Transaction log closed
+12:47:46.069 [main] INFO  c.a.configd.store.RocksDBStore - RocksDB closed at /tmp/junit-12574788546653902422/root-data/root
+12:47:46.069 [main] INFO  c.a.configd.network.ConnectionPool - Connection pool closed
+12:47:46.070 [main] INFO  c.a.configd.ConfigdInstance - Configd instance 'root' shut down
+]]></system-out>
+  </testcase>
+  <testcase name="multipleWritesPreserveOrder" classname="com.aayushatharva.configd.integration.ConfigdIntegrationTest" time="50.097">
+    <system-out><![CDATA[12:47:46.081 [main] INFO  c.a.configd.ConfigdInstance - Starting Configd instance 'root' as ROOT/REPLICA in test-dc
+12:47:46.128 [main] INFO  c.a.configd.store.RocksDBStore - RocksDB opened at /tmp/junit-15396756179950607329/root-data/root with version 0
+12:47:46.157 [main] INFO  c.a.c.txlog.RocksDBTransactionLog - Transaction log opened at /tmp/junit-15396756179950607329/root-txlog/root — latest=0, oldest=0
+12:47:46.158 [main] INFO  c.a.configd.cache.CacheManager - CacheManager initialized: mode=REPLICA, L1=256MB
+12:47:46.158 [main] INFO  c.a.c.replication.ReplicationManager - Replication manager started: mode=REPLICA, upstreams=0
+12:47:46.160 [main] INFO  c.a.configd.network.NetworkServer - Network server listening on port 17400
+12:47:46.161 [main] INFO  c.a.configd.discovery.HealthMonitor - Health monitor started
+12:47:46.161 [main] INFO  c.a.configd.discovery.GossipProtocol - Gossip protocol started on port 17402 with 0 seed(s)
+12:47:46.162 [main] INFO  c.a.configd.api.RestApiServer - REST API server listening on port 17401
+12:47:46.162 [main] INFO  c.a.configd.ConfigdInstance - Configd instance 'root' started successfully
+12:47:46.162 [main] INFO  c.a.configd.ConfigdInstance - Starting Configd instance 'proxy' as LEAF/PROXY in test-dc
+12:47:46.199 [main] INFO  c.a.configd.store.RocksDBStore - RocksDB opened at /tmp/junit-15396756179950607329/proxy-data/proxy with version 0
+12:47:46.229 [main] INFO  c.a.c.txlog.RocksDBTransactionLog - Transaction log opened at /tmp/junit-15396756179950607329/proxy-txlog/proxy — latest=0, oldest=0
+12:47:46.264 [main] INFO  c.a.configd.cache.PersistentLRUCache - Persistent LRU cache opened at /tmp/junit-15396756179950607329/proxy-data/persistent-cache, estimated size: 0 bytes
+12:47:46.265 [main] INFO  c.a.configd.cache.CacheManager - CacheManager initialized: mode=PROXY, L1=256MB
+12:47:46.265 [main] INFO  c.a.c.replication.ReplicationPuller - Replication puller started, pulling every 100ms from 1 upstream(s)
+12:47:46.265 [main] INFO  c.a.c.replication.ReplicationManager - Replication manager started: mode=PROXY, upstreams=1
+12:47:46.268 [main] INFO  c.a.configd.network.NetworkServer - Network server listening on port 17410
+12:47:46.268 [cd-replication-puller] INFO  c.a.configd.network.NetworkClient - Connected to 127.0.0.1:17400
+12:47:46.271 [main] INFO  c.a.configd.discovery.HealthMonitor - Health monitor started
+12:47:46.271 [main] INFO  c.a.configd.discovery.GossipProtocol - Gossip protocol started on port 17412 with 1 seed(s)
+12:47:46.273 [main] INFO  c.a.configd.api.RestApiServer - REST API server listening on port 17411
+12:47:46.273 [main] INFO  c.a.configd.ConfigdInstance - Configd instance 'proxy' started successfully
+12:47:46.658 [cd-batch-writer] DEBUG c.a.c.t.BatchingTransactionLogWriter - Flushing batch of 1 writes
+12:47:46.678 [nioEventLoopGroup-47-1] DEBUG c.a.c.replication.ReplicationServer - Served 1 entries to /127.0.0.1:44082 (afterSeq=0)
+12:47:46.679 [cd-replication-puller] DEBUG c.a.c.replication.ReplicationPuller - Applied 1 entries, version now 1
+12:47:46.679 [cd-replication-puller] DEBUG c.a.configd.cache.ReactivePrefetcher - Prefetched 1 entries into local cache
+12:47:47.158 [cd-batch-writer] DEBUG c.a.c.t.BatchingTransactionLogWriter - Flushing batch of 1 writes
+12:47:47.186 [nioEventLoopGroup-47-1] DEBUG c.a.c.replication.ReplicationServer - Served 1 entries to /127.0.0.1:44082 (afterSeq=1)
+12:47:47.186 [cd-replication-puller] DEBUG c.a.c.replication.ReplicationPuller - Applied 1 entries, version now 2
+12:47:47.187 [cd-replication-puller] DEBUG c.a.configd.cache.ReactivePrefetcher - Prefetched 1 entries into local cache
+12:47:47.658 [cd-batch-writer] DEBUG c.a.c.t.BatchingTransactionLogWriter - Flushing batch of 1 writes
+12:47:47.700 [nioEventLoopGroup-47-1] DEBUG c.a.c.replication.ReplicationServer - Served 1 entries to /127.0.0.1:44082 (afterSeq=2)
+12:47:47.701 [cd-replication-puller] DEBUG c.a.c.replication.ReplicationPuller - Applied 1 entries, version now 3
+12:47:47.701 [cd-replication-puller] DEBUG c.a.configd.cache.ReactivePrefetcher - Prefetched 1 entries into local cache
+12:47:48.158 [cd-batch-writer] DEBUG c.a.c.t.BatchingTransactionLogWriter - Flushing batch of 1 writes
+12:47:48.215 [nioEventLoopGroup-47-1] DEBUG c.a.c.replication.ReplicationServer - Served 1 entries to /127.0.0.1:44082 (afterSeq=3)
+12:47:48.216 [cd-replication-puller] DEBUG c.a.c.replication.ReplicationPuller - Applied 1 entries, version now 4
+12:47:48.216 [cd-replication-puller] DEBUG c.a.configd.cache.ReactivePrefetcher - Prefetched 1 entries into local cache
+12:47:48.659 [cd-batch-writer] DEBUG c.a.c.t.BatchingTransactionLogWriter - Flushing batch of 1 writes
+12:47:48.727 [nioEventLoopGroup-47-1] DEBUG c.a.c.replication.ReplicationServer - Served 1 entries to /127.0.0.1:44082 (afterSeq=4)
+12:47:48.730 [cd-replication-puller] DEBUG c.a.c.replication.ReplicationPuller - Applied 1 entries, version now 5
+12:47:48.730 [cd-replication-puller] DEBUG c.a.configd.cache.ReactivePrefetcher - Prefetched 1 entries into local cache
+12:47:49.160 [cd-batch-writer] DEBUG c.a.c.t.BatchingTransactionLogWriter - Flushing batch of 1 writes
+12:47:49.241 [nioEventLoopGroup-47-1] DEBUG c.a.c.replication.ReplicationServer - Served 1 entries to /127.0.0.1:44082 (afterSeq=5)
+12:47:49.242 [cd-replication-puller] DEBUG c.a.c.replication.ReplicationPuller - Applied 1 entries, version now 6
+12:47:49.242 [cd-replication-puller] DEBUG c.a.configd.cache.ReactivePrefetcher - Prefetched 1 entries into local cache
+12:47:49.660 [cd-batch-writer] DEBUG c.a.c.t.BatchingTransactionLogWriter - Flushing batch of 1 writes
+12:47:49.754 [nioEventLoopGroup-47-1] DEBUG c.a.c.replication.ReplicationServer - Served 1 entries to /127.0.0.1:44082 (afterSeq=6)
+12:47:49.754 [cd-replication-puller] DEBUG c.a.c.replication.ReplicationPuller - Applied 1 entries, version now 7
+12:47:49.754 [cd-replication-puller] DEBUG c.a.configd.cache.ReactivePrefetcher - Prefetched 1 entries into local cache
+12:47:50.160 [cd-batch-writer] DEBUG c.a.c.t.BatchingTransactionLogWriter - Flushing batch of 1 writes
+12:47:50.171 [nioEventLoopGroup-47-1] DEBUG c.a.c.replication.ReplicationServer - Served 1 entries to /127.0.0.1:44082 (afterSeq=7)
+12:47:50.171 [cd-replication-puller] DEBUG c.a.c.replication.ReplicationPuller - Applied 1 entries, version now 8
+12:47:50.171 [cd-replication-puller] DEBUG c.a.configd.cache.ReactivePrefetcher - Prefetched 1 entries into local cache
+12:47:50.660 [cd-batch-writer] DEBUG c.a.c.t.BatchingTransactionLogWriter - Flushing batch of 1 writes
+12:47:50.691 [nioEventLoopGroup-47-1] DEBUG c.a.c.replication.ReplicationServer - Served 1 entries to /127.0.0.1:44082 (afterSeq=8)
+12:47:50.692 [cd-replication-puller] DEBUG c.a.c.replication.ReplicationPuller - Applied 1 entries, version now 9
+12:47:50.692 [cd-replication-puller] DEBUG c.a.configd.cache.ReactivePrefetcher - Prefetched 1 entries into local cache
+12:47:51.158 [cd-batch-writer] DEBUG c.a.c.t.BatchingTransactionLogWriter - Flushing batch of 1 writes
+12:47:51.210 [nioEventLoopGroup-47-1] DEBUG c.a.c.replication.ReplicationServer - Served 1 entries to /127.0.0.1:44082 (afterSeq=9)
+12:47:51.210 [cd-replication-puller] DEBUG c.a.c.replication.ReplicationPuller - Applied 1 entries, version now 10
+12:47:51.210 [cd-replication-puller] DEBUG c.a.configd.cache.ReactivePrefetcher - Prefetched 1 entries into local cache
+12:47:51.659 [cd-batch-writer] DEBUG c.a.c.t.BatchingTransactionLogWriter - Flushing batch of 1 writes
+12:47:51.725 [nioEventLoopGroup-47-1] DEBUG c.a.c.replication.ReplicationServer - Served 1 entries to /127.0.0.1:44082 (afterSeq=10)
+12:47:51.726 [cd-replication-puller] DEBUG c.a.c.replication.ReplicationPuller - Applied 1 entries, version now 11
+12:47:51.726 [cd-replication-puller] DEBUG c.a.configd.cache.ReactivePrefetcher - Prefetched 1 entries into local cache
+12:47:52.158 [cd-batch-writer] DEBUG c.a.c.t.BatchingTransactionLogWriter - Flushing batch of 1 writes
+12:47:52.237 [cd-replication-puller] DEBUG c.a.c.replication.ReplicationPuller - Applied 1 entries, version now 12
+12:47:52.237 [cd-replication-puller] DEBUG c.a.configd.cache.ReactivePrefetcher - Prefetched 1 entries into local cache
+12:47:52.237 [nioEventLoopGroup-47-1] DEBUG c.a.c.replication.ReplicationServer - Served 1 entries to /127.0.0.1:44082 (afterSeq=11)
+12:47:52.659 [cd-batch-writer] DEBUG c.a.c.t.BatchingTransactionLogWriter - Flushing batch of 1 writes
+12:47:52.750 [nioEventLoopGroup-47-1] DEBUG c.a.c.replication.ReplicationServer - Served 1 entries to /127.0.0.1:44082 (afterSeq=12)
+12:47:52.750 [cd-replication-puller] DEBUG c.a.c.replication.ReplicationPuller - Applied 1 entries, version now 13
+12:47:52.750 [cd-replication-puller] DEBUG c.a.configd.cache.ReactivePrefetcher - Prefetched 1 entries into local cache
+12:47:53.159 [cd-batch-writer] DEBUG c.a.c.t.BatchingTransactionLogWriter - Flushing batch of 1 writes
+12:47:53.260 [nioEventLoopGroup-47-1] DEBUG c.a.c.replication.ReplicationServer - Served 1 entries to /127.0.0.1:44082 (afterSeq=13)
+12:47:53.260 [cd-replication-puller] DEBUG c.a.c.replication.ReplicationPuller - Applied 1 entries, version now 14
+12:47:53.265 [cd-replication-puller] DEBUG c.a.configd.cache.ReactivePrefetcher - Prefetched 1 entries into local cache
+12:47:53.660 [cd-batch-writer] DEBUG c.a.c.t.BatchingTransactionLogWriter - Flushing batch of 1 writes
+12:47:53.672 [cd-replication-puller] DEBUG c.a.c.replication.ReplicationPuller - Applied 1 entries, version now 15
+12:47:53.672 [cd-replication-puller] DEBUG c.a.configd.cache.ReactivePrefetcher - Prefetched 1 entries into local cache
+12:47:53.672 [nioEventLoopGroup-47-1] DEBUG c.a.c.replication.ReplicationServer - Served 1 entries to /127.0.0.1:44082 (afterSeq=14)
+12:47:54.158 [cd-batch-writer] DEBUG c.a.c.t.BatchingTransactionLogWriter - Flushing batch of 1 writes
+12:47:54.189 [cd-replication-puller] DEBUG c.a.c.replication.ReplicationPuller - Applied 1 entries, version now 16
+12:47:54.189 [cd-replication-puller] DEBUG c.a.configd.cache.ReactivePrefetcher - Prefetched 1 entries into local cache
+12:47:54.190 [nioEventLoopGroup-47-1] DEBUG c.a.c.replication.ReplicationServer - Served 1 entries to /127.0.0.1:44082 (afterSeq=15)
+12:47:54.658 [cd-batch-writer] DEBUG c.a.c.t.BatchingTransactionLogWriter - Flushing batch of 1 writes
+12:47:54.703 [nioEventLoopGroup-47-1] DEBUG c.a.c.replication.ReplicationServer - Served 1 entries to /127.0.0.1:44082 (afterSeq=16)
+12:47:54.703 [cd-replication-puller] DEBUG c.a.c.replication.ReplicationPuller - Applied 1 entries, version now 17
+12:47:54.703 [cd-replication-puller] DEBUG c.a.configd.cache.ReactivePrefetcher - Prefetched 1 entries into local cache
+12:47:55.160 [cd-batch-writer] DEBUG c.a.c.t.BatchingTransactionLogWriter - Flushing batch of 1 writes
+12:47:55.221 [nioEventLoopGroup-47-1] DEBUG c.a.c.replication.ReplicationServer - Served 1 entries to /127.0.0.1:44082 (afterSeq=17)
+12:47:55.223 [cd-replication-puller] DEBUG c.a.c.replication.ReplicationPuller - Applied 1 entries, version now 18
+12:47:55.223 [cd-replication-puller] DEBUG c.a.configd.cache.ReactivePrefetcher - Prefetched 1 entries into local cache
+12:47:55.658 [cd-batch-writer] DEBUG c.a.c.t.BatchingTransactionLogWriter - Flushing batch of 1 writes
+12:47:55.730 [nioEventLoopGroup-47-1] DEBUG c.a.c.replication.ReplicationServer - Served 1 entries to /127.0.0.1:44082 (afterSeq=18)
+12:47:55.730 [cd-replication-puller] DEBUG c.a.c.replication.ReplicationPuller - Applied 1 entries, version now 19
+12:47:55.730 [cd-replication-puller] DEBUG c.a.configd.cache.ReactivePrefetcher - Prefetched 1 entries into local cache
+12:47:56.158 [cd-batch-writer] DEBUG c.a.c.t.BatchingTransactionLogWriter - Flushing batch of 1 writes
+12:47:56.244 [nioEventLoopGroup-47-1] DEBUG c.a.c.replication.ReplicationServer - Served 1 entries to /127.0.0.1:44082 (afterSeq=19)
+12:47:56.244 [cd-replication-puller] DEBUG c.a.c.replication.ReplicationPuller - Applied 1 entries, version now 20
+12:47:56.244 [cd-replication-puller] DEBUG c.a.configd.cache.ReactivePrefetcher - Prefetched 1 entries into local cache
+12:47:56.659 [cd-batch-writer] DEBUG c.a.c.t.BatchingTransactionLogWriter - Flushing batch of 1 writes
+12:47:56.750 [nioEventLoopGroup-47-1] DEBUG c.a.c.replication.ReplicationServer - Served 1 entries to /127.0.0.1:44082 (afterSeq=20)
+12:47:56.751 [cd-replication-puller] DEBUG c.a.c.replication.ReplicationPuller - Applied 1 entries, version now 21
+12:47:56.751 [cd-replication-puller] DEBUG c.a.configd.cache.ReactivePrefetcher - Prefetched 1 entries into local cache
+12:47:57.160 [cd-batch-writer] DEBUG c.a.c.t.BatchingTransactionLogWriter - Flushing batch of 1 writes
+12:47:57.264 [nioEventLoopGroup-47-1] DEBUG c.a.c.replication.ReplicationServer - Served 1 entries to /127.0.0.1:44082 (afterSeq=21)
+12:47:57.267 [cd-replication-puller] DEBUG c.a.c.replication.ReplicationPuller - Applied 1 entries, version now 22
+12:47:57.267 [cd-replication-puller] DEBUG c.a.configd.cache.ReactivePrefetcher - Prefetched 1 entries into local cache
+12:47:57.658 [cd-batch-writer] DEBUG c.a.c.t.BatchingTransactionLogWriter - Flushing batch of 1 writes
+12:47:57.673 [nioEventLoopGroup-47-1] DEBUG c.a.c.replication.ReplicationServer - Served 1 entries to /127.0.0.1:44082 (afterSeq=22)
+12:47:57.675 [cd-replication-puller] DEBUG c.a.c.replication.ReplicationPuller - Applied 1 entries, version now 23
+12:47:57.675 [cd-replication-puller] DEBUG c.a.configd.cache.ReactivePrefetcher - Prefetched 1 entries into local cache
+12:47:58.160 [cd-batch-writer] DEBUG c.a.c.t.BatchingTransactionLogWriter - Flushing batch of 1 writes
+12:47:58.183 [nioEventLoopGroup-47-1] DEBUG c.a.c.replication.ReplicationServer - Served 1 entries to /127.0.0.1:44082 (afterSeq=23)
+12:47:58.184 [cd-replication-puller] DEBUG c.a.c.replication.ReplicationPuller - Applied 1 entries, version now 24
+12:47:58.184 [cd-replication-puller] DEBUG c.a.configd.cache.ReactivePrefetcher - Prefetched 1 entries into local cache
+12:47:58.658 [cd-batch-writer] DEBUG c.a.c.t.BatchingTransactionLogWriter - Flushing batch of 1 writes
+12:47:58.690 [cd-replication-puller] DEBUG c.a.c.replication.ReplicationPuller - Applied 1 entries, version now 25
+12:47:58.690 [cd-replication-puller] DEBUG c.a.configd.cache.ReactivePrefetcher - Prefetched 1 entries into local cache
+12:47:58.690 [nioEventLoopGroup-47-1] DEBUG c.a.c.replication.ReplicationServer - Served 1 entries to /127.0.0.1:44082 (afterSeq=24)
+12:47:59.159 [cd-batch-writer] DEBUG c.a.c.t.BatchingTransactionLogWriter - Flushing batch of 1 writes
+12:47:59.201 [cd-replication-puller] DEBUG c.a.c.replication.ReplicationPuller - Applied 1 entries, version now 26
+12:47:59.201 [cd-replication-puller] DEBUG c.a.configd.cache.ReactivePrefetcher - Prefetched 1 entries into local cache
+12:47:59.201 [nioEventLoopGroup-47-1] DEBUG c.a.c.replication.ReplicationServer - Served 1 entries to /127.0.0.1:44082 (afterSeq=25)
+12:47:59.659 [cd-batch-writer] DEBUG c.a.c.t.BatchingTransactionLogWriter - Flushing batch of 1 writes
+12:47:59.715 [nioEventLoopGroup-47-1] DEBUG c.a.c.replication.ReplicationServer - Served 1 entries to /127.0.0.1:44082 (afterSeq=26)
+12:47:59.717 [cd-replication-puller] DEBUG c.a.c.replication.ReplicationPuller - Applied 1 entries, version now 27
+12:47:59.717 [cd-replication-puller] DEBUG c.a.configd.cache.ReactivePrefetcher - Prefetched 1 entries into local cache
+12:48:00.158 [cd-batch-writer] DEBUG c.a.c.t.BatchingTransactionLogWriter - Flushing batch of 1 writes
+12:48:00.228 [nioEventLoopGroup-47-1] DEBUG c.a.c.replication.ReplicationServer - Served 1 entries to /127.0.0.1:44082 (afterSeq=27)
+12:48:00.228 [cd-replication-puller] DEBUG c.a.c.replication.ReplicationPuller - Applied 1 entries, version now 28
+12:48:00.229 [cd-replication-puller] DEBUG c.a.configd.cache.ReactivePrefetcher - Prefetched 1 entries into local cache
+12:48:00.659 [cd-batch-writer] DEBUG c.a.c.t.BatchingTransactionLogWriter - Flushing batch of 1 writes
+12:48:00.739 [nioEventLoopGroup-47-1] DEBUG c.a.c.replication.ReplicationServer - Served 1 entries to /127.0.0.1:44082 (afterSeq=28)
+12:48:00.740 [cd-replication-puller] DEBUG c.a.c.replication.ReplicationPuller - Applied 1 entries, version now 29
+12:48:00.740 [cd-replication-puller] DEBUG c.a.configd.cache.ReactivePrefetcher - Prefetched 1 entries into local cache
+12:48:01.161 [cd-batch-writer] DEBUG c.a.c.t.BatchingTransactionLogWriter - Flushing batch of 1 writes
+12:48:01.249 [nioEventLoopGroup-47-1] DEBUG c.a.c.replication.ReplicationServer - Served 1 entries to /127.0.0.1:44082 (afterSeq=29)
+12:48:01.250 [cd-replication-puller] DEBUG c.a.c.replication.ReplicationPuller - Applied 1 entries, version now 30
+12:48:01.251 [cd-replication-puller] DEBUG c.a.configd.cache.ReactivePrefetcher - Prefetched 1 entries into local cache
+12:48:01.659 [cd-batch-writer] DEBUG c.a.c.t.BatchingTransactionLogWriter - Flushing batch of 1 writes
+12:48:01.760 [nioEventLoopGroup-47-1] DEBUG c.a.c.replication.ReplicationServer - Served 1 entries to /127.0.0.1:44082 (afterSeq=30)
+12:48:01.760 [cd-replication-puller] DEBUG c.a.c.replication.ReplicationPuller - Applied 1 entries, version now 31
+12:48:01.760 [cd-replication-puller] DEBUG c.a.configd.cache.ReactivePrefetcher - Prefetched 1 entries into local cache
+12:48:02.159 [cd-batch-writer] DEBUG c.a.c.t.BatchingTransactionLogWriter - Flushing batch of 1 writes
+12:48:02.172 [nioEventLoopGroup-47-1] DEBUG c.a.c.replication.ReplicationServer - Served 1 entries to /127.0.0.1:44082 (afterSeq=31)
+12:48:02.173 [cd-replication-puller] DEBUG c.a.c.replication.ReplicationPuller - Applied 1 entries, version now 32
+12:48:02.173 [cd-replication-puller] DEBUG c.a.configd.cache.ReactivePrefetcher - Prefetched 1 entries into local cache
+12:48:02.658 [cd-batch-writer] DEBUG c.a.c.t.BatchingTransactionLogWriter - Flushing batch of 1 writes
+12:48:02.681 [nioEventLoopGroup-47-1] DEBUG c.a.c.replication.ReplicationServer - Served 1 entries to /127.0.0.1:44082 (afterSeq=32)
+12:48:02.684 [cd-replication-puller] DEBUG c.a.c.replication.ReplicationPuller - Applied 1 entries, version now 33
+12:48:02.684 [cd-replication-puller] DEBUG c.a.configd.cache.ReactivePrefetcher - Prefetched 1 entries into local cache
+12:48:03.158 [cd-batch-writer] DEBUG c.a.c.t.BatchingTransactionLogWriter - Flushing batch of 1 writes
+12:48:03.194 [nioEventLoopGroup-47-1] DEBUG c.a.c.replication.ReplicationServer - Served 1 entries to /127.0.0.1:44082 (afterSeq=33)
+12:48:03.195 [cd-replication-puller] DEBUG c.a.c.replication.ReplicationPuller - Applied 1 entries, version now 34
+12:48:03.195 [cd-replication-puller] DEBUG c.a.configd.cache.ReactivePrefetcher - Prefetched 1 entries into local cache
+12:48:03.659 [cd-batch-writer] DEBUG c.a.c.t.BatchingTransactionLogWriter - Flushing batch of 1 writes
+12:48:03.704 [nioEventLoopGroup-47-1] DEBUG c.a.c.replication.ReplicationServer - Served 1 entries to /127.0.0.1:44082 (afterSeq=34)
+12:48:03.706 [cd-replication-puller] DEBUG c.a.c.replication.ReplicationPuller - Applied 1 entries, version now 35
+12:48:03.707 [cd-replication-puller] DEBUG c.a.configd.cache.ReactivePrefetcher - Prefetched 1 entries into local cache
+12:48:04.158 [cd-batch-writer] DEBUG c.a.c.t.BatchingTransactionLogWriter - Flushing batch of 1 writes
+12:48:04.216 [nioEventLoopGroup-47-1] DEBUG c.a.c.replication.ReplicationServer - Served 1 entries to /127.0.0.1:44082 (afterSeq=35)
+12:48:04.217 [cd-replication-puller] DEBUG c.a.c.replication.ReplicationPuller - Applied 1 entries, version now 36
+12:48:04.218 [cd-replication-puller] DEBUG c.a.configd.cache.ReactivePrefetcher - Prefetched 1 entries into local cache
+12:48:04.658 [cd-batch-writer] DEBUG c.a.c.t.BatchingTransactionLogWriter - Flushing batch of 1 writes
+12:48:04.727 [nioEventLoopGroup-47-1] DEBUG c.a.c.replication.ReplicationServer - Served 1 entries to /127.0.0.1:44082 (afterSeq=36)
+12:48:04.727 [cd-replication-puller] DEBUG c.a.c.replication.ReplicationPuller - Applied 1 entries, version now 37
+12:48:04.727 [cd-replication-puller] DEBUG c.a.configd.cache.ReactivePrefetcher - Prefetched 1 entries into local cache
+12:48:05.161 [cd-batch-writer] DEBUG c.a.c.t.BatchingTransactionLogWriter - Flushing batch of 1 writes
+12:48:05.236 [cd-replication-puller] DEBUG c.a.c.replication.ReplicationPuller - Applied 1 entries, version now 38
+12:48:05.237 [cd-replication-puller] DEBUG c.a.configd.cache.ReactivePrefetcher - Prefetched 1 entries into local cache
+12:48:05.237 [nioEventLoopGroup-47-1] DEBUG c.a.c.replication.ReplicationServer - Served 1 entries to /127.0.0.1:44082 (afterSeq=37)
+12:48:05.658 [cd-batch-writer] DEBUG c.a.c.t.BatchingTransactionLogWriter - Flushing batch of 1 writes
+12:48:05.744 [nioEventLoopGroup-47-1] DEBUG c.a.c.replication.ReplicationServer - Served 1 entries to /127.0.0.1:44082 (afterSeq=38)
+12:48:05.746 [cd-replication-puller] DEBUG c.a.c.replication.ReplicationPuller - Applied 1 entries, version now 39
+12:48:05.746 [cd-replication-puller] DEBUG c.a.configd.cache.ReactivePrefetcher - Prefetched 1 entries into local cache
+12:48:06.158 [cd-batch-writer] DEBUG c.a.c.t.BatchingTransactionLogWriter - Flushing batch of 1 writes
+12:48:06.256 [nioEventLoopGroup-47-1] DEBUG c.a.c.replication.ReplicationServer - Served 1 entries to /127.0.0.1:44082 (afterSeq=39)
+12:48:06.257 [cd-replication-puller] DEBUG c.a.c.replication.ReplicationPuller - Applied 1 entries, version now 40
+12:48:06.257 [cd-replication-puller] DEBUG c.a.configd.cache.ReactivePrefetcher - Prefetched 1 entries into local cache
+12:48:06.658 [cd-batch-writer] DEBUG c.a.c.t.BatchingTransactionLogWriter - Flushing batch of 1 writes
+12:48:06.666 [nioEventLoopGroup-47-1] DEBUG c.a.c.replication.ReplicationServer - Served 1 entries to /127.0.0.1:44082 (afterSeq=40)
+12:48:06.666 [cd-replication-puller] DEBUG c.a.c.replication.ReplicationPuller - Applied 1 entries, version now 41
+12:48:06.667 [cd-replication-puller] DEBUG c.a.configd.cache.ReactivePrefetcher - Prefetched 1 entries into local cache
+12:48:07.160 [cd-batch-writer] DEBUG c.a.c.t.BatchingTransactionLogWriter - Flushing batch of 1 writes
+12:48:07.173 [cd-replication-puller] DEBUG c.a.c.replication.ReplicationPuller - Applied 1 entries, version now 42
+12:48:07.174 [cd-replication-puller] DEBUG c.a.configd.cache.ReactivePrefetcher - Prefetched 1 entries into local cache
+12:48:07.175 [nioEventLoopGroup-47-1] DEBUG c.a.c.replication.ReplicationServer - Served 1 entries to /127.0.0.1:44082 (afterSeq=41)
+12:48:07.658 [cd-batch-writer] DEBUG c.a.c.t.BatchingTransactionLogWriter - Flushing batch of 1 writes
+12:48:07.681 [nioEventLoopGroup-47-1] DEBUG c.a.c.replication.ReplicationServer - Served 1 entries to /127.0.0.1:44082 (afterSeq=42)
+12:48:07.681 [cd-replication-puller] DEBUG c.a.c.replication.ReplicationPuller - Applied 1 entries, version now 43
+12:48:07.681 [cd-replication-puller] DEBUG c.a.configd.cache.ReactivePrefetcher - Prefetched 1 entries into local cache
+12:48:08.159 [cd-batch-writer] DEBUG c.a.c.t.BatchingTransactionLogWriter - Flushing batch of 1 writes
+12:48:08.188 [nioEventLoopGroup-47-1] DEBUG c.a.c.replication.ReplicationServer - Served 1 entries to /127.0.0.1:44082 (afterSeq=43)
+12:48:08.191 [cd-replication-puller] DEBUG c.a.c.replication.ReplicationPuller - Applied 1 entries, version now 44
+12:48:08.191 [cd-replication-puller] DEBUG c.a.configd.cache.ReactivePrefetcher - Prefetched 1 entries into local cache
+12:48:08.659 [cd-batch-writer] DEBUG c.a.c.t.BatchingTransactionLogWriter - Flushing batch of 1 writes
+12:48:08.701 [nioEventLoopGroup-47-1] DEBUG c.a.c.replication.ReplicationServer - Served 1 entries to /127.0.0.1:44082 (afterSeq=44)
+12:48:08.701 [cd-replication-puller] DEBUG c.a.c.replication.ReplicationPuller - Applied 1 entries, version now 45
+12:48:08.702 [cd-replication-puller] DEBUG c.a.configd.cache.ReactivePrefetcher - Prefetched 1 entries into local cache
+12:48:09.159 [cd-batch-writer] DEBUG c.a.c.t.BatchingTransactionLogWriter - Flushing batch of 1 writes
+12:48:09.211 [cd-replication-puller] DEBUG c.a.c.replication.ReplicationPuller - Applied 1 entries, version now 46
+12:48:09.211 [cd-replication-puller] DEBUG c.a.configd.cache.ReactivePrefetcher - Prefetched 1 entries into local cache
+12:48:09.211 [nioEventLoopGroup-47-1] DEBUG c.a.c.replication.ReplicationServer - Served 1 entries to /127.0.0.1:44082 (afterSeq=45)
+12:48:09.658 [cd-batch-writer] DEBUG c.a.c.t.BatchingTransactionLogWriter - Flushing batch of 1 writes
+12:48:09.721 [nioEventLoopGroup-47-1] DEBUG c.a.c.replication.ReplicationServer - Served 1 entries to /127.0.0.1:44082 (afterSeq=46)
+12:48:09.721 [cd-replication-puller] DEBUG c.a.c.replication.ReplicationPuller - Applied 1 entries, version now 47
+12:48:09.721 [cd-replication-puller] DEBUG c.a.configd.cache.ReactivePrefetcher - Prefetched 1 entries into local cache
+12:48:10.161 [cd-batch-writer] DEBUG c.a.c.t.BatchingTransactionLogWriter - Flushing batch of 1 writes
+12:48:10.230 [nioEventLoopGroup-47-1] DEBUG c.a.c.replication.ReplicationServer - Served 1 entries to /127.0.0.1:44082 (afterSeq=47)
+12:48:10.230 [cd-replication-puller] DEBUG c.a.c.replication.ReplicationPuller - Applied 1 entries, version now 48
+12:48:10.231 [cd-replication-puller] DEBUG c.a.configd.cache.ReactivePrefetcher - Prefetched 1 entries into local cache
+12:48:10.658 [cd-batch-writer] DEBUG c.a.c.t.BatchingTransactionLogWriter - Flushing batch of 1 writes
+12:48:10.742 [cd-replication-puller] DEBUG c.a.c.replication.ReplicationPuller - Applied 1 entries, version now 49
+12:48:10.743 [cd-replication-puller] DEBUG c.a.configd.cache.ReactivePrefetcher - Prefetched 1 entries into local cache
+12:48:10.743 [nioEventLoopGroup-47-1] DEBUG c.a.c.replication.ReplicationServer - Served 1 entries to /127.0.0.1:44082 (afterSeq=48)
+12:48:11.158 [cd-batch-writer] DEBUG c.a.c.t.BatchingTransactionLogWriter - Flushing batch of 1 writes
+12:48:11.250 [nioEventLoopGroup-47-1] DEBUG c.a.c.replication.ReplicationServer - Served 1 entries to /127.0.0.1:44082 (afterSeq=49)
+12:48:11.250 [cd-replication-puller] DEBUG c.a.c.replication.ReplicationPuller - Applied 1 entries, version now 50
+12:48:11.250 [cd-replication-puller] DEBUG c.a.configd.cache.ReactivePrefetcher - Prefetched 1 entries into local cache
+12:48:11.660 [cd-batch-writer] DEBUG c.a.c.t.BatchingTransactionLogWriter - Flushing batch of 1 writes
+12:48:11.757 [nioEventLoopGroup-47-1] DEBUG c.a.c.replication.ReplicationServer - Served 1 entries to /127.0.0.1:44082 (afterSeq=50)
+12:48:11.758 [cd-replication-puller] DEBUG c.a.c.replication.ReplicationPuller - Applied 1 entries, version now 51
+12:48:11.758 [cd-replication-puller] DEBUG c.a.configd.cache.ReactivePrefetcher - Prefetched 1 entries into local cache
+12:48:12.159 [cd-batch-writer] DEBUG c.a.c.t.BatchingTransactionLogWriter - Flushing batch of 1 writes
+12:48:12.162 [nioEventLoopGroup-47-1] DEBUG c.a.c.replication.ReplicationServer - Served 1 entries to /127.0.0.1:44082 (afterSeq=51)
+12:48:12.163 [cd-replication-puller] DEBUG c.a.c.replication.ReplicationPuller - Applied 1 entries, version now 52
+12:48:12.163 [cd-replication-puller] DEBUG c.a.configd.cache.ReactivePrefetcher - Prefetched 1 entries into local cache
+12:48:12.658 [cd-batch-writer] DEBUG c.a.c.t.BatchingTransactionLogWriter - Flushing batch of 1 writes
+12:48:12.673 [nioEventLoopGroup-47-1] DEBUG c.a.c.replication.ReplicationServer - Served 1 entries to /127.0.0.1:44082 (afterSeq=52)
+12:48:12.674 [cd-replication-puller] DEBUG c.a.c.replication.ReplicationPuller - Applied 1 entries, version now 53
+12:48:12.674 [cd-replication-puller] DEBUG c.a.configd.cache.ReactivePrefetcher - Prefetched 1 entries into local cache
+12:48:13.158 [cd-batch-writer] DEBUG c.a.c.t.BatchingTransactionLogWriter - Flushing batch of 1 writes
+12:48:13.181 [nioEventLoopGroup-47-1] DEBUG c.a.c.replication.ReplicationServer - Served 1 entries to /127.0.0.1:44082 (afterSeq=53)
+12:48:13.181 [cd-replication-puller] DEBUG c.a.c.replication.ReplicationPuller - Applied 1 entries, version now 54
+12:48:13.181 [cd-replication-puller] DEBUG c.a.configd.cache.ReactivePrefetcher - Prefetched 1 entries into local cache
+12:48:13.658 [cd-batch-writer] DEBUG c.a.c.t.BatchingTransactionLogWriter - Flushing batch of 1 writes
+12:48:13.686 [nioEventLoopGroup-47-1] DEBUG c.a.c.replication.ReplicationServer - Served 1 entries to /127.0.0.1:44082 (afterSeq=54)
+12:48:13.687 [cd-replication-puller] DEBUG c.a.c.replication.ReplicationPuller - Applied 1 entries, version now 55
+12:48:13.687 [cd-replication-puller] DEBUG c.a.configd.cache.ReactivePrefetcher - Prefetched 1 entries into local cache
+12:48:14.161 [cd-batch-writer] DEBUG c.a.c.t.BatchingTransactionLogWriter - Flushing batch of 1 writes
+12:48:14.193 [nioEventLoopGroup-47-1] DEBUG c.a.c.replication.ReplicationServer - Served 1 entries to /127.0.0.1:44082 (afterSeq=55)
+12:48:14.197 [cd-replication-puller] DEBUG c.a.c.replication.ReplicationPuller - Applied 1 entries, version now 56
+12:48:14.197 [cd-replication-puller] DEBUG c.a.configd.cache.ReactivePrefetcher - Prefetched 1 entries into local cache
+12:48:14.658 [cd-batch-writer] DEBUG c.a.c.t.BatchingTransactionLogWriter - Flushing batch of 1 writes
+12:48:14.705 [cd-replication-puller] DEBUG c.a.c.replication.ReplicationPuller - Applied 1 entries, version now 57
+12:48:14.705 [cd-replication-puller] DEBUG c.a.configd.cache.ReactivePrefetcher - Prefetched 1 entries into local cache
+12:48:14.708 [nioEventLoopGroup-47-1] DEBUG c.a.c.replication.ReplicationServer - Served 1 entries to /127.0.0.1:44082 (afterSeq=56)
+12:48:15.160 [cd-batch-writer] DEBUG c.a.c.t.BatchingTransactionLogWriter - Flushing batch of 1 writes
+12:48:15.220 [nioEventLoopGroup-47-1] DEBUG c.a.c.replication.ReplicationServer - Served 1 entries to /127.0.0.1:44082 (afterSeq=57)
+12:48:15.220 [cd-replication-puller] DEBUG c.a.c.replication.ReplicationPuller - Applied 1 entries, version now 58
+12:48:15.220 [cd-replication-puller] DEBUG c.a.configd.cache.ReactivePrefetcher - Prefetched 1 entries into local cache
+12:48:15.658 [cd-batch-writer] DEBUG c.a.c.t.BatchingTransactionLogWriter - Flushing batch of 1 writes
+12:48:15.724 [cd-replication-puller] DEBUG c.a.c.replication.ReplicationPuller - Applied 1 entries, version now 59
+12:48:15.725 [cd-replication-puller] DEBUG c.a.configd.cache.ReactivePrefetcher - Prefetched 1 entries into local cache
+12:48:15.725 [nioEventLoopGroup-47-1] DEBUG c.a.c.replication.ReplicationServer - Served 1 entries to /127.0.0.1:44082 (afterSeq=58)
+12:48:16.158 [cd-batch-writer] DEBUG c.a.c.t.BatchingTransactionLogWriter - Flushing batch of 1 writes
+12:48:16.161 [cd-health-monitor] WARN  c.a.configd.discovery.HealthMonitor - Node proxy-0 marked as dead after 3 consecutive failures
+12:48:16.161 [cd-health-monitor] WARN  c.a.configd.discovery.HealthMonitor - Node root-0 marked as dead after 3 consecutive failures
+12:48:16.230 [nioEventLoopGroup-47-1] DEBUG c.a.c.replication.ReplicationServer - Served 1 entries to /127.0.0.1:44082 (afterSeq=59)
+12:48:16.230 [cd-replication-puller] DEBUG c.a.c.replication.ReplicationPuller - Applied 1 entries, version now 60
+12:48:16.230 [cd-replication-puller] DEBUG c.a.configd.cache.ReactivePrefetcher - Prefetched 1 entries into local cache
+12:48:16.271 [cd-health-monitor] WARN  c.a.configd.discovery.HealthMonitor - Node proxy-0 marked as dead after 3 consecutive failures
+12:48:16.271 [cd-health-monitor] WARN  c.a.configd.discovery.HealthMonitor - Node root-0 marked as dead after 3 consecutive failures
+12:48:16.659 [cd-batch-writer] DEBUG c.a.c.t.BatchingTransactionLogWriter - Flushing batch of 1 writes
+12:48:16.739 [nioEventLoopGroup-47-1] DEBUG c.a.c.replication.ReplicationServer - Served 1 entries to /127.0.0.1:44082 (afterSeq=60)
+12:48:16.740 [cd-replication-puller] DEBUG c.a.c.replication.ReplicationPuller - Applied 1 entries, version now 61
+12:48:16.740 [cd-replication-puller] DEBUG c.a.configd.cache.ReactivePrefetcher - Prefetched 1 entries into local cache
+12:48:17.158 [cd-batch-writer] DEBUG c.a.c.t.BatchingTransactionLogWriter - Flushing batch of 1 writes
+12:48:17.251 [nioEventLoopGroup-47-1] DEBUG c.a.c.replication.ReplicationServer - Served 1 entries to /127.0.0.1:44082 (afterSeq=61)
+12:48:17.251 [cd-replication-puller] DEBUG c.a.c.replication.ReplicationPuller - Applied 1 entries, version now 62
+12:48:17.252 [cd-replication-puller] DEBUG c.a.configd.cache.ReactivePrefetcher - Prefetched 1 entries into local cache
+12:48:17.658 [cd-batch-writer] DEBUG c.a.c.t.BatchingTransactionLogWriter - Flushing batch of 1 writes
+12:48:17.759 [cd-replication-puller] DEBUG c.a.c.replication.ReplicationPuller - Applied 1 entries, version now 63
+12:48:17.759 [cd-replication-puller] DEBUG c.a.configd.cache.ReactivePrefetcher - Prefetched 1 entries into local cache
+12:48:17.760 [nioEventLoopGroup-47-1] DEBUG c.a.c.replication.ReplicationServer - Served 1 entries to /127.0.0.1:44082 (afterSeq=62)
+12:48:18.158 [cd-batch-writer] DEBUG c.a.c.t.BatchingTransactionLogWriter - Flushing batch of 1 writes
+12:48:18.172 [nioEventLoopGroup-47-1] DEBUG c.a.c.replication.ReplicationServer - Served 1 entries to /127.0.0.1:44082 (afterSeq=63)
+12:48:18.172 [cd-replication-puller] DEBUG c.a.c.replication.ReplicationPuller - Applied 1 entries, version now 64
+12:48:18.172 [cd-replication-puller] DEBUG c.a.configd.cache.ReactivePrefetcher - Prefetched 1 entries into local cache
+12:48:18.658 [cd-batch-writer] DEBUG c.a.c.t.BatchingTransactionLogWriter - Flushing batch of 1 writes
+12:48:18.682 [nioEventLoopGroup-47-1] DEBUG c.a.c.replication.ReplicationServer - Served 1 entries to /127.0.0.1:44082 (afterSeq=64)
+12:48:18.683 [cd-replication-puller] DEBUG c.a.c.replication.ReplicationPuller - Applied 1 entries, version now 65
+12:48:18.683 [cd-replication-puller] DEBUG c.a.configd.cache.ReactivePrefetcher - Prefetched 1 entries into local cache
+12:48:19.158 [cd-batch-writer] DEBUG c.a.c.t.BatchingTransactionLogWriter - Flushing batch of 1 writes
+12:48:19.194 [nioEventLoopGroup-47-1] DEBUG c.a.c.replication.ReplicationServer - Served 1 entries to /127.0.0.1:44082 (afterSeq=65)
+12:48:19.195 [cd-replication-puller] DEBUG c.a.c.replication.ReplicationPuller - Applied 1 entries, version now 66
+12:48:19.195 [cd-replication-puller] DEBUG c.a.configd.cache.ReactivePrefetcher - Prefetched 1 entries into local cache
+12:48:19.658 [cd-batch-writer] DEBUG c.a.c.t.BatchingTransactionLogWriter - Flushing batch of 1 writes
+12:48:19.703 [nioEventLoopGroup-47-1] DEBUG c.a.c.replication.ReplicationServer - Served 1 entries to /127.0.0.1:44082 (afterSeq=66)
+12:48:19.706 [cd-replication-puller] DEBUG c.a.c.replication.ReplicationPuller - Applied 1 entries, version now 67
+12:48:19.706 [cd-replication-puller] DEBUG c.a.configd.cache.ReactivePrefetcher - Prefetched 1 entries into local cache
+12:48:20.161 [cd-batch-writer] DEBUG c.a.c.t.BatchingTransactionLogWriter - Flushing batch of 1 writes
+12:48:20.217 [nioEventLoopGroup-47-1] DEBUG c.a.c.replication.ReplicationServer - Served 1 entries to /127.0.0.1:44082 (afterSeq=67)
+12:48:20.218 [cd-replication-puller] DEBUG c.a.c.replication.ReplicationPuller - Applied 1 entries, version now 68
+12:48:20.219 [cd-replication-puller] DEBUG c.a.configd.cache.ReactivePrefetcher - Prefetched 1 entries into local cache
+12:48:20.658 [cd-batch-writer] DEBUG c.a.c.t.BatchingTransactionLogWriter - Flushing batch of 1 writes
+12:48:20.729 [nioEventLoopGroup-47-1] DEBUG c.a.c.replication.ReplicationServer - Served 1 entries to /127.0.0.1:44082 (afterSeq=68)
+12:48:20.729 [cd-replication-puller] DEBUG c.a.c.replication.ReplicationPuller - Applied 1 entries, version now 69
+12:48:20.730 [cd-replication-puller] DEBUG c.a.configd.cache.ReactivePrefetcher - Prefetched 1 entries into local cache
+12:48:21.158 [cd-batch-writer] DEBUG c.a.c.t.BatchingTransactionLogWriter - Flushing batch of 1 writes
+12:48:21.238 [nioEventLoopGroup-47-1] DEBUG c.a.c.replication.ReplicationServer - Served 1 entries to /127.0.0.1:44082 (afterSeq=69)
+12:48:21.238 [cd-replication-puller] DEBUG c.a.c.replication.ReplicationPuller - Applied 1 entries, version now 70
+12:48:21.238 [cd-replication-puller] DEBUG c.a.configd.cache.ReactivePrefetcher - Prefetched 1 entries into local cache
+12:48:21.658 [cd-batch-writer] DEBUG c.a.c.t.BatchingTransactionLogWriter - Flushing batch of 1 writes
+12:48:21.743 [nioEventLoopGroup-47-1] DEBUG c.a.c.replication.ReplicationServer - Served 1 entries to /127.0.0.1:44082 (afterSeq=70)
+12:48:21.744 [cd-replication-puller] DEBUG c.a.c.replication.ReplicationPuller - Applied 1 entries, version now 71
+12:48:21.744 [cd-replication-puller] DEBUG c.a.configd.cache.ReactivePrefetcher - Prefetched 1 entries into local cache
+12:48:22.158 [cd-batch-writer] DEBUG c.a.c.t.BatchingTransactionLogWriter - Flushing batch of 1 writes
+12:48:22.250 [nioEventLoopGroup-47-1] DEBUG c.a.c.replication.ReplicationServer - Served 1 entries to /127.0.0.1:44082 (afterSeq=71)
+12:48:22.250 [cd-replication-puller] DEBUG c.a.c.replication.ReplicationPuller - Applied 1 entries, version now 72
+12:48:22.250 [cd-replication-puller] DEBUG c.a.configd.cache.ReactivePrefetcher - Prefetched 1 entries into local cache
+12:48:22.658 [cd-batch-writer] DEBUG c.a.c.t.BatchingTransactionLogWriter - Flushing batch of 1 writes
+12:48:22.754 [nioEventLoopGroup-47-1] DEBUG c.a.c.replication.ReplicationServer - Served 1 entries to /127.0.0.1:44082 (afterSeq=72)
+12:48:22.756 [cd-replication-puller] DEBUG c.a.c.replication.ReplicationPuller - Applied 1 entries, version now 73
+12:48:22.759 [cd-replication-puller] DEBUG c.a.configd.cache.ReactivePrefetcher - Prefetched 1 entries into local cache
+12:48:23.158 [cd-batch-writer] DEBUG c.a.c.t.BatchingTransactionLogWriter - Flushing batch of 1 writes
+12:48:23.161 [nioEventLoopGroup-47-1] DEBUG c.a.c.replication.ReplicationServer - Served 1 entries to /127.0.0.1:44082 (afterSeq=73)
+12:48:23.162 [cd-replication-puller] DEBUG c.a.c.replication.ReplicationPuller - Applied 1 entries, version now 74
+12:48:23.162 [cd-replication-puller] DEBUG c.a.configd.cache.ReactivePrefetcher - Prefetched 1 entries into local cache
+12:48:23.658 [cd-batch-writer] DEBUG c.a.c.t.BatchingTransactionLogWriter - Flushing batch of 1 writes
+12:48:23.676 [nioEventLoopGroup-47-1] DEBUG c.a.c.replication.ReplicationServer - Served 1 entries to /127.0.0.1:44082 (afterSeq=74)
+12:48:23.676 [cd-replication-puller] DEBUG c.a.c.replication.ReplicationPuller - Applied 1 entries, version now 75
+12:48:23.676 [cd-replication-puller] DEBUG c.a.configd.cache.ReactivePrefetcher - Prefetched 1 entries into local cache
+12:48:24.158 [cd-batch-writer] DEBUG c.a.c.t.BatchingTransactionLogWriter - Flushing batch of 1 writes
+12:48:24.180 [cd-replication-puller] DEBUG c.a.c.replication.ReplicationPuller - Applied 1 entries, version now 76
+12:48:24.181 [cd-replication-puller] DEBUG c.a.configd.cache.ReactivePrefetcher - Prefetched 1 entries into local cache
+12:48:24.183 [nioEventLoopGroup-47-1] DEBUG c.a.c.replication.ReplicationServer - Served 1 entries to /127.0.0.1:44082 (afterSeq=75)
+12:48:24.658 [cd-batch-writer] DEBUG c.a.c.t.BatchingTransactionLogWriter - Flushing batch of 1 writes
+12:48:24.690 [cd-replication-puller] DEBUG c.a.c.replication.ReplicationPuller - Applied 1 entries, version now 77
+12:48:24.690 [nioEventLoopGroup-47-1] DEBUG c.a.c.replication.ReplicationServer - Served 1 entries to /127.0.0.1:44082 (afterSeq=76)
+12:48:24.693 [cd-replication-puller] DEBUG c.a.configd.cache.ReactivePrefetcher - Prefetched 1 entries into local cache
+12:48:25.158 [cd-batch-writer] DEBUG c.a.c.t.BatchingTransactionLogWriter - Flushing batch of 1 writes
+12:48:25.199 [nioEventLoopGroup-47-1] DEBUG c.a.c.replication.ReplicationServer - Served 1 entries to /127.0.0.1:44082 (afterSeq=77)
+12:48:25.199 [cd-replication-puller] DEBUG c.a.c.replication.ReplicationPuller - Applied 1 entries, version now 78
+12:48:25.201 [cd-replication-puller] DEBUG c.a.configd.cache.ReactivePrefetcher - Prefetched 1 entries into local cache
+12:48:25.658 [cd-batch-writer] DEBUG c.a.c.t.BatchingTransactionLogWriter - Flushing batch of 1 writes
+12:48:25.707 [nioEventLoopGroup-47-1] DEBUG c.a.c.replication.ReplicationServer - Served 1 entries to /127.0.0.1:44082 (afterSeq=78)
+12:48:25.707 [cd-replication-puller] DEBUG c.a.c.replication.ReplicationPuller - Applied 1 entries, version now 79
+12:48:25.708 [cd-replication-puller] DEBUG c.a.configd.cache.ReactivePrefetcher - Prefetched 1 entries into local cache
+12:48:26.158 [cd-batch-writer] DEBUG c.a.c.t.BatchingTransactionLogWriter - Flushing batch of 1 writes
+12:48:26.216 [nioEventLoopGroup-47-1] DEBUG c.a.c.replication.ReplicationServer - Served 1 entries to /127.0.0.1:44082 (afterSeq=79)
+12:48:26.217 [cd-replication-puller] DEBUG c.a.c.replication.ReplicationPuller - Applied 1 entries, version now 80
+12:48:26.217 [cd-replication-puller] DEBUG c.a.configd.cache.ReactivePrefetcher - Prefetched 1 entries into local cache
+12:48:26.658 [cd-batch-writer] DEBUG c.a.c.t.BatchingTransactionLogWriter - Flushing batch of 1 writes
+12:48:26.723 [cd-replication-puller] DEBUG c.a.c.replication.ReplicationPuller - Applied 1 entries, version now 81
+12:48:26.723 [cd-replication-puller] DEBUG c.a.configd.cache.ReactivePrefetcher - Prefetched 1 entries into local cache
+12:48:26.725 [nioEventLoopGroup-47-1] DEBUG c.a.c.replication.ReplicationServer - Served 1 entries to /127.0.0.1:44082 (afterSeq=80)
+12:48:27.161 [cd-batch-writer] DEBUG c.a.c.t.BatchingTransactionLogWriter - Flushing batch of 1 writes
+12:48:27.229 [nioEventLoopGroup-47-1] DEBUG c.a.c.replication.ReplicationServer - Served 1 entries to /127.0.0.1:44082 (afterSeq=81)
+12:48:27.230 [cd-replication-puller] DEBUG c.a.c.replication.ReplicationPuller - Applied 1 entries, version now 82
+12:48:27.230 [cd-replication-puller] DEBUG c.a.configd.cache.ReactivePrefetcher - Prefetched 1 entries into local cache
+12:48:27.658 [cd-batch-writer] DEBUG c.a.c.t.BatchingTransactionLogWriter - Flushing batch of 1 writes
+12:48:27.737 [nioEventLoopGroup-47-1] DEBUG c.a.c.replication.ReplicationServer - Served 1 entries to /127.0.0.1:44082 (afterSeq=82)
+12:48:27.737 [cd-replication-puller] DEBUG c.a.c.replication.ReplicationPuller - Applied 1 entries, version now 83
+12:48:27.738 [cd-replication-puller] DEBUG c.a.configd.cache.ReactivePrefetcher - Prefetched 1 entries into local cache
+12:48:28.159 [cd-batch-writer] DEBUG c.a.c.t.BatchingTransactionLogWriter - Flushing batch of 1 writes
+12:48:28.243 [cd-replication-puller] DEBUG c.a.c.replication.ReplicationPuller - Applied 1 entries, version now 84
+12:48:28.243 [nioEventLoopGroup-47-1] DEBUG c.a.c.replication.ReplicationServer - Served 1 entries to /127.0.0.1:44082 (afterSeq=83)
+12:48:28.245 [cd-replication-puller] DEBUG c.a.configd.cache.ReactivePrefetcher - Prefetched 1 entries into local cache
+12:48:28.658 [cd-batch-writer] DEBUG c.a.c.t.BatchingTransactionLogWriter - Flushing batch of 1 writes
+12:48:28.747 [nioEventLoopGroup-47-1] DEBUG c.a.c.replication.ReplicationServer - Served 1 entries to /127.0.0.1:44082 (afterSeq=84)
+12:48:28.750 [cd-replication-puller] DEBUG c.a.c.replication.ReplicationPuller - Applied 1 entries, version now 85
+12:48:28.750 [cd-replication-puller] DEBUG c.a.configd.cache.ReactivePrefetcher - Prefetched 1 entries into local cache
+12:48:29.158 [cd-batch-writer] DEBUG c.a.c.t.BatchingTransactionLogWriter - Flushing batch of 1 writes
+12:48:29.255 [nioEventLoopGroup-47-1] DEBUG c.a.c.replication.ReplicationServer - Served 1 entries to /127.0.0.1:44082 (afterSeq=85)
+12:48:29.255 [cd-replication-puller] DEBUG c.a.c.replication.ReplicationPuller - Applied 1 entries, version now 86
+12:48:29.255 [cd-replication-puller] DEBUG c.a.configd.cache.ReactivePrefetcher - Prefetched 1 entries into local cache
+12:48:29.658 [cd-batch-writer] DEBUG c.a.c.t.BatchingTransactionLogWriter - Flushing batch of 1 writes
+12:48:29.661 [nioEventLoopGroup-47-1] DEBUG c.a.c.replication.ReplicationServer - Served 1 entries to /127.0.0.1:44082 (afterSeq=86)
+12:48:29.661 [cd-replication-puller] DEBUG c.a.c.replication.ReplicationPuller - Applied 1 entries, version now 87
+12:48:29.661 [cd-replication-puller] DEBUG c.a.configd.cache.ReactivePrefetcher - Prefetched 1 entries into local cache
+12:48:30.158 [cd-batch-writer] DEBUG c.a.c.t.BatchingTransactionLogWriter - Flushing batch of 1 writes
+12:48:30.167 [nioEventLoopGroup-47-1] DEBUG c.a.c.replication.ReplicationServer - Served 1 entries to /127.0.0.1:44082 (afterSeq=87)
+12:48:30.167 [cd-replication-puller] DEBUG c.a.c.replication.ReplicationPuller - Applied 1 entries, version now 88
+12:48:30.167 [cd-replication-puller] DEBUG c.a.configd.cache.ReactivePrefetcher - Prefetched 1 entries into local cache
+12:48:30.658 [cd-batch-writer] DEBUG c.a.c.t.BatchingTransactionLogWriter - Flushing batch of 1 writes
+12:48:30.674 [nioEventLoopGroup-47-1] DEBUG c.a.c.replication.ReplicationServer - Served 1 entries to /127.0.0.1:44082 (afterSeq=88)
+12:48:30.674 [cd-replication-puller] DEBUG c.a.c.replication.ReplicationPuller - Applied 1 entries, version now 89
+12:48:30.674 [cd-replication-puller] DEBUG c.a.configd.cache.ReactivePrefetcher - Prefetched 1 entries into local cache
+12:48:31.158 [cd-batch-writer] DEBUG c.a.c.t.BatchingTransactionLogWriter - Flushing batch of 1 writes
+12:48:31.178 [nioEventLoopGroup-47-1] DEBUG c.a.c.replication.ReplicationServer - Served 1 entries to /127.0.0.1:44082 (afterSeq=89)
+12:48:31.178 [cd-replication-puller] DEBUG c.a.c.replication.ReplicationPuller - Applied 1 entries, version now 90
+12:48:31.178 [cd-replication-puller] DEBUG c.a.configd.cache.ReactivePrefetcher - Prefetched 1 entries into local cache
+12:48:31.658 [cd-batch-writer] DEBUG c.a.c.t.BatchingTransactionLogWriter - Flushing batch of 1 writes
+12:48:31.685 [cd-replication-puller] DEBUG c.a.c.replication.ReplicationPuller - Applied 1 entries, version now 91
+12:48:31.685 [cd-replication-puller] DEBUG c.a.configd.cache.ReactivePrefetcher - Prefetched 1 entries into local cache
+12:48:31.686 [nioEventLoopGroup-47-1] DEBUG c.a.c.replication.ReplicationServer - Served 1 entries to /127.0.0.1:44082 (afterSeq=90)
+12:48:32.158 [cd-batch-writer] DEBUG c.a.c.t.BatchingTransactionLogWriter - Flushing batch of 1 writes
+12:48:32.191 [nioEventLoopGroup-47-1] DEBUG c.a.c.replication.ReplicationServer - Served 1 entries to /127.0.0.1:44082 (afterSeq=91)
+12:48:32.191 [cd-replication-puller] DEBUG c.a.c.replication.ReplicationPuller - Applied 1 entries, version now 92
+12:48:32.191 [cd-replication-puller] DEBUG c.a.configd.cache.ReactivePrefetcher - Prefetched 1 entries into local cache
+12:48:32.658 [cd-batch-writer] DEBUG c.a.c.t.BatchingTransactionLogWriter - Flushing batch of 1 writes
+12:48:32.701 [nioEventLoopGroup-47-1] DEBUG c.a.c.replication.ReplicationServer - Served 1 entries to /127.0.0.1:44082 (afterSeq=92)
+12:48:32.701 [cd-replication-puller] DEBUG c.a.c.replication.ReplicationPuller - Applied 1 entries, version now 93
+12:48:32.701 [cd-replication-puller] DEBUG c.a.configd.cache.ReactivePrefetcher - Prefetched 1 entries into local cache
+12:48:33.158 [cd-batch-writer] DEBUG c.a.c.t.BatchingTransactionLogWriter - Flushing batch of 1 writes
+12:48:33.207 [cd-replication-puller] DEBUG c.a.c.replication.ReplicationPuller - Applied 1 entries, version now 94
+12:48:33.207 [cd-replication-puller] DEBUG c.a.configd.cache.ReactivePrefetcher - Prefetched 1 entries into local cache
+12:48:33.208 [nioEventLoopGroup-47-1] DEBUG c.a.c.replication.ReplicationServer - Served 1 entries to /127.0.0.1:44082 (afterSeq=93)
+12:48:33.658 [cd-batch-writer] DEBUG c.a.c.t.BatchingTransactionLogWriter - Flushing batch of 1 writes
+12:48:33.715 [cd-replication-puller] DEBUG c.a.c.replication.ReplicationPuller - Applied 1 entries, version now 95
+12:48:33.715 [cd-replication-puller] DEBUG c.a.configd.cache.ReactivePrefetcher - Prefetched 1 entries into local cache
+12:48:33.715 [nioEventLoopGroup-47-1] DEBUG c.a.c.replication.ReplicationServer - Served 1 entries to /127.0.0.1:44082 (afterSeq=94)
+12:48:34.158 [cd-batch-writer] DEBUG c.a.c.t.BatchingTransactionLogWriter - Flushing batch of 1 writes
+12:48:34.219 [cd-replication-puller] DEBUG c.a.c.replication.ReplicationPuller - Applied 1 entries, version now 96
+12:48:34.219 [cd-replication-puller] DEBUG c.a.configd.cache.ReactivePrefetcher - Prefetched 1 entries into local cache
+12:48:34.219 [nioEventLoopGroup-47-1] DEBUG c.a.c.replication.ReplicationServer - Served 1 entries to /127.0.0.1:44082 (afterSeq=95)
+12:48:34.658 [cd-batch-writer] DEBUG c.a.c.t.BatchingTransactionLogWriter - Flushing batch of 1 writes
+12:48:34.726 [nioEventLoopGroup-47-1] DEBUG c.a.c.replication.ReplicationServer - Served 1 entries to /127.0.0.1:44082 (afterSeq=96)
+12:48:34.727 [cd-replication-puller] DEBUG c.a.c.replication.ReplicationPuller - Applied 1 entries, version now 97
+12:48:34.727 [cd-replication-puller] DEBUG c.a.configd.cache.ReactivePrefetcher - Prefetched 1 entries into local cache
+12:48:35.158 [cd-batch-writer] DEBUG c.a.c.t.BatchingTransactionLogWriter - Flushing batch of 1 writes
+12:48:35.230 [nioEventLoopGroup-47-1] DEBUG c.a.c.replication.ReplicationServer - Served 1 entries to /127.0.0.1:44082 (afterSeq=97)
+12:48:35.232 [cd-replication-puller] DEBUG c.a.c.replication.ReplicationPuller - Applied 1 entries, version now 98
+12:48:35.232 [cd-replication-puller] DEBUG c.a.configd.cache.ReactivePrefetcher - Prefetched 1 entries into local cache
+12:48:35.661 [cd-batch-writer] DEBUG c.a.c.t.BatchingTransactionLogWriter - Flushing batch of 1 writes
+12:48:35.736 [nioEventLoopGroup-47-1] DEBUG c.a.c.replication.ReplicationServer - Served 1 entries to /127.0.0.1:44082 (afterSeq=98)
+12:48:35.737 [cd-replication-puller] DEBUG c.a.c.replication.ReplicationPuller - Applied 1 entries, version now 99
+12:48:35.737 [cd-replication-puller] DEBUG c.a.configd.cache.ReactivePrefetcher - Prefetched 1 entries into local cache
+12:48:36.158 [cd-batch-writer] DEBUG c.a.c.t.BatchingTransactionLogWriter - Flushing batch of 1 writes
+12:48:36.159 [main] INFO  c.a.configd.ConfigdInstance - Shutting down Configd instance 'proxy'
+12:48:36.166 [main] INFO  c.a.configd.api.RestApiServer - REST API server stopped
+12:48:36.166 [main] INFO  c.a.configd.discovery.GossipProtocol - Gossip protocol stopped
+12:48:36.168 [main] INFO  c.a.configd.network.NetworkServer - Network server stopped
+12:48:36.168 [main] INFO  c.a.c.replication.ReplicationManager - Replication manager stopped
+12:48:36.169 [main] INFO  c.a.configd.cache.CacheManager - CacheManager closed. Stats: CacheStats[l1Hits=0, l2Hits=0, l3Hits=0, misses=0, localCacheEntries=99, localCacheUtilization=1.689046621322632E-5]
+12:48:36.170 [main] INFO  c.a.c.txlog.RocksDBTransactionLog - Transaction log closed
+12:48:36.170 [main] INFO  c.a.configd.store.RocksDBStore - RocksDB closed at /tmp/junit-15396756179950607329/proxy-data/proxy
+12:48:36.170 [main] INFO  c.a.configd.network.ConnectionPool - Connection pool closed
+12:48:36.170 [main] INFO  c.a.configd.ConfigdInstance - Configd instance 'proxy' shut down
+12:48:36.170 [main] INFO  c.a.configd.ConfigdInstance - Shutting down Configd instance 'root'
+12:48:36.170 [main] INFO  c.a.configd.api.RestApiServer - REST API server stopped
+12:48:36.171 [main] INFO  c.a.configd.discovery.GossipProtocol - Gossip protocol stopped
+12:48:36.172 [main] INFO  c.a.configd.network.NetworkServer - Network server stopped
+12:48:36.172 [main] INFO  c.a.c.replication.ReplicationManager - Replication manager stopped
+12:48:36.172 [main] INFO  c.a.configd.cache.CacheManager - CacheManager closed. Stats: CacheStats[l1Hits=0, l2Hits=0, l3Hits=0, misses=0, localCacheEntries=0, localCacheUtilization=0.0]
+12:48:36.172 [main] INFO  c.a.c.txlog.RocksDBTransactionLog - Transaction log closed
+12:48:36.172 [main] INFO  c.a.configd.store.RocksDBStore - RocksDB closed at /tmp/junit-15396756179950607329/root-data/root
+12:48:36.172 [main] INFO  c.a.configd.network.ConnectionPool - Connection pool closed
+12:48:36.172 [main] INFO  c.a.configd.ConfigdInstance - Configd instance 'root' shut down
+]]></system-out>
+  </testcase>
+</testsuite>

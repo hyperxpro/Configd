@@ -1,0 +1,8 @@
+com/aayushatharva/configd/store/RocksDBStoreTest.class
+com/aayushatharva/configd/shard/ShardManagerTest.class
+com/aayushatharva/configd/store/KeyIndexTest.class
+com/aayushatharva/configd/replication/SlidingWindowTest.class
+com/aayushatharva/configd/integration/ConfigdIntegrationTest.class
+com/aayushatharva/configd/cache/LocalCacheTest.class
+com/aayushatharva/configd/txlog/RocksDBTransactionLogTest.class
+com/aayushatharva/configd/txlog/TransactionLogEntryTest.class
