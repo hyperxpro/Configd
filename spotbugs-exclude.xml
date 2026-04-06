@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  SpotBugs exclude filter for Configd (F-0020).
+
+  Suppresses known-noisy rules so first-pass output is actionable. Each
+  suppression lists the reason; we can remove these one at a time as
+  the code is hardened.
+-->
+<FindBugsFilter>
+    <!-- Test code is permitted to be chatty. -->
+    <Match>
+        <Class name="~.*\.Test.*"/>
+    </Match>
+    <Match>
+        <Class name="~.*Test"/>
+    </Match>
+
+    <!-- EI_EXPOSE_REP / EI_EXPOSE_REP2: we intentionally return/store
+         internal arrays in several hot-path structs (VersionedValue,
+         ConfigMutation, ConfigDelta) for zero-copy. Each caller is
+         documented not to mutate. -->
+    <Match>
+        <Bug pattern="EI_EXPOSE_REP,EI_EXPOSE_REP2"/>
+    </Match>
+
+    <!-- SE_BAD_FIELD: records used as DTOs; Serializable is not used. -->
+    <Match>
+        <Bug pattern="SE_BAD_FIELD,SE_NO_SERIALVERSIONID"/>
+    </Match>
+
+    <!-- DM_DEFAULT_ENCODING: platform-default charset is intentional for
+         error messages and log output; wire formats use explicit UTF-8. -->
+    <Match>
+        <Bug pattern="DM_DEFAULT_ENCODING"/>
+    </Match>
+
+    <!-- RV_RETURN_VALUE_IGNORED_BAD_PRACTICE: fire-and-forget dispatch
+         used for tick-thread work is intentional. -->
+    <Match>
+        <Bug pattern="RV_RETURN_VALUE_IGNORED_BAD_PRACTICE"/>
+    </Match>
+</FindBugsFilter>

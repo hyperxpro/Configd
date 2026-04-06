@@ -1,0 +1,18 @@
+# Build outputs
+**/build/
+**/.gradle/
+
+# IDE
+.idea/
+*.iml
+.vscode/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Git
+.git/
+
+# Docs (not needed in image)
+docs/

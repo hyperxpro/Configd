@@ -1,0 +1,253 @@
+WARNING: A terminally deprecated method in sun.misc.Unsafe has been called
+WARNING: sun.misc.Unsafe::objectFieldOffset has been called by org.openjdk.jmh.util.Utils (file:/home/ubuntu/Programming/Configd/configd-testkit/target/benchmarks.jar)
+WARNING: Please consider reporting this to the maintainers of class org.openjdk.jmh.util.Utils
+WARNING: sun.misc.Unsafe::objectFieldOffset will be removed in a future release
+# JMH version: 1.37
+# VM version: JDK 25.0.2, OpenJDK 64-Bit Server VM, 25.0.2+10-LTS
+# VM invoker: /home/ubuntu/.sdkman/candidates/java/25.0.2-amzn/bin/java
+# VM options: <none>
+# Blackhole mode: compiler (auto-detected, use -Djmh.blackhole.autoDetect=false to disable)
+# Warmup: 3 iterations, 1 s each
+# Measurement: 5 iterations, 1 s each
+# Timeout: 10 min per iteration
+# Threads: 1 thread, will synchronize iterations
+# Benchmark mode: Sampling time
+# Benchmark: io.configd.bench.HamtReadBenchmark.get
+# Parameters: (size = 10000)
+
+# Run progress: 0.00% complete, ETA 00:00:16
+# Fork: 1 of 1
+WARNING: A terminally deprecated method in sun.misc.Unsafe has been called
+WARNING: sun.misc.Unsafe::objectFieldOffset has been called by org.openjdk.jmh.util.Utils (file:/home/ubuntu/Programming/Configd/configd-testkit/target/benchmarks.jar)
+WARNING: Please consider reporting this to the maintainers of class org.openjdk.jmh.util.Utils
+WARNING: sun.misc.Unsafe::objectFieldOffset will be removed in a future release
+# Warmup Iteration   1: 1686.108 ±(99.9%) 1562.084 ns/op
+# Warmup Iteration   2: 3071.017 ±(99.9%) 3253.758 ns/op
+# Warmup Iteration   3: 2272.435 ±(99.9%) 2641.454 ns/op
+Iteration   1: 648.614 ±(99.9%) 1014.299 ns/op
+                 p0.00:   30.000 ns/op
+                 p0.50:   80.000 ns/op
+                 p0.90:   100.000 ns/op
+                 p0.95:   110.000 ns/op
+                 p0.99:   170.000 ns/op
+                 p0.999:  832.600 ns/op
+                 p0.9999: 3444506.624 ns/op
+                 p1.00:   6012928.000 ns/op
+
+Iteration   2: 747.984 ±(99.9%) 1091.779 ns/op
+                 p0.00:   30.000 ns/op
+                 p0.50:   80.000 ns/op
+                 p0.90:   100.000 ns/op
+                 p0.95:   110.000 ns/op
+                 p0.99:   180.000 ns/op
+                 p0.999:  692.035 ns/op
+                 p0.9999: 3688099.840 ns/op
+                 p1.00:   6021120.000 ns/op
+
+Iteration   3: 727.394 ±(99.9%) 834.887 ns/op
+                 p0.00:   30.000 ns/op
+                 p0.50:   80.000 ns/op
+                 p0.90:   100.000 ns/op
+                 p0.95:   110.000 ns/op
+                 p0.99:   180.000 ns/op
+                 p0.999:  15701.568 ns/op
+                 p0.9999: 2253977.600 ns/op
+                 p1.00:   4784128.000 ns/op
+
+Iteration   4: 794.303 ±(99.9%) 1182.185 ns/op
+                 p0.00:   30.000 ns/op
+                 p0.50:   80.000 ns/op
+                 p0.90:   100.000 ns/op
+                 p0.95:   110.000 ns/op
+                 p0.99:   180.000 ns/op
+                 p0.999:  742.600 ns/op
+                 p0.9999: 4048257.024 ns/op
+                 p1.00:   6021120.000 ns/op
+
+Iteration   5: 949.773 ±(99.9%) 989.838 ns/op
+                 p0.00:   30.000 ns/op
+                 p0.50:   80.000 ns/op
+                 p0.90:   100.000 ns/op
+                 p0.95:   110.000 ns/op
+                 p0.99:   140.000 ns/op
+                 p0.999:  569.905 ns/op
+                 p0.9999: 3529895.936 ns/op
+                 p1.00:   4194304.000 ns/op
+
+
+
+Result "io.configd.bench.HamtReadBenchmark.get":
+  N = 132663
+  mean =    778.960 ±(99.9%) 457.373 ns/op
+
+  Histogram, ns/op:
+    [      0.000,  500000.000) = 132634 
+    [ 500000.000, 1000000.000) = 0 
+    [1000000.000, 1500000.000) = 3 
+    [1500000.000, 2000000.000) = 4 
+    [2000000.000, 2500000.000) = 5 
+    [2500000.000, 3000000.000) = 2 
+    [3000000.000, 3500000.000) = 5 
+    [3500000.000, 4000000.000) = 1 
+    [4000000.000, 4500000.000) = 4 
+    [4500000.000, 5000000.000) = 1 
+    [5000000.000, 5500000.000) = 1 
+    [5500000.000, 6000000.000) = 0 
+    [6000000.000, 6500000.000) = 3 
+
+  Percentiles, ns/op:
+      p(0.0000) =     30.000 ns/op
+     p(50.0000) =     80.000 ns/op
+     p(90.0000) =    100.000 ns/op
+     p(95.0000) =    110.000 ns/op
+     p(99.0000) =    170.000 ns/op
+     p(99.9000) =    800.000 ns/op
+     p(99.9900) = 3028857.651 ns/op
+     p(99.9990) = 6021120.000 ns/op
+     p(99.9999) = 6021120.000 ns/op
+    p(100.0000) = 6021120.000 ns/op
+
+
+# JMH version: 1.37
+# VM version: JDK 25.0.2, OpenJDK 64-Bit Server VM, 25.0.2+10-LTS
+# VM invoker: /home/ubuntu/.sdkman/candidates/java/25.0.2-amzn/bin/java
+# VM options: <none>
+# Blackhole mode: compiler (auto-detected, use -Djmh.blackhole.autoDetect=false to disable)
+# Warmup: 3 iterations, 1 s each
+# Measurement: 5 iterations, 1 s each
+# Timeout: 10 min per iteration
+# Threads: 1 thread, will synchronize iterations
+# Benchmark mode: Sampling time
+# Benchmark: io.configd.bench.HamtReadBenchmark.getMiss
+# Parameters: (size = 10000)
+
+# Run progress: 50.00% complete, ETA 00:00:09
+# Fork: 1 of 1
+WARNING: A terminally deprecated method in sun.misc.Unsafe has been called
+WARNING: sun.misc.Unsafe::objectFieldOffset has been called by org.openjdk.jmh.util.Utils (file:/home/ubuntu/Programming/Configd/configd-testkit/target/benchmarks.jar)
+WARNING: Please consider reporting this to the maintainers of class org.openjdk.jmh.util.Utils
+WARNING: sun.misc.Unsafe::objectFieldOffset will be removed in a future release
+# Warmup Iteration   1: 608.236 ±(99.9%) 1052.525 ns/op
+# Warmup Iteration   2: 1025.790 ±(99.9%) 1548.742 ns/op
+# Warmup Iteration   3: 325.209 ±(99.9%) 777.459 ns/op
+Iteration   1: 588.544 ±(99.9%) 1007.646 ns/op
+                 p0.00:   20.000 ns/op
+                 p0.50:   30.000 ns/op
+                 p0.90:   40.000 ns/op
+                 p0.95:   40.000 ns/op
+                 p0.99:   70.000 ns/op
+                 p0.999:  131.000 ns/op
+                 p0.9999: 1821342.925 ns/op
+                 p1.00:   7708672.000 ns/op
+
+Iteration   2: 594.935 ±(99.9%) 1201.748 ns/op
+                 p0.00:   20.000 ns/op
+                 p0.50:   30.000 ns/op
+                 p0.90:   40.000 ns/op
+                 p0.95:   40.000 ns/op
+                 p0.99:   70.000 ns/op
+                 p0.999:  198.020 ns/op
+                 p0.9999: 2988269.158 ns/op
+                 p1.00:   8019968.000 ns/op
+
+Iteration   3: 359.462 ±(99.9%) 818.486 ns/op
+                 p0.00:   20.000 ns/op
+                 p0.50:   30.000 ns/op
+                 p0.90:   40.000 ns/op
+                 p0.95:   40.000 ns/op
+                 p0.99:   69.000 ns/op
+                 p0.999:  172.000 ns/op
+                 p0.9999: 1662755.840 ns/op
+                 p1.00:   5029888.000 ns/op
+
+Iteration   4: 666.905 ±(99.9%) 1084.821 ns/op
+                 p0.00:   20.000 ns/op
+                 p0.50:   30.000 ns/op
+                 p0.90:   40.000 ns/op
+                 p0.95:   40.000 ns/op
+                 p0.99:   70.000 ns/op
+                 p0.999:  258.320 ns/op
+                 p0.9999: 4623722.086 ns/op
+                 p1.00:   6012928.000 ns/op
+
+Iteration   5: 469.151 ±(99.9%) 840.198 ns/op
+                 p0.00:   20.000 ns/op
+                 p0.50:   30.000 ns/op
+                 p0.90:   40.000 ns/op
+                 p0.95:   40.000 ns/op
+                 p0.99:   70.000 ns/op
+                 p0.999:  150.283 ns/op
+                 p0.9999: 2803996.160 ns/op
+                 p1.00:   5365760.000 ns/op
+
+
+
+Result "io.configd.bench.HamtReadBenchmark.getMiss":
+  N = 140270
+  mean =    544.442 ±(99.9%) 452.815 ns/op
+
+  Histogram, ns/op:
+    [      0.000,  500000.000) = 140253 
+    [ 500000.000, 1000000.000) = 1 
+    [1000000.000, 1500000.000) = 1 
+    [1500000.000, 2000000.000) = 0 
+    [2000000.000, 2500000.000) = 4 
+    [2500000.000, 3000000.000) = 0 
+    [3000000.000, 3500000.000) = 1 
+    [3500000.000, 4000000.000) = 0 
+    [4000000.000, 4500000.000) = 1 
+    [4500000.000, 5000000.000) = 2 
+    [5000000.000, 5500000.000) = 2 
+    [5500000.000, 6000000.000) = 1 
+    [6000000.000, 6500000.000) = 2 
+    [6500000.000, 7000000.000) = 0 
+    [7000000.000, 7500000.000) = 0 
+    [7500000.000, 8000000.000) = 1 
+    [8000000.000, 8500000.000) = 1 
+
+  Percentiles, ns/op:
+      p(0.0000) =     20.000 ns/op
+     p(50.0000) =     30.000 ns/op
+     p(90.0000) =     40.000 ns/op
+     p(95.0000) =     40.000 ns/op
+     p(99.0000) =     70.000 ns/op
+     p(99.9000) =    180.000 ns/op
+     p(99.9900) = 2025416.499 ns/op
+     p(99.9990) = 7894605.988 ns/op
+     p(99.9999) = 8019968.000 ns/op
+    p(100.0000) = 8019968.000 ns/op
+
+
+# Run complete. Total time: 00:00:18
+
+REMEMBER: The numbers below are just data. To gain reusable insights, you need to follow up on
+why the numbers are the way they are. Use profilers (see -prof, -lprof), design factorial
+experiments, perform baseline and negative tests that provide experimental control, make sure
+the benchmarking environment is safe on JVM/OS/HW level, ask for reviews from the domain experts.
+Do not assume the numbers tell you what you want them to tell.
+
+NOTE: Current JVM experimentally supports Compiler Blackholes, and they are in use. Please exercise
+extra caution when trusting the results, look into the generated code to check the benchmark still
+works, and factor in a small probability of new VM bugs. Additionally, while comparisons between
+different JVMs are already problematic, the performance difference caused by different Blackhole
+modes can be very significant. Please make sure you use the consistent Blackhole mode for comparisons.
+
+Benchmark                          (size)    Mode     Cnt        Score     Error  Units
+HamtReadBenchmark.get               10000  sample  132663      778.960 ± 457.373  ns/op
+HamtReadBenchmark.get:p0.00         10000  sample               30.000            ns/op
+HamtReadBenchmark.get:p0.50         10000  sample               80.000            ns/op
+HamtReadBenchmark.get:p0.90         10000  sample              100.000            ns/op
+HamtReadBenchmark.get:p0.95         10000  sample              110.000            ns/op
+HamtReadBenchmark.get:p0.99         10000  sample              170.000            ns/op
+HamtReadBenchmark.get:p0.999        10000  sample              800.000            ns/op
+HamtReadBenchmark.get:p0.9999       10000  sample          3028857.651            ns/op
+HamtReadBenchmark.get:p1.00         10000  sample          6021120.000            ns/op
+HamtReadBenchmark.getMiss           10000  sample  140270      544.442 ± 452.815  ns/op
+HamtReadBenchmark.getMiss:p0.00     10000  sample               20.000            ns/op
+HamtReadBenchmark.getMiss:p0.50     10000  sample               30.000            ns/op
+HamtReadBenchmark.getMiss:p0.90     10000  sample               40.000            ns/op
+HamtReadBenchmark.getMiss:p0.95     10000  sample               40.000            ns/op
+HamtReadBenchmark.getMiss:p0.99     10000  sample               70.000            ns/op
+HamtReadBenchmark.getMiss:p0.999    10000  sample              180.000            ns/op
+HamtReadBenchmark.getMiss:p0.9999   10000  sample          2025416.499            ns/op
+HamtReadBenchmark.getMiss:p1.00     10000  sample          8019968.000            ns/op

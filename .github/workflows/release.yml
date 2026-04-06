@@ -1,0 +1,248 @@
+name: Release
+
+# Tag-driven release pipeline.
+#
+# Trigger: push of a `vX.Y.Z` tag.
+# Output:
+#   - Container image at ghcr.io/<owner>/<repo>:<version>
+#   - Cosign-signed manifest digest (B6 / PA-6011)
+#   - SLSA build provenance attestation (PA-6012)
+#   - CycloneDX SBOM attached to the GitHub release
+#
+# ADR-0025: this pipeline does not handle paging integration. Operator
+# is responsible for wiring their paging service to the alert rules
+# under ops/alerts/.
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+
+permissions:
+  contents: write       # publish GH release
+  packages: write       # push image to GHCR
+  id-token: write       # OIDC for cosign keyless + SLSA
+  attestations: write   # GitHub Artifact Attestations / SLSA
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+
+jobs:
+  build-and-publish:
+    runs-on: ubuntu-latest
+    outputs:
+      image-digest: ${{ steps.push.outputs.digest }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 25
+        uses: actions/setup-java@v4
+        with:
+          java-version: '25'
+          distribution: 'corretto'
+          cache: maven
+
+      - name: Verify version tag matches POM
+        run: |
+          tag_version="${GITHUB_REF_NAME#v}"
+          pom_version=$(./mvnw -q -Dexec.executable=echo -Dexec.args='${project.version}' --non-recursive exec:exec)
+          if [ "$tag_version" != "$pom_version" ]; then
+            echo "Tag version ($tag_version) does not match POM version ($pom_version)"
+            exit 1
+          fi
+
+      - name: Full reactor verify
+        run: ./mvnw clean verify --no-transfer-progress
+
+      # CycloneDX SBOM is attached to the GitHub release.
+      - name: Generate CycloneDX SBOM
+        run: ./mvnw -N --no-transfer-progress org.cyclonedx:cyclonedx-maven-plugin:2.9.0:makeAggregateBom
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Extract image metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=semver,pattern={{version}}
+            type=sha,format=long
+
+      - name: Build and push runtime image
+        id: push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: docker/Dockerfile.runtime
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          # Reproducible build — pin SOURCE_DATE_EPOCH to the commit timestamp.
+          build-args: |
+            SOURCE_DATE_EPOCH=${{ github.event.head_commit.timestamp }}
+          provenance: true
+          sbom: true
+
+      # R-004 — runtime-image vulnerability scan.
+      # The CI workflow (.github/workflows/ci.yml) only Trivy-scans the
+      # filesystem (source tree). The release workflow MUST also scan
+      # the just-built runtime image before signing, otherwise a CVE in
+      # a base-image layer gets a Cosign signature attesting it as
+      # "released" without ever being inspected.
+      #
+      # Mirrors ci.yml's severity / exit-code so a HIGH/CRITICAL CVE
+      # fails the release. Intentionally does NOT pass
+      # ignore-unfixed: true — that filter belongs to a separate finding
+      # (SEC-021) and would mask CVEs whose only mitigation is a base
+      # image rebuild.
+      - name: Trivy runtime image scan
+        uses: aquasecurity/trivy-action@0.20.0
+        with:
+          image-ref: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ steps.push.outputs.digest }}
+          scanners: vuln,secret,misconfig
+          severity: HIGH,CRITICAL
+          exit-code: '1'
+
+      # B6 (PA-6011) — keyless cosign signing using GitHub OIDC.
+      # Verify with: cosign verify --certificate-identity-regexp=...
+      - name: Install cosign
+        uses: sigstore/cosign-installer@v3
+        with:
+          cosign-release: 'v2.4.1'
+
+      - name: Sign image (keyless)
+        env:
+          DIGEST: ${{ steps.push.outputs.digest }}
+          TAGS: ${{ steps.meta.outputs.tags }}
+        run: |
+          for tag in $TAGS; do
+            cosign sign --yes "${tag}@${DIGEST}"
+          done
+
+      # SLSA Level 3 build provenance via GitHub Artifact Attestations.
+      # Verify with: gh attestation verify <image>@<digest> --owner <org>
+      - name: Generate SLSA provenance attestation
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-name: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          subject-digest: ${{ steps.push.outputs.digest }}
+          push-to-registry: true
+
+      - name: Create GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          files: |
+            target/bom.json
+          body: |
+            ## Container image
+
+            `${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ steps.push.outputs.digest }}`
+
+            ### Verification
+
+            ```
+            cosign verify \
+              --certificate-identity-regexp 'https://github.com/${{ github.repository }}/.github/workflows/release.yml@.*' \
+              --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+              ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ steps.push.outputs.digest }}
+
+            gh attestation verify oci://${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ steps.push.outputs.digest }} \
+              --owner ${{ github.repository_owner }}
+            ```
+
+            See `ops/runbooks/release.md` for the full release verification protocol.
+
+  # R-001 — closes the publish-pipeline-never-exercised honesty demotion.
+  # After build-and-publish has pushed the image, signed it, and attached
+  # the SLSA attestation, this job re-pulls the image *as a third party
+  # would* and re-runs the same verification commands the runbook tells
+  # consumers to run. If either fails, the release is broken even if the
+  # publish job reported success. Phase 9 / B6 / PA-6012 cannot be
+  # promoted back to GREEN until this job has run successfully against a
+  # real tag push and produced evidence in the workflow logs.
+  verify-published:
+    needs: build-and-publish
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: read
+      id-token: write   # cosign verify reads the OIDC keyset; no signing
+    env:
+      DIGEST: ${{ needs.build-and-publish.outputs.image-digest }}
+      IMAGE: ghcr.io/${{ github.repository }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install cosign
+        uses: sigstore/cosign-installer@v3
+        with:
+          cosign-release: 'v2.4.1'
+
+      - name: Log in to GHCR (read-only pull)
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Pull the published image by digest
+        run: |
+          set -euo pipefail
+          if [ -z "${DIGEST}" ]; then
+            echo "FAIL: build-and-publish did not emit an image-digest output."
+            exit 1
+          fi
+          docker pull "${IMAGE}@${DIGEST}"
+
+      - name: Verify Cosign signature
+        run: |
+          set -euo pipefail
+          cosign verify \
+            --certificate-identity-regexp \
+              "https://github.com/${{ github.repository }}/.github/workflows/release.yml@.*" \
+            --certificate-oidc-issuer \
+              https://token.actions.githubusercontent.com \
+            "${IMAGE}@${DIGEST}"
+
+      - name: Verify SLSA build provenance
+        run: |
+          set -euo pipefail
+          cosign verify-attestation \
+            --type slsaprovenance \
+            --certificate-identity-regexp \
+              "https://github.com/${{ github.repository }}/.github/workflows/release.yml@.*" \
+            --certificate-oidc-issuer \
+              https://token.actions.githubusercontent.com \
+            "${IMAGE}@${DIGEST}"
+
+      - name: Cross-check via gh attestation
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          gh attestation verify \
+            "oci://${IMAGE}@${DIGEST}" \
+            --owner "${{ github.repository_owner }}"
+
+      - name: Record verification evidence
+        run: |
+          {
+            echo "## Release verify-published evidence"
+            echo
+            echo "- Image: ${IMAGE}@${DIGEST}"
+            echo "- Cosign signature: VERIFIED"
+            echo "- SLSA provenance (cosign): VERIFIED"
+            echo "- SLSA provenance (gh attestation): VERIFIED"
+            echo "- Workflow run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          } >> "${GITHUB_STEP_SUMMARY}"

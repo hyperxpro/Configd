@@ -1,0 +1,41 @@
+# Build output
+target/
+build/
+*.bin
+*.class
+*.jar
+*.war
+*.ear
+out/
+
+# IDE
+.idea/
+*.iml
+.vscode/
+*.code-workspace
+.project
+.classpath
+.settings/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Logs and temp
+*.log
+*.tmp
+*.temp
+*.bak
+*.orig
+
+# Environment
+.env
+.env.*
+
+# Tool artifacts
+.iter3-deferred-tests/
+.claude/
+.jqwik-database

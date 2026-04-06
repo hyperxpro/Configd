@@ -1,0 +1,134 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: configd
+  labels:
+    app: configd
+spec:
+  serviceName: configd
+  replicas: 3
+  selector:
+    matchLabels:
+      app: configd
+  template:
+    metadata:
+      labels:
+        app: configd
+    spec:
+      affinity:
+        podAntiAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            - labelSelector:
+                matchExpressions:
+                  - key: app
+                    operator: In
+                    values:
+                      - configd
+              topologyKey: kubernetes.io/hostname
+      terminationGracePeriodSeconds: 30
+      containers:
+        - name: configd
+          image: configd:latest
+          command:
+            - "java"
+            - "--enable-preview"
+            - "-XX:+UseZGC"
+            - "-XX:+ZGenerational"
+            - "-Xms512m"
+            - "-Xmx2g"
+            - "-XX:+ExitOnOutOfMemoryError"
+            - "-XX:+UnlockDiagnosticVMOptions"
+            - "-XX:+LogVMOutput"
+            - "-XX:LogFile=/data/jvm.log"
+            - "-Djava.security.egd=file:/dev/urandom"
+            - "-jar"
+            - "configd-server.jar"
+            - "--node-id"
+            - "$(HOSTNAME)"
+            - "--data-dir"
+            - "/data"
+            - "--peers"
+            - "configd-0,configd-1,configd-2"
+            - "--bind-address"
+            - "0.0.0.0"
+            - "--bind-port"
+            - "9090"
+            - "--api-port"
+            - "8080"
+          env:
+            - name: HOSTNAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+          ports:
+            - name: api
+              containerPort: 8080
+              protocol: TCP
+            - name: raft
+              containerPort: 9090
+              protocol: TCP
+          readinessProbe:
+            httpGet:
+              path: /health/ready
+              port: 8080
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 3
+          livenessProbe:
+            httpGet:
+              path: /health/live
+              port: 8080
+            initialDelaySeconds: 15
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
+          resources:
+            requests:
+              memory: "768Mi"
+              cpu: "500m"
+            limits:
+              memory: "2560Mi"
+              cpu: "2000m"
+          volumeMounts:
+            - name: data
+              mountPath: /data
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes:
+          - ReadWriteOnce
+        resources:
+          requests:
+            storage: 10Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: configd
+  labels:
+    app: configd
+spec:
+  clusterIP: None
+  selector:
+    app: configd
+  ports:
+    - name: api
+      port: 8080
+      targetPort: 8080
+      protocol: TCP
+    - name: raft
+      port: 9090
+      targetPort: 9090
+      protocol: TCP
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: configd-pdb
+spec:
+  maxUnavailable: 1
+  selector:
+    matchLabels:
+      app: configd

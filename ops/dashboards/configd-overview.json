@@ -1,0 +1,131 @@
+{
+  "title": "Configd Overview",
+  "uid": "configd-overview",
+  "tags": ["configd", "raft", "slo"],
+  "timezone": "utc",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "30s",
+  "time": {"from": "now-1h", "to": "now"},
+  "templating": {
+    "list": [
+      {
+        "name": "cluster",
+        "type": "query",
+        "label": "Cluster",
+        "query": "label_values(configd_build_info, cluster)",
+        "datasource": {"type": "prometheus", "uid": "prometheus"}
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 1,
+      "title": "Write commit p99 (target < 150 ms)",
+      "type": "timeseries",
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "gridPos": {"x": 0, "y": 0, "w": 12, "h": 8},
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.99, sum by (le) (rate(configd_write_commit_seconds_bucket{cluster=\"$cluster\"}[5m])))",
+          "legendFormat": "p99",
+          "refId": "A"
+        },
+        {
+          "expr": "0.150",
+          "legendFormat": "SLO",
+          "refId": "B"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [{"color": "green", "value": null}, {"color": "red", "value": 0.150}]
+          }
+        }
+      }
+    },
+    {
+      "id": 2,
+      "title": "Edge read p99 (target < 1 ms)",
+      "type": "timeseries",
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "gridPos": {"x": 12, "y": 0, "w": 12, "h": 8},
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.99, sum by (le) (rate(configd_edge_read_seconds_bucket{cluster=\"$cluster\"}[5m])))",
+          "legendFormat": "p99",
+          "refId": "A"
+        },
+        {
+          "expr": "0.001",
+          "legendFormat": "SLO",
+          "refId": "B"
+        }
+      ],
+      "fieldConfig": {"defaults": {"unit": "s"}}
+    },
+    {
+      "id": 3,
+      "title": "Propagation delay p99 (target < 500 ms)",
+      "type": "timeseries",
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "gridPos": {"x": 0, "y": 8, "w": 12, "h": 8},
+      "targets": [{
+        "expr": "histogram_quantile(0.99, sum by (le) (rate(configd_propagation_delay_seconds_bucket{cluster=\"$cluster\"}[5m])))",
+        "legendFormat": "p99",
+        "refId": "A"
+      }],
+      "fieldConfig": {"defaults": {"unit": "s"}}
+    },
+    {
+      "id": 4,
+      "title": "Raft apply queue depth",
+      "type": "timeseries",
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "gridPos": {"x": 12, "y": 8, "w": 12, "h": 8},
+      "targets": [{
+        "expr": "configd_raft_pending_apply_entries{cluster=\"$cluster\"}",
+        "legendFormat": "{{instance}}",
+        "refId": "A"
+      }]
+    },
+    {
+      "id": 5,
+      "title": "Leader churn (elections/min)",
+      "type": "timeseries",
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "gridPos": {"x": 0, "y": 16, "w": 12, "h": 8},
+      "targets": [{
+        "expr": "sum(rate(configd_raft_elections_total{cluster=\"$cluster\"}[5m])) * 60",
+        "legendFormat": "elections/min",
+        "refId": "A"
+      }]
+    },
+    {
+      "id": 6,
+      "title": "Subscribed prefixes (capacity gauge)",
+      "type": "stat",
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "gridPos": {"x": 12, "y": 16, "w": 12, "h": 8},
+      "targets": [{
+        "expr": "configd_subscription_prefix_count{cluster=\"$cluster\"}",
+        "refId": "A"
+      }],
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {"color": "green", "value": null},
+              {"color": "yellow", "value": 5000},
+              {"color": "red", "value": 10000}
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

@@ -1,0 +1,46 @@
+# ---------------------------------------------------------------------------
+# Configd — CI / Build Image
+#
+# Produces all module JARs and runs the full test suite inside a reproducible,
+# hermetic container. Intended for CI pipelines (GitHub Actions, Jenkins, etc.)
+# and for local "clean-room" builds.
+#
+# Usage:
+#   docker build -f docker/Dockerfile.build -t configd-build .
+#   docker run --rm configd-build
+#
+# Artifacts are written to /workspace/*/target/ inside the container.
+# ---------------------------------------------------------------------------
+
+FROM eclipse-temurin:25-jdk-noble AS builder
+
+LABEL maintainer="configd"
+LABEL description="Configd library build and test image"
+
+# Install Maven
+RUN apt-get update && apt-get install -y maven && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /workspace
+
+# -- Layer 1: POM files (changes sometimes) ---------------------------------
+COPY pom.xml ./
+COPY configd-common/pom.xml         configd-common/pom.xml
+COPY configd-transport/pom.xml      configd-transport/pom.xml
+COPY configd-consensus-core/pom.xml configd-consensus-core/pom.xml
+COPY configd-config-store/pom.xml   configd-config-store/pom.xml
+COPY configd-edge-cache/pom.xml     configd-edge-cache/pom.xml
+COPY configd-observability/pom.xml  configd-observability/pom.xml
+COPY configd-replication-engine/pom.xml configd-replication-engine/pom.xml
+COPY configd-distribution-service/pom.xml configd-distribution-service/pom.xml
+COPY configd-control-plane-api/pom.xml configd-control-plane-api/pom.xml
+COPY configd-testkit/pom.xml        configd-testkit/pom.xml
+COPY configd-server/pom.xml         configd-server/pom.xml
+
+# Download dependencies into a cached layer
+RUN mvn dependency:resolve -B -q || true
+
+# -- Layer 2: Source (changes often) ----------------------------------------
+COPY . .
+
+# -- Default: build + test --------------------------------------------------
+CMD ["mvn", "clean", "verify", "-B"]

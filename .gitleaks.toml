@@ -1,0 +1,45 @@
+# Gitleaks configuration — Configd v0.1
+#
+# Default ruleset is the gitleaks built-in. We layer on:
+#   1. Allowlist for spec/test fixtures that look like keys but aren't.
+#   2. Allowlist for the SHA-256 pins committed by design (tla2tools.jar
+#      and maven-wrapper.properties — these are integrity hashes, not
+#      secrets).
+#   3. Allowlist for example/template tokens in runbooks and ADRs.
+#
+# This config is referenced by .github/workflows/ci.yml. Do not weaken
+# the allowlist without an ADR; pretend-allowlisting a real secret is a
+# §8.18 honesty-rule violation.
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Configd false-positive allowlist"
+
+paths = [
+    # Build outputs and lock state — never source.
+    '''^target/''',
+    '''^.*/target/''',
+    '''^perf/results/''',
+    '''^spec/states/''',
+    '''^\.claude/scheduled_tasks\.lock$''',
+]
+
+regexes = [
+    # SHA-256 toolchain pins (tla2tools.jar, maven-wrapper.properties)
+    # are integrity hashes, not secrets.
+    '''4c1d62e0f67c1d89f833619d7edad9d161e74a54b153f4f81dcef6043ea0d618''',
+    '''4ec3f26f55ed59b40d9b5d7eb24cd936bb96e2c34e2e9a3a0a8d9e0f1a2b3c4d''',
+    # Cosign and SLSA verification commands in runbooks include the
+    # word "key" / "token" but are documentation, not secrets.
+    '''(?i)gh attestation verify''',
+    '''(?i)cosign verify''',
+]
+
+stopwords = [
+    "example",
+    "EXAMPLE",
+    "PLACEHOLDER",
+    "FIXME",
+]

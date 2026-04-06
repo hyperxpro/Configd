@@ -1,0 +1,183 @@
+# =============================================================================
+# Configd Bootstrap Job — ONE-SHOT.
+#
+# DO NOT RE-RUN THIS JOB AGAINST AN EXISTING CLUSTER. The Job emits the
+# initial peer-set ConfigMap that the StatefulSet (configd-statefulset.yaml)
+# consumes on first startup. Re-running it after the cluster is bootstrapped
+# would overwrite the peer-set the cluster has already committed via Raft
+# joint-consensus and silently desynchronise the state machine from the
+# Raft log on next pod restart.
+#
+# Operational contract:
+#   * Apply once, immediately before the first apply of
+#     deploy/kubernetes/configd-statefulset.yaml.
+#   * `backoffLimit: 0` — a failure here means the cluster is *not*
+#     bootstrapped; do not paper over it with retries.
+#   * `ttlSecondsAfterFinished: 600` — pod is GC'd 10 minutes after the
+#     Job completes so the cluster's resource state stays minimal.
+#   * Mounts no PVCs. The Job emits exactly one ConfigMap (configd-peers)
+#     and exits. It must not write to any persistent volume.
+#
+# To re-bootstrap (disaster recovery only): follow ops/runbooks/disaster-
+# recovery.md. The runbook deletes PVCs and the existing ConfigMap before
+# re-applying this manifest.
+#
+# B9 / B10 alignment: this manifest mirrors the PodSecurity restricted
+# profile applied at namespace level by configd-statefulset.yaml — the
+# Job pod runs as non-root, with a read-only root filesystem and ALL
+# capabilities dropped.
+# =============================================================================
+---
+# RBAC for the bootstrap Job. Scoped to a single ConfigMap name so that
+# even with full RBAC compromise the blast radius is "could overwrite the
+# peers ConfigMap" — which is exactly what this Job is supposed to do.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: configd-bootstrap
+  namespace: configd
+  labels:
+    app: configd
+    component: bootstrap
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: configd-bootstrap
+  namespace: configd
+  labels:
+    app: configd
+    component: bootstrap
+rules:
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    resourceNames: ["configd-peers"]
+    verbs: ["get", "create", "update", "patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: configd-bootstrap
+  namespace: configd
+  labels:
+    app: configd
+    component: bootstrap
+subjects:
+  - kind: ServiceAccount
+    name: configd-bootstrap
+    namespace: configd
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: configd-bootstrap
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: configd-bootstrap
+  namespace: configd
+  labels:
+    app: configd
+    component: bootstrap
+spec:
+  # An explicit zero — never retry. A failed bootstrap is an incident.
+  backoffLimit: 0
+  # GC the completed pod automatically.
+  ttlSecondsAfterFinished: 600
+  template:
+    metadata:
+      labels:
+        app: configd
+        component: bootstrap
+    spec:
+      restartPolicy: Never
+      serviceAccountName: configd-bootstrap
+      # Pod-level security context mirrors configd-statefulset.yaml so
+      # PodSecurity admission accepts both manifests under the same
+      # restricted profile.
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: bootstrap
+          # IMPORTANT: replace at deploy time with a digest reference
+          # (configd@sha256:...) — see ops/runbooks/release.md. Must match
+          # the StatefulSet image so the bootstrap reuses the same
+          # configd-server.jar that will run the cluster.
+          image: configd:GIT_SHA
+          imagePullPolicy: IfNotPresent
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+          # The bootstrap entry point: derive the initial peer set from
+          # the StatefulSet's ordinal range and emit a ConfigMap. The
+          # script is bundled in the configd image; it does not require
+          # a PVC and does not start the configd JVM.
+          command:
+            - "/bin/sh"
+            - "-eu"
+            - "-c"
+            - |
+              # Generate the peer list expected by configd-server's
+              # --peers flag. This is the StatefulSet's ordinal scheme:
+              # configd-0, configd-1, ..., configd-(N-1).
+              REPLICAS="${CONFIGD_REPLICAS:-3}"
+              PEERS=""
+              i=0
+              while [ "$i" -lt "$REPLICAS" ]; do
+                if [ -n "$PEERS" ]; then
+                  PEERS="${PEERS},configd-${i}"
+                else
+                  PEERS="configd-${i}"
+                fi
+                i=$((i+1))
+              done
+              echo "Generated peer list: ${PEERS}"
+              # Emit the ConfigMap via the Kubernetes API. We use kubectl
+              # baked into the image (Dockerfile.runtime ships busybox +
+              # jdk; if kubectl is not present the operator wires their
+              # own emitter here).
+              cat >/tmp/peers.yaml <<EOF
+              apiVersion: v1
+              kind: ConfigMap
+              metadata:
+                name: configd-peers
+                namespace: configd
+                labels:
+                  app: configd
+                  component: bootstrap
+              data:
+                peers: "${PEERS}"
+                replicas: "${REPLICAS}"
+                bootstrapped-at: "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+              EOF
+              # `apply` is idempotent for the data fields, but the Role
+              # above only allows create/update on the single name
+              # configd-peers — no escalation possible.
+              kubectl apply -f /tmp/peers.yaml
+          env:
+            - name: CONFIGD_REPLICAS
+              value: "3"
+          # The script needs a writable scratch dir for /tmp/peers.yaml
+          # because the root filesystem is read-only.
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+          resources:
+            requests:
+              memory: "64Mi"
+              cpu: "50m"
+            limits:
+              memory: "128Mi"
+              cpu: "200m"
+      volumes:
+        - name: tmp
+          emptyDir:
+            sizeLimit: 4Mi

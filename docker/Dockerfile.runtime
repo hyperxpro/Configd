@@ -1,0 +1,65 @@
+# ---------------------------------------------------------------------------
+# Configd — Minimal Runtime Image
+#
+# Multi-stage build: compile with JDK 25, package into a minimal JRE image.
+# ---------------------------------------------------------------------------
+
+# ========================== Stage 1: Build ==================================
+FROM eclipse-temurin:25-jdk-noble AS builder
+
+RUN apt-get update && apt-get install -y maven && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /workspace
+
+COPY pom.xml ./
+COPY configd-common/pom.xml         configd-common/pom.xml
+COPY configd-transport/pom.xml      configd-transport/pom.xml
+COPY configd-consensus-core/pom.xml configd-consensus-core/pom.xml
+COPY configd-config-store/pom.xml   configd-config-store/pom.xml
+COPY configd-edge-cache/pom.xml     configd-edge-cache/pom.xml
+COPY configd-observability/pom.xml  configd-observability/pom.xml
+COPY configd-replication-engine/pom.xml configd-replication-engine/pom.xml
+COPY configd-distribution-service/pom.xml configd-distribution-service/pom.xml
+COPY configd-control-plane-api/pom.xml configd-control-plane-api/pom.xml
+COPY configd-testkit/pom.xml        configd-testkit/pom.xml
+COPY configd-server/pom.xml         configd-server/pom.xml
+
+RUN mvn dependency:resolve -B -q || true
+
+COPY . .
+RUN mvn clean package -DskipTests -B
+
+# Collect all runtime JARs into a flat directory
+RUN mkdir -p /staging/libs && \
+    find . -path '*/target/*.jar' -not -name '*-test*' -not -name '*-sources*' \
+        -exec cp {} /staging/libs/ \;
+
+# ========================== Stage 2: Runtime ================================
+FROM eclipse-temurin:25-jre-noble
+
+LABEL maintainer="configd"
+LABEL description="Configd minimal runtime image"
+
+RUN apt-get update && apt-get install -y --no-install-recommends curl && rm -rf /var/lib/apt/lists/*
+
+RUN groupadd --system configd && useradd --system --gid configd --no-create-home configd
+
+RUN mkdir -p /data && chown configd:configd /data
+
+COPY --from=builder /staging/libs /app/libs
+
+WORKDIR /app
+
+EXPOSE 8080 9090
+
+USER configd
+
+HEALTHCHECK --interval=10s --timeout=3s CMD curl -f http://localhost:8080/health/live || exit 1
+
+ENTRYPOINT ["java", "--enable-preview", \
+    "-XX:+UseZGC", "-XX:+ZGenerational", \
+    "-Xms512m", "-Xmx2g", \
+    "-XX:+ExitOnOutOfMemoryError", \
+    "-Djava.security.egd=file:/dev/urandom", \
+    "-cp", "libs/*", \
+    "io.configd.server.ConfigdServer"]

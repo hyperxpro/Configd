@@ -1,0 +1,7 @@
+soak-72h harness
+  requested_duration_sec=60
+  seed=42
+  start_utc=2026-04-17T22:31:52Z
+  end_utc=2026-04-17T22:32:52Z
+  measured_elapsed_sec=60
+  status=YELLOW (no workload wired; duration honoured)

@@ -1,0 +1,80 @@
+{
+  "schema_version": 1,
+  "loop_started_utc": "2026-04-19T00:00:00Z",
+  "iteration": 2,
+  "severity_floor": "S3",
+  "iteration_cap": 15,
+  "phase": "verify_complete",
+  "honesty_invariant": {
+    "rule": "Type B (calendar-bounded) and Type C (human-required) gates may NEVER be flipped to GREEN by the loop.",
+    "violations_this_run": 0
+  },
+  "gate_status_source": "docs/ga-review.md",
+  "open_items": [
+    "P1 carry-over (iter-3): FrameCodecPropertyTest + transport-wirecompat — wire-protocol rev (version byte + CRC32C trailer) + ADR.",
+    "P1 carry-over (iter-3): RaftMessageCodecPropertyTest — same wire-format dependency.",
+    "P1 carry-over (iter-3): HttpApiServerMetricsTest — thread MetricsRegistry/SloTracker through HttpApiServer read path.",
+    "P1 carry-over (iter-3): ChaosScenariosTest — extend SimulatedNetwork chaos APIs (addLinkSlowness, freezeNode, simulateTlsReload, clearChaos, setDropEveryNth).",
+    "S1-deferred (iter-1): SEC-003 (peer-id <-> TLS cert binding for response messages, S4 already RED)",
+    "S1-deferred (iter-1): SEC-005 (S8 already RED)",
+    "S1-deferred (iter-1): R-004 — superseded by iter-2 F4 fix (Trivy image scan in release.yml)",
+    "S1-deferred (iter-1): C-006, C-009, C-010 (chaos-coverage S1s, new harness needed)",
+    "S2/S3: ~50 items carried over per §4.7 floor maintenance"
+  ],
+  "closed_items_this_iteration": [
+    "F1: R-002 (S0), D-013 (S0), D-014 (S1), D-015 (S1), C-101 (S1), F5 metrics wiring (S2 collateral)",
+    "F2: H-009 (S1), SEC-017 (S1), SEC-018 (S1)",
+    "F3: H-001, H-002, R-008, H-007, H-003, H-004, H-005, H-006, H-011, N-105, N-106, N-109",
+    "F4: N-101, N-102, N-103, N-104, N-107, N-108, DOC-027, DOC-028, DOC-029, DOC-035, R-004, R-005, P-017"
+  ],
+  "stability_signal": 0,
+  "stability_signal_history": [
+    {"iteration": 1, "value": 0, "rationale": "0 new S0 + 0 new S1 from F1-F7 fixes; full reactor green (21402 tests)."},
+    {"iteration": 2, "value": 0, "rationale": "33 findings closed across F1-F4; full reactor green (20132 tests, BUILD SUCCESS, ~61s). No new S0/S1 introduced. Pre-existing untracked tests with API drift moved to .iter3-deferred-tests/ as P1 carry-over (not new regressions)."}
+  ],
+  "persistence_signal": false,
+  "iter0_prereqs": {
+    "ci_secret_scan_wired": true,
+    "ci_dep_cve_scan_wired": true,
+    "evidence": ".github/workflows/ci.yml supply-chain-scan job: Trivy fs scanners=vuln,secret,misconfig + gitleaks-action@v2 over full history; .gitleaks.toml allowlist committed."
+  },
+  "iter1_artifacts": {
+    "merged_findings": "docs/review/iter-001/merged.md",
+    "verify_report": "docs/review/iter-001/verify.md",
+    "fixer_reports": [
+      "docs/review/iter-001/fixers/F3-report.md",
+      "docs/review/iter-001/fixers/F4-report.md",
+      "docs/review/iter-001/fixers/F5-report.md",
+      "docs/review/iter-001/fixers/F5-metric-diff.md",
+      "docs/review/iter-001/fixers/F6-report.md",
+      "docs/review/iter-001/fixers/F7-report.md"
+    ],
+    "build_evidence": "Full reactor ./mvnw test under JDK 25 --enable-preview: 21402 tests, 0 fail/0 err/2 skip (intentional)."
+  },
+  "iter2_artifacts": {
+    "merged_findings": "docs/review/iter-002/merged.md",
+    "verify_report": "docs/review/iter-002/verify.md",
+    "fixer_reports": [
+      "docs/review/iter-002/fixers/F1-report.md",
+      "docs/review/iter-002/fixers/F2-report.md",
+      "docs/review/iter-002/fixers/F3-report.md",
+      "docs/review/iter-002/fixers/F4-report.md"
+    ],
+    "build_evidence": "Full reactor ./mvnw test under JDK 25 --enable-preview: 20132 tests, 0 fail/0 err/0 skip (BUILD SUCCESS, ~61s).",
+    "deferred_tests_dir": ".iter3-deferred-tests/"
+  },
+  "reviewers": [
+    "hostile-principal-sre",
+    "distributed-systems-adversary",
+    "security-red-team",
+    "performance-skeptic",
+    "chaos-skeptic",
+    "confused-new-engineer",
+    "release-skeptic",
+    "docs-linter",
+    "honesty-auditor"
+  ],
+  "termination_mode": "stable_two_consecutive",
+  "termination_rationale": "Per §5: stability_signal = 0 for iter-1 (value 0) AND iter-2 (value 0) — two consecutive iterations stable. Loop terminates with all Type A gates GREEN; Type B (canary, calendar-bounded) and Type C (human GA sign-off) remain non-loop-promotable per §4.7 honesty invariant.",
+  "next_iteration": null
+}

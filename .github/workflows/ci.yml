@@ -1,0 +1,111 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        java: ['25']
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK ${{ matrix.java }}
+        uses: actions/setup-java@v4
+        with:
+          java-version: ${{ matrix.java }}
+          distribution: 'corretto'
+          cache: maven
+
+      - name: Build and unit test
+        run: mvn clean install --no-transfer-progress -Dmaven.test.failure.ignore=false
+
+      - name: Property-based tests
+        run: mvn test -pl configd-common,configd-config-store,configd-consensus-core -am --no-transfer-progress -Dtest="*PropertyTest*,*Property*" -Dsurefire.failIfNoSpecifiedTests=false
+
+      - name: Simulation tests
+        run: mvn test -pl configd-testkit -am --no-transfer-progress -Dtest="*Simulation*,*EndToEnd*,*Consistency*" -Dsurefire.failIfNoSpecifiedTests=false
+
+      - name: Seed sweep (10k seeds)
+        run: mvn test -pl configd-testkit -am --no-transfer-progress -Dtest="SeedSweepTest" -Dconfigd.seedSweep.count=10000 -Dsurefire.failIfNoSpecifiedTests=false
+
+      - name: Upload test reports
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: test-reports
+          path: '**/target/surefire-reports/*.xml'
+          retention-days: 7
+
+  tlc-model-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download TLC
+        run: |
+          mkdir -p tools
+          curl -L -o tools/tla2tools.jar https://github.com/tlaplus/tlaplus/releases/download/v1.8.0/tla2tools.jar
+
+      - name: Run TLC model checker
+        run: |
+          cd spec
+          java -jar ../tools/tla2tools.jar -config ConsensusSpec.cfg -workers auto ConsensusSpec.tla
+        timeout-minutes: 30
+
+  wire-compat:
+    # ADR-0029 §8.10 fixture-bump guardrail.
+    # Fails the build if GoldenFixtures.java changed without a matching bump
+    # to FrameCodec.WIRE_VERSION. Golden bytes are stored as hex constants in
+    # GoldenFixtures.java rather than binary files — diffs stay human-readable.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # need history to diff against the base ref
+
+      - name: Detect fixture-bytes change without WIRE_VERSION bump
+        run: |
+          set -euo pipefail
+          FIXTURE_PATH="configd-transport/src/test/java/io/configd/transport/wirecompat/GoldenFixtures.java"
+          CODEC_PATH="configd-transport/src/main/java/io/configd/transport/FrameCodec.java"
+
+          # Pick the base reference to diff against:
+          #   - PR:  merge-base(base_ref, HEAD) via three-dot
+          #   - push: use before SHA if it still exists; fall back to HEAD~1
+          if [[ -n "${{ github.base_ref }}" ]]; then
+            BASE_REF="origin/${{ github.base_ref }}"
+            DIFF_RANGE="$BASE_REF...HEAD"
+          elif [[ -n "${{ github.event.before }}" \
+              && "${{ github.event.before }}" != "0000000000000000000000000000000000000000" ]] \
+              && git cat-file -e "${{ github.event.before }}" 2>/dev/null; then
+            DIFF_RANGE="${{ github.event.before }}...HEAD"
+          elif git rev-parse HEAD~1 &>/dev/null; then
+            DIFF_RANGE="HEAD~1...HEAD"
+          else
+            echo "Single-commit history — nothing to diff against, wire-compat clean."
+            exit 0
+          fi
+
+          if ! git diff --quiet "$DIFF_RANGE" -- "$FIXTURE_PATH"; then
+            echo "GoldenFixtures.java changed in $DIFF_RANGE:"
+            git diff --stat "$DIFF_RANGE" -- "$FIXTURE_PATH"
+
+            if git diff "$DIFF_RANGE" -- "$CODEC_PATH" | grep -qE '^[-+]\s*public\s+static\s+final\s+byte\s+WIRE_VERSION'; then
+              echo "OK: FrameCodec.WIRE_VERSION also changed — fixture rebaseline is intentional."
+            else
+              echo "::error::GoldenFixtures.java changed but FrameCodec.WIRE_VERSION did not." >&2
+              echo "::error::Either revert the fixture change or bump WIRE_VERSION and update GoldenFixtures (see ADR-0029 §8.10)." >&2
+              exit 1
+            fi
+          else
+            echo "No fixture changes in $DIFF_RANGE — wire-compat clean."
+          fi

@@ -1,0 +1,370 @@
+WARNING: A restricted method in java.lang.System has been called
+WARNING: java.lang.System::load has been called by org.fusesource.jansi.internal.JansiLoader in an unnamed module (file:/home/ubuntu/.m2/wrapper/dists/apache-maven-3.9.9/3477a4f1/lib/jansi-2.4.1.jar)
+WARNING: Use --enable-native-access=ALL-UNNAMED to avoid a warning for callers in this module
+WARNING: Restricted methods will be blocked in a future release unless native access is enabled
+
+WARNING: A terminally deprecated method in sun.misc.Unsafe has been called
+WARNING: sun.misc.Unsafe::objectFieldOffset has been called by com.google.common.util.concurrent.AbstractFuture$UnsafeAtomicHelper (file:/home/ubuntu/.m2/wrapper/dists/apache-maven-3.9.9/3477a4f1/lib/guava-33.2.1-jre.jar)
+WARNING: Please consider reporting this to the maintainers of class com.google.common.util.concurrent.AbstractFuture$UnsafeAtomicHelper
+WARNING: sun.misc.Unsafe::objectFieldOffset will be removed in a future release
+timestamp = 2026-04-16T22:32:17.547085711, HamtMapPropertyTest:putOverwriteDoesNotChangeSize = 
+                              |-----------------------jqwik-----------------------
+tries = 200                   | # of calls to property
+checks = 200                  | # of not rejected calls
+generation = RANDOMIZED       | parameters are randomly generated
+after-failure = SAMPLE_FIRST  | try previously failed sample, then previous seed
+when-fixed-seed = ALLOW       | fixing the random seed is allowed
+edge-cases#mode = MIXIN       | edge cases are mixed in
+edge-cases#total = 2          | # of all combined edge cases
+edge-cases#tried = 2          | # of edge cases tried in current run
+seed = -4464080318715572213   | random seed to reproduce generated values
+
+
+timestamp = 2026-04-16T22:32:17.741669421, HamtMapPropertyTest:structuralSharingPreservesOriginal = 
+                              |-----------------------jqwik-----------------------
+tries = 200                   | # of calls to property
+checks = 184                  | # of not rejected calls
+generation = RANDOMIZED       | parameters are randomly generated
+after-failure = SAMPLE_FIRST  | try previously failed sample, then previous seed
+when-fixed-seed = ALLOW       | fixing the random seed is allowed
+edge-cases#mode = MIXIN       | edge cases are mixed in
+edge-cases#total = 3          | # of all combined edge cases
+edge-cases#tried = 3          | # of edge cases tried in current run
+seed = -7469955240581032151   | random seed to reproduce generated values
+
+
+timestamp = 2026-04-16T22:32:17.816443209, HamtMapPropertyTest:allInsertedKeysRetrievable = 
+                              |-----------------------jqwik-----------------------
+tries = 100                   | # of calls to property
+checks = 100                  | # of not rejected calls
+generation = RANDOMIZED       | parameters are randomly generated
+after-failure = SAMPLE_FIRST  | try previously failed sample, then previous seed
+when-fixed-seed = ALLOW       | fixing the random seed is allowed
+edge-cases#mode = MIXIN       | edge cases are mixed in
+edge-cases#total = 3          | # of all combined edge cases
+edge-cases#tried = 3          | # of edge cases tried in current run
+seed = 3344098992193115597    | random seed to reproduce generated values
+
+
+timestamp = 2026-04-16T22:32:17.968620410, HamtMapPropertyTest:removedKeyNotFound = 
+                              |-----------------------jqwik-----------------------
+tries = 200                   | # of calls to property
+checks = 178                  | # of not rejected calls
+generation = RANDOMIZED       | parameters are randomly generated
+after-failure = SAMPLE_FIRST  | try previously failed sample, then previous seed
+when-fixed-seed = ALLOW       | fixing the random seed is allowed
+edge-cases#mode = MIXIN       | edge cases are mixed in
+edge-cases#total = 15         | # of all combined edge cases
+edge-cases#tried = 13         | # of edge cases tried in current run
+seed = 5364028369825474542    | random seed to reproduce generated values
+
+
+timestamp = 2026-04-16T22:32:18.029365290, HamtMapPropertyTest:putThenGetReturnsValue = 
+                              |-----------------------jqwik-----------------------
+tries = 500                   | # of calls to property
+checks = 500                  | # of not rejected calls
+generation = RANDOMIZED       | parameters are randomly generated
+after-failure = SAMPLE_FIRST  | try previously failed sample, then previous seed
+when-fixed-seed = ALLOW       | fixing the random seed is allowed
+edge-cases#mode = MIXIN       | edge cases are mixed in
+edge-cases#total = 4          | # of all combined edge cases
+edge-cases#tried = 4          | # of edge cases tried in current run
+seed = 7620197884101430498    | random seed to reproduce generated values
+
+
+timestamp = 2026-04-16T22:32:18.084105097, HamtMapPropertyTest:forEachVisitsAllEntries = 
+                              |-----------------------jqwik-----------------------
+tries = 100                   | # of calls to property
+checks = 100                  | # of not rejected calls
+generation = RANDOMIZED       | parameters are randomly generated
+after-failure = SAMPLE_FIRST  | try previously failed sample, then previous seed
+when-fixed-seed = ALLOW       | fixing the random seed is allowed
+edge-cases#mode = MIXIN       | edge cases are mixed in
+edge-cases#total = 3          | # of all combined edge cases
+edge-cases#tried = 3          | # of edge cases tried in current run
+seed = 3104760358317118094    | random seed to reproduce generated values
+
+
+timestamp = 2026-04-16T22:32:18.204331289, HamtMapPropertyTest:sizeEqualsDistinctKeyCount = 
+                              |-----------------------jqwik-----------------------
+tries = 200                   | # of calls to property
+checks = 200                  | # of not rejected calls
+generation = RANDOMIZED       | parameters are randomly generated
+after-failure = SAMPLE_FIRST  | try previously failed sample, then previous seed
+when-fixed-seed = ALLOW       | fixing the random seed is allowed
+edge-cases#mode = MIXIN       | edge cases are mixed in
+edge-cases#total = 3          | # of all combined edge cases
+edge-cases#tried = 3          | # of edge cases tried in current run
+seed = 2598910867621236322    | random seed to reproduce generated values
+
+
+timestamp = 2026-04-16T22:32:18.253548783, VersionedConfigStorePropertyTest:batchAtomicity = 
+                              |-----------------------jqwik-----------------------
+tries = 100                   | # of calls to property
+checks = 76                   | # of not rejected calls
+generation = RANDOMIZED       | parameters are randomly generated
+after-failure = SAMPLE_FIRST  | try previously failed sample, then previous seed
+when-fixed-seed = ALLOW       | fixing the random seed is allowed
+edge-cases#mode = MIXIN       | edge cases are mixed in
+edge-cases#total = 3          | # of all combined edge cases
+edge-cases#tried = 3          | # of edge cases tried in current run
+seed = 6916543719593258150    | random seed to reproduce generated values
+
+
+timestamp = 2026-04-16T22:32:18.267300693, VersionedConfigStorePropertyTest:deleteRemovesKey = 
+                              |-----------------------jqwik-----------------------
+tries = 200                   | # of calls to property
+checks = 200                  | # of not rejected calls
+generation = RANDOMIZED       | parameters are randomly generated
+after-failure = SAMPLE_FIRST  | try previously failed sample, then previous seed
+when-fixed-seed = ALLOW       | fixing the random seed is allowed
+edge-cases#mode = MIXIN       | edge cases are mixed in
+edge-cases#total = 2          | # of all combined edge cases
+edge-cases#tried = 2          | # of edge cases tried in current run
+seed = -8789610070838246091   | random seed to reproduce generated values
+
+
+timestamp = 2026-04-16T22:32:18.293903303, VersionedConfigStorePropertyTest:readYourWritesWithinSameStore = 
+                              |-----------------------jqwik-----------------------
+tries = 200                   | # of calls to property
+checks = 200                  | # of not rejected calls
+generation = RANDOMIZED       | parameters are randomly generated
+after-failure = SAMPLE_FIRST  | try previously failed sample, then previous seed
+when-fixed-seed = ALLOW       | fixing the random seed is allowed
+edge-cases#mode = MIXIN       | edge cases are mixed in
+edge-cases#total = 4          | # of all combined edge cases
+edge-cases#tried = 4          | # of edge cases tried in current run
+seed = -8695919598781617373   | random seed to reproduce generated values
+
+
+timestamp = 2026-04-16T22:32:18.307135832, VersionedConfigStorePropertyTest:snapshotIsolation = 
+                              |-----------------------jqwik-----------------------
+tries = 20                    | # of calls to property
+checks = 20                   | # of not rejected calls
+generation = EXHAUSTIVE       | parameters are exhaustively generated
+after-failure = SAMPLE_FIRST  | try previously failed sample, then previous seed
+when-fixed-seed = ALLOW       | fixing the random seed is allowed
+edge-cases#mode = MIXIN       | edge cases are mixed in
+edge-cases#total = 0          | # of all combined edge cases
+edge-cases#tried = 0          | # of edge cases tried in current run
+seed = 3453621289070398468    | random seed to reproduce generated values
+
+
+timestamp = 2026-04-16T22:32:18.313449063, VersionedConfigStorePropertyTest:versionAlwaysIncreases = 
+                              |-----------------------jqwik-----------------------
+tries = 50                    | # of calls to property
+checks = 50                   | # of not rejected calls
+generation = EXHAUSTIVE       | parameters are exhaustively generated
+after-failure = SAMPLE_FIRST  | try previously failed sample, then previous seed
+when-fixed-seed = ALLOW       | fixing the random seed is allowed
+edge-cases#mode = MIXIN       | edge cases are mixed in
+edge-cases#total = 0          | # of all combined edge cases
+edge-cases#tried = 0          | # of edge cases tried in current run
+seed = -6519067151795723949   | random seed to reproduce generated values
+
+
+Apr 16, 2026 10:32:21 PM io.configd.edge.DeltaApplier offer
+WARNING: Rejecting delta [0 -> 1]: signature verification failed
+Apr 16, 2026 10:32:22 PM io.configd.edge.DeltaApplier offer
+WARNING: Rejecting delta [0 -> 1]: signature verification failed
+Apr 16, 2026 10:32:22 PM io.configd.edge.DeltaApplier offer
+WARNING: Rejecting unsigned delta [0 -> 1]: signature verification is required
+timestamp = 2026-04-16T22:32:22.980115973, WatchServicePropertyTest:coalescingPreservesAllMutations = 
+                              |-----------------------jqwik-----------------------
+tries = 50                    | # of calls to property
+checks = 50                   | # of not rejected calls
+generation = EXHAUSTIVE       | parameters are exhaustively generated
+after-failure = SAMPLE_FIRST  | try previously failed sample, then previous seed
+when-fixed-seed = ALLOW       | fixing the random seed is allowed
+edge-cases#mode = MIXIN       | edge cases are mixed in
+edge-cases#total = 0          | # of all combined edge cases
+edge-cases#tried = 0          | # of edge cases tried in current run
+seed = -4439958858423847545   | random seed to reproduce generated values
+
+
+timestamp = 2026-04-16T22:32:23.000593409, WatchServicePropertyTest:cursorMatchesLastEventVersion = 
+                              |-----------------------jqwik-----------------------
+tries = 20                    | # of calls to property
+checks = 20                   | # of not rejected calls
+generation = EXHAUSTIVE       | parameters are exhaustively generated
+after-failure = SAMPLE_FIRST  | try previously failed sample, then previous seed
+when-fixed-seed = ALLOW       | fixing the random seed is allowed
+edge-cases#mode = MIXIN       | edge cases are mixed in
+edge-cases#total = 0          | # of all combined edge cases
+edge-cases#tried = 0          | # of edge cases tried in current run
+seed = -9059311084192631878   | random seed to reproduce generated values
+
+
+timestamp = 2026-04-16T22:32:23.213169191, WatchServicePropertyTest:prefixFilterNeverDeliversNonMatchingKeys = 
+                              |-----------------------jqwik-----------------------
+tries = 200                   | # of calls to property
+checks = 200                  | # of not rejected calls
+generation = RANDOMIZED       | parameters are randomly generated
+after-failure = SAMPLE_FIRST  | try previously failed sample, then previous seed
+when-fixed-seed = ALLOW       | fixing the random seed is allowed
+edge-cases#mode = MIXIN       | edge cases are mixed in
+edge-cases#total = 2          | # of all combined edge cases
+edge-cases#tried = 2          | # of edge cases tried in current run
+seed = -7447726808429608390   | random seed to reproduce generated values
+
+
+timestamp = 2026-04-16T22:32:23.232805426, WatchServicePropertyTest:everyMutationNotifiesMatchingWatchersExactlyOnce = 
+                              |-----------------------jqwik-----------------------
+tries = 20                    | # of calls to property
+checks = 20                   | # of not rejected calls
+generation = EXHAUSTIVE       | parameters are exhaustively generated
+after-failure = SAMPLE_FIRST  | try previously failed sample, then previous seed
+when-fixed-seed = ALLOW       | fixing the random seed is allowed
+edge-cases#mode = MIXIN       | edge cases are mixed in
+edge-cases#total = 0          | # of all combined edge cases
+edge-cases#tried = 0          | # of edge cases tried in current run
+seed = -2226556040372945409   | random seed to reproduce generated values
+
+
+timestamp = 2026-04-16T22:32:23.306348735, WatchServicePropertyTest:cancelledWatchNeverReceivesEvents = 
+                              |-----------------------jqwik-----------------------
+tries = 100                   | # of calls to property
+checks = 71                   | # of not rejected calls
+generation = RANDOMIZED       | parameters are randomly generated
+after-failure = SAMPLE_FIRST  | try previously failed sample, then previous seed
+when-fixed-seed = ALLOW       | fixing the random seed is allowed
+edge-cases#mode = MIXIN       | edge cases are mixed in
+edge-cases#total = 16         | # of all combined edge cases
+edge-cases#tried = 16         | # of edge cases tried in current run
+seed = 4582053160679519735    | random seed to reproduce generated values
+
+
+timestamp = 2026-04-16T22:32:23.338293868, WatchServicePropertyTest:versionCursorsAreMonotonicallyIncreasing = 
+                              |-----------------------jqwik-----------------------
+tries = 29                    | # of calls to property
+checks = 29                   | # of not rejected calls
+generation = EXHAUSTIVE       | parameters are exhaustively generated
+after-failure = SAMPLE_FIRST  | try previously failed sample, then previous seed
+when-fixed-seed = ALLOW       | fixing the random seed is allowed
+edge-cases#mode = MIXIN       | edge cases are mixed in
+edge-cases#total = 0          | # of all combined edge cases
+edge-cases#tried = 0          | # of edge cases tried in current run
+seed = -8406787989754671264   | random seed to reproduce generated values
+
+
+timestamp = 2026-04-16T22:32:23.964086086, BloomFilterPropertyTest:noFalseNegatives = 
+                              |-----------------------jqwik-----------------------
+tries = 500                   | # of calls to property
+checks = 480                  | # of not rejected calls
+generation = RANDOMIZED       | parameters are randomly generated
+after-failure = SAMPLE_FIRST  | try previously failed sample, then previous seed
+when-fixed-seed = ALLOW       | fixing the random seed is allowed
+edge-cases#mode = MIXIN       | edge cases are mixed in
+edge-cases#total = 3          | # of all combined edge cases
+edge-cases#tried = 3          | # of edge cases tried in current run
+seed = -4145981121524054307   | random seed to reproduce generated values
+
+
+timestamp = 2026-04-16T22:32:24.209410431, BloomFilterPropertyTest:falsePositiveRateBounded = 
+                              |-----------------------jqwik-----------------------
+tries = 100                   | # of calls to property
+checks = 100                  | # of not rejected calls
+generation = RANDOMIZED       | parameters are randomly generated
+after-failure = SAMPLE_FIRST  | try previously failed sample, then previous seed
+when-fixed-seed = ALLOW       | fixing the random seed is allowed
+edge-cases#mode = MIXIN       | edge cases are mixed in
+edge-cases#total = 4          | # of all combined edge cases
+edge-cases#tried = 4          | # of edge cases tried in current run
+seed = 8178928700326233877    | random seed to reproduce generated values
+
+
+timestamp = 2026-04-16T22:32:24.225170292, BloomFilterPropertyTest:sizeMatchesInsertedCount = 
+                              |-----------------------jqwik-----------------------
+tries = 100                   | # of calls to property
+checks = 100                  | # of not rejected calls
+generation = RANDOMIZED       | parameters are randomly generated
+after-failure = SAMPLE_FIRST  | try previously failed sample, then previous seed
+when-fixed-seed = ALLOW       | fixing the random seed is allowed
+edge-cases#mode = MIXIN       | edge cases are mixed in
+edge-cases#total = 4          | # of all combined edge cases
+edge-cases#tried = 4          | # of edge cases tried in current run
+seed = 5141718843554387189    | random seed to reproduce generated values
+
+
+WARNING: ************************************************************
+WARNING: Authentication is DISABLED (--auth-token not set).
+WARNING: All write/delete/admin endpoints are unauthenticated.
+WARNING: DO NOT run in production without --auth-token.
+WARNING: ************************************************************
+WARNING: ************************************************************
+WARNING: Authentication is DISABLED (--auth-token not set).
+WARNING: All write/delete/admin endpoints are unauthenticated.
+WARNING: DO NOT run in production without --auth-token.
+WARNING: ************************************************************
+WARNING: ************************************************************
+WARNING: Authentication is DISABLED (--auth-token not set).
+WARNING: All write/delete/admin endpoints are unauthenticated.
+WARNING: DO NOT run in production without --auth-token.
+WARNING: ************************************************************
+WARNING: ************************************************************
+WARNING: Authentication is DISABLED (--auth-token not set).
+WARNING: All write/delete/admin endpoints are unauthenticated.
+WARNING: DO NOT run in production without --auth-token.
+WARNING: ************************************************************
+WARNING: ************************************************************
+WARNING: Authentication is DISABLED (--auth-token not set).
+WARNING: All write/delete/admin endpoints are unauthenticated.
+WARNING: DO NOT run in production without --auth-token.
+WARNING: ************************************************************
+WARNING: ************************************************************
+WARNING: Authentication is DISABLED (--auth-token not set).
+WARNING: All write/delete/admin endpoints are unauthenticated.
+WARNING: DO NOT run in production without --auth-token.
+WARNING: ************************************************************
+WARNING: ************************************************************
+WARNING: Authentication is DISABLED (--auth-token not set).
+WARNING: All write/delete/admin endpoints are unauthenticated.
+WARNING: DO NOT run in production without --auth-token.
+WARNING: ************************************************************
+WARNING: ************************************************************
+WARNING: Authentication is DISABLED (--auth-token not set).
+WARNING: All write/delete/admin endpoints are unauthenticated.
+WARNING: DO NOT run in production without --auth-token.
+WARNING: ************************************************************
+WARNING: ************************************************************
+WARNING: Authentication is DISABLED (--auth-token not set).
+WARNING: All write/delete/admin endpoints are unauthenticated.
+WARNING: DO NOT run in production without --auth-token.
+WARNING: ************************************************************
+WARNING: ************************************************************
+WARNING: Authentication is DISABLED (--auth-token not set).
+WARNING: All write/delete/admin endpoints are unauthenticated.
+WARNING: DO NOT run in production without --auth-token.
+WARNING: ************************************************************
+WARNING: ************************************************************
+WARNING: Authentication is DISABLED (--auth-token not set).
+WARNING: All write/delete/admin endpoints are unauthenticated.
+WARNING: DO NOT run in production without --auth-token.
+WARNING: ************************************************************
+WARNING: ************************************************************
+WARNING: Authentication is DISABLED (--auth-token not set).
+WARNING: All write/delete/admin endpoints are unauthenticated.
+WARNING: DO NOT run in production without --auth-token.
+WARNING: ************************************************************
+WARNING: ************************************************************
+WARNING: Authentication is DISABLED (--auth-token not set).
+WARNING: All write/delete/admin endpoints are unauthenticated.
+WARNING: DO NOT run in production without --auth-token.
+WARNING: ************************************************************
+WARNING: ************************************************************
+WARNING: Authentication is DISABLED (--auth-token not set).
+WARNING: All write/delete/admin endpoints are unauthenticated.
+WARNING: DO NOT run in production without --auth-token.
+WARNING: ************************************************************
+Configd shutting down...
+Configd shutting down...
+Configd shutting down...
+Configd shutting down...
+Configd shutting down...
+Configd shutting down...
+Configd shutting down...
+Configd shutting down...
+Configd shutting down...
+Configd shutting down...
+Configd shutting down...
+Configd shutting down...

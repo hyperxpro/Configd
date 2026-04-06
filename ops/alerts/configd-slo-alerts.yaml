@@ -1,0 +1,199 @@
+# Configd SLO alert rules — Prometheus / Alertmanager.
+#
+# Rules track the SLOs from PROMPT.md §0.1 / ProductionSloDefinitions.java.
+# Each rule annotates a runbook_url that maps to ops/runbooks/<file>.md;
+# the operator's paging integration consumes this annotation and routes
+# the alert to whoever owns that runbook.
+#
+# Multi-window / multi-burn-rate (MWMBR) per Google SRE workbook §5: a
+# fast-burn (5 min @ 14.4× rate) and a slow-burn (1 hr @ 6× rate) page
+# the on-call; a 24 hr long-burn opens a ticket. This pattern is the O3
+# / O4 deliverable from gap-closure.
+#
+# ADR-0025: this file ships rules but no notification channel — the
+# operator wires their own paging service to Alertmanager.
+
+groups:
+  - name: configd-slo-write-commit
+    interval: 30s
+    rules:
+      - alert: ConfigdWriteCommitFastBurn
+        expr: |
+          (
+            sum(rate(configd_write_commit_seconds_bucket{le="0.150"}[5m]))
+            /
+            sum(rate(configd_write_commit_seconds_count[5m]))
+          ) < (1 - 14.4 * (1 - 0.99))
+        for: 2m
+        labels:
+          severity: page
+          slo: write.commit.latency.p99
+        annotations:
+          summary: "Write commit p99 burning fast (14.4× rate, 5m window)"
+          description: |
+            Write commit latency p99 is breaching the 150 ms budget at a
+            rate that will exhaust 2% of the monthly error budget in
+            under an hour. Investigate Raft commit pipeline.
+          runbook_url: ops/runbooks/write-commit-latency.md
+
+      - alert: ConfigdWriteCommitSlowBurn
+        expr: |
+          (
+            sum(rate(configd_write_commit_seconds_bucket{le="0.150"}[1h]))
+            /
+            sum(rate(configd_write_commit_seconds_count[1h]))
+          ) < (1 - 6 * (1 - 0.99))
+        for: 15m
+        labels:
+          severity: page
+          slo: write.commit.latency.p99
+        annotations:
+          summary: "Write commit p99 burning at 6× rate (1h window)"
+          runbook_url: ops/runbooks/write-commit-latency.md
+
+  - name: configd-slo-edge-read
+    interval: 30s
+    rules:
+      # H-005 closure (iter-2): rewritten as a real MWMBR burn-rate
+      # alert against the bucket. The previous expression was a raw
+      # `histogram_quantile(...) > 0.001` threshold that paged on a
+      # single 5-min p99 excursion (a 1.7%-of-day breach, well under
+      # the 14.4× burn rate the alert is named for). Shape now matches
+      # ConfigdWriteCommitFastBurn verbatim.
+      - alert: ConfigdEdgeReadFastBurn
+        expr: |
+          (
+            sum(rate(configd_edge_read_seconds_bucket{le="0.001"}[5m]))
+            /
+            sum(rate(configd_edge_read_seconds_count[5m]))
+          ) < (1 - 14.4 * (1 - 0.99))
+        for: 2m
+        labels:
+          severity: page
+          slo: edge.read.latency.p99
+        annotations:
+          summary: "Edge read p99 burning fast (14.4× rate, 5m window)"
+          description: |
+            Fraction-under-1ms over the last 5 min has dropped below the
+            14.4× burn-rate threshold. Will exhaust 2% of the monthly
+            error budget in under an hour. The raw p99 dashboard panel
+            is the symptom view; this alert is the burn-rate trigger.
+          runbook_url: ops/runbooks/edge-read-latency.md
+
+      - alert: ConfigdEdgeReadSlowBurn
+        expr: |
+          (
+            sum(rate(configd_edge_read_seconds_bucket{le="0.001"}[1h]))
+            /
+            sum(rate(configd_edge_read_seconds_count[1h]))
+          ) < (1 - 6 * (1 - 0.99))
+        for: 15m
+        labels:
+          severity: page
+          slo: edge.read.latency.p99
+        annotations:
+          summary: "Edge read p99 burning at 6× rate (1h window)"
+          runbook_url: ops/runbooks/edge-read-latency.md
+
+      # P999 dashboard panel kept as a raw threshold (warn-only, not
+      # paging) — this is a symptom view, not an SLO burn-rate gate.
+      - alert: ConfigdEdgeReadP999Breach
+        expr: |
+          histogram_quantile(0.999,
+            sum by (le) (rate(configd_edge_read_seconds_bucket[5m]))
+          ) > 0.005
+        for: 5m
+        labels:
+          severity: warn
+          slo: edge.read.latency.p999
+        annotations:
+          summary: "Edge read p999 > 5 ms"
+          runbook_url: ops/runbooks/edge-read-latency.md
+
+  - name: configd-slo-propagation
+    interval: 30s
+    rules:
+      - alert: ConfigdPropagationFastBurn
+        expr: |
+          histogram_quantile(0.99,
+            sum by (le) (rate(configd_propagation_delay_seconds_bucket[5m]))
+          ) > 0.5
+        for: 2m
+        labels:
+          severity: page
+          slo: propagation.delay.p99
+        annotations:
+          summary: "Global propagation p99 > 500 ms (fast burn)"
+          runbook_url: ops/runbooks/propagation-delay.md
+
+  - name: configd-availability
+    interval: 1m
+    rules:
+      # H-004 closure (iter-2): the previous denominator
+      # `configd_write_commit_total` counts SUCCESSES only (incremented
+      # on `onWriteCommitSuccess` in ConfigdServer.java) — so
+      # `failed/total == failed/successes` is unbounded as successes →
+      # 0. A complete outage produced NaN (no alert); a partial outage
+      # produced a nonsensical "availability = -900%" value. Use
+      # `failed / (failed + total)` so the denominator is actual
+      # ATTEMPTS regardless of the wiring convention. The Java fix to
+      # rename `_total` → `_succeeded_total` and increment a real
+      # `_total` on every attempt is tracked separately (see
+      # docs/review/iter-002/hostile-principal-sre.md H-004).
+      - alert: ConfigdControlPlaneAvailability
+        expr: |
+          (
+            1
+            -
+            (
+              sum(rate(configd_write_commit_failed_total[30m]))
+              /
+              (
+                sum(rate(configd_write_commit_failed_total[30m]))
+                +
+                sum(rate(configd_write_commit_total[30m]))
+              )
+            )
+          ) < 0.99999
+        for: 10m
+        labels:
+          severity: page
+          slo: control.plane.availability
+        annotations:
+          summary: "Control-plane write availability < 99.999% over 30 min"
+          description: |
+            Denominator is failed+success (i.e. all attempts) so a fully
+            broken control plane still pages. NaN is no longer a silent
+            failure mode.
+          runbook_url: ops/runbooks/control-plane-down.md
+
+  - name: configd-saturation
+    interval: 1m
+    rules:
+      - alert: ConfigdRaftPipelineSaturation
+        expr: configd_raft_pending_apply_entries > 5000
+        for: 5m
+        labels:
+          severity: warn
+        annotations:
+          summary: "Raft apply queue depth > 5000 — leader falling behind"
+          runbook_url: ops/runbooks/raft-saturation.md
+
+      # H-006 closure (iter-2): pages on a sustained failure rate, not
+      # "ever". The previous expression (`increase(...[15m]) > 0` for
+      # `1m`) paged on a single transient — and the runbook's own
+      # mitigation says "wait one retry window" first, so the alert was
+      # paging on something the operator was already told to ignore.
+      # Threshold = ≥ 3 failures in 15 min with a 5-min debounce.
+      - alert: ConfigdSnapshotInstallStalled
+        expr: increase(configd_snapshot_install_failed_total[15m]) >= 3
+        for: 5m
+        labels:
+          severity: warn
+        annotations:
+          summary: "InstallSnapshot failed ≥ 3 times in last 15 min"
+          description: |
+            A single transient is below threshold and self-clears via
+            the leader's automatic retry. Sustained failures (≥ 3 in
+            15 min, holding for 5 min) indicate a real install regression.
+          runbook_url: ops/runbooks/snapshot-install.md
