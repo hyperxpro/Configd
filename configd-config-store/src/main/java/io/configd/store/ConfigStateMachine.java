@@ -258,12 +258,11 @@ public final class ConfigStateMachine implements StateMachine {
                 // is needed — so this re-ordering is byte-equivalent on the
                 // happy path.
                 signCommand(command);
-                // INV-V1: sequence_monotonic — new seq must exceed previous
-                invariantChecker.check("sequence_monotonic", seq > prevSeq,
-                        "Sequence " + seq + " not > previous " + prevSeq);
-                // INV-V2: sequence_gap_free — new seq must be exactly prev + 1
-                invariantChecker.check("sequence_gap_free", seq == prevSeq + 1,
-                        "Sequence " + seq + " != expected " + (prevSeq + 1));
+                // R-05c (A2): removed the former sequence_monotonic / sequence_gap_free checks here.
+                // With seq := prevSeq + 1 they were LOCALLY VACUOUS — `seq > prevSeq` and
+                // `seq == prevSeq + 1` are tautologies that can never fire ("don't wire a checker
+                // that asserts nothing"). Global apply-order is enforced by RaftNode's
+                // version_monotonicity / state_machine_safety; per-key order is the real check below.
                 // INV-W1: per_key_order — new version for key must exceed existing
                 ReadResult existing = store.get(put.key());
                 if (existing.found()) {
@@ -279,10 +278,7 @@ public final class ConfigStateMachine implements StateMachine {
                 long prevSeq = sequenceCounter;
                 long seq = prevSeq + 1;
                 signCommand(command);
-                invariantChecker.check("sequence_monotonic", seq > prevSeq,
-                        "Sequence " + seq + " not > previous " + prevSeq);
-                invariantChecker.check("sequence_gap_free", seq == prevSeq + 1,
-                        "Sequence " + seq + " != expected " + (prevSeq + 1));
+                // R-05c (A2): removed locally-vacuous sequence_monotonic/sequence_gap_free (see Put).
                 sequenceCounter = seq;
                 store.delete(del.key(), seq);
                 notifyListeners(List.of(new ConfigMutation.Delete(del.key())), seq);
@@ -291,10 +287,7 @@ public final class ConfigStateMachine implements StateMachine {
                 long prevSeq = sequenceCounter;
                 long seq = prevSeq + 1;
                 signCommand(command);
-                invariantChecker.check("sequence_monotonic", seq > prevSeq,
-                        "Sequence " + seq + " not > previous " + prevSeq);
-                invariantChecker.check("sequence_gap_free", seq == prevSeq + 1,
-                        "Sequence " + seq + " != expected " + (prevSeq + 1));
+                // R-05c (A2): removed locally-vacuous sequence_monotonic/sequence_gap_free (see Put).
                 sequenceCounter = seq;
                 store.applyBatch(batch.mutations(), seq);
                 notifyListeners(batch.mutations(), seq);

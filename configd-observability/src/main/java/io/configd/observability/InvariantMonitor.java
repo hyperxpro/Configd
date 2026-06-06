@@ -6,6 +6,8 @@ import java.util.Objects;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.LongAdder;
 import java.util.function.BooleanSupplier;
+import java.util.logging.Level;
+import java.util.logging.Logger;
 import java.util.stream.Collectors;
 
 /**
@@ -21,9 +23,10 @@ import java.util.stream.Collectors;
  *       {@link AssertionError} immediately. Use this in unit and
  *       integration tests to fail fast on invariant violations.</li>
  *   <li><b>Production mode</b> ({@code testMode=false}): violations
- *       increment a counter in the {@link MetricsRegistry} and are
- *       recorded for later inspection. The system continues running —
- *       operators are expected to alert on the violation counter.</li>
+ *       increment a named counter in the {@link MetricsRegistry} AND emit a
+ *       SEVERE log (fail-open — never silent). The system keeps running;
+ *       operators alert on the violation counter (visible in the Prometheus
+ *       exposition).</li>
  * </ul>
  * <p>
  * Thread safety: all methods are safe for concurrent use. Violation
@@ -33,6 +36,8 @@ import java.util.stream.Collectors;
  * @see MetricsRegistry
  */
 public final class InvariantMonitor {
+
+    private static final Logger LOG = Logger.getLogger(InvariantMonitor.class.getName());
 
     /** Prefix for invariant violation counter metrics. */
     private static final String METRIC_PREFIX = "invariant.violation.";
@@ -80,8 +85,12 @@ public final class InvariantMonitor {
             return;
         }
 
-        // Record violation
+        // R-02: a violation must be OBSERVABLE — never silent. Always increment the
+        // named metric AND emit a SEVERE log (fail-open in production). Test mode
+        // additionally fails fast. "A net that fires into an unwatched log is the NOOP."
         recordViolation(invariantName);
+        LOG.log(Level.SEVERE,
+                "Invariant violated [" + invariantName + "]: " + messageOnViolation);
 
         if (testMode) {
             throw new AssertionError("Invariant violated [" + invariantName + "]: " + messageOnViolation);

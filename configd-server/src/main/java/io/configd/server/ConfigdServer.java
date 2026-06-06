@@ -19,6 +19,7 @@ import io.configd.distribution.SubscriptionManager;
 import io.configd.distribution.WatchService;
 import io.configd.observability.BurnRateAlertEvaluator;
 import io.configd.observability.ConfigdMetrics;
+import io.configd.observability.InvariantMonitor;
 import io.configd.observability.MetricsRegistry;
 import io.configd.observability.ProductionSloDefinitions;
 import io.configd.observability.PropagationLivenessMonitor;
@@ -188,7 +189,24 @@ public final class ConfigdServer {
         ConfigSnapshot initialSnapshot = new ConfigSnapshot(
                 HamtMap.empty(), 0L, clock.currentTimeMillis());
         VersionedConfigStore configStore = new VersionedConfigStore(initialSnapshot, clock);
-        ConfigStateMachine stateMachine = new ConfigStateMachine(configStore, clock, configSigner);
+
+        // ---------------------------------------------------------------
+        // R-02: turn the runtime invariant safety net ON. Build the metrics
+        // registry + InvariantMonitor HERE (before the state machine and Raft
+        // node) so BOTH are fed a REAL checker instead of NOOP. The monitor
+        // shares this registry, so violations surface at /metrics (the
+        // PrometheusExporter reads the same registry). Prod is fail-open:
+        // a violation increments a named metric + SEVERE log and keeps serving
+        // (never throw in a running server). The two InvariantChecker SAMs
+        // (RaftNode's and ConfigStateMachine's) both bridge to this monitor.
+        // ---------------------------------------------------------------
+        MetricsRegistry metricsRegistry = new MetricsRegistry();
+        InvariantMonitor invariantMonitor = new InvariantMonitor(metricsRegistry, false);
+        ConfigStateMachine.InvariantChecker smInvariantChecker = invariantMonitor::check;
+        RaftNode.InvariantChecker raftInvariantChecker = invariantMonitor::check;
+
+        ConfigStateMachine stateMachine =
+                new ConfigStateMachine(configStore, clock, smInvariantChecker, configSigner);
 
         // Initialize Raft with durable WAL storage
         RaftConfig raftConfig = RaftConfig.of(config.nodeId(), config.peers());
@@ -248,7 +266,7 @@ public final class ConfigdServer {
 
         RaftNode raftNode = new RaftNode(
                 raftConfig, raftLog, transport, stateMachine,
-                random, storage, RaftNode.InvariantChecker.NOOP);
+                random, storage, raftInvariantChecker);
 
         // Initialize multi-raft driver
         MultiRaftDriver driver = new MultiRaftDriver(config.nodeId(), clock);
@@ -349,7 +367,8 @@ public final class ConfigdServer {
         // ---------------------------------------------------------------
         // Wire observability
         // ---------------------------------------------------------------
-        MetricsRegistry metricsRegistry = new MetricsRegistry();
+        // (metricsRegistry + invariantMonitor were created earlier, before the
+        // state machine, so the runtime invariant net could be wired — see R-02.)
         SloTracker sloTracker = new SloTracker();
         ProductionSloDefinitions.register(sloTracker);
         BurnRateAlertEvaluator burnRateAlertEvaluator = new BurnRateAlertEvaluator(sloTracker);

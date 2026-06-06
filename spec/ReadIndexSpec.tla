@@ -223,45 +223,32 @@ ElectionSafety ==
 ReadIndexBoundedByMaxIndex ==
     \A r \in servedReads: r.readIdx <= MaxIndex
 
-\* INV-RI-3: Read freshness.
+\* INV-RI-3: Read freshness (de-vacuumed, R-05c).
 \*
-\* If a read was served at (term=T, readIdx=R) by leader n, then at the
-\* moment the leader served it, no other live leader at the same or
-\* higher term existed (lease established by quorum heartbeat ack).
-\*
-\* The CompleteReadIndex action enforces this by requiring
-\* `currentTerm[n] = r.term`. If the leader had stepped down, the served
-\* read would not have happened. The invariant verifies that the
-\* `pendingReads` mechanism cannot produce a serving while a higher-term
-\* leader exists.
+\* A served read never reports an index its server had not yet APPLIED.
+\* CompleteReadIndex requires appliedIndex[n] >= r.readIdx, and appliedIndex is
+\* monotonic non-decreasing, so for every served read r, r.readIdx is forever
+\* <= appliedIndex[r.server]. This is the F-0009 property: a ReadIndex must wait
+\* for the state machine to apply up to readIdx before serving. A regression that
+\* serves a read ahead of the applied state (a stale read) is caught here.
+\* (Non-vacuous: constrains servedReads against appliedIndex; the previous form
+\* had a literal `TRUE` consequent and could never fail.)
 ReadFreshness ==
     \A r \in servedReads:
-        \* No node has a higher term as leader concurrently with r.term
-        \* unless we already had a chance to invalidate r — which the
-        \* CompleteReadIndex precondition guarantees.
-        \A n \in Nodes:
-            (state[n] = "leader" /\ currentTerm[n] > r.term) =>
-                TRUE  \* served reads from older terms remain in history
-                      \* but new ones cannot be served from the older term.
+        r.readIdx <= appliedIndex[r.server]
 
-\* INV-RI-4: Stale leader cannot serve.
+\* INV-RI-4: Stale leader cannot serve (de-vacuumed, R-05c).
 \*
-\* No pending read can be completed if the leader has stepped down.
-\* This is enforced operationally; we verify it at the state level.
+\* A read is never served at a term beyond its server's current term.
+\* CompleteReadIndex serves only while currentTerm[n] = r.term, and per-node
+\* currentTerm is monotonic non-decreasing, so every served read satisfies
+\* r.term <= currentTerm[r.server] forever. A regression that lets a node serve
+\* a read recorded at a term ahead of the node (a stale/stepped-down leader
+\* serve) is caught here. (Non-vacuous: constrains servedReads against
+\* currentTerm; the previous form had a literal `TRUE` consequent.)
 NoStaleLeaderServe ==
-    \A n \in Nodes:
-        \A r \in pendingReads[n]:
-            \* If a pending read exists at term T, and the leader's
-            \* current term is T', then either T' = T (still leader)
-            \* or the read will not be served (state is no longer leader,
-            \* so CompleteReadIndex precondition fails).
-            (state[n] /= "leader" \/ currentTerm[n] /= r.term) =>
-                \* The pending read is "abandoned" — no ServeReadIndex
-                \* can fire for it. We verify by induction: the action
-                \* CompleteReadIndex requires both state[n]="leader" and
-                \* currentTerm[n] = r.term. So such a pending read cannot
-                \* enter servedReads. This invariant trivially holds.
-                TRUE
+    \A r \in servedReads:
+        r.term <= currentTerm[r.server]
 
 \* INV-RI-5: Monotonic served reads per leader-term.
 \* Within the same (leader, term), served readIdx values are non-decreasing

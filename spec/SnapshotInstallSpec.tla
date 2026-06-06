@@ -165,15 +165,18 @@ SnapshotMatching ==
         snapshot[n].index > 0 =>
             snapshot[n].term = LogTermAt(snapshot[n].index)
 
-\* INV-SI-3: NoCommitRevert — operationally, ReceiveInstallSnapshot only
-\* installs strictly newer snapshots. We verify the state-level corollary:
-\* every in-flight InstallSnapshot, if accepted, installs a snapshot index
-\* > the receiver's current. (This holds by construction; the invariant is
-\* sanity to catch a future regression in the action.)
+\* INV-SI-3: NoCommitRevert (de-vacuumed, R-05c) — installing a newer-index
+\* snapshot must never revert the term. For any in-flight InstallSnapshot that
+\* WOULD install (lastIncludedIndex > the receiver's current snapshot index),
+\* its term must be >= the receiver's current snapshot term. Snapshots are
+\* sourced from the committed log, whose terms are monotonic in index
+\* (ClusterCommit), so a higher index always carries a >= term; a regression
+\* that ships/installs a higher-index but lower-term snapshot (a commit revert)
+\* is caught here. (Non-vacuous: the previous form was `P \/ ~P`, a tautology.)
 NoCommitRevert ==
     \A msg \in inflight:
-        \/ msg.lastIncludedIndex <= snapshot[msg.to].index   \* will be discarded
-        \/ msg.lastIncludedIndex >  snapshot[msg.to].index   \* will be installed
+        msg.lastIncludedIndex > snapshot[msg.to].index =>
+            msg.lastIncludedTerm >= snapshot[msg.to].term
 
 \* INV-SI-4: InflightTermMonotonic — every in-flight InstallSnapshot
 \* references an index that exists in the global committed log with the

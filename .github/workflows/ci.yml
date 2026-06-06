@@ -58,7 +58,12 @@ jobs:
       - name: Run TLC model checker
         run: |
           cd spec
+          echo "== ConsensusSpec =="
           java -jar ../tools/tla2tools.jar -config ConsensusSpec.cfg -workers auto ConsensusSpec.tla
+          echo "== ReadIndexSpec =="
+          java -jar ../tools/tla2tools.jar -config ReadIndexSpec.cfg -workers auto ReadIndexSpec.tla
+          echo "== SnapshotInstallSpec =="
+          java -jar ../tools/tla2tools.jar -config SnapshotInstallSpec.cfg -workers auto SnapshotInstallSpec.tla
         timeout-minutes: 30
 
   wire-compat:
