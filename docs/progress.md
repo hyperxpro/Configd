@@ -1,5 +1,11 @@
 # Autonomous GA-Hardening Progress Log
 
+> ⚠️ **SUPERSEDED (2026-06-06).** This pre-assessment log is retained for history only. Its claims
+> predate — and are partly contradicted by — the read-only forensic assessment in
+> `docs/STATE-OF-REALITY.md` (e.g. it quotes "21,285 tests"; the live count is **21,394**). **Do
+> not read it as evidence.** The live production-readiness ledger is now
+> **`docs/READINESS-LEDGER.md`**, with `PRODUCTION-READINESS-PLAN.md` as the plan of record.
+
 Single source of truth for phase progress across context compaction. Append-only during a pass; prior runs' entries stay.
 
 ## Session 2026-04-17 (Opus 4.7, autonomous)
