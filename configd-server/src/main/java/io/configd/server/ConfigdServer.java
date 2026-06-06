@@ -84,6 +84,8 @@ public final class ConfigdServer {
     private static final int COMPACTION_INTERVAL_TICKS = 1000; // every ~10 seconds
     private static final int TLS_RELOAD_INTERVAL_MS = 60_000;  // every 60 seconds
     private static final int FANOUT_BUFFER_CAPACITY = 10_000;
+    // R-01: budget for a marshalled propose round-trip onto the tick executor.
+    private static final int PROPOSE_TIMEOUT_MS = 150;
 
     private final ServerConfig config;
     // F-0023: three separate single-threaded executors prevent head-of-line
@@ -404,10 +406,12 @@ public final class ConfigdServer {
         // ---------------------------------------------------------------
         // Wire config write service
         // ---------------------------------------------------------------
-        ConfigWriteService.RaftProposer proposer = (scope, command) -> {
-            ProposalResult result = driver.propose(DEFAULT_RAFT_GROUP, command);
-            return result == ProposalResult.ACCEPTED;
-        };
+        // R-01: marshal proposals onto the single tick executor so node.propose()
+        // (log/term/commitIndex mutation + applyCommitted -> stateMachine.apply) never
+        // races node.tick() or the inbound handler. The HTTP write thread blocks for
+        // the result. This closes the write-vs-tick race (live even single-node).
+        ConfigWriteService.RaftProposer proposer =
+                raftProposer(driver, DEFAULT_RAFT_GROUP, tickExecutor, PROPOSE_TIMEOUT_MS);
         // F-0054: default write rate limit = 10_000/s globally. Docs in
         // ADR-0017 and performance.md reflect this value; a startup line
         // prints the effective rate so operators can audit at boot.
@@ -665,6 +669,47 @@ public final class ConfigdServer {
     static java.util.function.BiConsumer<NodeId, RaftMessage> raftInboundHandler(
             MultiRaftDriver driver, int groupId, java.util.concurrent.Executor raftExecutor) {
         return (from, message) -> raftExecutor.execute(() -> driver.routeMessage(groupId, message));
+    }
+
+    /**
+     * R-01: builds the write proposer that marshals {@code driver.propose} onto the single Raft
+     * executor (the tick executor), so {@code node.propose} — which mutates the log / term /
+     * commitIndex and can call {@code applyCommitted -> stateMachine.apply} — never runs
+     * concurrently with {@code node.tick()} or the inbound handler on the non-synchronized
+     * {@link io.configd.raft.RaftNode}. The calling (HTTP write) thread blocks for the result.
+     * <p>
+     * Package-private static so the regression/stress test can drive the real marshalling
+     * decision. Reverting to a direct {@code driver.propose(...)} call reintroduces the
+     * write-vs-tick race (live even in single-node mode) and makes that test fail.
+     */
+    static ConfigWriteService.RaftProposer raftProposer(
+            MultiRaftDriver driver, int groupId,
+            java.util.concurrent.Executor raftExecutor, long timeoutMs) {
+        return (scope, command) -> {
+            java.util.concurrent.CompletableFuture<ProposalResult> f =
+                    new java.util.concurrent.CompletableFuture<>();
+            raftExecutor.execute(() -> {
+                try {
+                    f.complete(driver.propose(groupId, command));
+                } catch (Throwable t) {
+                    f.completeExceptionally(t);
+                }
+            });
+            try {
+                return f.get(timeoutMs, TimeUnit.MILLISECONDS) == ProposalResult.ACCEPTED;
+            } catch (java.util.concurrent.TimeoutException e) {
+                return false; // not accepted within the write budget
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                return false;
+            } catch (java.util.concurrent.ExecutionException e) {
+                Throwable cause = e.getCause();
+                if (cause instanceof RuntimeException re) {
+                    throw re; // preserve validation exceptions (e.g. IllegalArgumentException)
+                }
+                throw new RuntimeException("propose failed", cause);
+            }
+        };
     }
 
     private static void shutdownExecutor(ScheduledExecutorService exec, String name, int timeoutSec) {

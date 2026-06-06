@@ -3,8 +3,10 @@ package io.configd.server;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import io.configd.api.ConfigWriteService;
 import io.configd.common.Clock;
 import io.configd.common.NodeId;
 import io.configd.raft.AppendEntriesRequest;
@@ -35,16 +37,19 @@ import org.junit.jupiter.api.Test;
 
 /**
  * R-01 regression: the formally-verified, explicitly single-threaded {@link RaftNode}
- * ("No synchronization is used") must never have {@code tick()} and inbound
- * {@code handleMessage()}/{@code applyCommitted} run concurrently. The fix marshals inbound
- * routing onto the single tick executor (see {@link ConfigdServer#raftInboundHandler}).
+ * ("No synchronization is used") must only ever be touched by ONE thread. The server has three
+ * node-access entry points that all run on different threads in the unfixed code:
+ * <ul>
+ *   <li>{@code tick()} — the "configd-tick" thread,</li>
+ *   <li>inbound {@code handleMessage()} — per-connection virtual threads, and</li>
+ *   <li>{@code propose()} (writes) — HTTP virtual threads.</li>
+ * </ul>
+ * The fix marshals BOTH inbound routing ({@link ConfigdServer#raftInboundHandler}) and proposals
+ * ({@link ConfigdServer#raftProposer}) onto the single tick executor.
  *
- * <p>These tests drive the REAL production handler so they discriminate: reverting the marshalling
- * (handler calling {@code driver.routeMessage(...)} directly instead of via
- * {@code raftExecutor.execute(...)}) makes both tests fail.
- *
- * <p>Setup uses a single-node cluster, which self-elects to LEADER purely by ticking past the
- * election timeout (no peer votes needed), keeping the harness deterministic.
+ * <p>These tests drive the REAL production seams, so they discriminate: reverting either seam to a
+ * direct {@code driver.routeMessage}/{@code driver.propose} call makes them fail. Setup uses a
+ * single-node cluster, which self-elects to LEADER purely by ticking past the election timeout.
  */
 class RaftInboundMarshallingTest {
 
@@ -65,7 +70,6 @@ class RaftInboundMarshallingTest {
         NodeId id = NodeId.of(1);
         RaftConfig config = RaftConfig.of(id, Set.of()); // single-node cluster
         RaftNode node = new RaftNode(config, new RaftLog(), transport, sm, new java.util.Random(42));
-        // Drive the election on the raft thread so the node is only ever touched there.
         raftExecutor.submit(() -> {
             for (int i = 0; i < 400; i++) {
                 node.tick();
@@ -75,16 +79,100 @@ class RaftInboundMarshallingTest {
         return node;
     }
 
-    /** A stale-term AppendEntries — a single-node leader (term >= 1) rejects it and replies, so
-     *  feeding it always produces inbound work (a {@code transport.send}). */
+    private static MultiRaftDriver driverFor(RaftNode node) {
+        MultiRaftDriver driver = new MultiRaftDriver(NodeId.of(1), Clock.system());
+        driver.addGroup(GROUP, node);
+        return driver;
+    }
+
+    /** A stale-term AppendEntries — a leader (term >= 1) rejects it and replies, producing a send. */
     private static AppendEntriesRequest staleAppendEntries() {
         return new AppendEntriesRequest(0L, NodeId.of(2), 0L, 0L, List.of(), 0L);
     }
 
+    private static byte[] cmd(String s) {
+        return s.getBytes(StandardCharsets.UTF_8);
+    }
+
     /**
-     * Deterministic discriminator: inbound routing MUST execute on the raft executor thread, not on
-     * the caller's thread. Passes with the fix; fails deterministically if reverted.
+     * Concurrency stress: drive {@code tick()} on the raft executor while two other threads flood
+     * inbound messages AND proposals through the production seams. A shared sentinel (across
+     * {@code send} + {@code apply}) detects any concurrent RaftNode access. With the fix everything
+     * serializes on the raft executor → clean; without it the flood threads race the tick thread.
      */
+    @Test
+    void concurrentTickInboundAndProposeAreSerializedOnTheRaftExecutor() throws Exception {
+        ScheduledExecutorService raftExecutor = raftExecutor();
+        try {
+            Sentinel sentinel = new Sentinel();
+            RaftNode node = buildLeader(new SentinelTransport(sentinel),
+                    new SentinelStateMachine(sentinel), raftExecutor);
+            MultiRaftDriver driver = driverFor(node);
+
+            var inbound = ConfigdServer.raftInboundHandler(driver, GROUP, raftExecutor);
+            ConfigWriteService.RaftProposer proposer =
+                    ConfigdServer.raftProposer(driver, GROUP, raftExecutor, 2000);
+
+            // tick on the raft executor — the in-confinement entry point.
+            ScheduledFuture<?> ticker = raftExecutor.scheduleAtFixedRate(() -> {
+                try {
+                    node.tick();
+                } catch (Throwable ignore) {
+                    // best-effort load generator; assertions live in the sentinel
+                }
+            }, 0, 1, TimeUnit.MILLISECONDS);
+
+            AtomicReference<Throwable> floodError = new AtomicReference<>();
+            CountDownLatch ready = new CountDownLatch(2);
+            CountDownLatch go = new CountDownLatch(1);
+
+            Thread inboundFlood = new Thread(() -> {
+                ready.countDown();
+                await(go);
+                AppendEntriesRequest stale = staleAppendEntries();
+                try {
+                    for (int i = 0; i < 12_000; i++) {
+                        inbound.accept(NodeId.of(2), stale);
+                    }
+                } catch (Throwable t) {
+                    floodError.compareAndSet(null, t);
+                }
+            }, "inbound-flood");
+
+            Thread proposeFlood = new Thread(() -> {
+                ready.countDown();
+                await(go);
+                try {
+                    for (int i = 0; i < 3_000; i++) {
+                        proposer.propose(null, cmd("w" + i)); // off-executor write
+                    }
+                } catch (Throwable t) {
+                    floodError.compareAndSet(null, t);
+                }
+            }, "propose-flood");
+
+            inboundFlood.start();
+            proposeFlood.start();
+            assertTrue(ready.await(5, TimeUnit.SECONDS), "flood threads should start");
+            go.countDown();
+            inboundFlood.join(60_000);
+            proposeFlood.join(60_000);
+            assertFalse(inboundFlood.isAlive(), "inbound flood should finish");
+            assertFalse(proposeFlood.isAlive(), "propose flood should finish");
+            assertNull(floodError.get(), () -> "flood thread threw: " + floodError.get());
+
+            ticker.cancel(false);
+            raftExecutor.submit(() -> { }).get(30, TimeUnit.SECONDS); // drain queued tasks
+
+            assertFalse(sentinel.raceDetected(),
+                    "R-01: tick()/inbound/propose accessed the RaftNode concurrently (observed "
+                            + sentinel.maxConcurrency() + " concurrent entries)");
+        } finally {
+            raftExecutor.shutdownNow();
+        }
+    }
+
+    /** Deterministic discriminator for the INBOUND seam: routing must run on the raft executor. */
     @Test
     void inboundRoutingIsMarshalledOntoTheRaftExecutorThread() throws Exception {
         ScheduledExecutorService raftExecutor = raftExecutor();
@@ -96,13 +184,9 @@ class RaftInboundMarshallingTest {
                 sent.countDown();
             };
             RaftNode node = buildLeader(transport, new NoopStateMachine(), raftExecutor);
-            // Single-node election sends nothing (no peers): no send recorded yet.
             assertEquals(1, sent.getCount(), "election must not have produced a send");
 
-            MultiRaftDriver driver = new MultiRaftDriver(NodeId.of(1), Clock.system());
-            driver.addGroup(GROUP, node);
-            var handler = ConfigdServer.raftInboundHandler(driver, GROUP, raftExecutor);
-
+            var handler = ConfigdServer.raftInboundHandler(driverFor(node), GROUP, raftExecutor);
             String callerThread = Thread.currentThread().getName();
             handler.accept(NodeId.of(2), staleAppendEntries());
 
@@ -110,76 +194,44 @@ class RaftInboundMarshallingTest {
             assertEquals(RAFT_THREAD, sendThread.get(),
                     "R-01: inbound routing must run on the raft executor thread, not the caller ("
                             + callerThread + ")");
-            assertNotEquals(callerThread, sendThread.get(),
-                    "R-01: inbound routing ran on the caller thread — the marshalling fix is missing");
+            assertNotEquals(callerThread, sendThread.get());
         } finally {
             raftExecutor.shutdownNow();
         }
     }
 
-    /**
-     * Concurrency stress (the gate's named test): drive {@code tick()}+{@code propose()} on the raft
-     * executor while a separate thread floods inbound messages through the production handler. A
-     * shared sentinel (across {@code send} + {@code apply}) detects any concurrent RaftNode access.
-     * With the fix everything serializes on the raft executor → clean; without it the flood thread
-     * races the tick thread → the sentinel trips.
-     */
+    /** Deterministic discriminator for the PROPOSE seam: node.propose must run on the raft executor. */
     @Test
-    void concurrentTickAndInboundDoNotRaceTheNode() throws Exception {
+    void proposeIsMarshalledOntoTheRaftExecutorThread() throws Exception {
         ScheduledExecutorService raftExecutor = raftExecutor();
         try {
-            Sentinel sentinel = new Sentinel();
-            SentinelTransport transport = new SentinelTransport(sentinel);
-            SentinelStateMachine sm = new SentinelStateMachine(sentinel);
-            RaftNode node = buildLeader(transport, sm, raftExecutor);
+            ThreadRecordingStateMachine sm = new ThreadRecordingStateMachine();
+            RaftNode node = buildLeader(new NoopTransport(), sm, raftExecutor);
+            // The election's no-op commit applies on the raft executor; ignore it.
+            sm.reset();
 
-            MultiRaftDriver driver = new MultiRaftDriver(NodeId.of(1), Clock.system());
-            driver.addGroup(GROUP, node);
-            var handler = ConfigdServer.raftInboundHandler(driver, GROUP, raftExecutor);
+            ConfigWriteService.RaftProposer proposer =
+                    ConfigdServer.raftProposer(driverFor(node), GROUP, raftExecutor, 5000);
 
-            // tick + propose on the raft executor — generates frequent applyCommitted activity.
-            AtomicLong cmd = new AtomicLong();
-            ScheduledFuture<?> ticker = raftExecutor.scheduleAtFixedRate(() -> {
-                try {
-                    node.propose(("c" + cmd.incrementAndGet()).getBytes(StandardCharsets.UTF_8));
-                    node.tick();
-                } catch (Throwable ignore) {
-                    // best-effort load generator; assertions live in the sentinel
-                }
-            }, 0, 1, TimeUnit.MILLISECONDS);
+            String callerThread = Thread.currentThread().getName();
+            boolean accepted = proposer.propose(null, cmd("hello")); // single-node commits + applies
+            assertTrue(accepted, "single-node leader should accept the proposal");
 
-            // Inbound flood from a distinct thread, through the PRODUCTION handler.
-            final int floodIterations = 20_000;
-            CountDownLatch started = new CountDownLatch(1);
-            AtomicReference<Throwable> floodError = new AtomicReference<>();
-            Thread flood = new Thread(() -> {
-                started.countDown();
-                AppendEntriesRequest stale = staleAppendEntries();
-                try {
-                    for (int i = 0; i < floodIterations; i++) {
-                        handler.accept(NodeId.of(2), stale);
-                    }
-                } catch (Throwable t) {
-                    floodError.set(t);
-                }
-            }, "inbound-flood");
-            flood.start();
-            assertTrue(started.await(5, TimeUnit.SECONDS), "flood thread should start");
-            flood.join(30_000);
-            assertFalse(flood.isAlive(), "flood thread should finish");
-            assertEquals(null, floodError.get(), "flood thread threw");
-
-            ticker.cancel(false);
-            // Drain any inbound tasks still queued on the raft executor (the fix path enqueues them).
-            raftExecutor.submit(() -> { }).get(30, TimeUnit.SECONDS);
-
-            assertFalse(sentinel.raceDetected(),
-                    "R-01: tick() and inbound handleMessage() accessed the RaftNode concurrently "
-                            + "(observed " + sentinel.maxConcurrency() + " concurrent entries)");
-            assertFalse(sm.doubleApplied(),
-                    "R-01: stateMachine.apply double-entered (concurrent applyCommitted)");
+            String applyThread = sm.lastApplyThread();
+            assertEquals(RAFT_THREAD, applyThread,
+                    "R-01: node.propose()/apply must run on the raft executor thread, not the caller ("
+                            + callerThread + ")");
+            assertNotEquals(callerThread, applyThread);
         } finally {
             raftExecutor.shutdownNow();
+        }
+    }
+
+    private static void await(CountDownLatch latch) {
+        try {
+            latch.await();
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
         }
     }
 
@@ -224,7 +276,7 @@ class RaftInboundMarshallingTest {
         public void send(NodeId target, RaftMessage message) {
             sentinel.enter();
             try {
-                // no-op: we only care that send() is a node-access touchpoint
+                // node-access touchpoint
             } finally {
                 sentinel.exit();
             }
@@ -233,8 +285,6 @@ class RaftInboundMarshallingTest {
 
     private static final class SentinelStateMachine implements StateMachine {
         private final Sentinel sentinel;
-        private final java.util.Set<Long> applied = java.util.concurrent.ConcurrentHashMap.newKeySet();
-        private final AtomicBoolean doubleApplied = new AtomicBoolean(false);
 
         SentinelStateMachine(Sentinel sentinel) {
             this.sentinel = sentinel;
@@ -244,9 +294,7 @@ class RaftInboundMarshallingTest {
         public void apply(long index, long term, byte[] command) {
             sentinel.enter();
             try {
-                if (!applied.add(index)) {
-                    doubleApplied.set(true);
-                }
+                // node-access touchpoint
             } finally {
                 sentinel.exit();
             }
@@ -260,9 +308,31 @@ class RaftInboundMarshallingTest {
         @Override
         public void restoreSnapshot(byte[] snapshot) {
         }
+    }
 
-        boolean doubleApplied() {
-            return doubleApplied.get();
+    private static final class ThreadRecordingStateMachine implements StateMachine {
+        private final AtomicReference<String> lastApplyThread = new AtomicReference<>();
+
+        @Override
+        public void apply(long index, long term, byte[] command) {
+            lastApplyThread.set(Thread.currentThread().getName());
+        }
+
+        @Override
+        public byte[] snapshot() {
+            return new byte[0];
+        }
+
+        @Override
+        public void restoreSnapshot(byte[] snapshot) {
+        }
+
+        void reset() {
+            lastApplyThread.set(null);
+        }
+
+        String lastApplyThread() {
+            return lastApplyThread.get();
         }
     }
 
@@ -278,6 +348,12 @@ class RaftInboundMarshallingTest {
 
         @Override
         public void restoreSnapshot(byte[] snapshot) {
+        }
+    }
+
+    private static final class NoopTransport implements RaftTransport {
+        @Override
+        public void send(NodeId target, RaftMessage message) {
         }
     }
 }
