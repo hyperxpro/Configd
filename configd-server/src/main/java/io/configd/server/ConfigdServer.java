@@ -28,6 +28,7 @@ import io.configd.raft.RaftConfig;
 import io.configd.raft.RaftLog;
 import io.configd.raft.RaftNode;
 import io.configd.raft.RaftTransport;
+import io.configd.raft.RaftMessage;
 import io.configd.raft.ProposalResult;
 import io.configd.replication.MultiRaftDriver;
 import io.configd.store.Compactor;
@@ -251,10 +252,48 @@ public final class ConfigdServer {
         MultiRaftDriver driver = new MultiRaftDriver(config.nodeId(), clock);
         driver.addGroup(DEFAULT_RAFT_GROUP, raftNode);
 
-        // Register inbound message handler on TCP transport
+        // ---------------------------------------------------------------
+        // F-0023 + R-01: Create three dedicated single-threaded executors
+        // HERE — before wiring the transport — so the inbound Raft handler
+        // can marshal onto the tick executor. They isolate three latency
+        // domains:
+        //   - tickExecutor: consensus progress (MUST NOT be blocked). This
+        //     single thread drives RaftNode.tick() AND inbound
+        //     RaftNode.handleMessage()/applyCommitted (R-01), so the
+        //     non-synchronized RaftNode is only ever touched by one thread.
+        //   - readDispatchExecutor: HTTP read handler marshalling
+        //   - tlsReloadExecutor: slow cert I/O
+        //
+        // CRITICAL invariant (F-0010 + R-01): ALL RaftNode access — ticks,
+        // inbound messages, and ReadIndexState reads — happens ONLY on the
+        // tick thread. readDispatchExecutor and the inbound handler never
+        // touch the node directly; they marshal via `tickExecutor.execute(...)`.
+        // ---------------------------------------------------------------
+        ScheduledExecutorService tickExecutor = Executors.newSingleThreadScheduledExecutor(r -> {
+            Thread t = new Thread(r, "configd-tick");
+            t.setDaemon(true);
+            return t;
+        });
+        ScheduledExecutorService readDispatchExecutor = Executors.newSingleThreadScheduledExecutor(r -> {
+            Thread t = new Thread(r, "configd-read-dispatch");
+            t.setDaemon(true);
+            return t;
+        });
+        ScheduledExecutorService tlsReloadExecutor = Executors.newSingleThreadScheduledExecutor(r -> {
+            Thread t = new Thread(r, "configd-tls-reload");
+            t.setDaemon(true);
+            return t;
+        });
+
+        // Register inbound message handler on TCP transport.
+        // R-01: marshal inbound routing onto the single tick executor so
+        // node.handleMessage() (and applyCommitted -> stateMachine.apply)
+        // never runs concurrently with node.tick() on the non-synchronized
+        // RaftNode. Registration stays BEFORE start() so the handler is
+        // published before the accept loop begins.
         if (tcpTransport != null) {
             RaftTransportAdapter adapter = (RaftTransportAdapter) transport;
-            adapter.registerInboundHandler((from, message) -> driver.routeMessage(DEFAULT_RAFT_GROUP, message));
+            adapter.registerInboundHandler(raftInboundHandler(driver, DEFAULT_RAFT_GROUP, tickExecutor));
             try {
                 tcpTransport.start();
             } catch (Exception e) {
@@ -379,33 +418,9 @@ public final class ConfigdServer {
         ConfigWriteService writeService = new ConfigWriteService(proposer, null, rateLimiter,
                 () -> raftNode.leaderId());
 
-        // ---------------------------------------------------------------
-        // F-0023: Create three dedicated single-threaded executors. They
-        // isolate three latency domains:
-        //   - tickExecutor: consensus progress (MUST NOT be blocked)
-        //   - readDispatchExecutor: HTTP read handler marshalling
-        //   - tlsReloadExecutor: slow cert I/O
-        //
-        // CRITICAL invariant (F-0010): ReadIndexState access is ONLY from
-        // the tick thread. readDispatchExecutor never touches it directly
-        // — it only marshals dispatch requests from HTTP threads to the
-        // tick thread via `tickExecutor.execute(...)`.
-        // ---------------------------------------------------------------
-        ScheduledExecutorService tickExecutor = Executors.newSingleThreadScheduledExecutor(r -> {
-            Thread t = new Thread(r, "configd-tick");
-            t.setDaemon(true);
-            return t;
-        });
-        ScheduledExecutorService readDispatchExecutor = Executors.newSingleThreadScheduledExecutor(r -> {
-            Thread t = new Thread(r, "configd-read-dispatch");
-            t.setDaemon(true);
-            return t;
-        });
-        ScheduledExecutorService tlsReloadExecutor = Executors.newSingleThreadScheduledExecutor(r -> {
-            Thread t = new Thread(r, "configd-tls-reload");
-            t.setDaemon(true);
-            return t;
-        });
+        // (Tick / read-dispatch / TLS-reload executors are created earlier,
+        // right after the multi-raft driver, so the inbound Raft handler can
+        // marshal onto the tick executor — see the F-0023 + R-01 block above.)
 
         // ---------------------------------------------------------------
         // Wire config read service with linearizable read support
@@ -633,6 +648,23 @@ public final class ConfigdServer {
         LOG.log(Level.SEVERE,
                 "tick loop unhandled throwable: class=" + simpleName + " bucket=" + label,
                 t);
+    }
+
+    /**
+     * R-01: builds the inbound Raft message handler that marshals routing onto
+     * the single Raft executor (the tick executor), so {@code node.handleMessage}
+     * — and the {@code applyCommitted -> stateMachine.apply} it can trigger —
+     * never runs concurrently with {@code node.tick()} on the explicitly
+     * non-synchronized {@link io.configd.raft.RaftNode} (ADR-0009).
+     * <p>
+     * Package-private static so the regression/stress test can exercise the
+     * real marshalling decision directly without standing up a whole server.
+     * Reverting this to a direct {@code driver.routeMessage(...)} call (dropping
+     * {@code raftExecutor.execute}) reintroduces the race and makes that test fail.
+     */
+    static java.util.function.BiConsumer<NodeId, RaftMessage> raftInboundHandler(
+            MultiRaftDriver driver, int groupId, java.util.concurrent.Executor raftExecutor) {
+        return (from, message) -> raftExecutor.execute(() -> driver.routeMessage(groupId, message));
     }
 
     private static void shutdownExecutor(ScheduledExecutorService exec, String name, int timeoutSec) {
