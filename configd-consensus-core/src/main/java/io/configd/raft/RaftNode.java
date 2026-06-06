@@ -1357,13 +1357,17 @@ public final class RaftNode {
         while (log.lastApplied() < log.commitIndex()) {
             long nextApply = log.lastApplied() + 1;
 
-            // INV-5: VersionMonotonicity — applied index must advance monotonically
-            invariantChecker.check("version_monotonicity",
-                    nextApply > log.lastApplied(),
-                    "Apply index " + nextApply + " not > lastApplied " + log.lastApplied());
-
             LogEntry entry = log.entryAt(nextApply);
             if (entry != null) {
+                // INV-5: VersionMonotonicity — the entry we are about to apply must carry an
+                // index strictly greater than lastApplied. entry.index() comes from the log
+                // (independent of the nextApply computation), so a log returning a stale/wrong
+                // entry trips this. (A2/R-05c: the previous form `nextApply > lastApplied` with
+                // nextApply := lastApplied + 1 was locally vacuous and could never fire.)
+                invariantChecker.check("version_monotonicity",
+                        entry.index() > log.lastApplied(),
+                        "Apply entry index " + entry.index() + " not > lastApplied " + log.lastApplied());
+
                 // INV-4: StateMachineSafety — entry at this index must match across nodes
                 // (structural guarantee from Raft log matching; assert entry consistency)
                 invariantChecker.check("state_machine_safety",
