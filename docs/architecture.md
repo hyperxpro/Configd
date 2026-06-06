@@ -180,6 +180,14 @@ Each regional group has non-voting replicas in other regions for:
 
 ## 5. Multi-Region Strategy
 
+> ⚠️ **SUPERSEDED by ADR-0030 (2026-06-06, Session 0).** This section describes a multi-region /
+> hierarchical-Raft *write* topology (core/regional/edge tiers, non-voting global replicas,
+> closed-timestamp follower reads) that is **unimplemented** (`docs/STATE-OF-REALITY.md §4.1`: one
+> Raft group; no `region`/`non-voting`/`closedTimestamp` in `src/main`) and whose *write* topology
+> is **rejected** by `docs/decisions/adr-0030-quicksilver-shaped-topology.md` in favor of a
+> Quicksilver-shaped centralized-write + async-edge-fan-out design. Retained for historical context
+> only; do not treat the tiers/RTT matrices/follower-read mechanics below as the current design.
+
 ### Region Tiers
 | Tier | Role | Example |
 |---|---|---|

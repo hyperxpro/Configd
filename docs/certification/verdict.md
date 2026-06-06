@@ -1,5 +1,12 @@
 # Terminal Certification Verdict
 
+> ⚠️ **STALE / SUPERSEDED EVIDENCE (annotated 2026-06-06, Session 0).** Point-in-time artifact, not
+> current proof. The "20,132 tests" below is historical — the live count is **21,394**
+> (`verification-runs/state-of-reality/live-mvn-test.log`); do not cite it as a current quality
+> signal. The "TLC … 13.8M states" row is itself marked *"Not re-run"* below and is NOT current
+> evidence (a live TLC re-run is recorded in `docs/READINESS-LEDGER.md`;
+> `docs/STATE-OF-REALITY.md §4.7`). Authoritative assessment: `docs/STATE-OF-REALITY.md`.
+
 ## Commit certified
 
 HEAD (all fixes applied and verified)
@@ -41,7 +48,7 @@ The WAL crash-safety bug (CERT-0004) and simulation determinism bug (CERT-0007) 
 | Claim | Re-verified | Result |
 |---|---|---|
 | TLC model check: 8 invariants PASS over 13.8M states | Not re-run (requires TLC tooling) | Accepted — spec itself was correct; the divergence was in the implementation |
-| 20,132 unit/property tests pass | Re-run after fixes | All tests pass (0 failures, 0 errors) |
+| 20,132 unit/property tests pass *(count historical; live **21,394**)* | Re-run after fixes | All tests pass (0 failures, 0 errors) |
 | Deterministic simulation | **INVALIDATED** | PRNG was not seeded (CERT-0007). All prior "deterministic" results are non-reproducible. |
 
 ### Critical test gaps identified and filled

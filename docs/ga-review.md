@@ -2,6 +2,12 @@
 
 **Status:** REVIEW — NOT SIGNED.
 
+> ⚠️ **Suite-size + TLC claims relabeled 2026-06-06 (Session 0).** The "20,149 tests" figure in
+> the Test-pyramid row is historical and uncited; the live count is **21,394**
+> (`verification-runs/state-of-reality/live-mvn-test.log`) — do not use a suite-size number here as
+> a quality signal. Any claim that TLC passes on all three specs is an overclaim: CI runs only
+> `ConsensusSpec` (`docs/STATE-OF-REALITY.md §3, §4.7`). See `docs/READINESS-LEDGER.md`.
+
 This document records the gate-by-gate state of the v0.1 GA hardening
 pass at end of Phase 11 (2026-04-17). It is a measurement, not an
 approval. Per the autonomous-loop directive, calendar-bounded gates

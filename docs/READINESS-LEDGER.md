@@ -16,8 +16,8 @@
 >
 > **Plan of record:** `PRODUCTION-READINESS-PLAN.md` (repo root).
 
-**Last updated:** 2026-06-06 — Session S (scaffolding); ledger renamed `PROGRESS.md` →
-`READINESS-LEDGER.md`. No code/spec/test changed.
+**Last updated:** 2026-06-06 — Session 0 (topology ADR-0030 + doc decontamination) on branch
+`session-0-topology-adr`, committed pre-merge for review. No code/spec/test changed.
 
 ---
 
@@ -103,11 +103,17 @@ is driven thread-unsafely by the server, with no test exercising it (Risk **R-01
 | **R-03** | Edge data plane unverified against any live pipeline — fan-out is a write-only sink. | 🟠 | OPEN | **B1/B2/B3** | `FanOutBuffer.append` `ConfigdServer.java:301` with no draining reader; `broadcast()` benchmark-only. |
 | **R-04** | "Linearizability verified" with no history checker — `LinearizabilityTest` is scripted single-threaded. | 🟠 | OPEN | **A3** | grep Knossos/Elle/Wing-Gong/Porcupine → 0. |
 | **R-05** | Green ≠ coverage — count inflation (~20k of 21,394 = one parameterized test), unseeded per-node election RNG, vacuous TLA invariants, misnamed reconfig test. | 🟠 | OPEN | **A2** (vacuous invariants) + **A4** (seed sweep, misnamed test) | `ConsistencyPropertyTests.java:77` unseeded; `ReadIndexSpec.tla:237,251` & `SnapshotInstallSpec.tla:173` tautological; `ReconfigurationTest.java:257-270` vacuous. |
-| **R-06** | Multi-region / hierarchical Raft is a deploy-shaped false promise. | 🟠 | OPEN | **Session 0** (decision/ADR) + docs | `architecture.md:181-205` vs one group `ConfigdServer.java:251-252`; `research.md:618` self-contradicts. |
+| **R-06** | Multi-region / hierarchical Raft is a deploy-shaped false promise. | 🟠 | **DECIDED (Session 0)** — docs reconciled; orphan-code removal owed to Phase B | ADR-0030 rejects WAN write consensus; `architecture.md §5` + `adr-0015` marked **Superseded by ADR-0030**. Orphaned multi-region/edge code still present (removal = Phase B). |
 | **R-07** | Latent store hazards become live under R-01: R-1 unclone'd `byte[]`, W-1 unenforced single-writer, W-2 non-volatile getters. | 🟡 | OPEN | **A4** | `ReadResult.java:56-58`; single-writer unguarded; `ConfigStateMachine` public getters. |
-| **R-08** | Perf "SURPASSES Quicksilver 4/4" + stack assumptions unbacked (Netty/JCTools/ZGC not present). | 🟡 | OPEN | **Session 0** (relabel) + **C1** (measure) | `gap-analysis.md:243-252`; `performance.md` "MODELED, NOT MEASURED"; no `io.netty`/`org.jctools` in `src/main`. |
+| **R-08** | Perf "SURPASSES Quicksilver 4/4" + stack assumptions unbacked (Netty/JCTools/ZGC not present). | 🟡 | **PARTIAL** — live scorecards relabeled MODELED (Session 0); measurement owed to **C1** | `gap-analysis.md §6` + `performance.md §11` SURPASSES→MODELED; suite-size pinned 21,394 + stale TLC citations flagged in `final-report.md`/`verdict.md`/`ga-review.md`/`ga-approval.md`. Stack still absent; measurement pending C1. |
+| **R-09** | Write availability does NOT meet §0.1 99.999% under **full-region** loss — single-region root, manual standby cutover (A2 covers AZ loss only). A busted §0.1 target. | 🔴 | OPEN | **Phase B** (`adr-0024` v0.2 region failover) + **ADR-0031** (target renegotiation, human-gated) | ADR-0030 "SLO impact" subsection; Amendment A2; ADR-0031 stub. |
+| **R-10** | `GLOBAL`/security keys need a fail-closed linearizable strong-read path (INV-1) — not wired: no strong-read key class, no fail-closed enforcement, no testable contract entry. | 🟠 | OPEN | **Phase B** (testable `consistency-contract.md` entry) | ADR-0030 INV-1 / Amendment A1. |
+| **R-11** | Data residency unsolved — single global root non-compliant for hard-localization data classes (INV-2); needs a deploy-time guardrail. | 🟠 | OPEN | **Phase B** (deploy guardrail) + `adr-0024` v0.2 per-jurisdiction roots | ADR-0030 INV-2 / Amendment A3. |
 
-**New seams discovered after baseline:** _(none yet — append R-09+ here as found)_
+**New risks from Session 0 (topology-decision residuals):** R-09 (full-region write-availability §0.1
+violation), R-10 (GLOBAL-key fail-closed strong-read, INV-1), R-11 (data residency, INV-2) — all
+OPEN, owned by Phase B. These are accepted topology trade-offs, not verified-but-untested-integration
+*seams* (no new cross-thread seam found this session).
 
 ---
 
@@ -135,6 +141,44 @@ is driven thread-unsafely by the server, with no test exercising it (Risk **R-01
 - **Open follow-up for the next session:** the next session (whichever is launched) must still run
   its own "Before anything" reads of `STATE-OF-REALITY.md` + the relevant `findings-*.md` and
   treat them as claims to verify.
+
+### Session 0 — Topology decision (ADR-0030) + doc decontamination (2026-06-06)
+- **Mode:** agent team — 3 Opus teammates (`prior-art-researcher`, `topology-architect`,
+  `devils-advocate`) investigating independently then cross-examining; lead orchestrated ordering
+  and did the mechanical decontamination directly. Branch: `session-0-topology-adr`. No
+  code/spec/test changed.
+- **Decision:** adopt a **Quicksilver-shaped topology** — one centralized strongly-consistent Raft
+  root + asynchronous bounded-staleness edge fan-out; **reject** global multi-region / hierarchical
+  Raft *write* consensus. Recorded as **ADR-0030** (Status: Proposed; all three teammates SIGN-OFF).
+  Stub **ADR-0031** opens the §0.1 write-availability-target renegotiation (human-gated).
+- **Cross-examination was real, not ceremonial:** ordering enforced — the architect did not draft
+  the ADR until researcher + adversary both reported. Round-3 sign-off caught the architect
+  **fabricating a §0.2 non-goal** ("not a low-latency regional write store") to prop up the #3
+  rebuttal; struck after the devils-advocate flagged it (verified `grep -c` = 0). Researcher
+  independently confirmed all latency math/citations faithful; nothing `[UNVERIFIED]` promoted to fact.
+- **Three forced amendments (honest engagement, not a clean win):** A1 `GLOBAL`/security strong-read
+  key class (→ INV-1); A2 multi-AZ root for automatic AZ-loss survival; A3 residency explicitly
+  deferred (→ INV-2). Four adversary points booked as honest residuals → new risks **R-09/R-10/R-11**.
+- **Decontamination diff (lead, mechanical):**
+  - `gap-analysis.md §6` + `performance.md §11` scorecards: "SURPASSES / 4-of-4 / Measured" →
+    **MODELED, NOT MEASURED** (verdicts withdrawn pending C1).
+  - `architecture.md §5` (Multi-Region Strategy) + `adr-0015` (Status: Accepted → **Superseded by
+    ADR-0030**) marked superseded.
+  - Suite-size pinned to live **21,394** (evidence `verification-runs/state-of-reality/live-mvn-test.log`)
+    in `final-report.md`, `certification/verdict.md`, `ga-review.md`, `ga-approval.md`; historical
+    20,132/20,149/21,246/21,285 flagged as point-in-time. (Dated review/audit/prr snapshots left as
+    historical record, superseded by this pin.)
+  - Stale TLA+ artifact citations (`verification-runs/tlc-rerun.log`) struck/flagged in
+    `final-report.md:93,310`; `verdict.md` TLC row noted as "Not re-run / not current evidence".
+- **Evidence:** `[VERIFIED-PASS]` — `docs/decisions/adr-0030-*.md` + `adr-0031-*.md` exist; ADR-0030
+  Status=Proposed with 3× SIGN-OFF; fabricated §0.2 item `grep -c` = 0. Findings persisted under
+  `verification-runs/session-0/`. No code/spec/test ran (nothing modified).
+- **Component re-classification:** none (no component code touched). R-06 → DECIDED (docs reconciled;
+  orphan-code removal = Phase B); R-08 → PARTIAL (live scorecards relabeled; measurement = C1).
+- **Stop point / human gates:** committed on branch `session-0-topology-adr`; **stops for human
+  review before merge.** Pending human ratification: the §0.1 write-availability KNOWN VIOLATION
+  (R-09) via ADR-0031. Teammates left idle + resumable (not cleaned up) in case review needs ADR
+  changes. INV-1/INV-2 enforcement + orphan-code removal are Phase B obligations.
 
 <!-- Append new session entries ABOVE this line, newest-first or newest-last (pick one and keep it
      consistent). Each entry: Mode · What changed · Exit-gate command + pasted output · Component

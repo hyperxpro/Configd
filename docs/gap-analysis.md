@@ -242,14 +242,23 @@ These are not minor features — they are fundamental capabilities (multi-tenanc
 
 ## 6. Summary: Surpass-Quicksilver Scorecard
 
-| Axis | Quicksilver Baseline | Our Target | Measured/Verified | Status |
-|---|---|---|---|---|
-| **Write commit latency (p99, cross-region)** | ~500ms batch + unknown Raft | < 150ms | Raft commit CPU overhead: 1.23μs (3-node). Network-bound at 68ms RTT (us-east↔eu-west). Total: **~80ms p50, <150ms p99** | **SURPASSES** (no 500ms batch window) |
-| **Edge staleness (p99 propagation)** | "within seconds" (~2.3s unverified p99) | < 500ms global | Plumtree fan-out to 500 peers: 7.25μs CPU. 2-3 hops × 100ms inter-region = **~250ms p50, <500ms p99** | **SURPASSES** (push not pull) |
-| **Write throughput (sustained)** | ~350 writes/sec (30M/day) | 10K/s base, 100K/s burst | Raft commit: **815K ops/s** (3-node). HAMT put: 137ns/op. Per-group headroom: **>100K/s**. Multi-group: **linear scaling** | **SURPASSES** (2000× baseline) |
-| **Operational complexity** | Separate root Raft + Salt topology + custom replication tree | Zero external coordination | Embedded Raft. No external ZK/etcd. Single JAR. **Zero external coordination deps.** | **SURPASSES** |
+> ⚠️ **MODELED, NOT MEASURED — "SURPASSES" verdicts WITHDRAWN (relabeled 2026-06-06, Session 0).**
+> Every figure below is a CPU microbenchmark plus a constant-RTT network *model*, not an
+> end-to-end measurement. There is no cross-region soak, no cluster-level load test, and the
+> Plumtree fan-out the edge-staleness row assumes is **unwired** in `src/main`
+> (`docs/STATE-OF-REALITY.md §4.2`). The numbers are retained as *models*; the "SURPASSES / 4-of-4"
+> claims are withdrawn until JMH/soak artifacts exist under `perf/results/` (Phase C1). See
+> `docs/READINESS-LEDGER.md` R-08.
 
-**Scorecard: 4 of 4 axes surpassed, 0 regressions.** Meets the §0.3 "at least 3 of 4 with no regression" criterion.
+| Axis | Quicksilver Baseline | Our Target | Modeled (NOT measured) | Status |
+|---|---|---|---|---|
+| **Write commit latency (p99, cross-region)** | ~500ms batch + unknown Raft | < 150ms | Raft commit CPU overhead: 1.23μs (3-node). Network-bound at 68ms RTT (us-east↔eu-west). Total: **~80ms p50, <150ms p99** *(model)* | **MODELED — NOT MEASURED** |
+| **Edge staleness (p99 propagation)** | "within seconds" (~2.3s unverified p99) | < 500ms global | Plumtree fan-out to 500 peers: 7.25μs CPU. 2-3 hops × 100ms inter-region = **~250ms p50, <500ms p99** *(model; fan-out unwired)* | **MODELED — NOT MEASURED** |
+| **Write throughput (sustained)** | ~350 writes/sec (30M/day) | 10K/s base, 100K/s burst | Raft commit: **815K ops/s** (3-node, CPU-only). HAMT put: 137ns/op. Per-group headroom: **>100K/s** *(in-process, not cluster)* | **MODELED — NOT MEASURED** |
+| **Operational complexity** | Separate root Raft + Salt topology + custom replication tree | Zero external coordination | Embedded Raft. No external ZK/etcd. Single JAR. **Zero external coordination deps.** | **ARCHITECTURAL (inspectable, not benchmarked)** |
+
+**Scorecard: MODELED only — no axis is measured-surpassed.** The "4 of 4 surpassed" verdict is
+withdrawn pending Phase C1 measurement; §0.3 evaluation is deferred to committed measured artifacts.
 
 ---
 
