@@ -19,7 +19,10 @@ import java.util.concurrent.atomic.AtomicLong;
  * </ol>
  * <p>
  * Thread safety: methods are safe for concurrent access from API handler
- * threads. The underlying Raft propose is thread-safe (message passing).
+ * threads. The underlying {@code RaftNode.propose} is NOT itself thread-safe
+ * (the node is single-threaded by design); safety relies on the supplied
+ * {@link RaftProposer} marshalling the proposal onto the single Raft tick
+ * thread (see {@code ConfigdServer.raftProposer}; R-01).
  */
 public final class ConfigWriteService {
 

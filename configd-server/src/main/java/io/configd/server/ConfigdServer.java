@@ -681,6 +681,11 @@ public final class ConfigdServer {
      * Package-private static so the regression/stress test can drive the real marshalling
      * decision. Reverting to a direct {@code driver.propose(...)} call reintroduces the
      * write-vs-tick race (live even in single-node mode) and makes that test fail.
+     * <p>
+     * On {@code timeoutMs} expiry the call returns {@code false} (not accepted), but the queued
+     * task may still run {@code driver.propose} afterward — an at-least-once semantic that mirrors
+     * the read path's timeout handling and Raft's client-retry model. It does not violate the
+     * single-thread invariant.
      */
     static ConfigWriteService.RaftProposer raftProposer(
             MultiRaftDriver driver, int groupId,
