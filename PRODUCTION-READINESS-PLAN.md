@@ -12,9 +12,8 @@
 > data-plane design depends on the topology ADR.
 >
 > **Session playbook:** the prompt templates referenced below (§0 reusable template, §1 Session 0,
-> §2 Session A1, …) are provided by the operator in-session and are **not yet a committed repo
-> file**. Note `PROMPT.md` in the repo root is the *project mission* doc — a different document
-> that does not contain these templates. (Open: decide whether to persist the playbook in-repo.)
+> §2 Session A1, …) live in `docs/SESSION-PLAYBOOK.md`. Note `PROMPT.md` in the repo root is the
+> *project mission* doc — a different document that does not contain these templates.
 
 ---
 
@@ -70,7 +69,7 @@ conflicts) — optionally + one reviewer subagent.
 - **Exit gate:** `grep -rin "surpass\|measured\|verified" docs/` reviewed, no claim lacking a
   backing artifact; topology ADR committed with the devils-advocate's rejected-alternative analysis
   and all three teammates signed off in its Reviewers section.
-- **Maps to** `STATE-OF-REALITY.md §6.7` + §4.1/§4.5–4.7. Full prompt: session playbook §1.
+- **Maps to** `STATE-OF-REALITY.md §6.7` + §4.1/§4.5–4.7. Full prompt: `docs/SESSION-PLAYBOOK.md` §1.
 
 ---
 
@@ -92,7 +91,7 @@ under the concurrency it actually runs with. **A3 is the true Phase A gate.**
   `handleMessage()` can no longer run concurrently (post-fix call path).
 - **Also:** grep for other cross-thread seams where a verified component is invoked without
   marshalling (same failure class) → log as new R-rows.
-- **Closes** R-01 (and removes the trigger for W-1/W-2). Maps to `§6.1`. Full prompt: session playbook §2.
+- **Closes** R-01 (and removes the trigger for W-1/W-2). Maps to `§6.1`. Full prompt: `docs/SESSION-PLAYBOOK.md` §2.
 
 ### A2 — Real invariant net + de-vacuum the TLA proof  *(Solo)*
 - **Goal:** turn the runtime safety net back on, and make the formal proof constrain real state.

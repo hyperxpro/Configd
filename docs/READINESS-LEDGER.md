@@ -124,9 +124,9 @@ is driven thread-unsafely by the server, with no test exercising it (Risk **R-01
 - **Why:** the operator's session playbook opens every session with "read the ledger" and closes
   with "append to the ledger", and references `PRODUCTION-READINESS-PLAN.md` — but neither existed.
   This unblocks the plan without touching any verified surface.
-- **Finding (doc-vs-reality):** the session playbook is **not** a repo file — the on-disk
-  `PROMPT.md` is the project *mission* doc and contains no ledger references. The plan/ledger now
-  refer to "the session playbook" generically; persisting it in-repo is an open decision.
+- **Finding (doc-vs-reality):** the on-disk `PROMPT.md` is the project *mission* doc and contains
+  no ledger references — it is **not** the session playbook. The operator's session playbook is now
+  persisted as `docs/SESSION-PLAYBOOK.md` (its ledger references updated to this file's name).
 - **Evidence:** `[VERIFIED-PASS]` — `ls docs/READINESS-LEDGER.md PRODUCTION-READINESS-PLAN.md`
   lists both files; `ls docs/PROGRESS.md` returns no such file (rename complete). Creation/rename
   only; nothing else was run because nothing else was modified.
