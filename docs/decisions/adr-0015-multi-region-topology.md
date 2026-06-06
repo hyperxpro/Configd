@@ -1,7 +1,14 @@
 # ADR-0015: Multi-Region Topology with Region Tiers and Scope-Aware Placement
 
 ## Status
-Accepted
+**Superseded by ADR-0030** (write topology) — 2026-06-06. Previously: Accepted.
+
+The *write* topology in this ADR (global 5-voter cross-region Raft group, per-region write groups,
+closed-timestamp side-transport) is rejected by
+`adr-0030-quicksilver-shaped-topology.md` on cross-region write-latency (§0.1 `< 150 ms`) and
+operational-complexity grounds; it was never implemented (`docs/STATE-OF-REALITY.md §4.1`). The
+*read-locality concept* (follower reads via a safe/closed timestamp) is retained in spirit but
+delivered via async edge copies rather than in-Raft non-voting replicas.
 
 ## Context
 The system must support global deployment across 5+ regions with < 150ms p99 cross-region write commit, < 500ms p99 edge staleness, and < 1ms p99 edge reads. ZooKeeper was never designed for WAN deployment — ensemble across DCs requires RTT < 100ms p99, and observers cannot be auto-promoted or improve write throughput (gap-analysis.md section 2.5). Consul's WAN federation requires average RTT <= 50ms with p99 <= 100ms, eliminating intercontinental federation for many deployments (gap-analysis.md section 4.1). A single global Raft group imposes cross-region RTT on every write, making 10K/s throughput unachievable with realistic payloads.

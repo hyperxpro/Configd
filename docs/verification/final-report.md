@@ -1,5 +1,14 @@
 # Adversarial Verification — Final Report (Round 2)
 
+> ⚠️ **STALE / SUPERSEDED EVIDENCE (annotated 2026-06-06, Session 0).** This Round-2 report
+> (2026-04-16) is a point-in-time artifact, NOT current proof. (1) **Suite size:** the "21,246"
+> here (and "21,285" later) are historical; the live count is **21,394** (`./mvnw -fae test`;
+> evidence `verification-runs/state-of-reality/live-mvn-test.log`) — do not cite a count from this
+> doc as a current quality signal. (2) **TLA+:** the `verification-runs/tlc-rerun.log` citations
+> below reference a different machine tree and are NOT current evidence
+> (`docs/STATE-OF-REALITY.md §4.7`). The authoritative assessment is `docs/STATE-OF-REALITY.md`;
+> the live ledger is `docs/READINESS-LEDGER.md`.
+
 **System:** Configd — Globally distributed configuration store
 **Verifier:** Jepsen-class adversarial re-verification
 **Date:** 2026-04-16
@@ -90,7 +99,7 @@ pass: `TypeOK`, `ElectionSafety`, `StateMachineSafety`, `LeaderCompleteness`,
 `LogMatching`, `VersionMonotonicity`, `ReconfigSafety`, `SingleServerInvariant`,
 `NoOpBeforeReconfig`.
 
-Log: `verification-runs/tlc-rerun.log`.
+Log: ~~`verification-runs/tlc-rerun.log`~~ **[STALE — cross-machine artifact, not current evidence; see top banner / `docs/STATE-OF-REALITY.md §4.7`].**
 
 Residual spec gap: `EdgePropagationLiveness` remains commented out in
 `spec/ConsensusSpec.cfg` because TLC finds a spurious violation at the
@@ -307,7 +316,7 @@ F-V7-01) — all re-verified Closed. No regressions.
 
 ## Raw Artifacts
 
-- TLC log: `verification-runs/tlc-rerun.log`
+- TLC log: ~~`verification-runs/tlc-rerun.log`~~ **[STALE — not current evidence; see top banner]**
 - Maven baseline log: `verification-runs/mvn-test-baseline.log`
 - All finding files: `docs/verification/findings/F-NNNN.md`
 - Inventory: `docs/verification/inventory.md`

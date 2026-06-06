@@ -47,7 +47,7 @@ of the §4.7 honesty invariant and invalidates this approval.
 
 - [ ] **§6.1 Green test suite on the approved SHA.**
       Command: `./mvnw -T 1C test`
-      Expected: `BUILD SUCCESS`, `Tests run: ≥ 20132`.
+      Expected: `BUILD SUCCESS`, `Tests run: ≥ 21,394` (live count 2026-06-06; historically quoted as 20,132).
       Attach: surefire log line and the SHA the run was on.
       _Artifact / link:_ ____________________________________________
 

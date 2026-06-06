@@ -357,13 +357,20 @@ JAVA_HOME=/home/ubuntu/.sdkman/candidates/java/25.0.2-amzn \
 
 ---
 
-## 11. Surpass-Quicksilver Scorecard (Measured)
+## 11. Surpass-Quicksilver Scorecard (MODELED — NOT MEASURED)
 
-| Axis | Quicksilver Baseline | Our Target | Our Result | Status |
+> ⚠️ **Relabeled 2026-06-06 (Session 0): MODELED, NOT MEASURED. "SURPASSED" verdicts WITHDRAWN.**
+> The "Our Result" column is a constant-RTT latency model + in-process CPU microbenchmarks, not an
+> end-to-end measurement; the edge-staleness row depends on a fan-out path that is unwired in
+> `src/main` (`docs/STATE-OF-REALITY.md §4.2`). The numbers stay as *models*; no axis is
+> measured-surpassed. Re-evaluate only against committed JMH/soak artifacts under `perf/results/`
+> (Phase C1). See `docs/READINESS-LEDGER.md` R-08.
+
+| Axis | Quicksilver Baseline | Our Target | Modeled result (NOT measured) | Status |
 |---|---|---|---|---|
-| **Write commit latency (p99, cross-region)** | ~500ms (batched) | < 150ms | ~100ms (68ms RTT + 32ms overhead) | ✅ SURPASSED |
-| **Edge staleness (p99 propagation)** | ~2.3s (unverified) | < 500ms global | ~300-400ms (2-3 hop Plumtree) | ✅ SURPASSED |
-| **Write throughput (sustained)** | ~350 writes/sec | 10K/s base, 100K/s burst | 10K+/s per group × N groups | ✅ SURPASSED |
-| **Operational complexity** | External Raft + Salt + replication tree | Zero external coordination | Embedded Raft, single artifact | ✅ SURPASSED |
+| **Write commit latency (p99, cross-region)** | ~500ms (batched) | < 150ms | ~100ms (68ms RTT + 32ms overhead) *(model)* | **MODELED — NOT MEASURED** |
+| **Edge staleness (p99 propagation)** | ~2.3s (unverified) | < 500ms global | ~300-400ms (2-3 hop Plumtree) *(model; fan-out unwired)* | **MODELED — NOT MEASURED** |
+| **Write throughput (sustained)** | ~350 writes/sec | 10K/s base, 100K/s burst | 10K+/s per group × N groups *(in-process, not cluster)* | **MODELED — NOT MEASURED** |
+| **Operational complexity** | External Raft + Salt + replication tree | Zero external coordination | Embedded Raft, single artifact | **ARCHITECTURAL (inspectable, not benchmarked)** |
 
-**All four axes surpass baseline.** Scorecard requirement (≥3 of 4 with no regression) met.
+**No axis is measured-surpassed.** The "all four surpass" claim is withdrawn pending Phase C1 measurement.
