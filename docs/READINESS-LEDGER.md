@@ -16,8 +16,8 @@
 >
 > **Plan of record:** `PRODUCTION-READINESS-PLAN.md` (repo root).
 
-**Last updated:** 2026-06-06 — Session A1 (R-01 Raft event-loop serialization) on branch
-`session-a1-raft-race`, committed pre-merge for review. First code change of the effort.
+**Last updated:** 2026-06-06 — Session A2 (R-02 runtime invariant net + R-05c TLA de-vacuum) on
+branch `session-a2-invariant-net`, committed pre-merge for review.
 
 ---
 
@@ -86,7 +86,7 @@ in Session A1: all node access serialized onto the single tick thread). Full det
 | Component | Current classification | Baseline (2026-06-06) | Owning session(s) |
 |---|---|---|---|
 | consensus — Raft algorithm | `[VERIFIED-PASS]` (single-group) | same | — (solid; do not re-litigate) |
-| consensus — runtime invariant enforcement | `[VERIFIED-FAIL]` (NOOP in prod) | same | A2 |
+| consensus — runtime invariant enforcement | `[VERIFIED-PASS]` (wired to InvariantMonitor ✓ A2; fail-open metric + SEVERE log, observable at `/metrics`) | `[VERIFIED-FAIL]` (NOOP in prod) | A2 ✓ |
 | config-store (MVCC) | `[VERIFIED-PASS]` | same | A4 (latent R-1/W-1/W-2 hardening) |
 | edge-cache | `[EXISTS-UNTESTED]` (orphan) | same | B2 / B4 |
 | distribution (Plumtree/HyParView fan-out) | `[EXISTS-UNTESTED]` (lib) / `[ABSENT]` (live path) | same | B1 / B2 |
@@ -95,8 +95,8 @@ in Session A1: all node access serialized onto the single tick thread). Full det
 | control-plane (API) | `[VERIFIED-PASS]` (JDK HTTP) / `[ABSENT]` (Spring) | same | Session 0 (relabel) |
 | server (bootstrap) | `[VERIFIED-PASS]` (single node; Raft event-loop thread-confined ✓ A1) / `[VERIFIED-FAIL]` (as documented architecture) | same | A1 ✓, B2, Session 0 |
 | testkit (DST + JMH) | `[VERIFIED-PASS]` (sim) / `[EXISTS-UNTESTED]` (perf numbers) | same | A4 (seed sweep), C1 |
-| observability | `[VERIFIED-PASS]` | same | A2 (wire InvariantMonitor) |
-| spec (TLA+) | `[VERIFIED-PASS]` (green) / `[VERIFIED-FAIL]` (some invariants vacuous) | same | A2 |
+| observability | `[VERIFIED-PASS]` (InvariantMonitor now wired ✓ A2) | same | A2 ✓ |
+| spec (TLA+) | `[VERIFIED-PASS]` (green; 3 vacuous invariants de-vacuumed ✓ A2; all 3 specs now in CI) | `[VERIFIED-PASS]` (green) / `[VERIFIED-FAIL]` (some invariants vacuous) | A2 ✓ |
 
 ---
 
@@ -108,10 +108,10 @@ in Session A1: all node access serialized onto the single tick thread). Full det
 | ID | Risk | Sev | Status | Owning session | Best evidence (baseline) |
 |---|---|---|---|---|---|
 | **R-01** | Multi-node concurrency race on `RaftNode` + `ConfigStateMachine` — algorithm verified, integration unsafe & untested (the recurring failure mode). | 🔴 | **CLOSED (A1, 2026-06-06)** | **Fixed:** ALL RaftNode access (tick, inbound, **propose**, read) marshalled onto the single `tickExecutor` via `ConfigdServer.raftInboundHandler` + `raftProposer` seams. `RaftInboundMarshallingTest` (3 tests) pass-with-fix / fail-without per seam; `./mvnw -fae test` BUILD SUCCESS. Commits c0b6617, c702657. Reviewer-confirmed: no off-thread mutator remains. |
-| **R-02** | No runtime invariant enforcement in production — both checkers NOOP; `InvariantMonitor` never wired. | 🔴 | OPEN | **A2** | `ConfigdServer.java:248` RaftNode NOOP; `:188`→null→NOOP via `ConfigStateMachine.java:136`. |
+| **R-02** | No runtime invariant enforcement in production — both checkers NOOP; `InvariantMonitor` never wired. | 🔴 | **CLOSED (A2, 2026-06-06)** | **Fixed:** `ConfigdServer` wires `InvariantMonitor` to BOTH checkers (RaftNode + ConfigStateMachine); a violation increments a named metric visible at `/metrics` + a SEVERE log (fail-open), throws in testMode. `InvariantNetMetricTest` observes a real `per_key_order` violation in a RUNNING server (fails if reverted to NOOP). Reviewer-confirmed. |
 | **R-03** | Edge data plane unverified against any live pipeline — fan-out is a write-only sink. | 🟠 | OPEN | **B1/B2/B3** | `FanOutBuffer.append` `ConfigdServer.java:301` with no draining reader; `broadcast()` benchmark-only. |
 | **R-04** | "Linearizability verified" with no history checker — `LinearizabilityTest` is scripted single-threaded. | 🟠 | OPEN | **A3** | grep Knossos/Elle/Wing-Gong/Porcupine → 0. |
-| **R-05** | Green ≠ coverage — count inflation (~20k of 21,394 = one parameterized test), unseeded per-node election RNG, vacuous TLA invariants, misnamed reconfig test. | 🟠 | OPEN | **A2** (vacuous invariants) + **A4** (seed sweep, misnamed test) | `ConsistencyPropertyTests.java:77` unseeded; `ReadIndexSpec.tla:237,251` & `SnapshotInstallSpec.tla:173` tautological; `ReconfigurationTest.java:257-270` vacuous. |
+| **R-05** | Green ≠ coverage — count inflation, unseeded election RNG, vacuous TLA invariants, misnamed reconfig test. | 🟠 | **PARTIAL** — (c) vacuous invariants **DONE (A2)**; (a) count, (b) seed sweep, (d) misnamed test remain **A4** | (c) DONE: ReadFreshness/NoStaleLeaderServe/NoCommitRevert de-vacuumed (TLC green + seeded-bug counterexamples) + RaftNode `version_monotonicity` & SM `sequence_*` (runtime vacuity) fixed/removed; all 3 specs in CI. Remaining: `ConsistencyPropertyTests.java:77` unseeded; `ReconfigurationTest.java:257-270` vacuous. |
 | **R-06** | Multi-region / hierarchical Raft is a deploy-shaped false promise. | 🟠 | **DECIDED (Session 0)** — docs reconciled; orphan-code removal owed to Phase B | ADR-0030 rejects WAN write consensus; `architecture.md §5` + `adr-0015` marked **Superseded by ADR-0030**. Orphaned multi-region/edge code still present (removal = Phase B). |
 | **R-07** | Latent store hazards (R-1 unclone'd `byte[]`, W-1 unenforced single-writer, W-2 non-volatile getters). | 🟡 | **DORMANT — CONDITIONAL on the A1 single-thread marshalling invariant holding.** Becomes live again the instant any node access escapes the tick thread. | **A4** | `ReadResult.java:56-58`; single-writer unguarded; `ConfigStateMachine` public getters. **A4's W-1 owner-thread assertion is the regression TRIPWIRE that protects the A1 fix — it fires if a future change drives the node off the tick thread. It is load-bearing, NOT optional cleanup.** |
 | **R-08** | Perf "SURPASSES Quicksilver 4/4" + stack assumptions unbacked (Netty/JCTools/ZGC not present). | 🟡 | **PARTIAL** — live scorecards relabeled MODELED (Session 0); measurement owed to **C1** | `gap-analysis.md §6` + `performance.md §11` SURPASSES→MODELED; suite-size pinned 21,394 + stale TLC citations flagged in `final-report.md`/`verdict.md`/`ga-review.md`/`ga-approval.md`. Stack still absent; measurement pending C1. |
@@ -127,6 +127,17 @@ OPEN, owned by Phase B. These are accepted topology trade-offs, not verified-but
 **GA blockers (must be CLOSED before GA):** **R-09** — per `ADR-0031` (option (a), ratified
 2026-06-06), the §0.1 99.999% write-availability target is **kept**; GA MUST NOT proceed until
 sub-second automatic region failover (`adr-0024` v0.2) meets it through a full-region loss.
+
+**C-phase obligations (deferred, recorded by A2):**
+1. **Per-invariant fail-closed classification.** A2 ships the runtime invariant net **fail-open**
+   (metric + SEVERE log). Fail-closed (halt / step-down) is NOT a global toggle — it is a
+   per-invariant decision: safety/corruption invariants (`state_machine_safety`, `log_matching`,
+   `leader_completeness`, `version_monotonicity`, `per_key_order`) are halt-worthy candidates;
+   liveness/freshness invariants are observe-only. An assertion MUST **earn halt authority by
+   demonstrating a zero false-positive rate in metric mode first** — do not grant halt authority
+   before that evidence exists.
+2. **Repo cruft:** committed TLC trace artifacts (`spec/*_TTrace_*`, `spec/states/`) should be
+   `.gitignore`d (pre-existing, ~225 MB per `inventory.md`; not A2 scope).
 
 ---
 
@@ -239,6 +250,46 @@ sub-second automatic region failover (`adr-0024` v0.2) meets it through a full-r
   Minor cleanup: corrected the stale `ConfigWriteService` "propose is thread-safe" javadoc.
 - **Stop point:** committed on branch `session-a1-raft-race` (c0b6617 inbound · c702657 propose ·
   + this finalize commit); **stops for human review before merge.**
+
+### Session A2 — Runtime invariant net (R-02) + de-vacuum the TLA proof (R-05c) (2026-06-06)
+- **Mode:** single Opus session (lead) + one Opus reviewer subagent; **plan-mode first** (plan
+  approved before any edit). Branch: `session-a2-invariant-net`.
+- **R-02 — net was NOOP in prod, now ON + observable:** `ConfigdServer` hoists `MetricsRegistry`
+  above the state machine, instantiates `InvariantMonitor(registry, testMode=false)`, and bridges
+  BOTH `InvariantChecker` SAMs (RaftNode's + ConfigStateMachine's) to it; passes real checkers (was
+  `NOOP` on RaftNode; was the 3-arg SM ctor → null → NOOP). `InvariantMonitor` now emits a SEVERE
+  log **and** a named metric on violation (fail-open), throws in testMode. The metric shares the
+  registry the `PrometheusExporter` reads → visible at `/metrics`.
+- **No wired check that asserts nothing** (operator directive): removed SM `sequence_monotonic`/
+  `sequence_gap_free` (locally tautological); the reviewer caught the SAME vacuity in RaftNode
+  `version_monotonicity` (which the wiring had just activated) → de-vacuumed to assert against the
+  log entry's own index. Kept the real checks (RaftNode's 8 ↔ ConsensusSpec invariants; SM
+  `per_key_order`).
+- **R-05c — de-vacuumed 3 TLA invariants + CI + tlc-results:** `ReadFreshness`
+  (`readIdx <= appliedIndex[server]`, the F-0009 property), `NoStaleLeaderServe`
+  (`term <= currentTerm[server]`), `NoCommitRevert` (a higher-index inflight snapshot can't revert
+  the term). `ci.yml` now runs all 3 specs; `spec/tlc-results.md` regenerated from the live `.cfg`
+  (drops the removed `NoStaleOverwrite`).
+- **Exit gate — `[VERIFIED-PASS]`:**
+  - (i)/(vi) `InvariantNetMetricTest`: a real `per_key_order` violation in a RUNNING server
+    increments `invariant_violation_per_key_order_total` in the live `/metrics` exposition (+ SEVERE
+    log observed). Discrimination: reverting the wiring to NOOP fails the test (verified on scratch).
+  - (ii) all 3 specs TLC-green live (ConsensusSpec 3,299,086 / ReadIndexSpec 2,276,125 /
+    SnapshotInstallSpec 847,124 distinct); each de-vacuumed invariant **fails with a seeded buggy
+    action** (scratch): `Invariant ReadFreshness / NoStaleLeaderServe / NoCommitRevert is violated`.
+  - (iii) `ci.yml` runs ConsensusSpec + ReadIndexSpec + SnapshotInstallSpec.
+  - (iv) `./mvnw -fae test` → BUILD SUCCESS.
+  - (v) Independent Opus reviewer: **CONFIRMED** (net wired + observable; no vacuous wired check
+    survives; de-vacuumed invariants real; test discriminates, no false-green). Notes: (a) RaftNode
+    `version_monotonicity` vacuity — **fixed this session**; (b) `NoCommitRevert` is non-vacuous but
+    partly implied by `InflightTermMonotonic` (the weakest of the three) — recorded, acceptable.
+- **Component re-classification:** consensus runtime-invariant-enforcement `[VERIFIED-FAIL]` →
+  **`[VERIFIED-PASS]`**; spec (TLA+) vacuity resolved; observability InvariantMonitor wired. **R-02
+  CLOSED**; **R-05 → PARTIAL** ((c) done; a/b/d remain A4).
+- **Recorded:** the C-phase per-invariant fail-closed obligation (§3 GA-blockers note); repo-cruft
+  note (committed TLC trace artifacts should be gitignored).
+- **Stop point:** committed on `session-a2-invariant-net` (53c86f8 impl · 56c1684 version_monotonicity
+  fix · + this finalize commit); **stops for human review before merge.**
 
 <!-- Append new session entries ABOVE this line, newest-first or newest-last (pick one and keep it
      consistent). Each entry: Mode · What changed · Exit-gate command + pasted output · Component
