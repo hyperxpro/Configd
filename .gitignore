@@ -26,6 +26,8 @@ desktop.ini
 
 # Logs and temp
 *.log
+# Exception: committed forensic evidence backing docs/STATE-OF-REALITY.md
+!verification-runs/state-of-reality/live-mvn-test.log
 *.tmp
 *.temp
 *.bak
