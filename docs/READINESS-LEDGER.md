@@ -42,6 +42,14 @@ claim without reading the code; marking any gate passed without a pasted command
 > verified single-threaded `RaftNode` driven concurrently by the server (Risk R-01). Whenever you
 > find another (a verified/real unit invoked across threads without marshalling, or glued together
 > only in test code), **log it as a new finding here**, classified.
+>
+> **A1 sharpened this prior (2026-06-06):** the assessment framed R-01 as *tick-vs-inbound*, but a
+> **third** off-thread caller existed — the **write/propose path, live even in single-node mode** —
+> and was found only by an adversarial reviewer + a discriminating test, **not** by static reads.
+> **Load-bearing prior for Phase B:** the fan-out / edge-pipeline wiring (B1/B2/B3) almost certainly
+> has **more cross-thread callers than a static call-graph shows**. Budget adversarial review + real
+> concurrency tests for every B-phase seam; treat "static inspection found N callers" as a *floor*,
+> not the count.
 
 **How to append (every session, on finish):**
 1. Add a dated entry to **§4 Session log** — what changed, the exit-gate command(s) + pasted
@@ -105,7 +113,7 @@ in Session A1: all node access serialized onto the single tick thread). Full det
 | **R-04** | "Linearizability verified" with no history checker — `LinearizabilityTest` is scripted single-threaded. | 🟠 | OPEN | **A3** | grep Knossos/Elle/Wing-Gong/Porcupine → 0. |
 | **R-05** | Green ≠ coverage — count inflation (~20k of 21,394 = one parameterized test), unseeded per-node election RNG, vacuous TLA invariants, misnamed reconfig test. | 🟠 | OPEN | **A2** (vacuous invariants) + **A4** (seed sweep, misnamed test) | `ConsistencyPropertyTests.java:77` unseeded; `ReadIndexSpec.tla:237,251` & `SnapshotInstallSpec.tla:173` tautological; `ReconfigurationTest.java:257-270` vacuous. |
 | **R-06** | Multi-region / hierarchical Raft is a deploy-shaped false promise. | 🟠 | **DECIDED (Session 0)** — docs reconciled; orphan-code removal owed to Phase B | ADR-0030 rejects WAN write consensus; `architecture.md §5` + `adr-0015` marked **Superseded by ADR-0030**. Orphaned multi-region/edge code still present (removal = Phase B). |
-| **R-07** | Latent store hazards (R-1 unclone'd `byte[]`, W-1 unenforced single-writer, W-2 non-volatile getters). | 🟡 | OPEN (DE-ESCALATED) — no longer *live* now R-01 is closed (single-thread node access restored); hardening still owed | **A4** | `ReadResult.java:56-58`; single-writer unguarded; `ConfigStateMachine` public getters. |
+| **R-07** | Latent store hazards (R-1 unclone'd `byte[]`, W-1 unenforced single-writer, W-2 non-volatile getters). | 🟡 | **DORMANT — CONDITIONAL on the A1 single-thread marshalling invariant holding.** Becomes live again the instant any node access escapes the tick thread. | **A4** | `ReadResult.java:56-58`; single-writer unguarded; `ConfigStateMachine` public getters. **A4's W-1 owner-thread assertion is the regression TRIPWIRE that protects the A1 fix — it fires if a future change drives the node off the tick thread. It is load-bearing, NOT optional cleanup.** |
 | **R-08** | Perf "SURPASSES Quicksilver 4/4" + stack assumptions unbacked (Netty/JCTools/ZGC not present). | 🟡 | **PARTIAL** — live scorecards relabeled MODELED (Session 0); measurement owed to **C1** | `gap-analysis.md §6` + `performance.md §11` SURPASSES→MODELED; suite-size pinned 21,394 + stale TLC citations flagged in `final-report.md`/`verdict.md`/`ga-review.md`/`ga-approval.md`. Stack still absent; measurement pending C1. |
 | **R-09** | Write availability does NOT meet §0.1 99.999% under **full-region** loss — single-region root, manual standby cutover (A2 covers AZ loss only). **GA BLOCKER.** | 🔴 | OPEN — **GA BLOCKER** | **Phase B**: `adr-0024` v0.2 sub-second region failover | ADR-0030 "SLO impact"; Amendment A2; **ADR-0031 (Accepted — option (a), 2026-06-06: keep 99.999%, fix by design)**. |
 | **R-10** | `GLOBAL`/security keys need a fail-closed linearizable strong-read path (INV-1) — not wired: no strong-read key class, no fail-closed enforcement, no testable contract entry. | 🟠 | OPEN | **Phase B** (testable `consistency-contract.md` entry) | ADR-0030 INV-1 / Amendment A1. |
@@ -218,9 +226,10 @@ sub-second automatic region failover (`adr-0024` v0.2) meets it through a full-r
   - (iv) Independent Opus reviewer: **CONFIRMED** — all four seams confined to the one tickExecutor
     thread; no remaining off-thread RaftNode mutator; no deadlock; validation exceptions preserved.
 - **Cross-examination caught a real gap:** the reviewer's first pass (CONCERNS) found my initial
-  inbound-only fix missed the **propose path** (live even single-node). Fixed within A1 (the
-  `raftProposer` seam + propose-flood/deterministic tests) — the recurring
-  verified-but-untested-integration failure mode, found and closed in the same session.
+  inbound-only fix missed the **propose path** (live even single-node) — a third off-thread caller
+  **beyond the assessment's tick-vs-inbound framing of R-01**, invisible to the static call-graph and
+  surfaced only by adversarial review + a discriminating test. Fixed within A1 (the `raftProposer`
+  seam + propose-flood/deterministic tests). See the §0 "load-bearing prior for Phase B" this raised.
 - **Task 3 (other same-class seams):** SEAM-1 candidate (`TcpRaftTransport.messageHandler`
   registration) **verified and dismissed** — handler registered before `transport.start()`; field
   is volatile (`TcpRaftTransport.java:63`). The propose path was the one real additional seam —
