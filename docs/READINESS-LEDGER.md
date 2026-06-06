@@ -106,7 +106,7 @@ is driven thread-unsafely by the server, with no test exercising it (Risk **R-01
 | **R-06** | Multi-region / hierarchical Raft is a deploy-shaped false promise. | 🟠 | **DECIDED (Session 0)** — docs reconciled; orphan-code removal owed to Phase B | ADR-0030 rejects WAN write consensus; `architecture.md §5` + `adr-0015` marked **Superseded by ADR-0030**. Orphaned multi-region/edge code still present (removal = Phase B). |
 | **R-07** | Latent store hazards become live under R-01: R-1 unclone'd `byte[]`, W-1 unenforced single-writer, W-2 non-volatile getters. | 🟡 | OPEN | **A4** | `ReadResult.java:56-58`; single-writer unguarded; `ConfigStateMachine` public getters. |
 | **R-08** | Perf "SURPASSES Quicksilver 4/4" + stack assumptions unbacked (Netty/JCTools/ZGC not present). | 🟡 | **PARTIAL** — live scorecards relabeled MODELED (Session 0); measurement owed to **C1** | `gap-analysis.md §6` + `performance.md §11` SURPASSES→MODELED; suite-size pinned 21,394 + stale TLC citations flagged in `final-report.md`/`verdict.md`/`ga-review.md`/`ga-approval.md`. Stack still absent; measurement pending C1. |
-| **R-09** | Write availability does NOT meet §0.1 99.999% under **full-region** loss — single-region root, manual standby cutover (A2 covers AZ loss only). A busted §0.1 target. | 🔴 | OPEN | **Phase B** (`adr-0024` v0.2 region failover) + **ADR-0031** (target renegotiation, human-gated) | ADR-0030 "SLO impact" subsection; Amendment A2; ADR-0031 stub. |
+| **R-09** | Write availability does NOT meet §0.1 99.999% under **full-region** loss — single-region root, manual standby cutover (A2 covers AZ loss only). **GA BLOCKER.** | 🔴 | OPEN — **GA BLOCKER** | **Phase B**: `adr-0024` v0.2 sub-second region failover | ADR-0030 "SLO impact"; Amendment A2; **ADR-0031 (Accepted — option (a), 2026-06-06: keep 99.999%, fix by design)**. |
 | **R-10** | `GLOBAL`/security keys need a fail-closed linearizable strong-read path (INV-1) — not wired: no strong-read key class, no fail-closed enforcement, no testable contract entry. | 🟠 | OPEN | **Phase B** (testable `consistency-contract.md` entry) | ADR-0030 INV-1 / Amendment A1. |
 | **R-11** | Data residency unsolved — single global root non-compliant for hard-localization data classes (INV-2); needs a deploy-time guardrail. | 🟠 | OPEN | **Phase B** (deploy guardrail) + `adr-0024` v0.2 per-jurisdiction roots | ADR-0030 INV-2 / Amendment A3. |
 
@@ -114,6 +114,10 @@ is driven thread-unsafely by the server, with no test exercising it (Risk **R-01
 violation), R-10 (GLOBAL-key fail-closed strong-read, INV-1), R-11 (data residency, INV-2) — all
 OPEN, owned by Phase B. These are accepted topology trade-offs, not verified-but-untested-integration
 *seams* (no new cross-thread seam found this session).
+
+**GA blockers (must be CLOSED before GA):** **R-09** — per `ADR-0031` (option (a), ratified
+2026-06-06), the §0.1 99.999% write-availability target is **kept**; GA MUST NOT proceed until
+sub-second automatic region failover (`adr-0024` v0.2) meets it through a full-region loss.
 
 ---
 
@@ -179,6 +183,17 @@ OPEN, owned by Phase B. These are accepted topology trade-offs, not verified-but
   review before merge.** Pending human ratification: the §0.1 write-availability KNOWN VIOLATION
   (R-09) via ADR-0031. Teammates left idle + resumable (not cleaned up) in case review needs ADR
   changes. INV-1/INV-2 enforcement + orphan-code removal are Phase B obligations.
+
+### Session 0 — review fixups + merge to main (2026-06-06)
+- **ADR-0031 ratified: option (a)** — keep §0.1 99.999% write-availability; sub-second region
+  failover (`adr-0024` v0.2) is a **GA BLOCKER** (R-09 updated; (b)/(c) rejected).
+- **Historical-record notices** added at `docs/review/`, `docs/prr/`, `docs/audit/` pointing at the
+  authoritative pinned numbers (live suite size **21,394**; `STATE-OF-REALITY.md`). Dated snapshots
+  NOT rewritten (rewriting dated records would itself be dishonest).
+- **Merge:** `session-0-topology-adr` → `main` (`--no-ff`); this fixups commit is the last on the
+  branch before merge. Session 0 teammates were ephemeral subagents (Agent tool, not a TeamCreate
+  team) and have all terminated — nothing left running to shut down.
+- **Next:** branch `session-a1-raft-race` for Session A1 (R-01, the Raft integration race).
 
 <!-- Append new session entries ABOVE this line, newest-first or newest-last (pick one and keep it
      consistent). Each entry: Mode · What changed · Exit-gate command + pasted output · Component
