@@ -16,8 +16,8 @@
 >
 > **Plan of record:** `PRODUCTION-READINESS-PLAN.md` (repo root).
 
-**Last updated:** 2026-06-06 — Session 0 (topology ADR-0030 + doc decontamination) on branch
-`session-0-topology-adr`, committed pre-merge for review. No code/spec/test changed.
+**Last updated:** 2026-06-06 — Session A1 (R-01 Raft event-loop serialization) on branch
+`session-a1-raft-race`, committed pre-merge for review. First code change of the effort.
 
 ---
 
@@ -42,6 +42,14 @@ claim without reading the code; marking any gate passed without a pasted command
 > verified single-threaded `RaftNode` driven concurrently by the server (Risk R-01). Whenever you
 > find another (a verified/real unit invoked across threads without marshalling, or glued together
 > only in test code), **log it as a new finding here**, classified.
+>
+> **A1 sharpened this prior (2026-06-06):** the assessment framed R-01 as *tick-vs-inbound*, but a
+> **third** off-thread caller existed — the **write/propose path, live even in single-node mode** —
+> and was found only by an adversarial reviewer + a discriminating test, **not** by static reads.
+> **Load-bearing prior for Phase B:** the fan-out / edge-pipeline wiring (B1/B2/B3) almost certainly
+> has **more cross-thread callers than a static call-graph shows**. Budget adversarial review + real
+> concurrency tests for every B-phase seam; treat "static inspection found N callers" as a *floor*,
+> not the count.
 
 **How to append (every session, on finish):**
 1. Add a dated entry to **§4 Session log** — what changed, the exit-gate command(s) + pasted
@@ -60,8 +68,9 @@ observability) is genuinely real and tests green (`./mvnw -fae test` → 21,394 
 skipped; `ConsensusSpec` TLC green live). The advertised "globally distributed edge data plane" is
 largely paper: one Raft group is registered, the Plumtree/HyParView fan-out is never invoked
 (`FanOutBuffer` is appended to and never drained), and no wire path connects control plane to edge.
-The most dangerous single defect is a **verified-but-untested-integration seam**: the verified Raft
-is driven thread-unsafely by the server, with no test exercising it (Risk **R-01**). Full detail:
+The most dangerous single defect was a **verified-but-untested-integration seam**: the verified Raft
+was driven thread-unsafely by the server, with no test exercising it (Risk **R-01** — now **CLOSED**
+in Session A1: all node access serialized onto the single tick thread). Full detail:
 `docs/STATE-OF-REALITY.md`.
 
 **Real-vs-paper split (baseline estimate):** ~55–60% real & wired · ~20% real-but-orphaned ·
@@ -84,7 +93,7 @@ is driven thread-unsafely by the server, with no test exercising it (Risk **R-01
 | replication-engine | `[EXISTS-UNTESTED]` (skeleton, one group) | same | B1 / B2 |
 | transport | `[VERIFIED-PASS]` (TCP/TLS) / `[ABSENT]` (Netty/gRPC) | same | Session 0 (relabel), C1 |
 | control-plane (API) | `[VERIFIED-PASS]` (JDK HTTP) / `[ABSENT]` (Spring) | same | Session 0 (relabel) |
-| server (bootstrap) | `[VERIFIED-PASS]` (single node) / `[VERIFIED-FAIL]` (as documented architecture) | same | A1, B2, Session 0 |
+| server (bootstrap) | `[VERIFIED-PASS]` (single node; Raft event-loop thread-confined ✓ A1) / `[VERIFIED-FAIL]` (as documented architecture) | same | A1 ✓, B2, Session 0 |
 | testkit (DST + JMH) | `[VERIFIED-PASS]` (sim) / `[EXISTS-UNTESTED]` (perf numbers) | same | A4 (seed sweep), C1 |
 | observability | `[VERIFIED-PASS]` | same | A2 (wire InvariantMonitor) |
 | spec (TLA+) | `[VERIFIED-PASS]` (green) / `[VERIFIED-FAIL]` (some invariants vacuous) | same | A2 |
@@ -98,13 +107,13 @@ is driven thread-unsafely by the server, with no test exercising it (Risk **R-01
 
 | ID | Risk | Sev | Status | Owning session | Best evidence (baseline) |
 |---|---|---|---|---|---|
-| **R-01** | Multi-node concurrency race on `RaftNode` + `ConfigStateMachine` — algorithm verified, integration unsafe & untested (the recurring failure mode). | 🔴 | OPEN | **A1** | inbound on virtual threads `MultiRaftDriver.java:119` (no marshalling) vs tick thread `ConfigdServer.java:394`; `RaftNode.java:17-18` "no synchronization"; apply on inbound via `:851`. |
+| **R-01** | Multi-node concurrency race on `RaftNode` + `ConfigStateMachine` — algorithm verified, integration unsafe & untested (the recurring failure mode). | 🔴 | **CLOSED (A1, 2026-06-06)** | **Fixed:** ALL RaftNode access (tick, inbound, **propose**, read) marshalled onto the single `tickExecutor` via `ConfigdServer.raftInboundHandler` + `raftProposer` seams. `RaftInboundMarshallingTest` (3 tests) pass-with-fix / fail-without per seam; `./mvnw -fae test` BUILD SUCCESS. Commits c0b6617, c702657. Reviewer-confirmed: no off-thread mutator remains. |
 | **R-02** | No runtime invariant enforcement in production — both checkers NOOP; `InvariantMonitor` never wired. | 🔴 | OPEN | **A2** | `ConfigdServer.java:248` RaftNode NOOP; `:188`→null→NOOP via `ConfigStateMachine.java:136`. |
 | **R-03** | Edge data plane unverified against any live pipeline — fan-out is a write-only sink. | 🟠 | OPEN | **B1/B2/B3** | `FanOutBuffer.append` `ConfigdServer.java:301` with no draining reader; `broadcast()` benchmark-only. |
 | **R-04** | "Linearizability verified" with no history checker — `LinearizabilityTest` is scripted single-threaded. | 🟠 | OPEN | **A3** | grep Knossos/Elle/Wing-Gong/Porcupine → 0. |
 | **R-05** | Green ≠ coverage — count inflation (~20k of 21,394 = one parameterized test), unseeded per-node election RNG, vacuous TLA invariants, misnamed reconfig test. | 🟠 | OPEN | **A2** (vacuous invariants) + **A4** (seed sweep, misnamed test) | `ConsistencyPropertyTests.java:77` unseeded; `ReadIndexSpec.tla:237,251` & `SnapshotInstallSpec.tla:173` tautological; `ReconfigurationTest.java:257-270` vacuous. |
 | **R-06** | Multi-region / hierarchical Raft is a deploy-shaped false promise. | 🟠 | **DECIDED (Session 0)** — docs reconciled; orphan-code removal owed to Phase B | ADR-0030 rejects WAN write consensus; `architecture.md §5` + `adr-0015` marked **Superseded by ADR-0030**. Orphaned multi-region/edge code still present (removal = Phase B). |
-| **R-07** | Latent store hazards become live under R-01: R-1 unclone'd `byte[]`, W-1 unenforced single-writer, W-2 non-volatile getters. | 🟡 | OPEN | **A4** | `ReadResult.java:56-58`; single-writer unguarded; `ConfigStateMachine` public getters. |
+| **R-07** | Latent store hazards (R-1 unclone'd `byte[]`, W-1 unenforced single-writer, W-2 non-volatile getters). | 🟡 | **DORMANT — CONDITIONAL on the A1 single-thread marshalling invariant holding.** Becomes live again the instant any node access escapes the tick thread. | **A4** | `ReadResult.java:56-58`; single-writer unguarded; `ConfigStateMachine` public getters. **A4's W-1 owner-thread assertion is the regression TRIPWIRE that protects the A1 fix — it fires if a future change drives the node off the tick thread. It is load-bearing, NOT optional cleanup.** |
 | **R-08** | Perf "SURPASSES Quicksilver 4/4" + stack assumptions unbacked (Netty/JCTools/ZGC not present). | 🟡 | **PARTIAL** — live scorecards relabeled MODELED (Session 0); measurement owed to **C1** | `gap-analysis.md §6` + `performance.md §11` SURPASSES→MODELED; suite-size pinned 21,394 + stale TLC citations flagged in `final-report.md`/`verdict.md`/`ga-review.md`/`ga-approval.md`. Stack still absent; measurement pending C1. |
 | **R-09** | Write availability does NOT meet §0.1 99.999% under **full-region** loss — single-region root, manual standby cutover (A2 covers AZ loss only). **GA BLOCKER.** | 🔴 | OPEN — **GA BLOCKER** | **Phase B**: `adr-0024` v0.2 sub-second region failover | ADR-0030 "SLO impact"; Amendment A2; **ADR-0031 (Accepted — option (a), 2026-06-06: keep 99.999%, fix by design)**. |
 | **R-10** | `GLOBAL`/security keys need a fail-closed linearizable strong-read path (INV-1) — not wired: no strong-read key class, no fail-closed enforcement, no testable contract entry. | 🟠 | OPEN | **Phase B** (testable `consistency-contract.md` entry) | ADR-0030 INV-1 / Amendment A1. |
@@ -194,6 +203,42 @@ sub-second automatic region failover (`adr-0024` v0.2) meets it through a full-r
   branch before merge. Session 0 teammates were ephemeral subagents (Agent tool, not a TeamCreate
   team) and have all terminated — nothing left running to shut down.
 - **Next:** branch `session-a1-raft-race` for Session A1 (R-01, the Raft integration race).
+
+### Session A1 — Kill the Raft integration race (R-01) (2026-06-06)
+- **Mode:** single Opus session (lead) + one Opus reviewer subagent; **plan-mode first** (plan
+  approved before any edit). Branch: `session-a1-raft-race`. **First code change of the effort.**
+- **The race (verified by file:line):** the explicitly single-threaded `RaftNode` ("No
+  synchronization is used", `RaftNode.java:17-21`) was driven concurrently by THREE entry points on
+  THREE threads — `tick()` ("configd-tick"), inbound `handleMessage()` (per-connection virtual
+  threads), and `propose()` (HTTP virtual threads) — racing currentTerm/log/commitIndex and
+  double-entering `stateMachine.apply`. The read path was already marshalled; inbound and propose
+  were not.
+- **Fix:** marshal ALL node access onto the single `tickExecutor`. Hoisted executor creation above
+  the transport wiring; added `ConfigdServer.raftInboundHandler` (inbound) and `raftProposer`
+  (writes) seams that `tickExecutor.execute(...)` the routing/proposal; rewired both. Tick, inbound,
+  propose, and read now all run on the one "configd-tick" thread.
+- **Exit gate — `[VERIFIED-PASS]`:**
+  - (i) `./mvnw -pl configd-server test -Dtest=RaftInboundMarshallingTest` → 3 tests, 0 fail.
+  - (ii) **Discrimination (per seam):** scratch branches — revert inbound → inbound + stress fail;
+    revert propose → propose + stress fail (sentinel "observed 2 concurrent entries"; deterministic
+    "apply ran on main, expected raft-test-exec"); restore.
+  - (iii) `./mvnw -fae test` → **BUILD SUCCESS** (full reactor; +1 net test method).
+  - (iv) Independent Opus reviewer: **CONFIRMED** — all four seams confined to the one tickExecutor
+    thread; no remaining off-thread RaftNode mutator; no deadlock; validation exceptions preserved.
+- **Cross-examination caught a real gap:** the reviewer's first pass (CONCERNS) found my initial
+  inbound-only fix missed the **propose path** (live even single-node) — a third off-thread caller
+  **beyond the assessment's tick-vs-inbound framing of R-01**, invisible to the static call-graph and
+  surfaced only by adversarial review + a discriminating test. Fixed within A1 (the `raftProposer`
+  seam + propose-flood/deterministic tests). See the §0 "load-bearing prior for Phase B" this raised.
+- **Task 3 (other same-class seams):** SEAM-1 candidate (`TcpRaftTransport.messageHandler`
+  registration) **verified and dismissed** — handler registered before `transport.start()`; field
+  is volatile (`TcpRaftTransport.java:63`). The propose path was the one real additional seam —
+  fixed, not left open. No other off-thread node mutator (reviewer re-grep).
+- **Component re-classification:** R-01 `[VERIFIED-FAIL]` (threading model) → **`[VERIFIED-PASS]`**
+  (event loop serialized; discriminating test in place). R-07 de-escalated (no longer live).
+  Minor cleanup: corrected the stale `ConfigWriteService` "propose is thread-safe" javadoc.
+- **Stop point:** committed on branch `session-a1-raft-race` (c0b6617 inbound · c702657 propose ·
+  + this finalize commit); **stops for human review before merge.**
 
 <!-- Append new session entries ABOVE this line, newest-first or newest-last (pick one and keep it
      consistent). Each entry: Mode · What changed · Exit-gate command + pasted output · Component

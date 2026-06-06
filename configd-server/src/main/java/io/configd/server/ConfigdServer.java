@@ -28,6 +28,7 @@ import io.configd.raft.RaftConfig;
 import io.configd.raft.RaftLog;
 import io.configd.raft.RaftNode;
 import io.configd.raft.RaftTransport;
+import io.configd.raft.RaftMessage;
 import io.configd.raft.ProposalResult;
 import io.configd.replication.MultiRaftDriver;
 import io.configd.store.Compactor;
@@ -83,6 +84,8 @@ public final class ConfigdServer {
     private static final int COMPACTION_INTERVAL_TICKS = 1000; // every ~10 seconds
     private static final int TLS_RELOAD_INTERVAL_MS = 60_000;  // every 60 seconds
     private static final int FANOUT_BUFFER_CAPACITY = 10_000;
+    // R-01: budget for a marshalled propose round-trip onto the tick executor.
+    private static final int PROPOSE_TIMEOUT_MS = 150;
 
     private final ServerConfig config;
     // F-0023: three separate single-threaded executors prevent head-of-line
@@ -251,10 +254,48 @@ public final class ConfigdServer {
         MultiRaftDriver driver = new MultiRaftDriver(config.nodeId(), clock);
         driver.addGroup(DEFAULT_RAFT_GROUP, raftNode);
 
-        // Register inbound message handler on TCP transport
+        // ---------------------------------------------------------------
+        // F-0023 + R-01: Create three dedicated single-threaded executors
+        // HERE — before wiring the transport — so the inbound Raft handler
+        // can marshal onto the tick executor. They isolate three latency
+        // domains:
+        //   - tickExecutor: consensus progress (MUST NOT be blocked). This
+        //     single thread drives RaftNode.tick() AND inbound
+        //     RaftNode.handleMessage()/applyCommitted (R-01), so the
+        //     non-synchronized RaftNode is only ever touched by one thread.
+        //   - readDispatchExecutor: HTTP read handler marshalling
+        //   - tlsReloadExecutor: slow cert I/O
+        //
+        // CRITICAL invariant (F-0010 + R-01): ALL RaftNode access — ticks,
+        // inbound messages, and ReadIndexState reads — happens ONLY on the
+        // tick thread. readDispatchExecutor and the inbound handler never
+        // touch the node directly; they marshal via `tickExecutor.execute(...)`.
+        // ---------------------------------------------------------------
+        ScheduledExecutorService tickExecutor = Executors.newSingleThreadScheduledExecutor(r -> {
+            Thread t = new Thread(r, "configd-tick");
+            t.setDaemon(true);
+            return t;
+        });
+        ScheduledExecutorService readDispatchExecutor = Executors.newSingleThreadScheduledExecutor(r -> {
+            Thread t = new Thread(r, "configd-read-dispatch");
+            t.setDaemon(true);
+            return t;
+        });
+        ScheduledExecutorService tlsReloadExecutor = Executors.newSingleThreadScheduledExecutor(r -> {
+            Thread t = new Thread(r, "configd-tls-reload");
+            t.setDaemon(true);
+            return t;
+        });
+
+        // Register inbound message handler on TCP transport.
+        // R-01: marshal inbound routing onto the single tick executor so
+        // node.handleMessage() (and applyCommitted -> stateMachine.apply)
+        // never runs concurrently with node.tick() on the non-synchronized
+        // RaftNode. Registration stays BEFORE start() so the handler is
+        // published before the accept loop begins.
         if (tcpTransport != null) {
             RaftTransportAdapter adapter = (RaftTransportAdapter) transport;
-            adapter.registerInboundHandler((from, message) -> driver.routeMessage(DEFAULT_RAFT_GROUP, message));
+            adapter.registerInboundHandler(raftInboundHandler(driver, DEFAULT_RAFT_GROUP, tickExecutor));
             try {
                 tcpTransport.start();
             } catch (Exception e) {
@@ -365,10 +406,12 @@ public final class ConfigdServer {
         // ---------------------------------------------------------------
         // Wire config write service
         // ---------------------------------------------------------------
-        ConfigWriteService.RaftProposer proposer = (scope, command) -> {
-            ProposalResult result = driver.propose(DEFAULT_RAFT_GROUP, command);
-            return result == ProposalResult.ACCEPTED;
-        };
+        // R-01: marshal proposals onto the single tick executor so node.propose()
+        // (log/term/commitIndex mutation + applyCommitted -> stateMachine.apply) never
+        // races node.tick() or the inbound handler. The HTTP write thread blocks for
+        // the result. This closes the write-vs-tick race (live even single-node).
+        ConfigWriteService.RaftProposer proposer =
+                raftProposer(driver, DEFAULT_RAFT_GROUP, tickExecutor, PROPOSE_TIMEOUT_MS);
         // F-0054: default write rate limit = 10_000/s globally. Docs in
         // ADR-0017 and performance.md reflect this value; a startup line
         // prints the effective rate so operators can audit at boot.
@@ -379,33 +422,9 @@ public final class ConfigdServer {
         ConfigWriteService writeService = new ConfigWriteService(proposer, null, rateLimiter,
                 () -> raftNode.leaderId());
 
-        // ---------------------------------------------------------------
-        // F-0023: Create three dedicated single-threaded executors. They
-        // isolate three latency domains:
-        //   - tickExecutor: consensus progress (MUST NOT be blocked)
-        //   - readDispatchExecutor: HTTP read handler marshalling
-        //   - tlsReloadExecutor: slow cert I/O
-        //
-        // CRITICAL invariant (F-0010): ReadIndexState access is ONLY from
-        // the tick thread. readDispatchExecutor never touches it directly
-        // — it only marshals dispatch requests from HTTP threads to the
-        // tick thread via `tickExecutor.execute(...)`.
-        // ---------------------------------------------------------------
-        ScheduledExecutorService tickExecutor = Executors.newSingleThreadScheduledExecutor(r -> {
-            Thread t = new Thread(r, "configd-tick");
-            t.setDaemon(true);
-            return t;
-        });
-        ScheduledExecutorService readDispatchExecutor = Executors.newSingleThreadScheduledExecutor(r -> {
-            Thread t = new Thread(r, "configd-read-dispatch");
-            t.setDaemon(true);
-            return t;
-        });
-        ScheduledExecutorService tlsReloadExecutor = Executors.newSingleThreadScheduledExecutor(r -> {
-            Thread t = new Thread(r, "configd-tls-reload");
-            t.setDaemon(true);
-            return t;
-        });
+        // (Tick / read-dispatch / TLS-reload executors are created earlier,
+        // right after the multi-raft driver, so the inbound Raft handler can
+        // marshal onto the tick executor — see the F-0023 + R-01 block above.)
 
         // ---------------------------------------------------------------
         // Wire config read service with linearizable read support
@@ -633,6 +652,69 @@ public final class ConfigdServer {
         LOG.log(Level.SEVERE,
                 "tick loop unhandled throwable: class=" + simpleName + " bucket=" + label,
                 t);
+    }
+
+    /**
+     * R-01: builds the inbound Raft message handler that marshals routing onto
+     * the single Raft executor (the tick executor), so {@code node.handleMessage}
+     * — and the {@code applyCommitted -> stateMachine.apply} it can trigger —
+     * never runs concurrently with {@code node.tick()} on the explicitly
+     * non-synchronized {@link io.configd.raft.RaftNode} (ADR-0009).
+     * <p>
+     * Package-private static so the regression/stress test can exercise the
+     * real marshalling decision directly without standing up a whole server.
+     * Reverting this to a direct {@code driver.routeMessage(...)} call (dropping
+     * {@code raftExecutor.execute}) reintroduces the race and makes that test fail.
+     */
+    static java.util.function.BiConsumer<NodeId, RaftMessage> raftInboundHandler(
+            MultiRaftDriver driver, int groupId, java.util.concurrent.Executor raftExecutor) {
+        return (from, message) -> raftExecutor.execute(() -> driver.routeMessage(groupId, message));
+    }
+
+    /**
+     * R-01: builds the write proposer that marshals {@code driver.propose} onto the single Raft
+     * executor (the tick executor), so {@code node.propose} — which mutates the log / term /
+     * commitIndex and can call {@code applyCommitted -> stateMachine.apply} — never runs
+     * concurrently with {@code node.tick()} or the inbound handler on the non-synchronized
+     * {@link io.configd.raft.RaftNode}. The calling (HTTP write) thread blocks for the result.
+     * <p>
+     * Package-private static so the regression/stress test can drive the real marshalling
+     * decision. Reverting to a direct {@code driver.propose(...)} call reintroduces the
+     * write-vs-tick race (live even in single-node mode) and makes that test fail.
+     * <p>
+     * On {@code timeoutMs} expiry the call returns {@code false} (not accepted), but the queued
+     * task may still run {@code driver.propose} afterward — an at-least-once semantic that mirrors
+     * the read path's timeout handling and Raft's client-retry model. It does not violate the
+     * single-thread invariant.
+     */
+    static ConfigWriteService.RaftProposer raftProposer(
+            MultiRaftDriver driver, int groupId,
+            java.util.concurrent.Executor raftExecutor, long timeoutMs) {
+        return (scope, command) -> {
+            java.util.concurrent.CompletableFuture<ProposalResult> f =
+                    new java.util.concurrent.CompletableFuture<>();
+            raftExecutor.execute(() -> {
+                try {
+                    f.complete(driver.propose(groupId, command));
+                } catch (Throwable t) {
+                    f.completeExceptionally(t);
+                }
+            });
+            try {
+                return f.get(timeoutMs, TimeUnit.MILLISECONDS) == ProposalResult.ACCEPTED;
+            } catch (java.util.concurrent.TimeoutException e) {
+                return false; // not accepted within the write budget
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                return false;
+            } catch (java.util.concurrent.ExecutionException e) {
+                Throwable cause = e.getCause();
+                if (cause instanceof RuntimeException re) {
+                    throw re; // preserve validation exceptions (e.g. IllegalArgumentException)
+                }
+                throw new RuntimeException("propose failed", cause);
+            }
+        };
     }
 
     private static void shutdownExecutor(ScheduledExecutorService exec, String name, int timeoutSec) {
