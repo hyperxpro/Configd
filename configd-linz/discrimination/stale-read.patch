@@ -1,0 +1,41 @@
+diff --git a/configd-consensus-core/src/main/java/io/configd/raft/RaftNode.java b/configd-consensus-core/src/main/java/io/configd/raft/RaftNode.java
+index e009002..60ea051 100644
+--- a/configd-consensus-core/src/main/java/io/configd/raft/RaftNode.java
++++ b/configd-consensus-core/src/main/java/io/configd/raft/RaftNode.java
+@@ -390,16 +390,12 @@ public final class RaftNode {
+      * @return a read ID for tracking, or -1 if not leader
+      */
+     public long readIndex() {
+-        if (role != RaftRole.LEADER) {
+-            return -1;
+-        }
+-        // For single-node clusters, the read is immediately ready
+-        // since we are trivially the leader with full quorum
++        // [A3-B DISCRIMINATION SEED — stale-read] serve linearizable reads from local
++        // state on ANY node and confirm leadership unconditionally — bypassing the
++        // leader gate and the quorum-based ReadIndex confirmation. A lagging/isolated
++        // node then serves a stale value as if linearizable.
+         long readId = readIndexState.startRead(log.commitIndex());
+-        if (clusterConfig.peersOf(config.nodeId()).isEmpty()) {
+-            // Single-node cluster: self is always a quorum
+-            readIndexState.confirmAllLeadership();
+-        }
++        readIndexState.confirmAllLeadership();
+         return readId;
+     }
+ 
+@@ -415,12 +411,8 @@ public final class RaftNode {
+      * @return true if the read can be served with linearizable guarantees
+      */
+     public boolean isReadReady(long readId) {
+-        // Re-verify leadership: a deposed leader must not serve reads.
+-        // This closes the TOCTOU window between heartbeat confirmation
+-        // and read serving (see FIND-0002).
+-        if (role != RaftRole.LEADER) {
+-            return false;
+-        }
++        // [A3-B DISCRIMINATION SEED — stale-read] no leadership re-check: the FIND-0002
++        // guard (a deposed/non-leader node must not serve a read) is deleted.
+         return readIndexState.isReady(readId, log.lastApplied());
+     }
+ 

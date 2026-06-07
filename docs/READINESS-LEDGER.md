@@ -16,9 +16,12 @@
 >
 > **Plan of record:** `PRODUCTION-READINESS-PLAN.md` (repo root).
 
-**Last updated:** 2026-06-06 — Session A3-D (linearizability + fault-injection harness **DESIGN**:
-ADR-0032 + `docs/a3-harness-design.md`, 3/3 team sign-off) on branch `session-a3-linearizability`,
-committed pre-merge for human review. **Design only — no code/spec/test changed.** Build = A3-B.
+**Last updated:** 2026-06-07 — Session A3-B (linearizability + fault-injection harness **BUILT**:
+new module `configd-linz` — real separate-JVM cluster over the real TCP transport, OS-level
+iptables/kill-9 faults, trusted Porcupine checker) on branch `session-a3-linearizability`. **All six
+exit gates green; R-04 CLOSED.** Committed pre-merge for human review — A3-D design + A3-B build merge
+together as one unit. **Phase A: linearizable under the fault classes A3 tested, with R-12 (reconfig)
+and R-14 (ack≠commit) explicitly OUTSTANDING** (NOT unqualified-done).
 
 ---
 
@@ -101,6 +104,7 @@ in Session A1: all node access serialized onto the single tick thread). Full det
 | control-plane (API) | `[VERIFIED-PASS]` (JDK HTTP) / `[ABSENT]` (Spring) | same | Session 0 (relabel) |
 | server (bootstrap) | `[VERIFIED-PASS]` (single node; Raft event-loop thread-confined ✓ A1) / `[VERIFIED-FAIL]` (as documented architecture) | same | A1 ✓, B2, Session 0 |
 | testkit (DST + JMH) | `[VERIFIED-PASS]` (sim) / `[EXISTS-UNTESTED]` (perf numbers) | same | A4 (seed sweep), C1 |
+| linearizability harness (`configd-linz`) | `[VERIFIED-PASS]` (real separate-JVM + OS faults + trusted Porcupine; R-04 closed ✓ A3-B) | `[ABSENT]` | A3-B ✓ |
 | observability | `[VERIFIED-PASS]` (InvariantMonitor now wired ✓ A2) | same | A2 ✓ |
 | spec (TLA+) | `[VERIFIED-PASS]` (green; 3 vacuous invariants de-vacuumed ✓ A2; all 3 specs now in CI) | `[VERIFIED-PASS]` (green) / `[VERIFIED-FAIL]` (some invariants vacuous) | A2 ✓ |
 
@@ -116,7 +120,7 @@ in Session A1: all node access serialized onto the single tick thread). Full det
 | **R-01** | Multi-node concurrency race on `RaftNode` + `ConfigStateMachine` — algorithm verified, integration unsafe & untested (the recurring failure mode). | 🔴 | **CLOSED (A1, 2026-06-06)** | **Fixed:** ALL RaftNode access (tick, inbound, **propose**, read) marshalled onto the single `tickExecutor` via `ConfigdServer.raftInboundHandler` + `raftProposer` seams. `RaftInboundMarshallingTest` (3 tests) pass-with-fix / fail-without per seam; `./mvnw -fae test` BUILD SUCCESS. Commits c0b6617, c702657. Reviewer-confirmed: no off-thread mutator remains. |
 | **R-02** | No runtime invariant enforcement in production — both checkers NOOP; `InvariantMonitor` never wired. | 🔴 | **CLOSED (A2, 2026-06-06)** | **Fixed:** `ConfigdServer` wires `InvariantMonitor` to BOTH checkers (RaftNode + ConfigStateMachine); a violation increments a named metric visible at `/metrics` + a SEVERE log (fail-open), throws in testMode. `InvariantNetMetricTest` observes a real `per_key_order` violation in a RUNNING server (fails if reverted to NOOP). Reviewer-confirmed. |
 | **R-03** | Edge data plane unverified against any live pipeline — fan-out is a write-only sink. | 🟠 | OPEN | **B1/B2/B3** | `FanOutBuffer.append` `ConfigdServer.java:301` with no draining reader; `broadcast()` benchmark-only. |
-| **R-04** | "Linearizability verified" with no history checker — `LinearizabilityTest` is scripted single-threaded. | 🟠 | **IN-PROGRESS** — design DONE (A3-D); build + discrimination owed to **A3-B** | **A3-B** | **A3-D (design, 3/3 signed):** `ADR-0032` (bespoke Java orchestrator + **Porcupine** checker; rejects full Jepsen/Clojure-as-driver, in-process sim, hand-rolled checker, Lincheck-category-error) + `docs/a3-harness-design.md` (fault matrix, per-key linearizable-register model, indeterminate-op handling, OS-level iptables/tc injection, seeding, **discrimination plan**). Feasibility `[VERIFIED-PASS]`: 3-JVM bring-up + real iptables partition (→ re-election/step-down) + kill-9/restart durability on this box. **NOT a green gate yet** — A3-B must first show the two seeded bugs (lost-acked-write `FileStorage.java:110`; stale-read `RaftNode.java:421`) turn the checker RED. |
+| **R-04** | "Linearizability verified" with no history checker — `LinearizabilityTest` is scripted single-threaded. | 🟠 | **CLOSED (A3-B, 2026-06-07)** | A3-D (design) + A3-B (build) | **Built (`configd-linz`) + all 6 gates green.** Real **separate-JVM** cluster (shaded `configd-server` jar) over the real `TcpRaftTransport`, OS-level iptables `REJECT`/`kill -9` faults, faithful client history → **trusted Porcupine** checker (per-key linearizable register; ack≠commit writes modeled `:info`-floating + confirm-bound). **(i)** self-test 6/6 incl. timeout→`info`-never-`fail` flip + 4/4 unit; **(ii)** discrimination — lost-acked-write (no-op `appendToLog`) → **RED** (a value confirmed by a linearizable read-back vanished post-restart), stale-read (delete the `readIndex`/`isReadReady` leader guards) → **RED** (a lagging follower served a superseded value), controls GREEN; **(iii)** linearizable across seeds 2001-2004 on **3- AND 5-node**, faults active; **(iv)** seed→byte-identical schedule; **(v)** `./mvnw -fae test` BUILD SUCCESS (21,408 / 0 fail / 0 err); **(vi)** independent Opus reviewer CONFIRMED all three (real multi-process not sim; `:info`-not-`:fail` sound; discrimination genuinely RED). Full detail: §4 A3-B entry. |
 | **R-05** | Green ≠ coverage — count inflation, unseeded election RNG, vacuous TLA invariants, misnamed reconfig test. | 🟠 | **PARTIAL** — (c) vacuous invariants **DONE (A2)**; (a) count, (b) seed sweep, (d) misnamed test remain **A4** | (c) DONE: ReadFreshness/NoStaleLeaderServe/NoCommitRevert de-vacuumed (TLC green + seeded-bug counterexamples) + RaftNode `version_monotonicity` & SM `sequence_*` (runtime vacuity) fixed/removed; all 3 specs in CI. Remaining: `ConsistencyPropertyTests.java:77` unseeded; `ReconfigurationTest.java:257-270` vacuous. |
 | **R-06** | Multi-region / hierarchical Raft is a deploy-shaped false promise. | 🟠 | **DECIDED (Session 0)** — docs reconciled; orphan-code removal owed to Phase B | ADR-0030 rejects WAN write consensus; `architecture.md §5` + `adr-0015` marked **Superseded by ADR-0030**. Orphaned multi-region/edge code still present (removal = Phase B). |
 | **R-07** | Latent store hazards (R-1 unclone'd `byte[]`, W-1 unenforced single-writer, W-2 non-volatile getters). | 🟡 | **DORMANT — CONDITIONAL on the A1 single-thread marshalling invariant holding.** Becomes live again the instant any node access escapes the tick thread. | **A4** | `ReadResult.java:56-58`; single-writer unguarded; `ConfigStateMachine` public getters. **A4's W-1 owner-thread assertion is the regression TRIPWIRE that protects the A1 fix — it fires if a future change drives the node off the tick thread. It is load-bearing, NOT optional cleanup.** |
@@ -127,6 +131,7 @@ in Session A1: all node access serialized onto the single tick thread). Full det
 | **R-12** | Joint-consensus reconfiguration is **unverified end-to-end AND structurally untestable until a live caller exists** — there is no path from the running binary that exercises a membership change, let alone one under fault. **This must CLOSE before Phase A can be declared complete (unqualified)** — it is one of Phase A's two named outstanding exceptions (with R-14). | 🟠 | OPEN — **DEFERRED by A3-D** to a dedicated reconfig session; **A3-B re-confirmed still structurally untestable** | dedicated reconfig session (post-A3) | **A3-D, re-confirmed A3-B:** `proposeConfigChange` (`RaftNode.java:514`) has **zero non-test callers**; `AdminService` is never instantiated outside tests (`grep 'new AdminService'` → 0 non-test); the only test `configChangePreservedAcrossElections` (`ReconfigurationTest.java:257-270`) is vacuous (= R-05d). A3 fences to writes + ReadIndex reads; injecting reconfig faults would require **adding an admin reconfig seam** — itself a *new* verified-but-untested-integration seam (the A1 prior) — explicitly **NOT** done in A3-B. Owed: a session that wires a reconfig seam **with a tripwire**, then fault-tests reconfig-under-partition/election. |
 | **R-13** | InstallSnapshot has a silent-drop **liveness cliff**: a snapshot > 16 MiB is dropped, not chunked → a lagging follower can get permanently stuck. | 🟡 | OPEN — surfaced by A3-D | later session | **A3-D:** install is single-shot (`sendInstallSnapshot:1283-1292` always `offset=0,done=true`; `handleInstallSnapshot:1501` one `restoreSnapshot`); over-cap snapshot hits the IAE path (`RaftNode.java:1300`) against the 16 MiB wire frame cap (`FrameCodec.java:86`) and is silently dropped (corrects the docs' "4 MiB / offset-ignored chunking" framing). Not an A3 linearizability **safety** fault (no partial-install state to corrupt) — recorded as a liveness gap. |
 | **R-14** | **`ack ≠ commit`** — `ConfigWriteService.put/delete` returns `200 Accepted` on **local append** (before quorum-commit); `proposalId` is a local `AtomicLong`, not a Raft commit index. A client "success" is therefore **not** a commit → **read-your-writes is not guaranteed**, and the response contradicts the contract's ack model (`consistency-contract.md §6` "acknowledgment with commit sequence S"). An **R-01-class gap** (the system behaves in a way the contract does not admit) — **surfaced, not introduced,** by A3-B. | 🟠 | **OPEN** | **A5 — commit-confirmed write path (dedicated session; NOT an A3-B follow-on)** | `ConfigWriteService.java:150-154` (`proposer.propose()` local append → `WriteResult.Accepted(nextProposalId.getAndIncrement())`); `RaftNode.java:283-289` (`propose` returns after local append, before quorum-commit); `HttpApiServer.java:278` (`200` on `Accepted`). Fix = a synchronous commit-confirmed write path (block until applied, return the commit seq), buildable on `whenReadReady`/`lastApplied` (`RaftNode.java:453-460,424`) — `a3-harness-design.md §6(B)`. |
+| **R-15** | **Timeout-less `connect()` on the single tick thread** — the Raft transport opens outbound peer connections with `new Socket(addr, port)` and **no connect timeout** (`TcpRaftTransport.java:343`), invoked from `send()` on the one serialized tick thread (the A1 invariant). A single **black-holed** peer (e.g. an iptables DROP partition) blocks the leader's tick loop for the full TCP SYN timeout → the leader cannot commit to **anyone**. A liveness/availability gap surfaced by A3-B. | 🟡 | OPEN — surfaced by A3-B | later session | **A3-B:** empirically reproduced — DROP-isolating a follower intermittently stalled the leader so a write never committed; the harness had to switch to iptables `REJECT --reject-with tcp-reset` (fail-fast) to test safety at all. Fix = a bounded `connect()`/send timeout or async connect off the tick thread. Not an A3 linearizability **safety** fault. |
 
 **New risks from Session 0 (topology-decision residuals):** R-09 (full-region write-availability §0.1
 violation), R-10 (GLOBAL-key fail-closed strong-read, INV-1), R-11 (data residency, INV-2) — all
@@ -360,6 +365,80 @@ sub-second automatic region failover (`adr-0024` v0.2) meets it through a full-r
   no-op) are analyzed, not silently omitted.
 - **Stop point:** committed on `session-a3-linearizability`; **stops for human review before any
   implementation.** Teammates shut down + team cleaned up after sign-off; findings persist on disk.
+
+### Session A3-B — Build the linearizability + fault-injection harness — close R-04 (2026-06-07)
+- **Mode:** single Opus session (lead) + one Opus reviewer subagent at the end; **plan-mode first** (plan
+  approved before any edit). Branch `session-a3-linearizability` (continues A3-D). First code of the A3
+  build. Ledger-prep commit `b7f36e2` (R-14, R-12 reclassify, §0 evidence rule) preceded the build.
+- **Built — new Maven module `configd-linz`** (added to the reactor): a real **separate-JVM** cluster
+  launched from the shaded `configd-server` jar over the **real `TcpRaftTransport`** (NOT the in-process
+  `SimulatedNetwork` — the R-01 blind spot), driven by a concurrent JDK-`HttpClient` workload over a small
+  key set, under **OS-level faults** (iptables partitions + `kill -9`), recording a checker-neutral per-key
+  op-history fed to a **trusted third-party checker — Porcupine** (Go; installed user-local, pinned via
+  `go.mod`/`go.sum`; the binary is gitignored, rebuilt by `scripts/build-porcupine.sh`).
+- **Load-bearing build decisions (grounded by reading source, not taken from the design verbatim):**
+  - **Porcupine v1.2.0 cannot model a call-without-return** — an unmatched call makes the history
+    non-linearizable, it is NOT "placeable anywhere" (verified in `checker.go`/`model.go`). So an
+    indeterminate (ack≠commit / timed-out) write is encoded as a **floating `Operation`** (`Return = END`),
+    the sound finite equivalent. Tractability is restored by **confirm-bound**: a write later observed by an
+    OK read is pinned to that read's response time (it provably committed by then — a tighter, still-sound
+    upper bound); only never-observed writes float to END. Floating only ADDS linearization freedom → it
+    **cannot cause a false RED** (reviewer independently judged it sound).
+  - **ack≠commit:** every write `:info`; reads pin reality; FAIL writes (503 NotLeader / 4xx — rejected
+    pre-propose, never committed) and indeterminate (503/timeout) reads dropped; unique PUT tokens so a read
+    pins exactly which write it observed.
+  - **Single-host fault reality (verified, not assumed):** unbound loopback sockets always source from
+    `127.0.0.1`, so per-node SOURCE-IP partitions are impossible without netns — partition by Raft `--dport`.
+    The **F-F bridge** partition (per-pair cut) is **deferred to a netns follow-up** (recorded, not silently
+    dropped). The **stale-read** discrimination was **adapted** from "isolate the deposed leader" (not
+    single-host injectable: CheckQuorum steps it down, and a no-step-down mutation leaks heartbeats and
+    blocks re-election) to a **lagging isolated follower** serving a local read as if linearizable — the same
+    INV-L1 / FIND-0002 safety class.
+  - **iptables `REJECT --reject-with tcp-reset`, not `DROP`:** DROP black-holes → the transport's
+    timeout-less `connect()` on the tick thread stalls the leader (new risk **R-15**); REJECT fails fast so
+    the majority makes progress while the node is still isolated — what a SAFETY test needs.
+- **Exit gate — `[VERIFIED-PASS]` (all six, pasted output; discrimination BEFORE green):**
+  - **(i) Checker self-test FIRST:** `CheckerSelfTest` 6/6 through the real recorder→Porcupine pipe, incl.
+    test 3 — `3a timeout-as-INFO → LINEARIZABLE`; the SAME op flipped `3b → FAIL → NON-LINEARIZABLE` (the
+    decisive "who checks the checker" flip); + `HistoryWriterUnitTest` 4/4 (pure-Java, runs in default CI).
+  - **(ii) Discrimination (`scripts/run-discrimination.sh both`):** lost-acked-write
+    (`FileStorage.appendToLog`→no-op; write→linearizable read-back confirms T_new→full-cluster `kill -9`+
+    restart) — control GREEN (`post-restart read OK value='Tnew'`), mutated **RED** (`OK value=''` — a
+    confirmed value VANISHED). stale-read (delete the `readIndex`/`isReadReady` leader guards) — control
+    GREEN (`follower read INFO` = 503, no stale read), mutated **RED** (`follower read OK value='v1'` — a
+    lagging non-leader served a superseded value). **DISCRIMINATION PASS.** Mutations applied to a scratch
+    build via committed `.patch` files and reverted (production source never broken).
+  - **(iii) Unmodified GREEN:** `LINEARIZABLE` across seeds 2001-2004 on BOTH **3- and 5-node** clusters
+    (8/8), 4-5 OS-level faults (isolate-leader / isolate-node / kill-leader / kill-node) active throughout.
+  - **(iv) Reproducibility:** seed 777 → byte-identical `schedule-777-n3.json` across two runs (matching
+    sha256; 4 faults + 795 planned ops). Inputs pinned (seeded `SplittableRandom`), not which node wins.
+  - **(v)** `./mvnw -fae test` → **BUILD SUCCESS** — 21,408 run, 0 fail, 0 error, 8 skipped (6 = the
+    Porcupine self-test auto-skipping without `PORCUPINE_BIN`, so default CI stays green without a Go
+    toolchain; 2 pre-existing).
+  - **(vi) Independent Opus reviewer: CONFIRMED all three** — real separate-JVM over the real transport
+    (zero non-linz `io.configd` imports; `ProcessBuilder`+`java -jar`; `destroyForcibly`=SIGKILL); timed-out
+    ops `:info` not `:fail` (confirm-bound judged sound; re-ran self-test 3); both seeded bugs genuinely RED
+    from real contradictions, controls GREEN (re-ran the full discrimination); clean teardown (git clean, no
+    iptables rules, no stray JVMs). **No false-green or false-red risk found.**
+- **Recorded honestly (residual, not smoothed over):** ONE early high-density write-heavy run produced a
+  non-linearizable history under the (also-sound) float-to-END encoding; it did **not reproduce** across
+  30+ subsequent runs (18 at identical high-density write-heavy conditions) under the final confirm-bound
+  encoding, and the harness reliably discriminates the seeded violations and is consistently green on the
+  unmodified binary. Classified as an **unresolved rare anomaly** (genuine rare edge case vs transient
+  artifact — undetermined); the `PORCUPINE_DUMP` instrumentation is retained to catch it if it recurs; a
+  dedicated soak is owed.
+- **Component re-classification:** **R-04 `[ABSENT]`/IN-PROGRESS → `[VERIFIED-PASS]` — CLOSED.** New
+  component row: linearizability harness (`configd-linz`) `[VERIFIED-PASS]`. **New risk R-15** (timeout-less
+  `connect()` on the tick thread — a liveness gap, surfaced by the DROP-vs-REJECT investigation).
+- **Phase A status (precise):** the root control-plane Raft group is **linearizable under the fault classes
+  A3 tested** — leader/node isolation partitions, `kill -9` + restart, leader-crash chains, on 3- and
+  5-node clusters — **with TWO named exceptions OUTSTANDING: R-12** (joint-consensus reconfiguration —
+  unverified end-to-end AND structurally untestable until a live caller exists) and **R-14** (`ack ≠ commit`
+  — read-your-writes not guaranteed). **"Phase A done with two named exceptions" — NOT unqualified-done.**
+  Also owed (recorded): the **F-F bridge** partition (needs netns) and **R-15** (connect-stall).
+- **Stop point:** committed on `session-a3-linearizability`; **STOPS for human review before merge** — A3-D
+  design + A3-B build merge together as one unit only after this gate is green (it is). Reviewer subagent
+  left idle + resumable.
 
 <!-- Append new session entries ABOVE this line, newest-first or newest-last (pick one and keep it
      consistent). Each entry: Mode · What changed · Exit-gate command + pasted output · Component

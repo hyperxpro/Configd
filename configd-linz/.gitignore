@@ -1,0 +1,6 @@
+# Built Porcupine checker binary (rebuild via scripts/build-porcupine.sh)
+bin/
+# Run artifacts: recorded histories, schedules, cluster data-dirs
+runs/
+# Maven output
+target/

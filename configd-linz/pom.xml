@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <parent>
+        <groupId>io.configd</groupId>
+        <artifactId>configd</artifactId>
+        <version>0.1.0-SNAPSHOT</version>
+    </parent>
+
+    <artifactId>configd-linz</artifactId>
+
+    <description>
+        A3 linearizability + fault-injection harness (R-04). Drives a REAL
+        separate-JVM Configd cluster (the shaded configd-server jar) over the
+        REAL TcpRaftTransport, under OS-level faults (iptables / tc / kill -9),
+        records a checker-neutral op-history, and verifies it with a TRUSTED
+        third-party checker (Porcupine). This deliberately does NOT use the
+        in-process SimulatedNetwork — that is the path that hid R-01. The harness
+        treats the server as a black box (HTTP + process control), so it depends
+        on no other io.configd module at compile time.
+    </description>
+
+    <dependencies>
+        <!-- junit-jupiter (and jqwik) are inherited test-scope from the parent. -->
+        <dependency>
+            <groupId>org.junit.jupiter</groupId>
+            <artifactId>junit-jupiter</artifactId>
+        </dependency>
+    </dependencies>
+</project>

@@ -21,6 +21,7 @@
         <module>configd-control-plane-api</module>
         <module>configd-testkit</module>
         <module>configd-server</module>
+        <module>configd-linz</module>
     </modules>
 
     <properties>
