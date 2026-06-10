@@ -1,8 +1,13 @@
 package io.configd.raft;
 
 import io.configd.common.NodeId;
+import io.configd.common.Storage;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Set;
@@ -136,6 +141,118 @@ class SnapshotCrashRecoveryTest {
             fail("RR-003: " + violations + " durable-prefix violation(s) across the crash matrix:\n"
                     + report);
         }
+    }
+
+    /**
+     * Torn-tail cell: a crash mid-append of the final WAL record leaves a partial
+     * trailing frame on disk. Recovery (FileStorage.readLog, F-0011) must discard
+     * the never-fully-fsynced trailing record and recover exactly the entries
+     * below it — without violating the durable-prefix/no-gap invariant. Uses a
+     * real {@link io.configd.common.FileStorage} so the byte-level torn frame is
+     * genuine (the frame-granular CrashStorage cannot model a sub-frame tear).
+     */
+    @Test
+    void recoversCleanlyFromTornFinalWalRecord(@TempDir Path tempDir) throws Exception {
+        Storage storage = Storage.file(tempDir);
+
+        // Build a node, commit three writes (durable WAL frames), capture state.
+        RaftConfig config = RaftConfig.of(NODE, Set.of());
+        RaftLog log = new RaftLog(storage);
+        KvStateMachine sm = new KvStateMachine();
+        RaftNode node = new RaftNode(config, log, NO_PEERS, sm,
+                RandomGenerator.of("L64X128MixRandom"), storage, THROWING);
+        for (int i = 0; i < ELECTION_TICKS && node.role() != RaftRole.LEADER; i++) {
+            node.tick();
+        }
+        assertEquals(RaftRole.LEADER, node.role());
+        node.propose(KvStateMachine.put("a", "1"));
+        node.propose(KvStateMachine.put("b", "2"));
+        Map<String, String> committedBeforeTear = sm.snapshotState();
+        assertEquals(Map.of("a", "1", "b", "2"), committedBeforeTear);
+
+        // Simulate a torn final record: append a partial frame (a length header
+        // with no complete data/CRC) directly to the WAL file — exactly what a
+        // crash mid-appendToLog leaves behind.
+        Path wal = tempDir.resolve("raft-log.wal");
+        byte[] tornFrame = new byte[] {0, 0, 0, 32, 1, 2, 3}; // claims len=32, only 3 bytes follow
+        Files.write(wal, tornFrame, java.nio.file.StandardOpenOption.APPEND);
+
+        // Restart: a fresh RaftLog/RaftNode over the same directory.
+        RaftLog log2 = new RaftLog(storage);
+        KvStateMachine sm2 = new KvStateMachine();
+        RaftNode node2 = new RaftNode(config, log2, NO_PEERS, sm2,
+                RandomGenerator.of("L64X128MixRandom"), storage, THROWING);
+        for (int i = 0; i < ELECTION_TICKS && node2.role() != RaftRole.LEADER; i++) {
+            node2.tick();
+        }
+        assertEquals(RaftRole.LEADER, node2.role(), "recovers and re-elects despite the torn tail");
+
+        // The torn trailing frame was discarded; the two committed writes survive;
+        // no durable_prefix_no_gap violation fired (THROWING would have thrown).
+        Map<String, String> recovered = sm2.snapshotState();
+        assertTrue(recovered.entrySet().containsAll(committedBeforeTear.entrySet()),
+                "torn-tail recovery dropped a committed entry: expected superset of "
+                        + committedBeforeTear + " but got " + recovered);
+        assertEquals("1", recovered.get("a"));
+        assertEquals("2", recovered.get("b"));
+    }
+
+    /**
+     * Gap-detection: when a snapshot boundary exists on disk but the snapshot
+     * BYTES are genuinely unrecoverable (e.g. the blob file is lost to disk
+     * corruption), recovery must FAIL LOUDLY — the no-gap invariant
+     * ({@code durable_prefix_no_gap}) fires rather than the pre-fix silent skip
+     * that advanced lastApplied past the hole and served an empty store. This is
+     * the defense-in-depth that the persist-before-truncate fix backstops: even
+     * if durability is somehow defeated, the loss is observable, never silent.
+     */
+    @Test
+    void gapDetectionFiresWhenSnapshotBlobUnrecoverable(@TempDir Path tempDir) throws Exception {
+        Storage storage = Storage.file(tempDir);
+        RaftConfig config = RaftConfig.of(NODE, Set.of());
+
+        RaftLog log = new RaftLog(storage);
+        KvStateMachine sm = new KvStateMachine();
+        RaftNode node = new RaftNode(config, log, NO_PEERS, sm,
+                RandomGenerator.of("L64X128MixRandom"), storage, THROWING);
+        for (int i = 0; i < ELECTION_TICKS && node.role() != RaftRole.LEADER; i++) {
+            node.tick();
+        }
+        assertEquals(RaftRole.LEADER, node.role());
+        node.propose(KvStateMachine.put("k0", "v0"));
+        node.propose(KvStateMachine.put("k1", "v1"));
+        // Snapshot+compact: the WAL prefix is now gone; the blob is the only
+        // record of [1..snapshotIndex].
+        assertTrue(node.triggerSnapshot());
+        assertTrue(log.snapshotIndex() > 0);
+
+        // Simulate UNRECOVERABLE loss of the snapshot bytes (disk corruption):
+        // delete the persisted blob file while the boundary meta + (empty) WAL
+        // remain. This is NOT the RR-003 software bug (the fix persisted it) — it
+        // models a hardware/medium failure to prove the invariant is a real net.
+        Files.deleteIfExists(tempDir.resolve("raft-log.snapshot.dat"));
+
+        RaftLog log2 = new RaftLog(storage);
+        KvStateMachine sm2 = new KvStateMachine();
+        // Recovery (constructor + any apply) walks into the [1..snapshotIndex]
+        // hole with no bytes to fill it. The throwing checker must fire — the
+        // pre-fix silent skip would have advanced lastApplied over the hole and
+        // booted with an empty store.
+        AssertionError thrown = null;
+        try {
+            RaftNode node2 = new RaftNode(config, log2, NO_PEERS, sm2,
+                    RandomGenerator.of("L64X128MixRandom"), storage, THROWING);
+            for (int i = 0; i < ELECTION_TICKS && node2.role() != RaftRole.LEADER; i++) {
+                node2.tick();
+            }
+        } catch (AssertionError e) {
+            thrown = e;
+        }
+        org.junit.jupiter.api.Assertions.assertNotNull(thrown,
+                "durable_prefix_no_gap must fire when the snapshot is unrecoverable; "
+                        + "a silent skip would have advanced lastApplied over the hole");
+        assertTrue(thrown.getMessage().contains("durable_prefix_no_gap"),
+                "wrong invariant fired: " + thrown.getMessage());
     }
 
     enum CrashPoint { BEFORE_PERSIST, AFTER_PERSIST_BEFORE_TRUNCATE, AFTER_TRUNCATE, NONE }

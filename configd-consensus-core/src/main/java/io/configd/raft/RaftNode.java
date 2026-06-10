@@ -208,6 +208,47 @@ public final class RaftNode {
         this.noopCommittedInCurrentTerm = false;
         this.configChangePending = false;
 
+        // RR-003: restore the state machine from the durable snapshot BEFORE any
+        // WAL suffix replays. Without this, a node that restarts after a
+        // compaction starts with an EMPTY state machine and applyCommitted
+        // silently advances past the missing (compacted) entries — total silent
+        // loss of all committed state at/below the snapshot point.
+        //
+        // lastApplied is initialized to the recovered snapshotIndex whenever a
+        // snapshot boundary exists: everything at/below snapshotIndex is, by
+        // definition, folded into the snapshot, so the only entries left to
+        // replay are the WAL suffix (snapshotIndex+1 .. commitIndex]. Seeding
+        // lastApplied past the compacted prefix is also what stops applyCommitted
+        // from walking indices [1..snapshotIndex] (which entryAt() returns null
+        // for) and tripping the no-gap invariant on a perfectly-recovered node.
+        //
+        // RaftLog accepts the durable snapshot blob only when its boundary
+        // matches the recovered WAL boundary (see RaftLog's recovery rule).
+        SnapshotState recovered = log.recoveredSnapshot();
+        if (recovered != null) {
+            stateMachine.restoreSnapshot(recovered.data());
+            latestSnapshot = recovered;
+        }
+        if (log.snapshotIndex() > 0) {
+            // RR-003 (durable-prefix / no-gap invariant, recovery side): a
+            // snapshot BOUNDARY exists but no snapshot BYTES restored it. The
+            // state machine therefore does NOT reflect [1..snapshotIndex], yet we
+            // are about to advance lastApplied past that range — exactly the
+            // silent-skip that caused the data loss. This is unreachable when the
+            // persist-before-truncate fix holds (a boundary always has matching
+            // bytes); it fires only on genuinely unrecoverable storage (the blob
+            // lost to medium corruption) or if persistence is defeated. Fail
+            // LOUDLY: throw in test/sim, metric + SEVERE log in production — never
+            // boot silently into a state machine missing committed entries.
+            invariantChecker.check("durable_prefix_no_gap",
+                    recovered != null,
+                    "Recovered snapshot boundary snapshotIndex=" + log.snapshotIndex()
+                            + " but no durable snapshot bytes to restore it — the recoverable"
+                            + " prefix is incomplete; refusing to boot with silently-missing"
+                            + " committed state below the snapshot point.");
+            log.setLastApplied(log.snapshotIndex());
+        }
+
         // Recover cluster config from the log if it contains config entries
         // from a prior run. This ensures config changes survive restarts.
         recomputeConfigFromLog();
@@ -384,7 +425,16 @@ public final class RaftNode {
         // appliedIndex must record only the config that was effective at
         // that index, not a future uncommitted config.
         byte[] configData = serializeConfigChange(configAtIndex(appliedIndex));
-        latestSnapshot = new SnapshotState(snapshotData, appliedIndex, appliedTerm, configData);
+        SnapshotState snapshot = new SnapshotState(snapshotData, appliedIndex, appliedTerm, configData);
+
+        // RR-003 (durable-prefix invariant): persist the snapshot bytes DURABLY
+        // BEFORE compaction deletes the WAL prefix. Until this fix the snapshot
+        // lived only in the RAM field below, so snapshot -> WAL truncate ->
+        // restart silently lost all committed state at/below appliedIndex. The
+        // persist-then-compact ordering guarantees a complete prefix (persisted
+        // snapshot OR intact WAL) is on durable storage at every instant.
+        log.persistSnapshot(snapshot);
+        latestSnapshot = snapshot;
         log.compact(appliedIndex, appliedTerm);
         return true;
     }
@@ -1576,48 +1626,73 @@ public final class RaftNode {
             long nextApply = log.lastApplied() + 1;
 
             LogEntry entry = log.entryAt(nextApply);
-            if (entry != null) {
-                // INV-5: VersionMonotonicity — the entry we are about to apply must carry an
-                // index strictly greater than lastApplied. entry.index() comes from the log
-                // (independent of the nextApply computation), so a log returning a stale/wrong
-                // entry trips this. (A2/R-05c: the previous form `nextApply > lastApplied` with
-                // nextApply := lastApplied + 1 was locally vacuous and could never fire.)
-                invariantChecker.check("version_monotonicity",
-                        entry.index() > log.lastApplied(),
-                        "Apply entry index " + entry.index() + " not > lastApplied " + log.lastApplied());
+            if (entry == null) {
+                // RR-003 (durable-prefix / no-gap invariant): a committed index
+                // with no log entry and no covering snapshot is a GAP in the
+                // recoverable prefix. The pre-fix code SILENTLY skipped here and
+                // advanced lastApplied — the loss amplifier that turned an
+                // unrestored snapshot into invisible total data loss. Fail
+                // LOUDLY instead: throw in test/sim, increment the
+                // durable_prefix_no_gap metric + SEVERE log in production
+                // (never silently skip a committed entry). nextApply > snapshotIndex
+                // here (we only advance lastApplied within (snapshotIndex,
+                // commitIndex]), so a null entry means the entry is genuinely
+                // missing, not merely compacted-and-restored.
+                invariantChecker.check("durable_prefix_no_gap",
+                        false,
+                        "Committed index " + nextApply + " is missing from the recoverable prefix"
+                                + " (snapshotIndex=" + log.snapshotIndex()
+                                + ", lastApplied=" + log.lastApplied()
+                                + ", commitIndex=" + log.commitIndex()
+                                + "): persisted snapshot + WAL suffix do not cover all committed"
+                                + " entries — refusing to silently skip.");
+                // In production (fail-open) the metric/log has fired; do NOT
+                // advance lastApplied past the gap (that is the silent-skip we
+                // are killing). Stop applying — the node is in a corrupt
+                // recovery state and must not pretend the entry was applied.
+                break;
+            }
 
-                // INV-4: StateMachineSafety — entry at this index must match across nodes
-                // (structural guarantee from Raft log matching; assert entry consistency)
-                invariantChecker.check("state_machine_safety",
-                        entry.index() == nextApply,
-                        "Entry index " + entry.index() + " != expected " + nextApply);
+            // INV-5: VersionMonotonicity — the entry we are about to apply must carry an
+            // index strictly greater than lastApplied. entry.index() comes from the log
+            // (independent of the nextApply computation), so a log returning a stale/wrong
+            // entry trips this. (A2/R-05c: the previous form `nextApply > lastApplied` with
+            // nextApply := lastApplied + 1 was locally vacuous and could never fire.)
+            invariantChecker.check("version_monotonicity",
+                    entry.index() > log.lastApplied(),
+                    "Apply entry index " + entry.index() + " not > lastApplied " + log.lastApplied());
 
-                // Track no-op commitment in current term (for reconfig safety)
-                if (entry.term() == currentTerm && entry.command().length == 0) {
-                    noopCommittedInCurrentTerm = true;
-                }
+            // INV-4: StateMachineSafety — entry at this index must match across nodes
+            // (structural guarantee from Raft log matching; assert entry consistency)
+            invariantChecker.check("state_machine_safety",
+                    entry.index() == nextApply,
+                    "Entry index " + entry.index() + " != expected " + nextApply);
 
-                // Handle config change entries
-                if (isConfigChangeEntry(entry.command())) {
-                    // RR-004: RCFG entries bypass the state machine; they assign no
-                    // applied-mutation seq. A commit-outcome callback on this index
-                    // (clients never propose RCFG, but the seam is generic) surfaces
-                    // the current sequence — consistent with the non-mutating case.
-                    handleCommittedConfigChange(entry);
-                    recordAppliedSeq(entry.index(), currentAppliedSequence());
+            // Track no-op commitment in current term (for reconfig safety)
+            if (entry.term() == currentTerm && entry.command().length == 0) {
+                noopCommittedInCurrentTerm = true;
+            }
+
+            // Handle config change entries
+            if (isConfigChangeEntry(entry.command())) {
+                // RR-004: RCFG entries bypass the state machine; they assign no
+                // applied-mutation seq. A commit-outcome callback on this index
+                // (clients never propose RCFG, but the seam is generic) surfaces
+                // the current sequence — consistent with the non-mutating case.
+                handleCommittedConfigChange(entry);
+                recordAppliedSeq(entry.index(), currentAppliedSequence());
+            } else {
+                // RR-004 / ADR-0033: apply now returns the assigned
+                // applied-mutation seq (or NON_MUTATING for a no-op). Record it
+                // per index so the commit-outcome seam can surface the correct
+                // seq for this exact entry.
+                long appliedSeq = stateMachine.apply(entry.index(), entry.term(), entry.command());
+                if (appliedSeq == StateMachine.NON_MUTATING) {
+                    appliedSeq = currentAppliedSequence();
                 } else {
-                    // RR-004 / ADR-0033: apply now returns the assigned
-                    // applied-mutation seq (or NON_MUTATING for a no-op). Record it
-                    // per index so the commit-outcome seam can surface the correct
-                    // seq for this exact entry.
-                    long appliedSeq = stateMachine.apply(entry.index(), entry.term(), entry.command());
-                    if (appliedSeq == StateMachine.NON_MUTATING) {
-                        appliedSeq = currentAppliedSequence();
-                    } else {
-                        lastRecordedSeq = appliedSeq;
-                    }
-                    recordAppliedSeq(entry.index(), appliedSeq);
+                    lastRecordedSeq = appliedSeq;
                 }
+                recordAppliedSeq(entry.index(), appliedSeq);
             }
             log.setLastApplied(nextApply);
         }
@@ -1772,6 +1847,18 @@ public final class RaftNode {
 
         // Restore the state machine from the snapshot
         stateMachine.restoreSnapshot(req.data());
+
+        // RR-003: a follower installing a snapshot has the same restart-loss
+        // exposure as a leader taking one — it is about to compact away the WAL
+        // prefix. Persist the received snapshot bytes durably BEFORE compaction
+        // so a restart restores the state machine instead of silently dropping
+        // everything at/below lastIncludedIndex. Cache it as latestSnapshot too,
+        // so this node can in turn serve it to a lagging peer.
+        SnapshotState installed = new SnapshotState(
+                req.data(), req.lastIncludedIndex(), req.lastIncludedTerm(),
+                req.clusterConfigData());
+        log.persistSnapshot(installed);
+        latestSnapshot = installed;
 
         // Compact the log up to the snapshot point
         log.compact(req.lastIncludedIndex(), req.lastIncludedTerm());

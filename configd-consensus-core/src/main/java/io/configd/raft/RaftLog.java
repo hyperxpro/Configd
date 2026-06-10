@@ -62,6 +62,24 @@ public final class RaftLog {
     private static final String WAL_NAME = "raft-log";
     private static final String WAL_TMP_NAME = "raft-log.tmp";
     private static final String SNAPSHOT_META_KEY = "raft-log.snapshot-meta";
+    /**
+     * RR-003: durable storage key for the snapshot BYTES (the state-machine
+     * bytes plus the SnapshotState envelope). Distinct from
+     * {@link #SNAPSHOT_META_KEY}, which carries only the (index, term) boundary.
+     * Before this fix the snapshot bytes lived only in a RAM field of RaftNode,
+     * so a restart after compaction silently lost all state at/below the
+     * snapshot point.
+     */
+    private static final String SNAPSHOT_BLOB_KEY = "raft-log.snapshot";
+
+    /**
+     * The snapshot recovered from durable storage on construction, or {@code null}
+     * if none is on disk or it does not match the recovered WAL boundary. Read
+     * once by {@link #recoveredSnapshot()} so the owning RaftNode can restore the
+     * state machine before replaying the WAL suffix. See the recovery rule in the
+     * constructor.
+     */
+    private final SnapshotState recoveredSnapshot;
 
     public RaftLog() {
         this.entries = new ArrayList<>(1024);
@@ -70,6 +88,7 @@ public final class RaftLog {
         this.commitIndex = 0;
         this.lastApplied = 0;
         this.storage = null;
+        this.recoveredSnapshot = null;
     }
 
     /**
@@ -143,6 +162,28 @@ public final class RaftLog {
                 // grants an invalid one.
                 this.snapshotTerm = 0;
             }
+        }
+
+        // RR-003: recover the durable snapshot bytes (the state-machine state at
+        // the snapshot boundary) so the owning RaftNode can restore the state
+        // machine BEFORE replaying the WAL suffix. Acceptance rule:
+        //
+        //   accept iff blob.lastIncludedIndex == snapshotIndex (the consistent,
+        //   post-compaction steady state).
+        //
+        // If they disagree, the WAL is authoritative and still holds the entries
+        // the blob would have restored (a crash between persisting the blob and
+        // rewriting the WAL leaves snapshotIndex < blob.lastIncludedIndex with
+        // the full WAL intact), so we ignore the ahead-of-WAL blob and let the
+        // full WAL replay. A null/short/corrupt blob is treated as absent.
+        SnapshotState blob = readSnapshotBlob();
+        if (blob != null && blob.lastIncludedIndex() == this.snapshotIndex && this.snapshotIndex > 0) {
+            this.recoveredSnapshot = blob;
+            // The blob's term is authoritative for the snapshot boundary even if
+            // the WAL/meta cross-validation conservatively reset snapshotTerm.
+            this.snapshotTerm = blob.lastIncludedTerm();
+        } else {
+            this.recoveredSnapshot = null;
         }
     }
 
@@ -390,8 +431,52 @@ public final class RaftLog {
     }
 
     /**
+     * RR-003: durably persists the snapshot bytes (state-machine state + the
+     * {@link SnapshotState} envelope) to storage, fsynced, before returning.
+     * <p>
+     * <b>Ordering contract (the durable-prefix invariant).</b> This MUST be
+     * called and MUST complete BEFORE {@link #compact(long, long)} deletes the
+     * WAL prefix [1..index]. Persist-before-truncate guarantees that at every
+     * instant a complete prefix exists on durable storage: either the snapshot
+     * bytes (once persisted) OR the still-present WAL. A crash between this call
+     * and {@code compact()} leaves the full WAL intact (recovery replays it and
+     * ignores the ahead-of-WAL blob); a crash after {@code compact()} has the
+     * snapshot bytes durable. There is no instant at which both the WAL prefix
+     * and the snapshot bytes for an index are missing.
+     * <p>
+     * No-op in the in-memory ({@code storage == null}) mode.
+     *
+     * @param snapshot the snapshot to persist; its {@code lastIncludedIndex} is
+     *                 the boundary that {@code compact} will subsequently set
+     */
+    public void persistSnapshot(SnapshotState snapshot) {
+        if (storage == null) {
+            return; // in-memory mode: nothing durable to write
+        }
+        // Storage.put writes a temp file, fsyncs it, atomic-renames, and fsyncs
+        // the directory before returning — so the blob is on durable storage
+        // when this returns, independent of any later WAL rewrite.
+        storage.put(SNAPSHOT_BLOB_KEY, serializeSnapshot(snapshot));
+    }
+
+    /**
+     * RR-003: the snapshot recovered from durable storage on construction, used
+     * by RaftNode to restore the state machine before replaying the WAL suffix,
+     * or {@code null} if none is on disk or it does not match the recovered WAL
+     * boundary (see the recovery rule in the constructor). Idempotent.
+     */
+    public SnapshotState recoveredSnapshot() {
+        return recoveredSnapshot;
+    }
+
+    /**
      * Compacts entries up to the given index (inclusive) for snapshot.
      * After compaction, entries [1..snapshotIndex] are discarded.
+     * <p>
+     * RR-003: callers that take a real snapshot (not just a follower's
+     * InstallSnapshot of already-known state) MUST {@link #persistSnapshot} the
+     * snapshot bytes durably BEFORE invoking this, so the WAL prefix is never the
+     * sole record of committed state.
      *
      * @param index the index of the last entry included in the snapshot
      * @param term  the term of the last entry included in the snapshot
@@ -475,6 +560,71 @@ public final class RaftLog {
         buf.putLong(entry.term());
         buf.put(command);
         return buf.array();
+    }
+
+    // ---- Snapshot blob persistence (RR-003) ----
+    //
+    // RaftLog-level envelope around the state-machine snapshot bytes. This frames
+    // the SnapshotState (index/term/clusterConfig + the state-machine `data`),
+    // NOT the state machine's internal byte format — the latter is ADR-0028 and
+    // is owned by ConfigStateMachine, which serializes/deserializes `data`. A
+    // -1 length encodes a null clusterConfigData (legacy snapshots).
+    //
+    //   [8 lastIncludedIndex][8 lastIncludedTerm]
+    //   [4 dataLen][data][4 configLen (-1 == null)][config]
+
+    private static byte[] serializeSnapshot(SnapshotState s) {
+        byte[] data = s.data();
+        byte[] cfg = s.clusterConfigData();
+        int cfgLen = (cfg == null) ? -1 : cfg.length;
+        int cfgBytes = (cfg == null) ? 0 : cfg.length;
+        ByteBuffer buf = ByteBuffer.allocate(8 + 8 + 4 + data.length + 4 + cfgBytes);
+        buf.putLong(s.lastIncludedIndex());
+        buf.putLong(s.lastIncludedTerm());
+        buf.putInt(data.length);
+        buf.put(data);
+        buf.putInt(cfgLen);
+        if (cfg != null) {
+            buf.put(cfg);
+        }
+        return buf.array();
+    }
+
+    /**
+     * Reads and deserializes the persisted snapshot blob, or returns {@code null}
+     * if absent or structurally invalid (a torn/short blob is treated as absent —
+     * the WAL remains authoritative for recovery).
+     */
+    private SnapshotState readSnapshotBlob() {
+        byte[] raw = storage.get(SNAPSHOT_BLOB_KEY);
+        if (raw == null || raw.length < 8 + 8 + 4) {
+            return null;
+        }
+        try {
+            ByteBuffer buf = ByteBuffer.wrap(raw);
+            long index = buf.getLong();
+            long term = buf.getLong();
+            int dataLen = buf.getInt();
+            if (dataLen < 0 || buf.remaining() < dataLen + 4) {
+                return null; // torn blob
+            }
+            byte[] data = new byte[dataLen];
+            buf.get(data);
+            int cfgLen = buf.getInt();
+            byte[] cfg = null;
+            if (cfgLen >= 0) {
+                if (buf.remaining() < cfgLen) {
+                    return null; // torn blob
+                }
+                cfg = new byte[cfgLen];
+                buf.get(cfg);
+            }
+            return new SnapshotState(data, index, term, cfg);
+        } catch (RuntimeException e) {
+            // Defensive: a malformed blob must not crash recovery; the WAL is
+            // authoritative. Treat as absent.
+            return null;
+        }
     }
 
     /**

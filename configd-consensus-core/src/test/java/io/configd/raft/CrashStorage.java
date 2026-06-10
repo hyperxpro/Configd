@@ -93,6 +93,17 @@ final class CrashStorage implements Storage {
     private int crashAfter = -1;
     /** Set once any armed auto-crash fires, so callers can detect it. */
     private boolean crashed;
+    /**
+     * Set once an ARMED crash has fired: the modelled process is dead, so any
+     * further storage call from the (now-zombie) caller is a no-op. A real crash
+     * stops the process mid-operation; the in-process test keeps executing the
+     * Java that follows, and this flag prevents those post-crash calls from
+     * mutating the durable image. The test must {@link #recoveredView()} to model
+     * the restart. (An explicit {@link #crash()} does NOT set this — callers that
+     * crash explicitly then keep using the instance are responsible for their own
+     * sequencing.)
+     */
+    private boolean dead;
 
     /** When set, crash just BEFORE the first {@code put} to this key. */
     private String crashBeforeKeyPut;
@@ -183,9 +194,11 @@ final class CrashStorage implements Storage {
 
     @Override
     public void put(String key, byte[] value) {
+        if (dead) {
+            return;
+        }
         if (crashBeforeKeyPut != null && crashBeforeKeyPut.equals(key) && !crashed) {
-            crashed = true;
-            crash();
+            fireArmedCrash();
             return; // crashed before this put landed
         }
         byte[] v = value.clone();
@@ -193,8 +206,7 @@ final class CrashStorage implements Storage {
         working.kv.put(key, v.clone());
         operationCount++;
         if (crashAfterKeySynced != null && crashAfterKeySynced.equals(key) && !crashed) {
-            crashed = true;
-            crash();
+            fireArmedCrash();
             return;
         }
         maybeAutoCrash();
@@ -202,6 +214,9 @@ final class CrashStorage implements Storage {
 
     @Override
     public void appendToLog(String logName, byte[] data) {
+        if (dead) {
+            return;
+        }
         byte[] d = data.clone();
         durable.logs.computeIfAbsent(logName, k -> new ArrayList<>()).add(d.clone());
         working.logs.computeIfAbsent(logName, k -> new ArrayList<>()).add(d.clone());
@@ -213,6 +228,9 @@ final class CrashStorage implements Storage {
 
     @Override
     public void truncateLog(String logName) {
+        if (dead) {
+            return;
+        }
         if (crashBeforeDelete(logName)) {
             return;
         }
@@ -221,6 +239,9 @@ final class CrashStorage implements Storage {
 
     @Override
     public void renameLog(String fromLogName, String toLogName) {
+        if (dead) {
+            return;
+        }
         // A rename deletes `fromLogName` and replaces `toLogName`; either being
         // the guarded WAL means the prefix deletion is about to land.
         if (crashBeforeDelete(toLogName) || crashBeforeDelete(fromLogName)) {
@@ -246,8 +267,7 @@ final class CrashStorage implements Storage {
     /** Crashes (and returns true) iff a before-delete crash is armed for {@code logName}. */
     private boolean crashBeforeDelete(String logName) {
         if (crashBeforeLogDelete != null && crashBeforeLogDelete.equals(logName) && !crashed) {
-            crashed = true;
-            crash();
+            fireArmedCrash();
             return true;
         }
         return false;
@@ -255,13 +275,22 @@ final class CrashStorage implements Storage {
 
     private void maybeAutoCrash() {
         if (crashAfter > 0 && operationCount >= crashAfter && !crashed) {
-            crashed = true;
-            crash();
+            fireArmedCrash();
         }
+    }
+
+    /** Fires an armed crash and marks the modelled process dead. */
+    private void fireArmedCrash() {
+        crashed = true;
+        dead = true;
+        crash();
     }
 
     @Override
     public void sync() {
+        if (dead) {
+            return;
+        }
         // Directory fsync: promote pending rename-style mutations to durable.
         for (Pending p : pendingRenames) {
             p.applyTo(durable);
