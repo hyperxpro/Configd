@@ -49,6 +49,15 @@ public interface StateMachineMetrics {
      */
     void onSnapshotInstallFailed();
 
+    /**
+     * RR-029 / W-1: records a single-writer apply-owner-thread violation — an
+     * {@link ConfigStateMachine#apply} call observed on a thread other than the
+     * one bound on first apply. In production this is the metric counterpart of
+     * the test/sim assertion (which throws). Default no-op so existing sinks need
+     * not change; the production registry overrides it.
+     */
+    default void onApplyOwnerThreadViolation() {}
+
     /** No-op metrics sink — used by tests / bootstraps with no registry. */
     StateMachineMetrics NOOP = new StateMachineMetrics() {
         @Override public void onWriteCommitSuccess(long applyDurationNanos) {}

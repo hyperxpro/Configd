@@ -2,6 +2,7 @@ package io.configd.server;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -214,8 +215,11 @@ class RaftInboundMarshallingTest {
                     ConfigdServer.raftProposer(driverFor(node), GROUP, raftExecutor, 5000);
 
             String callerThread = Thread.currentThread().getName();
-            boolean accepted = proposer.propose(null, cmd("hello")); // single-node commits + applies
-            assertTrue(accepted, "single-node leader should accept the proposal");
+            // RR-004 / ADR-0033: a single-node leader commits + applies inline, so
+            // the proposer returns Committed (commit-confirmed), not a bare accept.
+            ConfigWriteService.ProposeCommitResult result = proposer.propose(null, cmd("hello"));
+            assertInstanceOf(ConfigWriteService.ProposeCommitResult.Committed.class, result,
+                    "single-node leader should commit the proposal");
 
             String applyThread = sm.lastApplyThread();
             assertEquals(RAFT_THREAD, applyThread,
@@ -291,10 +295,11 @@ class RaftInboundMarshallingTest {
         }
 
         @Override
-        public void apply(long index, long term, byte[] command) {
+        public long apply(long index, long term, byte[] command) {
             sentinel.enter();
             try {
                 // node-access touchpoint
+                return StateMachine.NON_MUTATING;
             } finally {
                 sentinel.exit();
             }
@@ -314,8 +319,9 @@ class RaftInboundMarshallingTest {
         private final AtomicReference<String> lastApplyThread = new AtomicReference<>();
 
         @Override
-        public void apply(long index, long term, byte[] command) {
+        public long apply(long index, long term, byte[] command) {
             lastApplyThread.set(Thread.currentThread().getName());
+            return StateMachine.NON_MUTATING;
         }
 
         @Override
@@ -338,7 +344,8 @@ class RaftInboundMarshallingTest {
 
     private static final class NoopStateMachine implements StateMachine {
         @Override
-        public void apply(long index, long term, byte[] command) {
+        public long apply(long index, long term, byte[] command) {
+            return StateMachine.NON_MUTATING;
         }
 
         @Override

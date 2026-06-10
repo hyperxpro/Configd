@@ -47,7 +47,7 @@ class MultiRaftDriverTest {
     }
 
     static final class TestStateMachine implements StateMachine {
-        @Override public void apply(long index, long term, byte[] command) {}
+        @Override public long apply(long index, long term, byte[] command) { return StateMachine.NON_MUTATING; }
         @Override public byte[] snapshot() { return new byte[0]; }
         @Override public void restoreSnapshot(byte[] snapshot) {}
     }
@@ -292,7 +292,7 @@ class MultiRaftDriverTest {
             }
             assertEquals(RaftRole.LEADER, node.role());
 
-            ProposalResult result = driver.propose(1, "test-command".getBytes());
+            ProposalResult result = driver.propose(1, "test-command".getBytes()).result();
             assertEquals(ProposalResult.ACCEPTED, result);
         }
 
@@ -304,13 +304,13 @@ class MultiRaftDriverTest {
             // Node is a follower (multi-node cluster, no election triggered)
             assertEquals(RaftRole.FOLLOWER, node.role());
 
-            ProposalResult result = driver.propose(1, "test-command".getBytes());
+            ProposalResult result = driver.propose(1, "test-command".getBytes()).result();
             assertEquals(ProposalResult.NOT_LEADER, result);
         }
 
         @Test
         void proposeToNonexistentGroupReturnsNotLeader() {
-            ProposalResult result = driver.propose(99, "test-command".getBytes());
+            ProposalResult result = driver.propose(99, "test-command".getBytes()).result();
             assertEquals(ProposalResult.NOT_LEADER, result);
         }
     }

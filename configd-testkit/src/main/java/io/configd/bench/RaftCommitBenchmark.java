@@ -113,7 +113,7 @@ public class RaftCommitBenchmark {
         RaftNode leader = nodes.get(leaderId);
         long commitBefore = leader.log().commitIndex();
 
-        ProposalResult result = leader.propose(proposalData);
+        ProposeOutcome result = leader.propose(proposalData);
         bh.consume(result);
 
         // Deliver messages and tick until commit advances
@@ -173,8 +173,9 @@ public class RaftCommitBenchmark {
      */
     private static final class NoOpStateMachine implements StateMachine {
         @Override
-        public void apply(long index, long term, byte[] command) {
+        public long apply(long index, long term, byte[] command) {
             // No-op for benchmarking
+            return StateMachine.NON_MUTATING;
         }
 
         @Override

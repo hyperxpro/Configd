@@ -107,6 +107,15 @@ public final class ConfigStateMachine implements StateMachine {
     private long sequenceCounter;
 
     /**
+     * RR-029 / W-1: the thread bound on first {@link #apply}. All subsequent
+     * applies must run on this same thread (the Raft apply / tick thread). Lazily
+     * bound (not via constructor) because the owning thread is created after the
+     * state machine. Written and read only from the apply path; the single-writer
+     * invariant this field guards is exactly what makes that safe.
+     */
+    private Thread applyOwnerThread;
+
+    /**
      * Creates a state machine wrapping the given store, clock, invariant checker,
      * and optional config signer.
      *
@@ -215,13 +224,25 @@ public final class ConfigStateMachine implements StateMachine {
      * <p>
      * After a successful mutation, all registered {@link ConfigChangeListener}s
      * are notified with the list of applied mutations and the new version.
+     * <p>
+     * RR-004 / ADR-0033: returns the applied-mutation sequence assigned to a
+     * mutating entry (the client's commit-sequence / read cursor), or
+     * {@link StateMachine#NON_MUTATING} ({@code -1}) for a no-op.
+     * <p>
+     * RR-029 / W-1: the first apply binds this state machine to the calling
+     * (Raft apply / tick) thread; every later apply asserts it runs on that same
+     * owner thread. A violation throws in test/sim (via the invariant checker)
+     * and increments a violation metric in production — closing the unguarded
+     * single-writer precondition on the store/state-machine apply path.
      *
      * @param index   the log index of the committed entry
      * @param term    the term of the committed entry
      * @param command the opaque command bytes (may be empty for no-op entries)
+     * @return the applied-mutation sequence, or {@code -1} for a non-mutating entry
      */
     @Override
-    public void apply(long index, long term, byte[] command) {
+    public long apply(long index, long term, byte[] command) {
+        assertOwnerThread();
         CommandCodec.DecodedCommand decoded = CommandCodec.decode(command);
         long applyStart = System.nanoTime();
         boolean mutating = !(decoded instanceof CommandCodec.DecodedCommand.Noop);
@@ -236,6 +257,31 @@ public final class ConfigStateMachine implements StateMachine {
                 metrics.onWriteCommitFailure();
             }
             throw e;
+        }
+        // After a mutating apply, sequenceCounter holds the seq just assigned.
+        return mutating ? sequenceCounter : StateMachine.NON_MUTATING;
+    }
+
+    /**
+     * RR-029 / W-1 owner-thread tripwire. The single-writer precondition on the
+     * apply path was documented but unenforced; this binds the owner thread on
+     * first apply and asserts it on every subsequent apply. In test/sim the
+     * invariant checker throws on violation; in production it records a metric.
+     */
+    private void assertOwnerThread() {
+        Thread current = Thread.currentThread();
+        Thread owner = applyOwnerThread;
+        if (owner == null) {
+            applyOwnerThread = current;
+            return;
+        }
+        if (owner != current) {
+            metrics.onApplyOwnerThreadViolation();
+            invariantChecker.check("apply_owner_thread", false,
+                    "ConfigStateMachine.apply invoked off the owner thread: bound to '"
+                            + owner.getName() + "' (id=" + owner.threadId() + ") but called from '"
+                            + current.getName() + "' (id=" + current.threadId()
+                            + ") — single-writer apply invariant violated (RR-029/W-1)");
         }
     }
 

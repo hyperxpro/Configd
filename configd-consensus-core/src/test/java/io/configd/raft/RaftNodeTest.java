@@ -71,8 +71,9 @@ class RaftNodeTest {
         record AppliedEntry(long index, long term, byte[] command) {}
 
         @Override
-        public void apply(long index, long term, byte[] command) {
+        public long apply(long index, long term, byte[] command) {
             applied.add(new AppliedEntry(index, term, command));
+            return StateMachine.NON_MUTATING;
         }
 
         @Override
@@ -233,7 +234,7 @@ class RaftNodeTest {
             for (int i = 0; i < 301; i++) {
                 node.tick();
             }
-            assertEquals(ProposalResult.ACCEPTED, node.propose(new byte[]{1, 2, 3}));
+            assertEquals(ProposalResult.ACCEPTED, node.propose(new byte[]{1, 2, 3}).result());
 
             // In a single-node cluster, entries commit immediately
             assertEquals(2, log.commitIndex()); // no-op + command
@@ -283,7 +284,7 @@ class RaftNodeTest {
             cluster.electLeader(NodeId.of(1));
 
             RaftNode leader = cluster.nodes.get(NodeId.of(1));
-            assertEquals(ProposalResult.ACCEPTED, leader.propose(new byte[]{42}));
+            assertEquals(ProposalResult.ACCEPTED, leader.propose(new byte[]{42}).result());
 
             // Deliver AppendEntries to followers, responses back to leader.
             // Leader advances commitIndex upon receiving majority responses.
@@ -306,7 +307,7 @@ class RaftNodeTest {
             cluster.electLeader(NodeId.of(1));
 
             RaftNode follower = cluster.nodes.get(NodeId.of(2));
-            assertEquals(ProposalResult.NOT_LEADER, follower.propose(new byte[]{1}));
+            assertEquals(ProposalResult.NOT_LEADER, follower.propose(new byte[]{1}).result());
         }
 
         @Test
@@ -595,7 +596,7 @@ class RaftNodeTest {
             assertNotNull(leader.transferTarget(), "Transfer should be in progress");
 
             // During transfer, proposals should be rejected
-            assertEquals(ProposalResult.TRANSFER_IN_PROGRESS, leader.propose(new byte[]{1}),
+            assertEquals(ProposalResult.TRANSFER_IN_PROGRESS, leader.propose(new byte[]{1}).result(),
                     "Proposals should be rejected during leadership transfer");
         }
 
@@ -1239,11 +1240,11 @@ class RaftNodeTest {
             // uncommitted = lastIndex - commitIndex = 1 - 0 = 1
 
             // Propose until we hit the limit (maxPendingProposals = 3)
-            assertEquals(ProposalResult.ACCEPTED, leader.propose(new byte[]{1}));
+            assertEquals(ProposalResult.ACCEPTED, leader.propose(new byte[]{1}).result());
             // uncommitted = 2 - 0 = 2
-            assertEquals(ProposalResult.ACCEPTED, leader.propose(new byte[]{2}));
+            assertEquals(ProposalResult.ACCEPTED, leader.propose(new byte[]{2}).result());
             // uncommitted = 3 - 0 = 3 >= maxPendingProposals (3)
-            assertEquals(ProposalResult.OVERLOADED, leader.propose(new byte[]{3}));
+            assertEquals(ProposalResult.OVERLOADED, leader.propose(new byte[]{3}).result());
         }
 
         @Test
@@ -1265,7 +1266,7 @@ class RaftNodeTest {
 
             // Propose many entries — they all commit immediately in single-node
             for (int i = 0; i < 100; i++) {
-                assertEquals(ProposalResult.ACCEPTED, node.propose(new byte[]{(byte) i}));
+                assertEquals(ProposalResult.ACCEPTED, node.propose(new byte[]{(byte) i}).result());
             }
         }
     }

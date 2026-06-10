@@ -4,7 +4,6 @@ import io.configd.common.ConfigScope;
 import io.configd.common.NodeId;
 
 import java.util.Objects;
-import java.util.concurrent.atomic.AtomicLong;
 
 /**
  * Handles config write requests. Routes writes to the appropriate Raft group
@@ -15,44 +14,95 @@ import java.util.concurrent.atomic.AtomicLong;
  *   <li>Validate the request (key, value, ACL)</li>
  *   <li>Determine the Raft group by key scope</li>
  *   <li>Encode the command and propose to the Raft leader</li>
- *   <li>Return success or failure (not leader, validation error, etc.)</li>
+ *   <li><b>Block until the proposal commits (applies) or the write deadline
+ *       expires</b>, then return the typed outcome</li>
  * </ol>
  * <p>
+ * RR-004 / ADR-0033: acknowledgement is <b>commit-confirmed</b>. A write returns
+ * {@link WriteResult.Committed} only after the entry is quorum-committed AND
+ * applied — carrying the applied-mutation sequence {@code seq} (the client's read
+ * cursor; contract §6 read-your-writes). The failure taxonomy is explicit:
+ * {@link WriteResult.NotLeader} (pre-append, definite), {@link WriteResult.Lost}
+ * (post-append, definite — leadership lost before commit, safe to retry),
+ * {@link WriteResult.Indeterminate} (deadline expired with the outcome unknown —
+ * the write MAY still commit later; safe to retry or re-read on an idempotent
+ * last-writer-wins payload).
+ * <p>
  * Thread safety: methods are safe for concurrent access from API handler
- * threads. The underlying {@code RaftNode.propose} is NOT itself thread-safe
- * (the node is single-threaded by design); safety relies on the supplied
- * {@link RaftProposer} marshalling the proposal onto the single Raft tick
- * thread (see {@code ConfigdServer.raftProposer}; R-01).
+ * threads. The underlying Raft node is single-threaded by design; safety relies
+ * on the supplied {@link RaftProposer} marshalling the proposal AND the
+ * commit-outcome registration onto the single Raft tick thread (see
+ * {@code ConfigdServer.raftProposer}; R-01).
  */
 public final class ConfigWriteService {
 
     /**
-     * Result of a write operation.
+     * Result of a write operation. RR-004 / ADR-0033 taxonomy.
      */
     public sealed interface WriteResult {
-        /** Write was accepted by the Raft leader and will be replicated. */
-        record Accepted(long proposalId) implements WriteResult {}
-        /** This node is not the leader for the target group. */
+        /**
+         * The write was quorum-committed and applied. {@code seq} is the
+         * applied-mutation sequence assigned to this write — the client's read
+         * cursor for read-your-writes (contract §6).
+         */
+        record Committed(long seq) implements WriteResult {}
+        /** This node is not the leader for the target group (pre-append, definite). */
         record NotLeader(NodeId leaderId) implements WriteResult {}
-        /** Validation failed. */
+        /**
+         * The entry was appended but leadership was lost before commit, and the
+         * slot is now permanently occupied by a different proposal — the write
+         * definitely did not commit. Safe to retry. {@code leaderHint} may be null.
+         */
+        record Lost(NodeId leaderHint) implements WriteResult {}
+        /**
+         * The write deadline expired with the outcome unknown (quorum slow,
+         * leadership in flux). The write MAY still commit later. Distinguishable
+         * from both success and definite failure; safe to retry or re-read.
+         */
+        record Indeterminate() implements WriteResult {}
+        /** Validation failed (permanent). */
         record ValidationFailed(String reason) implements WriteResult {}
         /** The system is overloaded — the client should retry later. */
         record Overloaded() implements WriteResult {}
     }
 
     /**
-     * Abstraction for proposing commands to the correct Raft group.
+     * The terminal commit outcome of a proposed command, as surfaced by the
+     * {@link RaftProposer}. RR-004 / ADR-0033: the proposer performs propose +
+     * commit-outcome registration on the tick thread and blocks the calling
+     * (HTTP write) thread until the outcome is known or the write deadline
+     * expires; it then returns one of these. The {@link ConfigWriteService} maps
+     * these to {@link WriteResult}, attaching the leader hint where appropriate.
+     */
+    public sealed interface ProposeCommitResult {
+        /** Quorum-committed and applied; carries the applied-mutation seq. */
+        record Committed(long seq) implements ProposeCommitResult {}
+        /** Rejected pre-append: this node is not the leader. */
+        record NotLeader() implements ProposeCommitResult {}
+        /** Appended then definitely lost (different-term entry committed at the slot). */
+        record Lost() implements ProposeCommitResult {}
+        /** Deadline expired with the outcome unknown. */
+        record Indeterminate() implements ProposeCommitResult {}
+        /** Rejected pre-append: backpressure (too many uncommitted entries). */
+        record Overloaded() implements ProposeCommitResult {}
+    }
+
+    /**
+     * Abstraction for proposing commands to the correct Raft group and awaiting
+     * the commit outcome.
      */
     @FunctionalInterface
     public interface RaftProposer {
         /**
-         * Proposes a command to the Raft group for the given scope.
+         * Proposes a command to the Raft group for the given scope and blocks the
+         * calling thread until the commit outcome is known or the write deadline
+         * expires.
          *
          * @param scope   determines which Raft group handles this write
          * @param command the encoded command bytes
-         * @return true if the proposal was accepted (this node is the leader)
+         * @return the terminal commit outcome
          */
-        boolean propose(ConfigScope scope, byte[] command);
+        ProposeCommitResult propose(ConfigScope scope, byte[] command);
     }
 
     /**
@@ -81,13 +131,12 @@ public final class ConfigWriteService {
     private final RaftProposer proposer;
     private final WriteValidator validator;
     private final RateLimiter rateLimiter;
-    private final AtomicLong nextProposalId;
     private final LeaderHintSupplier leaderHintSupplier;
 
     /**
      * Creates a write service.
      *
-     * @param proposer           routes proposals to the correct Raft group
+     * @param proposer           routes proposals to the correct Raft group and awaits commit
      * @param validator          validates writes (may be null for no validation)
      * @param rateLimiter        rate limiter (may be null for no rate limiting)
      * @param leaderHintSupplier supplies the current leader hint (may be null)
@@ -98,7 +147,6 @@ public final class ConfigWriteService {
         this.proposer = Objects.requireNonNull(proposer, "proposer must not be null");
         this.validator = validator;
         this.rateLimiter = rateLimiter;
-        this.nextProposalId = new AtomicLong(1);
         this.leaderHintSupplier = leaderHintSupplier;
     }
 
@@ -111,7 +159,8 @@ public final class ConfigWriteService {
     }
 
     /**
-     * Writes a config key-value pair.
+     * Writes a config key-value pair. Blocks until the write commits (applies) or
+     * the write deadline expires.
      *
      * @param key   the config key (non-null, non-blank)
      * @param value the config value (non-null)
@@ -147,15 +196,12 @@ public final class ConfigWriteService {
         }
 
         byte[] command = encodeCommand((byte) 0x01, key, value);
-        boolean accepted = proposer.propose(scope, command);
-        if (!accepted) {
-            return new WriteResult.NotLeader(leaderHint());
-        }
-        return new WriteResult.Accepted(nextProposalId.getAndIncrement());
+        return mapOutcome(proposer.propose(scope, command));
     }
 
     /**
-     * Deletes a config key.
+     * Deletes a config key. Blocks until the delete commits (applies) or the
+     * write deadline expires.
      *
      * @param key   the config key (non-null, non-blank)
      * @param scope the replication scope
@@ -174,11 +220,21 @@ public final class ConfigWriteService {
         }
 
         byte[] command = encodeCommand((byte) 0x02, key, null);
-        boolean accepted = proposer.propose(scope, command);
-        if (!accepted) {
-            return new WriteResult.NotLeader(leaderHint());
-        }
-        return new WriteResult.Accepted(nextProposalId.getAndIncrement());
+        return mapOutcome(proposer.propose(scope, command));
+    }
+
+    /**
+     * Maps a terminal {@link ProposeCommitResult} to a {@link WriteResult},
+     * attaching the leader hint to the redirect/loss cases.
+     */
+    private WriteResult mapOutcome(ProposeCommitResult outcome) {
+        return switch (outcome) {
+            case ProposeCommitResult.Committed c -> new WriteResult.Committed(c.seq());
+            case ProposeCommitResult.NotLeader ignored -> new WriteResult.NotLeader(leaderHint());
+            case ProposeCommitResult.Lost ignored -> new WriteResult.Lost(leaderHint());
+            case ProposeCommitResult.Indeterminate ignored -> new WriteResult.Indeterminate();
+            case ProposeCommitResult.Overloaded ignored -> new WriteResult.Overloaded();
+        };
     }
 
     private NodeId leaderHint() {

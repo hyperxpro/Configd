@@ -99,6 +99,37 @@ public final class RaftNode {
      */
     private final Map<Long, Runnable> readReadyCallbacks = new HashMap<>();
 
+    // ---- Commit-outcome seam (RR-004 / ADR-0033) ----
+    /**
+     * Pending one-shot commit-outcome callbacks for proposed entries, keyed by
+     * the proposed log {@code index}. Symmetric to {@link #readReadyCallbacks};
+     * all access is tick-thread only (R-01). Each record remembers the proposed
+     * {@code term} so the firing logic can distinguish COMMITTED (same term
+     * applied at {@code index}) from LOST (a different term applied at
+     * {@code index}). Bounded by the same {@code maxPendingProposals}
+     * backpressure that bounds in-flight proposals, plus deadline cleanup on the
+     * registrant side (one-shot, late-completion-tolerant).
+     */
+    private final Map<Long, PendingCommit> commitOutcomeCallbacks = new HashMap<>();
+
+    /**
+     * Recently applied {@code index -> appliedSeq} for entries applied by
+     * {@link #applyCommitted}. Lets a commit-outcome registration that arrives
+     * <em>after</em> the entry has already applied (the single-node
+     * immediate-commit path, where {@code propose} commits inline) still surface
+     * the correct applied-mutation sequence for that exact index. Pruned to the
+     * indices that may still be queried: entries below the lowest still-pending
+     * callback index are dropped, and the map is hard-capped to avoid unbounded
+     * growth if a caller never registers.
+     */
+    private final Map<Long, Long> appliedSeqByIndex = new HashMap<>();
+
+    /** Hard cap on {@link #appliedSeqByIndex} retained without a pending registrant. */
+    private static final int MAX_RETAINED_APPLIED_SEQ = 4096;
+
+    /** A pending commit-outcome callback bound to a proposed {@code (index, term)}. */
+    private record PendingCommit(long term, java.util.function.Consumer<CommitOutcome> callback) {}
+
     // ---- Reconfiguration state (Joint Consensus, Raft §6) ----
     /**
      * The current cluster configuration. Starts as a simple config
@@ -242,11 +273,17 @@ public final class RaftNode {
 
     /**
      * Proposes a command to be replicated. Only the leader can accept proposals.
+     * <p>
+     * RR-004 / ADR-0033: on acceptance the returned {@link ProposeOutcome} carries
+     * the assigned {@code (index, term)} so the caller can register a
+     * commit-outcome callback ({@link #whenCommitOutcome}) against the exact entry.
+     * Acceptance is still leader-LOCAL append; it is NOT a commit acknowledgement.
+     * The rejection reasons are unchanged.
      *
      * @param command the command bytes
-     * @return the result of the proposal attempt
+     * @return the proposal outcome (accepted + position, or a rejection reason)
      */
-    public ProposalResult propose(byte[] command) {
+    public ProposeOutcome propose(byte[] command) {
         if (command == null || command.length == 0) {
             throw new IllegalArgumentException(
                     "Command must not be null or empty (empty commands are reserved for no-op entries)");
@@ -270,23 +307,27 @@ public final class RaftNode {
                     "Client commands must not start with config change magic bytes (RCFG)");
         }
         if (role != RaftRole.LEADER) {
-            return ProposalResult.NOT_LEADER;
+            return ProposeOutcome.rejected(ProposalResult.NOT_LEADER);
         }
         if (transferTarget != null) {
-            return ProposalResult.TRANSFER_IN_PROGRESS;
+            return ProposeOutcome.rejected(ProposalResult.TRANSFER_IN_PROGRESS);
         }
         // Backpressure: reject if too many uncommitted entries (Hard Rule #12)
         long uncommitted = log.lastIndex() - log.commitIndex();
         if (uncommitted >= config.maxPendingProposals()) {
-            return ProposalResult.OVERLOADED;
+            return ProposeOutcome.rejected(ProposalResult.OVERLOADED);
         }
         long newIndex = log.lastIndex() + 1;
-        LogEntry entry = new LogEntry(newIndex, currentTerm, command);
+        long entryTerm = currentTerm;
+        LogEntry entry = new LogEntry(newIndex, entryTerm, command);
         log.append(entry);
         broadcastAppendEntries();
-        // Check if single-node cluster (commit immediately)
+        // Check if single-node cluster (commit immediately). On the single-node
+        // path this applies the entry inline before propose returns; any
+        // commit-outcome callback registered afterward resolves immediately via
+        // appliedSeqByIndex (see whenCommitOutcome).
         maybeAdvanceCommitIndex();
-        return ProposalResult.ACCEPTED;
+        return ProposeOutcome.accepted(newIndex, entryTerm);
     }
 
     /**
@@ -486,6 +527,173 @@ public final class RaftNode {
             }
         }
     }
+
+    // ========================================================================
+    // Commit-outcome seam (RR-004 / ADR-0033)
+    // ========================================================================
+
+    /**
+     * Registers a one-shot callback fired exactly once with the
+     * {@link CommitOutcome} of the entry proposed at {@code (index, term)}.
+     * Symmetric to {@link #whenReadReady}: if the outcome is already decidable at
+     * registration time it fires inline (required for the single-node
+     * immediate-commit path); otherwise it is stored and swept on every apply,
+     * step-down, and snapshot install covering {@code index}.
+     * <p>
+     * Outcome predicates (see {@link CommitOutcome}): COMMITTED when the entry
+     * applied at {@code index} carries {@code term}; LOST when a different term
+     * applied at {@code index} (Log Matching makes the slot permanent);
+     * INDETERMINATE_LOCALLY when an InstallSnapshot covers {@code index} before it
+     * applied. Truncation-without-apply and step-down do NOT resolve to LOST —
+     * those remain pending and surface as Indeterminate at the service deadline
+     * (by design: a false "definitely lost" that later commits is a phantom
+     * write).
+     * <p>
+     * MUST be called from the tick thread (single-threaded executor); all access
+     * to the callback map is tick-thread only, preserving R-01.
+     *
+     * @param index    the proposed log index (from {@link ProposeOutcome#index()})
+     * @param term     the proposed term (from {@link ProposeOutcome#term()})
+     * @param callback invoked exactly once with the outcome
+     */
+    public void whenCommitOutcome(long index, long term,
+                                  java.util.function.Consumer<CommitOutcome> callback) {
+        Objects.requireNonNull(callback, "callback");
+        CommitOutcome decided = decideCommitOutcome(index, term);
+        if (decided != null) {
+            invokeOutcome(callback, decided);
+            return;
+        }
+        commitOutcomeCallbacks.put(index, new PendingCommit(term, callback));
+    }
+
+    /**
+     * Cancels a pending commit-outcome callback for {@code index}, releasing its
+     * map entry. Called from the tick thread when the registrant has abandoned the
+     * wait (its deadline expired and it already reported Indeterminate). Mirrors
+     * {@link #completeRead}'s cleanup: prevents a map-entry leak when the outcome
+     * would otherwise never become decidable (e.g. an isolated leader that never
+     * steps down). No-op if the callback already fired.
+     *
+     * @param index the proposed log index whose pending callback to drop
+     */
+    public void cancelCommitOutcome(long index) {
+        commitOutcomeCallbacks.remove(index);
+    }
+
+    /**
+     * Returns the decided {@link CommitOutcome} for {@code (index, term)} if it is
+     * already determinable from local state, or {@code null} if still pending.
+     * <p>
+     * Decidable only once {@code lastApplied >= index}: at that point Raft Log
+     * Matching guarantees the entry at {@code index} is permanent on this node, so
+     * a same-term match is COMMITTED and a different-term match is LOST. If the
+     * index has been compacted into a snapshot below {@code lastApplied} without a
+     * recorded applied seq, the per-index term is unrecoverable → INDETERMINATE.
+     */
+    private CommitOutcome decideCommitOutcome(long index, long term) {
+        if (log.lastApplied() < index) {
+            return null; // not yet applied — outcome still open
+        }
+        // Applied. Recover the term that actually occupies this index.
+        if (index <= log.snapshotIndex()) {
+            // Index folded into a snapshot. If we recorded the applied seq while
+            // applying it (the proposing leader's normal path), trust that record;
+            // otherwise the per-index term is gone (snapshot install on a lagging
+            // follower) → locally indeterminate.
+            Long seq = appliedSeqByIndex.get(index);
+            if (seq != null) {
+                return CommitOutcome.committed(seq);
+            }
+            return CommitOutcome.indeterminateLocally();
+        }
+        LogEntry entry = log.entryAt(index);
+        if (entry == null) {
+            // Applied yet absent from the live log and not in a snapshot — should
+            // not happen on a consistent node; report indeterminate rather than
+            // fabricate a definite outcome.
+            return CommitOutcome.indeterminateLocally();
+        }
+        if (entry.term() == term) {
+            Long seq = appliedSeqByIndex.get(index);
+            // Same (index,term) => our proposal, committed and applied. seq was
+            // recorded at apply; for a non-mutating entry it is the current
+            // sequence (any S <= current version satisfies RYW for a no-op).
+            return CommitOutcome.committed(seq != null ? seq : currentAppliedSequence());
+        }
+        // Different term occupies this slot permanently (Log Matching) → lost.
+        return CommitOutcome.lost();
+    }
+
+    /**
+     * Fires any pending commit-outcome callbacks that are now decidable. Called
+     * from the tick thread after each apply ({@link #applyCommitted}) and after a
+     * snapshot install. Late completion is impossible to double-fire: the entry is
+     * removed from the map before the callback runs.
+     */
+    private void fireCommitOutcomes() {
+        if (commitOutcomeCallbacks.isEmpty()) {
+            return;
+        }
+        var entries = new ArrayList<>(commitOutcomeCallbacks.entrySet());
+        for (var e : entries) {
+            long index = e.getKey();
+            PendingCommit pending = e.getValue();
+            CommitOutcome outcome = decideCommitOutcome(index, pending.term());
+            if (outcome != null) {
+                if (commitOutcomeCallbacks.remove(index) != null) {
+                    invokeOutcome(pending.callback(), outcome);
+                }
+            }
+        }
+    }
+
+    /**
+     * Fires INDETERMINATE_LOCALLY for any pending callback whose index is covered
+     * by a freshly installed snapshot but was not applied before the install
+     * (per-index term unrecoverable from the snapshot). Callbacks whose index the
+     * apply path already recorded resolve as COMMITTED via {@link #fireCommitOutcomes}.
+     */
+    private void fireSnapshotIndeterminate(long snapshotIndex) {
+        if (commitOutcomeCallbacks.isEmpty()) {
+            return;
+        }
+        var entries = new ArrayList<>(commitOutcomeCallbacks.entrySet());
+        for (var e : entries) {
+            long index = e.getKey();
+            if (index <= snapshotIndex && !appliedSeqByIndex.containsKey(index)) {
+                PendingCommit pending = commitOutcomeCallbacks.remove(index);
+                if (pending != null) {
+                    invokeOutcome(pending.callback(), CommitOutcome.indeterminateLocally());
+                }
+            }
+        }
+    }
+
+    private static void invokeOutcome(java.util.function.Consumer<CommitOutcome> cb,
+                                      CommitOutcome outcome) {
+        try {
+            cb.accept(outcome);
+        } catch (Throwable t) {
+            // A bad callback must not kill the tick thread.
+            System.err.println("RaftNode: commitOutcome callback threw: " + t);
+        }
+    }
+
+    /**
+     * The current applied-mutation sequence, used as the COMMITTED seq for a
+     * non-mutating entry. Delegates to the state machine when it exposes a
+     * sequence accessor; otherwise falls back to {@code lastApplied}.
+     */
+    private long currentAppliedSequence() {
+        if (lastRecordedSeq >= 0) {
+            return lastRecordedSeq;
+        }
+        return log.lastApplied();
+    }
+
+    /** The most recent applied-mutation seq observed from {@link StateMachine#apply}. */
+    private long lastRecordedSeq = -1;
 
     // ========================================================================
     // Reconfiguration (Joint Consensus — Raft §6)
@@ -1066,6 +1274,16 @@ public final class RaftNode {
                 }
             }
         }
+        // RR-004 / ADR-0033: step-down is NOT a definite-loss trigger — a former
+        // leader steps down with its proposed entry still in its log, and a
+        // replica holding that entry can win a later election and commit it. So we
+        // only RE-EVALUATE pending commit outcomes here (some may now be decidable
+        // as COMMITTED/LOST because lastApplied advanced as this node caught up);
+        // we do NOT drain the still-undecidable ones as LOST. Those resolve on a
+        // later apply at their index, or surface as Indeterminate at the service
+        // deadline. (Contrast with the read callbacks above, which are correctly
+        // drained because a deposed leader can no longer serve a linearizable read.)
+        fireCommitOutcomes();
         resetElectionTimeout();
         electionTicksElapsed = 0;
     }
@@ -1381,9 +1599,24 @@ public final class RaftNode {
 
                 // Handle config change entries
                 if (isConfigChangeEntry(entry.command())) {
+                    // RR-004: RCFG entries bypass the state machine; they assign no
+                    // applied-mutation seq. A commit-outcome callback on this index
+                    // (clients never propose RCFG, but the seam is generic) surfaces
+                    // the current sequence — consistent with the non-mutating case.
                     handleCommittedConfigChange(entry);
+                    recordAppliedSeq(entry.index(), currentAppliedSequence());
                 } else {
-                    stateMachine.apply(entry.index(), entry.term(), entry.command());
+                    // RR-004 / ADR-0033: apply now returns the assigned
+                    // applied-mutation seq (or NON_MUTATING for a no-op). Record it
+                    // per index so the commit-outcome seam can surface the correct
+                    // seq for this exact entry.
+                    long appliedSeq = stateMachine.apply(entry.index(), entry.term(), entry.command());
+                    if (appliedSeq == StateMachine.NON_MUTATING) {
+                        appliedSeq = currentAppliedSequence();
+                    } else {
+                        lastRecordedSeq = appliedSeq;
+                    }
+                    recordAppliedSeq(entry.index(), appliedSeq);
                 }
             }
             log.setLastApplied(nextApply);
@@ -1391,6 +1624,40 @@ public final class RaftNode {
         // F-0022: apply advanced lastApplied — some pending reads may now
         // satisfy the "lastApplied >= readIndex" condition.
         fireReadyCallbacks();
+        // RR-004: apply advanced lastApplied — pending commit outcomes at or below
+        // the new lastApplied are now decidable (COMMITTED / LOST).
+        fireCommitOutcomes();
+    }
+
+    /**
+     * Records the applied-mutation seq for {@code index} so a commit-outcome
+     * registration arriving after the apply can still surface the correct seq.
+     * Pruned to indices that may still be queried by a pending callback, and
+     * hard-capped so a workload that never registers cannot grow it unbounded.
+     */
+    private void recordAppliedSeq(long index, long seq) {
+        appliedSeqByIndex.put(index, seq);
+        // Drop records strictly below the lowest pending-callback index — no
+        // registration can ever query them again.
+        long floor = lowestPendingCommitIndex();
+        if (floor > 0) {
+            appliedSeqByIndex.keySet().removeIf(k -> k < floor);
+        }
+        // Hard cap: if no callbacks are pending (floor == Long.MAX_VALUE) and the
+        // map has grown large, retain only the most recent indices.
+        if (appliedSeqByIndex.size() > MAX_RETAINED_APPLIED_SEQ) {
+            long cutoff = log.lastApplied() - MAX_RETAINED_APPLIED_SEQ;
+            appliedSeqByIndex.keySet().removeIf(k -> k < cutoff);
+        }
+    }
+
+    /** Lowest index among pending commit-outcome callbacks, or MAX if none. */
+    private long lowestPendingCommitIndex() {
+        long min = Long.MAX_VALUE;
+        for (long idx : commitOutcomeCallbacks.keySet()) {
+            if (idx < min) min = idx;
+        }
+        return min;
     }
 
     /**
@@ -1515,6 +1782,18 @@ public final class RaftNode {
         // Pass the snapshot's cluster config as a fallback for when the log
         // is fully compacted past all config entries.
         recomputeConfigFromLog(req.clusterConfigData());
+
+        // RR-004 / ADR-0033: the snapshot just folded indices up to
+        // lastIncludedIndex into compacted state. A pending commit-outcome
+        // callback at an index covered by the snapshot whose entry this node never
+        // applied (and therefore never recorded) has an unrecoverable per-index
+        // term — fire INDETERMINATE_LOCALLY for it. (On the proposing leader apply
+        // always precedes local compaction of an index, so this only arises after
+        // step-down; the predicate also covers a follower that took the snapshot
+        // before catching up.) Callbacks whose index WAS recorded as applied
+        // resolve as COMMITTED via fireCommitOutcomes.
+        fireSnapshotIndeterminate(req.lastIncludedIndex());
+        fireCommitOutcomes();
 
         // Successful install: lastApplied was just set to
         // req.lastIncludedIndex(); use the same max() form for

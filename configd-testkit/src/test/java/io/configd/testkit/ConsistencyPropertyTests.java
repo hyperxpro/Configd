@@ -170,13 +170,13 @@ class ConsistencyPropertyTests {
         /** Propose a PUT command on the given node. */
         boolean proposePut(int nodeIdx, String key, String value) {
             byte[] cmd = CommandCodec.encodePut(key, value.getBytes(StandardCharsets.UTF_8));
-            return nodes.get(nodeIdx).propose(cmd) == ProposalResult.ACCEPTED;
+            return nodes.get(nodeIdx).propose(cmd).accepted();
         }
 
         /** Propose a DELETE command on the given node. */
         boolean proposeDelete(int nodeIdx, String key) {
             byte[] cmd = CommandCodec.encodeDelete(key);
-            return nodes.get(nodeIdx).propose(cmd) == ProposalResult.ACCEPTED;
+            return nodes.get(nodeIdx).propose(cmd).accepted();
         }
 
         /**

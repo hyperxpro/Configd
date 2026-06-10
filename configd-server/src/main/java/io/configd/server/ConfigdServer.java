@@ -30,7 +30,7 @@ import io.configd.raft.RaftLog;
 import io.configd.raft.RaftNode;
 import io.configd.raft.RaftTransport;
 import io.configd.raft.RaftMessage;
-import io.configd.raft.ProposalResult;
+import io.configd.raft.ProposeOutcome;
 import io.configd.replication.MultiRaftDriver;
 import io.configd.store.Compactor;
 import io.configd.store.ConfigDelta;
@@ -85,8 +85,11 @@ public final class ConfigdServer {
     private static final int COMPACTION_INTERVAL_TICKS = 1000; // every ~10 seconds
     private static final int TLS_RELOAD_INTERVAL_MS = 60_000;  // every 60 seconds
     private static final int FANOUT_BUFFER_CAPACITY = 10_000;
-    // R-01: budget for a marshalled propose round-trip onto the tick executor.
-    private static final int PROPOSE_TIMEOUT_MS = 150;
+    // RR-004 / ADR-0033: single end-to-end commit-confirmation deadline for a
+    // write, in REAL milliseconds on the outcome future (NOT a tick count — it
+    // must not route through the RR-006-affected tick-config path). 5 s default,
+    // chosen >> worst-case re-election; revisit when RR-006 fixes the 10x tick-unit bug.
+    private static final long WRITE_COMMIT_TIMEOUT_MS = 5_000;
 
     private final ServerConfig config;
     // F-0023: three separate single-threaded executors prevent head-of-line
@@ -427,10 +430,12 @@ public final class ConfigdServer {
         // ---------------------------------------------------------------
         // R-01: marshal proposals onto the single tick executor so node.propose()
         // (log/term/commitIndex mutation + applyCommitted -> stateMachine.apply) never
-        // races node.tick() or the inbound handler. The HTTP write thread blocks for
-        // the result. This closes the write-vs-tick race (live even single-node).
+        // races node.tick() or the inbound handler. RR-004 / ADR-0033: the SAME
+        // marshalled task also registers the commit-outcome callback; the HTTP write
+        // thread blocks on one end-to-end WRITE_COMMIT_TIMEOUT_MS deadline and gets a
+        // commit-confirmed answer (Committed/Lost/NotLeader/Indeterminate/Overloaded).
         ConfigWriteService.RaftProposer proposer =
-                raftProposer(driver, DEFAULT_RAFT_GROUP, tickExecutor, PROPOSE_TIMEOUT_MS);
+                raftProposer(driver, DEFAULT_RAFT_GROUP, tickExecutor, WRITE_COMMIT_TIMEOUT_MS);
         // F-0054: default write rate limit = 10_000/s globally. Docs in
         // ADR-0017 and performance.md reflect this value; a startup line
         // prints the effective rate so operators can audit at boot.
@@ -691,41 +696,99 @@ public final class ConfigdServer {
     }
 
     /**
-     * R-01: builds the write proposer that marshals {@code driver.propose} onto the single Raft
-     * executor (the tick executor), so {@code node.propose} — which mutates the log / term /
-     * commitIndex and can call {@code applyCommitted -> stateMachine.apply} — never runs
-     * concurrently with {@code node.tick()} or the inbound handler on the non-synchronized
-     * {@link io.configd.raft.RaftNode}. The calling (HTTP write) thread blocks for the result.
+     * R-01 + RR-004 / ADR-0033: builds the commit-confirmed write proposer.
      * <p>
-     * Package-private static so the regression/stress test can drive the real marshalling
-     * decision. Reverting to a direct {@code driver.propose(...)} call reintroduces the
-     * write-vs-tick race (live even in single-node mode) and makes that test fail.
+     * A SINGLE marshalled tick task performs {@code driver.propose} AND, on
+     * acceptance, registers {@code whenCommitOutcome(index, term, cb)} on the
+     * owning {@link io.configd.raft.RaftNode} — atomically, in the same task,
+     * capturing {@code (index, term)} <em>inside</em> the task (review finding f:
+     * a slow tick queue must not lose the position; the at-least-once append must
+     * not force Indeterminate when the entry actually appended). All node mutation
+     * (propose, the apply it may trigger, and the seam registration/firing) stays
+     * on the single tick thread, preserving the R-01 single-thread invariant; the
+     * tick thread never waits on the HTTP future (registration is fire-and-return,
+     * like {@code whenReadReady}).
      * <p>
-     * On {@code timeoutMs} expiry the call returns {@code false} (not accepted), but the queued
-     * task may still run {@code driver.propose} afterward — an at-least-once semantic that mirrors
-     * the read path's timeout handling and Raft's client-retry model. It does not violate the
-     * single-thread invariant.
+     * The calling (HTTP write) thread blocks on ONE end-to-end
+     * {@code writeCommitTimeoutMs} deadline (real milliseconds, not a tick count —
+     * not subject to the RR-006 10x bug). On commit it returns
+     * {@code Committed(seq)}; on definite loss {@code Lost}; on pre-append
+     * rejection {@code NotLeader}/{@code Overloaded}; on deadline expiry
+     * {@code Indeterminate}, after dispatching a tick-thread cleanup that cancels
+     * the now-abandoned one-shot callback (no map-entry leak; no double-complete —
+     * the future is already terminal).
+     * <p>
+     * Package-private static so the regression test can drive the real
+     * marshalling decision; reverting to a direct {@code driver.propose(...)} call
+     * reintroduces the write-vs-tick race.
      */
     static ConfigWriteService.RaftProposer raftProposer(
             MultiRaftDriver driver, int groupId,
-            java.util.concurrent.Executor raftExecutor, long timeoutMs) {
+            java.util.concurrent.Executor raftExecutor, long writeCommitTimeoutMs) {
         return (scope, command) -> {
-            java.util.concurrent.CompletableFuture<ProposalResult> f =
+            java.util.concurrent.CompletableFuture<ConfigWriteService.ProposeCommitResult> f =
                     new java.util.concurrent.CompletableFuture<>();
+            // Captured inside the marshalled task so the timeout path can cancel
+            // the exact pending callback on the tick thread (mirrors the read
+            // path's readIdRef). -1 until an entry is appended.
+            java.util.concurrent.atomic.AtomicLong indexRef =
+                    new java.util.concurrent.atomic.AtomicLong(-1L);
             raftExecutor.execute(() -> {
                 try {
-                    f.complete(driver.propose(groupId, command));
+                    ProposeOutcome outcome = driver.propose(groupId, command);
+                    if (!outcome.accepted()) {
+                        f.complete(switch (outcome.result()) {
+                            case OVERLOADED -> new ConfigWriteService.ProposeCommitResult.Overloaded();
+                            // NOT_LEADER and TRANSFER_IN_PROGRESS are both pre-append,
+                            // definite, redirect-and-retry — surfaced as NotLeader.
+                            default -> new ConfigWriteService.ProposeCommitResult.NotLeader();
+                        });
+                        return;
+                    }
+                    long index = outcome.index();
+                    indexRef.set(index);
+                    io.configd.raft.RaftNode node = driver.getGroup(groupId);
+                    if (node == null) {
+                        // Group vanished between propose and registration — treat as
+                        // indeterminate (the append may still commit elsewhere).
+                        f.complete(new ConfigWriteService.ProposeCommitResult.Indeterminate());
+                        return;
+                    }
+                    // Register the one-shot commit-outcome callback atomically with
+                    // the accepted append, on the tick thread. Fires inline if the
+                    // outcome is already decidable (single-node immediate commit).
+                    node.whenCommitOutcome(index, outcome.term(), commitOutcome -> {
+                        f.complete(switch (commitOutcome.kind()) {
+                            case COMMITTED -> new ConfigWriteService.ProposeCommitResult.Committed(commitOutcome.seq());
+                            case LOST -> new ConfigWriteService.ProposeCommitResult.Lost();
+                            case INDETERMINATE_LOCALLY -> new ConfigWriteService.ProposeCommitResult.Indeterminate();
+                        });
+                    });
                 } catch (Throwable t) {
                     f.completeExceptionally(t);
                 }
             });
             try {
-                return f.get(timeoutMs, TimeUnit.MILLISECONDS) == ProposalResult.ACCEPTED;
+                return f.get(writeCommitTimeoutMs, TimeUnit.MILLISECONDS);
             } catch (java.util.concurrent.TimeoutException e) {
-                return false; // not accepted within the write budget
+                // Deadline expired with the outcome unknown. Cancel the abandoned
+                // one-shot callback on the tick thread so its map entry cannot leak
+                // (an isolated leader may never step down or apply). complete()
+                // below is a no-op race-wise: the future is returned as
+                // Indeterminate regardless.
+                long index = indexRef.get();
+                if (index >= 0) {
+                    raftExecutor.execute(() -> {
+                        io.configd.raft.RaftNode node = driver.getGroup(groupId);
+                        if (node != null) {
+                            node.cancelCommitOutcome(index);
+                        }
+                    });
+                }
+                return new ConfigWriteService.ProposeCommitResult.Indeterminate();
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
-                return false;
+                return new ConfigWriteService.ProposeCommitResult.Indeterminate();
             } catch (java.util.concurrent.ExecutionException e) {
                 Throwable cause = e.getCause();
                 if (cause instanceof RuntimeException re) {

@@ -69,9 +69,10 @@ class CertificationTest {
         record AppliedEntry(long index, long term, byte[] command) {}
 
         @Override
-        public void apply(long index, long term, byte[] command) {
+        public long apply(long index, long term, byte[] command) {
             applied.add(new AppliedEntry(index, term, command));
             snapshotData = ("snap-" + index).getBytes();
+            return StateMachine.NON_MUTATING;
         }
 
         @Override
@@ -470,7 +471,7 @@ class CertificationTest {
             if (newLeader != null) {
                 // New leader can accept proposals
                 assertEquals(ProposalResult.ACCEPTED,
-                        newLeader.propose("after-reconfig-failure".getBytes()));
+                        newLeader.propose("after-reconfig-failure".getBytes()).result());
             }
             // If no leader yet, at least verify term advanced and no split-brain
             assertTrue(cluster.countLeaders() <= 1,
@@ -731,7 +732,7 @@ class CertificationTest {
             RaftNode leader = cluster.nodes.get(n1);
 
             // Normal command
-            ProposalResult result = leader.propose("normal-command".getBytes());
+            ProposalResult result = leader.propose("normal-command".getBytes()).result();
             assertEquals(ProposalResult.ACCEPTED, result);
         }
     }
@@ -769,7 +770,7 @@ class CertificationTest {
             // or having negative inflight count. If it did go negative,
             // it would eventually block all sends to that peer.
             // Verify leader is still functional by proposing
-            ProposalResult result = leader.propose("after-spurious".getBytes());
+            ProposalResult result = leader.propose("after-spurious".getBytes()).result();
             assertEquals(ProposalResult.ACCEPTED, result);
         }
     }

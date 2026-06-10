@@ -273,21 +273,7 @@ public final class HttpApiServer {
             }
 
             ConfigWriteService.WriteResult result = writeService.put(key, body, ConfigScope.GLOBAL);
-            switch (result) {
-                case ConfigWriteService.WriteResult.Accepted a ->
-                        sendResponse(exchange, 200, "Accepted: proposalId=" + a.proposalId());
-                case ConfigWriteService.WriteResult.NotLeader nl -> {
-                    if (nl.leaderId() != null) {
-                        exchange.getResponseHeaders().set("X-Leader-Hint", String.valueOf(nl.leaderId().id()));
-                    }
-                    sendResponse(exchange, 503, "Not Leader"
-                            + (nl.leaderId() != null ? " (leader=" + nl.leaderId() + ")" : ""));
-                }
-                case ConfigWriteService.WriteResult.ValidationFailed vf ->
-                        sendResponse(exchange, 400, "Validation failed: " + vf.reason());
-                case ConfigWriteService.WriteResult.Overloaded _ ->
-                        sendResponse(exchange, 429, "Overloaded");
-            }
+            sendWriteResult(exchange, result);
         }
 
         private void handleDelete(HttpExchange exchange, String key) throws IOException {
@@ -299,9 +285,28 @@ public final class HttpApiServer {
             }
 
             ConfigWriteService.WriteResult result = writeService.delete(key, ConfigScope.GLOBAL);
+            sendWriteResult(exchange, result);
+        }
+
+        /**
+         * RR-004 / ADR-0033 HTTP mapping. 200 is returned ONLY after quorum
+         * commit + local apply (the {@code Committed} variant); no other path
+         * returns 200.
+         * <table>
+         *   <tr><th>Outcome</th><th>HTTP</th><th>Body</th></tr>
+         *   <tr><td>Committed</td><td>200</td><td>{@code Committed: seq=<S>}</td></tr>
+         *   <tr><td>NotLeader (pre-append)</td><td>503 + X-Leader-Hint</td><td>Not Leader (definite, retryable)</td></tr>
+         *   <tr><td>Lost (post-append)</td><td>503 + X-Leader-Hint</td><td>Lost leadership before commit (definite, retryable)</td></tr>
+         *   <tr><td>Overloaded</td><td>429</td><td>Overloaded (definite, retryable)</td></tr>
+         *   <tr><td>Indeterminate</td><td>504</td><td>outcome unknown; safe to retry or re-read</td></tr>
+         *   <tr><td>Validation</td><td>400</td><td>permanent</td></tr>
+         * </table>
+         */
+        private void sendWriteResult(HttpExchange exchange, ConfigWriteService.WriteResult result)
+                throws IOException {
             switch (result) {
-                case ConfigWriteService.WriteResult.Accepted a ->
-                        sendResponse(exchange, 200, "Deleted: proposalId=" + a.proposalId());
+                case ConfigWriteService.WriteResult.Committed c ->
+                        sendResponse(exchange, 200, "Committed: seq=" + c.seq());
                 case ConfigWriteService.WriteResult.NotLeader nl -> {
                     if (nl.leaderId() != null) {
                         exchange.getResponseHeaders().set("X-Leader-Hint", String.valueOf(nl.leaderId().id()));
@@ -309,6 +314,16 @@ public final class HttpApiServer {
                     sendResponse(exchange, 503, "Not Leader"
                             + (nl.leaderId() != null ? " (leader=" + nl.leaderId() + ")" : ""));
                 }
+                case ConfigWriteService.WriteResult.Lost lost -> {
+                    if (lost.leaderHint() != null) {
+                        exchange.getResponseHeaders().set("X-Leader-Hint", String.valueOf(lost.leaderHint().id()));
+                    }
+                    sendResponse(exchange, 503, "Lost leadership before commit"
+                            + (lost.leaderHint() != null ? " (leader=" + lost.leaderHint() + ")" : ""));
+                }
+                case ConfigWriteService.WriteResult.Indeterminate _ ->
+                        sendResponse(exchange, 504,
+                                "Commit unconfirmed within deadline; outcome unknown; safe to retry or re-read");
                 case ConfigWriteService.WriteResult.ValidationFailed vf ->
                         sendResponse(exchange, 400, "Validation failed: " + vf.reason());
                 case ConfigWriteService.WriteResult.Overloaded _ ->

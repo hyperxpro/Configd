@@ -61,8 +61,9 @@ class ReconfigurationTest {
         record AppliedEntry(long index, long term, byte[] command) {}
 
         @Override
-        public void apply(long index, long term, byte[] command) {
+        public long apply(long index, long term, byte[] command) {
             applied.add(new AppliedEntry(index, term, command));
+            return StateMachine.NON_MUTATING;
         }
 
         @Override
@@ -264,7 +265,7 @@ class ReconfigurationTest {
             assertEquals(RaftRole.LEADER, leader.role());
 
             // Propose a normal command and verify it commits
-            assertEquals(ProposalResult.ACCEPTED, leader.propose(new byte[]{42}));
+            assertEquals(ProposalResult.ACCEPTED, leader.propose(new byte[]{42}).result());
             cluster.deliverAllMessages(10);
             assertTrue(leader.log().commitIndex() >= 2); // no-op + command
         }

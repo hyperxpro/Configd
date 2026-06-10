@@ -3,6 +3,7 @@ package io.configd.replication;
 import io.configd.common.Clock;
 import io.configd.common.NodeId;
 import io.configd.raft.ProposalResult;
+import io.configd.raft.ProposeOutcome;
 import io.configd.raft.RaftMessage;
 import io.configd.raft.RaftNode;
 
@@ -123,16 +124,20 @@ public final class MultiRaftDriver {
     /**
      * Proposes a command to the specified Raft group. Only the leader
      * of that group can accept proposals.
+     * <p>
+     * RR-004 / ADR-0033: returns a {@link ProposeOutcome} carrying the assigned
+     * {@code (index, term)} on acceptance so the caller can register a
+     * commit-outcome callback on the owning {@link RaftNode}.
      *
      * @param groupId the target Raft group identifier
      * @param command the command bytes to replicate
-     * @return the result of the proposal attempt; {@link ProposalResult#NOT_LEADER}
-     *         if the group does not exist or this node is not the leader
+     * @return the proposal outcome; {@code rejected(NOT_LEADER)} if the group does
+     *         not exist or this node is not the leader
      */
-    public ProposalResult propose(int groupId, byte[] command) {
+    public ProposeOutcome propose(int groupId, byte[] command) {
         RaftNode node = groups.get(groupId);
         if (node == null) {
-            return ProposalResult.NOT_LEADER;
+            return ProposeOutcome.rejected(ProposalResult.NOT_LEADER);
         }
         return node.propose(command);
     }

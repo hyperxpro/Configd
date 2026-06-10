@@ -70,10 +70,11 @@ class InstallSnapshotTest {
         record AppliedEntry(long index, long term, byte[] command) {}
 
         @Override
-        public void apply(long index, long term, byte[] command) {
+        public long apply(long index, long term, byte[] command) {
             applied.add(new AppliedEntry(index, term, command));
             // Build snapshot data as a simple accumulation
             snapshotData = ("snap-" + index).getBytes();
+            return StateMachine.NON_MUTATING;
         }
 
         @Override
