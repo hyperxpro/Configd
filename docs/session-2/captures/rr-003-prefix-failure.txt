@@ -109,11 +109,68 @@ LOSS EVIDENCE (the defect, quantified):
   snapshot point.
 
 ================================================================================
-APPENDIX A — POST-FIX PROOF  (filled in by the fix commit)
+APPENDIX A — POST-FIX PROOF
 ================================================================================
-(see below)
+
+Fix commit 5c2ca55 ("S2/RR-003: persist snapshots durably before WAL
+truncation; fail loudly on gaps").
+
+The fix, by file:line:
+  - RaftLog.persistSnapshot(SnapshotState) (RaftLog.java) — fsync the snapshot
+    bytes (Storage.put: temp + force + atomic-rename + dir-fsync) under key
+    "raft-log.snapshot" BEFORE compact() deletes the WAL prefix.
+  - RaftLog ctor — recover the blob (readSnapshotBlob), accept iff
+    blob.lastIncludedIndex == recovered snapshotIndex (else WAL is authoritative).
+  - RaftNode.triggerSnapshot — persistSnapshot THEN compact (persist-before-truncate).
+  - RaftNode.handleInstallSnapshot — same persist-then-compact (follower path).
+  - RaftNode ctor — restore the state machine from the recovered snapshot and
+    seed lastApplied = snapshotIndex; if a boundary exists with NO bytes, fire
+    durable_prefix_no_gap (loud, never silent).
+  - RaftNode.applyCommitted — entry==null on a committed index fires
+    durable_prefix_no_gap and stops (no silent lastApplied advance).
+
+Post-fix the full matrix + edge cells are GREEN:
+  ./mvnw -pl configd-consensus-core test -Dtest=SnapshotCrashRecoveryTest \
+         -Dsurefire.failIfNoSpecifiedTests=false
+  => Tests run: 6, Failures: 0, Errors: 0, Skipped: 0
+     - recoversAfterSnapshotAndWalTruncate            (crash point (c))
+     - recoversWhenCrashedBetweenPersistAndTruncate   (crash point (b))
+     - recoversWhenCrashedBeforeSnapshotPersist       (crash point (a))
+     - matrixHoldsAcrossSeeds                          (60 seeds x 4 points)
+     - recoversCleanlyFromTornFinalWalRecord          (torn final WAL record)
+     - gapDetectionFiresWhenSnapshotBlobUnrecoverable (no-gap invariant fires)
+
+Affected module suites GREEN (JDK 25, 2-vCPU):
+  consensus-core 170 (2 known wire-compat skips, RR-064) | config-store 240 |
+  server 81 (incl. RaftProposerCommitConfirmTest 4) |
+  testkit 1137 (incl. AckEqualsCommitTest, -Dconfigd.seedSweep.count=500)
+  A1-seam green: CommitOutcomeSeamTest 5, RaftProposerCommitConfirmTest 4.
 
 ================================================================================
-APPENDIX B — MUTATION-REVERT PAIRS  (filled in by the fix commit)
+APPENDIX B — MUTATION-REVERT PAIRS (revert one fix line -> a named test fails)
 ================================================================================
-(see below)
+
+Each fix element was individually reverted; the paired named test fails, proving
+the test kills the mutant.
+
+(i) PERSIST-BEFORE-TRUNCATE ORDERING (RaftNode.triggerSnapshot)
+    revert: persistSnapshot AFTER compact (compact -> persistSnapshot)
+    => SnapshotCrashRecoveryTest.recoversWhenCrashedBeforeSnapshotPersist FAILS
+       "RR-003 VIOLATION [BEFORE_PERSIST, seed=3]: ... expected={k0..k3} actual={}
+        (snapshotIndex=5, lastApplied=6)"
+       (compact deletes the WAL first; the crash-before-blob-put then loses the
+        prefix with the WAL already gone.) matrixHoldsAcrossSeeds also FAILS.
+
+(ii) SNAPSHOT PERSIST / FSYNC (RaftNode.triggerSnapshot)
+    revert: delete the log.persistSnapshot(snapshot) call (never durable)
+    => SnapshotCrashRecoveryTest.recoversAfterSnapshotAndWalTruncate FAILS
+       "RR-003 VIOLATION [AFTER_TRUNCATE, seed=1]: ... expected={k0,k1} actual={}
+        (snapshotIndex=3, lastApplied=4)"
+
+(iii) GAP-DETECTION ASSERTION (RaftNode ctor durable_prefix_no_gap)
+    revert: replace the invariant check with a silent lastApplied advance
+    => SnapshotCrashRecoveryTest.gapDetectionFiresWhenSnapshotBlobUnrecoverable
+       FAILS "durable_prefix_no_gap must fire when the snapshot is unrecoverable;
+        a silent skip would have advanced lastApplied over the hole
+        ==> expected: not <null>"
+================================================================================
