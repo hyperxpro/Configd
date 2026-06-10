@@ -1,0 +1,55 @@
+RR-010 pre-fix discriminating-test failure capture
+==================================================
+Date:    2026-06-10T21:25:46Z
+Branch:  session-2-correctness
+Commit:  2a08b6fb3b8e013c69850bd182fe4296c8763472  (pre-fix; SimulationDeterminismTest added, election-RNG NOT yet seeded)
+
+Command:
+  ./mvnw -q -pl configd-testkit -am test -Dtest=SimulationDeterminismTest -Dsurefire.failIfNoSpecifiedTests=false
+
+Defect: ConsistencyPropertyTests.java:77 constructs each RaftNode with an
+entropy-seeded RandomGenerator.of("L64X128MixRandom") that drives
+RaftNode.resetElectionTimeout (RaftNode.java:1648-1650). Only the network/sim
+RNGs are seeded (RaftSimulation.java:35-39, SimulatedNetwork.java:34), so the
+same master seed yields divergent election schedules -> divergent digests.
+
+----------------------- verbatim surefire output -----------------------
+[ERROR] Tests run: 2, Failures: 2, Errors: 0, Skipped: 0, Time elapsed: 0.650 s <<< FAILURE! -- in io.configd.testkit.SimulationDeterminismTest
+[ERROR] io.configd.testkit.SimulationDeterminismTest.distinctSeedsAreReplayableAndDiffer -- Time elapsed: 0.529 s <<< FAILURE!
+org.opentest4j.AssertionFailedError: RR-010: seed 2 must replay identically ==> expected: <16516e9e69ef620a1976ea72dce5f54d29fc65bcc70f3d57cadb56a55a8b18a7> but was: <db4212a674dcd7ad23596387b858c5d67a5021959af26503fbf5274e74008c62>
+	at org.junit.jupiter.api.AssertionFailureBuilder.build(AssertionFailureBuilder.java:151)
+	at org.junit.jupiter.api.AssertionFailureBuilder.buildAndThrow(AssertionFailureBuilder.java:132)
+	at org.junit.jupiter.api.AssertEquals.failNotEqual(AssertEquals.java:197)
+	at org.junit.jupiter.api.AssertEquals.assertEquals(AssertEquals.java:182)
+	at org.junit.jupiter.api.Assertions.assertEquals(Assertions.java:1156)
+	at io.configd.testkit.SimulationDeterminismTest.distinctSeedsAreReplayableAndDiffer(SimulationDeterminismTest.java:83)
+	at java.base/java.lang.reflect.Method.invoke(Method.java:565)
+	at java.base/java.util.ArrayList.forEach(ArrayList.java:1604)
+	at java.base/java.util.ArrayList.forEach(ArrayList.java:1604)
+
+[ERROR] io.configd.testkit.SimulationDeterminismTest.sameSeedProducesIdenticalSchedule -- Time elapsed: 0.049 s <<< FAILURE!
+org.opentest4j.AssertionFailedError: 
+RR-010: simulation is not deterministic — same seed (123456789) produced divergent execution schedules.
+  run #1 digest = 8fbefe99a8afbce31c6ba25d5503c2fd9d11878d87d6d81618255babde6bce55
+  run #2 digest = c9c1f2fbae4943c6ddf3e79f36e4789157a58034b09eabc5fd1a9942bbed3638
+Every RNG consumer in the sim (including the per-node election timeout RNG) must be derived from the master seed. ==> expected: <8fbefe99a8afbce31c6ba25d5503c2fd9d11878d87d6d81618255babde6bce55> but was: <c9c1f2fbae4943c6ddf3e79f36e4789157a58034b09eabc5fd1a9942bbed3638>
+	at org.junit.jupiter.api.AssertionFailureBuilder.build(AssertionFailureBuilder.java:151)
+	at org.junit.jupiter.api.AssertionFailureBuilder.buildAndThrow(AssertionFailureBuilder.java:132)
+	at org.junit.jupiter.api.AssertEquals.failNotEqual(AssertEquals.java:197)
+	at org.junit.jupiter.api.AssertEquals.assertEquals(AssertEquals.java:182)
+	at org.junit.jupiter.api.Assertions.assertEquals(Assertions.java:1156)
+	at io.configd.testkit.SimulationDeterminismTest.sameSeedProducesIdenticalSchedule(SimulationDeterminismTest.java:62)
+	at java.base/java.lang.reflect.Method.invoke(Method.java:565)
+	at java.base/java.util.ArrayList.forEach(ArrayList.java:1604)
+	at java.base/java.util.ArrayList.forEach(ArrayList.java:1604)
+
+[ERROR] Failures: 
+[ERROR]   SimulationDeterminismTest.distinctSeedsAreReplayableAndDiffer:83 RR-010: seed 2 must replay identically ==> expected: <16516e9e69ef620a1976ea72dce5f54d29fc65bcc70f3d57cadb56a55a8b18a7> but was: <db4212a674dcd7ad23596387b858c5d67a5021959af26503fbf5274e74008c62>
+[ERROR]   SimulationDeterminismTest.sameSeedProducesIdenticalSchedule:62 RR-010: simulation is not deterministic — same seed (123456789) produced divergent execution schedules.
+  run #1 digest = 8fbefe99a8afbce31c6ba25d5503c2fd9d11878d87d6d81618255babde6bce55
+  run #2 digest = c9c1f2fbae4943c6ddf3e79f36e4789157a58034b09eabc5fd1a9942bbed3638
+Every RNG consumer in the sim (including the per-node election timeout RNG) must be derived from the master seed. ==> expected: <8fbefe99a8afbce31c6ba25d5503c2fd9d11878d87d6d81618255babde6bce55> but was: <c9c1f2fbae4943c6ddf3e79f36e4789157a58034b09eabc5fd1a9942bbed3638>
+[ERROR] Tests run: 2, Failures: 2, Errors: 0, Skipped: 0
+[ERROR] Failed to execute goal org.apache.maven.plugins:maven-surefire-plugin:3.5.2:test (default-test) on project configd-testkit: There are test failures.
+[ERROR] 
+[ERROR] See /home/ubuntu/Code/Configd/configd-testkit/target/surefire-reports for the individual test results.

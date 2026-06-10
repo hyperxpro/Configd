@@ -6,6 +6,7 @@ import io.configd.common.NodeId;
 import java.util.*;
 import java.util.function.Consumer;
 import java.util.random.RandomGenerator;
+import java.util.random.RandomGeneratorFactory;
 
 /**
  * Deterministic simulation harness for Raft consensus testing.
@@ -48,6 +49,39 @@ public final class RaftSimulation {
     public SimulatedNetwork network() { return network; }
     public List<NodeId> nodeIds() { return Collections.unmodifiableList(nodeIds); }
     public long seed() { return seed; }
+
+    /**
+     * Returns a deterministic per-node {@link RandomGenerator} for driving a
+     * node's election timeout, seeded purely from the master simulation seed
+     * and the node id. This closes RR-010: previously the harness constructed
+     * the election RNG entropy-seeded ({@code RandomGenerator.of(name)}), so a
+     * fixed seed produced divergent election schedules and failing seeds were
+     * unreplayable. Threading the seed here makes "same seed = same execution"
+     * actually hold for the election RNG too — the master seed is the single
+     * source of all simulated randomness.
+     * <p>
+     * Production seeding is unaffected: this lives in the test simulation
+     * harness; the live server keeps its own {@link RandomGenerator}.
+     *
+     * @param nodeId the node whose election RNG is requested
+     * @return a fresh deterministic generator seeded from {@code mix(seed, nodeId)}
+     */
+    public RandomGenerator electionRandom(NodeId nodeId) {
+        long nodeSeed = mixSeed(seed, nodeId.id());
+        return RandomGeneratorFactory.of("L64X128MixRandom").create(nodeSeed);
+    }
+
+    /**
+     * SplitMix64 finalizer applied to a seed combined with the node id. This
+     * decorrelates per-node streams so two nodes never share an election-timeout
+     * sequence, while remaining a pure deterministic function of (seed, nodeId).
+     */
+    private static long mixSeed(long seed, int nodeId) {
+        long z = seed + 0x9E3779B97F4A7C15L * (nodeId + 1L);
+        z = (z ^ (z >>> 30)) * 0xBF58476D1CE4E5B9L;
+        z = (z ^ (z >>> 27)) * 0x94D049BB133111EBL;
+        return z ^ (z >>> 31);
+    }
 
     /**
      * Register an invariant checker that runs after every simulation step.

@@ -14,7 +14,6 @@ import org.junit.jupiter.api.Test;
 import java.nio.charset.StandardCharsets;
 import java.util.*;
 import java.util.concurrent.CopyOnWriteArrayList;
-import java.util.random.RandomGenerator;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -73,8 +72,11 @@ class ConsistencyPropertyTests {
                 RaftTransport transport = (target, message) ->
                         sim.network().send(nodeId, target, message, sim.clock().currentTimeMillis());
 
+                // RR-010: derive the per-node election RNG from the master
+                // simulation seed (not entropy) so the same seed reproduces the
+                // same execution schedule and a failing seed is replayable.
                 RaftNode node = new RaftNode(config, log, transport, sm,
-                        RandomGenerator.of("L64X128MixRandom"));
+                        sim.electionRandom(nodeId));
 
                 nodes.add(node);
                 logs.add(log);
