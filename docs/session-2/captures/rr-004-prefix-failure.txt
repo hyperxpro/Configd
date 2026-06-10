@@ -1,0 +1,70 @@
+================================================================================
+RR-004 (P0) — ack != commit — DISCRIMINATING PRE-FIX FAILURE CAPTURE
+================================================================================
+
+Finding : RR-004 / CF-44 / old R-14 — HTTP 200 ("acknowledged") is returned on
+          leader-LOCAL append, pre-quorum. An acknowledged write can vanish on
+          leader failover (contract §6 CONTRADICTED; observed live in
+          docs/audit-session-1/smoke-test.md §3).
+
+Pre-fix  : The propose seam (RaftNode.propose) returns ProposalResult.ACCEPTED the
+defect     instant the leader appends the entry to its LOCAL log
+           (RaftNode.java propose(), pre-quorum). ConfigWriteService maps that to
+           WriteResult.Accepted(proposalId) -> HttpApiServer 200. The "ack" is
+           therefore decoupled from quorum commit.
+
+Test     : configd-testkit/src/test/java/io/configd/testkit/AckEqualsCommitTest.java
+           Drives the deterministic post-RR-010 simulator with RANDOMIZED
+           leader-kill points placed in the window BETWEEN local append and quorum
+           commit (killAfterTicks = 1..4, derived from the seed), across SEEDS=200
+           seeds, for all THREE fault shapes:
+             - LEADER_CRASH                 (leader stops executing + isolated; kill -9)
+             - LEADER_ISOLATION             (leader keeps ticking, partitioned from quorum)
+             - SLOW_FOLLOWER_QUORUM_DELAY   (a quorum of followers starved before propose)
+           The "ack" is observed at the SAME boundary the HTTP path uses — the
+           propose seam (ProposalResult.ACCEPTED, equivalently the post-fix
+           ProposeOutcome.accepted()) — NOT internal raft commit state.
+           Invariant asserted: every write acknowledged as successful is present in
+           the post-failover committed log (survives on the new leader of the
+           surviving quorum). committedBeforeKill=false in the printed violations
+           CONFIRMS the kill lands in the append->commit window (the write was acked
+           at local append but was NOT yet committed when the leader was removed).
+
+Tree     : pre-fix HEAD = c452aa19477f50d67b1323702880c283d13a2189
+           ("S2/RR-010: thread the master seed into the per-node election RNG ...")
+           — i.e. RR-010 determinism fix present, RR-004 ack=commit fix NOT yet applied.
+
+--------------------------------------------------------------------------------
+EXACT COMMAND (re-runnable):
+--------------------------------------------------------------------------------
+./mvnw -q -pl configd-testkit -am test -Dtest=AckEqualsCommitTest \
+       -Dsurefire.failIfNoSpecifiedTests=false
+
+--------------------------------------------------------------------------------
+VERBATIM FAILURE (pre-fix) — representative excerpt + summary:
+--------------------------------------------------------------------------------
+RR-004 VIOLATION [LEADER_CRASH, seed=177, killAfterTicks=2, committedBeforeKill=false]: write acknowledged at the propose seam is ABSENT from the post-failover committed log (new leader=0). ack != commit.
+RR-004 VIOLATION [LEADER_CRASH, seed=181, killAfterTicks=2, committedBeforeKill=false]: write acknowledged at the propose seam is ABSENT from the post-failover committed log (new leader=4). ack != commit.
+RR-004 VIOLATION [LEADER_CRASH, seed=189, killAfterTicks=2, committedBeforeKill=false]: write acknowledged at the propose seam is ABSENT from the post-failover committed log (new leader=3). ack != commit.
+RR-004 VIOLATION [LEADER_CRASH, seed=192, killAfterTicks=1, committedBeforeKill=false]: write acknowledged at the propose seam is ABSENT from the post-failover committed log (new leader=2). ack != commit.
+RR-004 VIOLATION [LEADER_CRASH, seed=194, killAfterTicks=1, committedBeforeKill=false]: write acknowledged at the propose seam is ABSENT from the post-failover committed log (new leader=3). ack != commit.
+... (many seeds per shape) ...
+
+[ERROR] Tests run: 3, Failures: 3, Errors: 0, Skipped: 0, Time elapsed: 1.437 s <<< FAILURE! -- in io.configd.testkit.AckEqualsCommitTest
+[ERROR]   AckEqualsCommitTest.ackedWriteSurvivesLeaderCrashInAppendCommitWindow:75 RR-004: 119 acknowledged write(s) lost after leader CRASH in the append→commit window ==> expected: <true> but was: <false>
+[ERROR]   AckEqualsCommitTest.ackedWriteSurvivesLeaderIsolationInAppendCommitWindow:83 RR-004: 119 acknowledged write(s) lost after leader ISOLATION in the append→commit window ==> expected: <true> but was: <false>
+[ERROR]   AckEqualsCommitTest.ackedWriteSurvivesSlowFollowerQuorumDelay:91 RR-004: 180 acknowledged write(s) lost after SLOW-FOLLOWER quorum delay in the append→commit window ==> expected: <true> but was: <false>
+[ERROR] Tests run: 3, Failures: 3, Errors: 0, Skipped: 0
+
+ACKED-WRITE-LOSS EVIDENCE (the defect, quantified):
+  LEADER_CRASH                : 119 / 200 seeds lost an ACKNOWLEDGED write
+  LEADER_ISOLATION            : 119 / 200 seeds lost an ACKNOWLEDGED write
+  SLOW_FOLLOWER_QUORUM_DELAY  : 180 / 200 seeds lost an ACKNOWLEDGED write
+  In every printed violation committedBeforeKill=false => the kill was inside the
+  append->commit window; the write was acked at local append but never reached the
+  surviving quorum and is gone after failover.
+
+================================================================================
+(post-fix proof and the mutation-revert -> failing-test appendix are recorded
+ below, appended after the ADR-0033 fix lands.)
+================================================================================
