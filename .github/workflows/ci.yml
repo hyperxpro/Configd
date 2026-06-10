@@ -66,6 +66,54 @@ jobs:
           java -jar ../tools/tla2tools.jar -config SnapshotInstallSpec.cfg -workers auto SnapshotInstallSpec.tla
         timeout-minutes: 30
 
+  gate-1:
+    # Session-1 cumulative gate (audit-session-1 Phase E): clean `./mvnw clean
+    # verify` + count tripwire, Porcupine-gated linz self-tests (6/6, 0 skips),
+    # JMH executability smoke (9 classes), TLC smoke bounds (gates/spec-smoke/),
+    # 3-node failover smoke. See gates/gate-1.sh header for what a green run
+    # does and does NOT prove (docs/readiness-register.md "Gate-1 blockers").
+    # NOTE: runs the pinned wrapper (./mvnw); build-and-test above runs bare
+    # `mvn` — that discrepancy is registered finding RR-071 (Session 5 owns it).
+    # Estimated runtime on ubuntu-latest (4 vCPU): ~15-25 min, from per-step
+    # measurements on the 2-vCPU audit box: build+suite 5.5-13 min (CPU-credit
+    # dependent), linz 15s, JMH smoke ~2 min, TLC smoke ~2.5-8 min, multinode
+    # ~10s; a cold Maven cache adds dependency-download time.
+    # KNOWN FLAKE RISK (registered TF-9, Session 2 owns): the two keytool TLS
+    # tests (find0050/find0051, hardcoded @Timeout(10)) run ~7-10s on slow
+    # 2-vCPU hardware and can fail the build step on a throttled runner.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 25
+        uses: actions/setup-java@v4
+        with:
+          java-version: '25'
+          distribution: 'corretto'
+          cache: maven
+
+      - name: Set up Go (builds the Porcupine checker in gate-1 step b)
+        uses: actions/setup-go@v5
+        with:
+          # gate-1 builds with GOTOOLCHAIN=local, so the installed toolchain
+          # must satisfy the go.mod "go" directive — read it from the file.
+          go-version-file: configd-linz/src/main/go/porcupine-check/go.mod
+          cache-dependency-path: configd-linz/src/main/go/porcupine-check/go.sum
+
+      - name: Run gate-1
+        run: bash gates/gate-1.sh
+        env:
+          GATE1_LOG_DIR: ${{ runner.temp }}/gate1-logs
+        timeout-minutes: 45
+
+      - name: Upload gate-1 step logs
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: gate-1-logs
+          path: ${{ runner.temp }}/gate1-logs
+          retention-days: 7
+
   wire-compat:
     # ADR-0029 §8.10 fixture-bump guardrail.
     # Fails the build if GoldenFixtures.java changed without a matching bump
