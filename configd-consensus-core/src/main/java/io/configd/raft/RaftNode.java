@@ -1637,14 +1637,20 @@ public final class RaftNode {
      */
     private void recordAppliedSeq(long index, long seq) {
         appliedSeqByIndex.put(index, seq);
-        // Drop records strictly below the lowest pending-callback index — no
-        // registration can ever query them again.
+        // Drop records strictly below the lowest pending-callback index — once
+        // every pending callback has registered at an index >= floor, no
+        // registration can ever query an older index again. Only prune by floor
+        // when callbacks ARE pending: with none pending, an imminent registration
+        // (the single-node immediate-commit path registers right after this apply)
+        // must still be able to read the seq it just recorded, so we must NOT wipe
+        // the recent records — the hard cap below bounds the map in that case.
         long floor = lowestPendingCommitIndex();
-        if (floor > 0) {
+        if (floor != Long.MAX_VALUE) {
             appliedSeqByIndex.keySet().removeIf(k -> k < floor);
         }
-        // Hard cap: if no callbacks are pending (floor == Long.MAX_VALUE) and the
-        // map has grown large, retain only the most recent indices.
+        // Hard cap: bound the map for a workload that proposes without ever
+        // registering a commit-outcome callback — retain only the most recent
+        // window of indices (the only ones a late registration could query).
         if (appliedSeqByIndex.size() > MAX_RETAINED_APPLIED_SEQ) {
             long cutoff = log.lastApplied() - MAX_RETAINED_APPLIED_SEQ;
             appliedSeqByIndex.keySet().removeIf(k -> k < cutoff);

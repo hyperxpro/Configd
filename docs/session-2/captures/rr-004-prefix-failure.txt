@@ -65,6 +65,69 @@ ACKED-WRITE-LOSS EVIDENCE (the defect, quantified):
   surviving quorum and is gone after failover.
 
 ================================================================================
-(post-fix proof and the mutation-revert -> failing-test appendix are recorded
- below, appended after the ADR-0033 fix lands.)
+APPENDIX A — POST-FIX PROOF
+================================================================================
+
+After the ADR-0033 fix, AckEqualsCommitTest observes the ack at the live commit
+seam (RaftNode.whenCommitOutcome — the same seam ConfigWriteService blocks on),
+so a write is "acknowledged" ONLY on COMMITTED. The discriminating sweep is GREEN
+and NON-VACUOUS (the non-vacuity guard requires ackedAndSurvived > 0):
+
+  ./mvnw -pl configd-testkit test -Dtest=AckEqualsCommitTest \
+         -Dsurefire.failIfNoSpecifiedTests=false
+  => Tests run: 3, Failures: 0, Errors: 0  (200 seeds x 3 fault shapes)
+     - leader crash, leader network isolation, slow-follower quorum delay
+     - a write killed in the append->commit window resolves LOST/INDETERMINATE
+       (correctly NOT acknowledged => 503/504, not a false 200); every write that
+       IS acknowledged (COMMITTED) is present in the post-failover committed log.
+
+Seam-level proof (configd-consensus-core/.../CommitOutcomeSeamTest):
+  ./mvnw -pl configd-consensus-core test -Dtest=CommitOutcomeSeamTest
+  => Tests run: 5, Failures: 0  (COMMITTED carries per-index seq; different-term
+     applied at index => LOST; one-shot fires once; multi-entry batch each carries
+     its own seq; no-op => COMMITTED with current seq)
+
+Service-seam proof (configd-server/.../RaftProposerCommitConfirmTest):
+  ./mvnw -pl configd-server test -Dtest=RaftProposerCommitConfirmTest
+  => Tests run: 4, Failures: 0  (single-node => Committed(seq); follower =>
+     NotLeader; outcome-unknown-within-deadline => Indeterminate; APPENDED-but-
+     UNCOMMITTED => Indeterminate, NOT Committed)
+
+Affected module suites GREEN (JDK 25, 2-vCPU):
+  configd-consensus-core 163 | configd-config-store 240 | configd-control-plane-api 119
+  configd-replication-engine 53 | configd-server 80 | configd-testkit 1137
+  (testkit run with -Dconfigd.seedSweep.count=500)
+
+Error distinguishability (charter §3): an uncommitted write is reported as
+something OTHER than success and OTHER than permanent failure — typed variants
+Committed / Lost / Indeterminate / NotLeader / Overloaded (ConfigWriteServiceTest),
+mapped to HTTP 200 / 503 / 504 / 503 / 429 respectively.
+
+================================================================================
+APPENDIX B — MUTATION CHECK (revert key line -> failing test)
+================================================================================
+
+Each key fix line was reverted one at a time; the paired test fails, proving the
+test kills the mutant. (Equivalent-mutant note: a naive seq mutation was found to
+be behaviorally equivalent because currentAppliedSequence() tracks the per-entry
+seq; the seq test was strengthened with a SEQ_OFFSET that decorrelates seq from
+the log index so the mutation became observable.)
+
+1) TERM-MATCH PREDICATE  (RaftNode.decideCommitOutcome)
+   revert: `if (entry.term() == term)` -> `if (true)`
+   => CommitOutcomeSeamTest.differentTermAppliedAtIndexIsLostNotCommitted FAILS
+      "a different term applied at the index must be LOST, not COMMITTED
+       ==> expected: <LOST> but was: <COMMITTED>"
+
+2) 200-ONLY-ON-COMMIT BRANCH  (ConfigdServer.raftProposer)
+   revert: register whenCommitOutcome -> `f.complete(Committed(index))` on accept
+   => RaftProposerCommitConfirmTest.appendedButUncommittedIsNotAckedAsCommitted FAILS
+      "an APPENDED-but-UNCOMMITTED write must not be acked as Committed
+       ==> expected: <...Indeterminate> but was: <...Committed>"
+
+3) SEQ THREADING  (RaftNode.applyCommitted)
+   revert: thread apply()'s returned seq -> ignore it, record currentAppliedSequence()
+   => CommitOutcomeSeamTest.committedCarriesTheAppliedMutationSeqForThisIndex FAILS
+      "first write's COMMITTED seq must be its own applied-mutation seq
+       ==> expected: <1001> but was: <1>"
 ================================================================================

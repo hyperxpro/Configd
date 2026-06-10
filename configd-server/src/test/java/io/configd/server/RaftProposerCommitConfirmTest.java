@@ -6,6 +6,7 @@ import io.configd.common.NodeId;
 import io.configd.raft.RaftConfig;
 import io.configd.raft.RaftLog;
 import io.configd.raft.RaftNode;
+import io.configd.raft.RaftRole;
 import io.configd.raft.RaftTransport;
 import io.configd.raft.StateMachine;
 import io.configd.replication.MultiRaftDriver;
@@ -16,6 +17,7 @@ import java.nio.charset.StandardCharsets;
 import java.util.Set;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
 
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
@@ -141,5 +143,99 @@ class RaftProposerCommitConfirmTest {
         } finally {
             exec.shutdownNow();
         }
+    }
+
+    /**
+     * The load-bearing "200 only on commit" property: a leader that APPENDS but
+     * cannot COMMIT (its followers are severed, so quorum never forms) must NOT be
+     * acknowledged as Committed — the proposer blocks past the local append and
+     * returns Indeterminate at the deadline. This kills the mutant that acks on
+     * local append (the pre-fix defect): under that mutant this returns Committed.
+     */
+    @Test
+    void appendedButUncommittedIsNotAckedAsCommitted() throws Exception {
+        ScheduledExecutorService exec = raftExecutor();
+        try {
+            // 3-node cluster wired through a controllable in-memory bus, all driven
+            // on the single raft executor (R-01).
+            Bus bus = new Bus();
+            RaftNode n1 = busNode(1, Set.of(NodeId.of(2), NodeId.of(3)), bus);
+            RaftNode n2 = busNode(2, Set.of(NodeId.of(1), NodeId.of(3)), bus);
+            RaftNode n3 = busNode(3, Set.of(NodeId.of(1), NodeId.of(2)), bus);
+            bus.register(NodeId.of(1), n1);
+            bus.register(NodeId.of(2), n2);
+            bus.register(NodeId.of(3), n3);
+
+            // Elect n1: tick it to campaign and deliver messages until it leads.
+            exec.submit(() -> {
+                for (int round = 0; round < 400 && n1.role() != RaftRole.LEADER; round++) {
+                    n1.tick();
+                    bus.deliverAll();
+                }
+            }).get(5, TimeUnit.SECONDS);
+            org.junit.jupiter.api.Assertions.assertEquals(RaftRole.LEADER, n1.role(),
+                    "n1 must be elected leader");
+
+            // Now SEVER the followers: no further messages are delivered, so a new
+            // proposal appends on the leader but can never reach a commit quorum.
+            bus.sever();
+
+            MultiRaftDriver driver = new MultiRaftDriver(NodeId.of(1), Clock.system());
+            driver.addGroup(GROUP, n1);
+            // Real, modest deadline so the proposer genuinely waits for a commit
+            // that will never come — and keep the leader ticking so it is not the
+            // executor-saturation case but a true no-quorum case.
+            ConfigWriteService.RaftProposer proposer =
+                    ConfigdServer.raftProposer(driver, GROUP, exec, 200 /* ms */);
+            ScheduledFuture<?> ticker = exec.scheduleAtFixedRate(
+                    n1::tick, 0, 5, TimeUnit.MILLISECONDS);
+            try {
+                var result = proposer.propose(null, put("k", "v"));
+                assertInstanceOf(ConfigWriteService.ProposeCommitResult.Indeterminate.class, result,
+                        "an APPENDED-but-UNCOMMITTED write must not be acked as Committed; "
+                                + "it must block to the deadline and report Indeterminate");
+            } finally {
+                ticker.cancel(false);
+            }
+        } finally {
+            exec.shutdownNow();
+        }
+    }
+
+    /** A controllable in-memory message bus for a small RaftNode cluster. */
+    private static final class Bus {
+        private final java.util.Map<NodeId, RaftNode> nodes = new java.util.concurrent.ConcurrentHashMap<>();
+        private final java.util.List<Runnable> queue =
+                java.util.Collections.synchronizedList(new java.util.ArrayList<>());
+        private volatile boolean severed;
+
+        void register(NodeId id, RaftNode node) { nodes.put(id, node); }
+        void sever() { severed = true; queue.clear(); }
+
+        void send(NodeId to, io.configd.raft.RaftMessage msg) {
+            if (severed) return;
+            RaftNode target = nodes.get(to);
+            if (target != null) {
+                queue.add(() -> target.handleMessage(msg));
+            }
+        }
+
+        void deliverAll() {
+            for (int i = 0; i < 50 && !queue.isEmpty(); i++) {
+                java.util.List<Runnable> batch;
+                synchronized (queue) {
+                    batch = new java.util.ArrayList<>(queue);
+                    queue.clear();
+                }
+                for (Runnable r : batch) r.run();
+            }
+        }
+    }
+
+    private static RaftNode busNode(int id, Set<NodeId> peers, Bus bus) {
+        RaftConfig config = RaftConfig.of(NodeId.of(id), peers);
+        RaftTransport transport = (target, message) -> bus.send(target, message);
+        return new RaftNode(config, new RaftLog(), transport, new SeqStateMachine(),
+                new java.util.Random(id * 31L + 5));
     }
 }

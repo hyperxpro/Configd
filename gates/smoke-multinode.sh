@@ -14,8 +14,10 @@
 #
 # WHAT IT PROVES (exits non-zero on ANY failure):
 #   - 3-node localhost cluster comes up, all /health/ready == 200
-#   - a leader is elected (one node accepts a PUT with 200)
-#   - PUT a config -> 200 (R-14: 200 == local-append ACK, NOT quorum commit)
+#   - a leader is elected (one node commit-confirms a PUT with 200)
+#   - PUT a config -> 200 (RR-004/ADR-0033: 200 == "Committed: seq=S", returned
+#     ONLY after quorum commit + apply; the write now BLOCKS until commit or the
+#     5s write deadline, so probe/write curls allow for commit-wait latency)
 #   - read it back from ALL 3 nodes (default GET) and linearizably from leader
 #   - kill -9 the leader, a NEW leader is elected within budget
 #   - write again to a survivor, read it back
@@ -79,11 +81,16 @@ done
 [ "$ready" -eq 1 ] || fail "not all 3 nodes became ready within ${ELECT_BUDGET_S}s"
 pass "all 3 nodes /health/ready == 200 (leader elected)"
 
-# identify leader: the node that answers a probe PUT with 200
+# identify leader: the node that COMMIT-CONFIRMS a probe PUT with 200.
+# RR-004/ADR-0033: 200 now means the probe entry actually quorum-committed (a real
+# side-effecting __leader_probe__ write), and the PUT BLOCKS until commit or the 5s
+# write deadline. --max-time must exceed that deadline so a probe to the leader is
+# not cut off mid-commit and misread as "not leader". A follower returns 503
+# (NotLeader) promptly, so the loop still moves on quickly.
 find_leader() {
   for k in 1 2 3; do
     [ -n "${DEAD:-}" ] && [ "$k" = "$DEAD" ] && continue
-    code=$(curl -s -o /dev/null -w "%{http_code}" --max-time 2 -X PUT -d probe \
+    code=$(curl -s -o /dev/null -w "%{http_code}" --max-time 8 -X PUT -d probe \
            "http://$(api $k)/v1/config/__leader_probe__" 2>/dev/null)
     [ "$code" = "200" ] && { echo "$k"; return 0; }
   done
@@ -92,14 +99,14 @@ find_leader() {
 LEADER=$(find_leader) || fail "no node accepted a write (no leader)"
 pass "leader elected: node $LEADER (api $(api "$LEADER"))"
 
-# ---- step 3: write a config (R-14: 200 == ACK, not commit) -----------------
+# ---- step 3: write a config (RR-004/ADR-0033: 200 == COMMITTED) -------------
 echo "[step 3] PUT smoke/k1 to leader"
-body=$(curl -s --max-time 3 -w "\n%{http_code}" -X PUT -d "smoke-value-1" \
+body=$(curl -s --max-time 8 -w "\n%{http_code}" -X PUT -d "smoke-value-1" \
        "http://$(api "$LEADER")/v1/config/smoke/k1")
 code=$(echo "$body" | tail -1)
 [ "$code" = "200" ] || fail "PUT returned $code (expected 200)"
-echo "  PUT response body: $(echo "$body" | head -1)  (R-14: ACK != commit)"
-pass "write accepted (200)"
+echo "  PUT response body: $(echo "$body" | head -1)  (RR-004: 200 == quorum-committed; body 'Committed: seq=S')"
+pass "write committed (200)"
 
 # ---- step 4: read back from all 3 + linearizable from leader ---------------
 # Followers serve their LOCAL applied state, which lags the leader's commit by
@@ -141,7 +148,9 @@ done
 pass "new leader elected: node $NEWLEADER"
 
 echo "[step 6] write smoke/k2 to new leader, read back"
-code=$(curl -s -o /dev/null -w "%{http_code}" --max-time 3 -X PUT -d "smoke-value-2" \
+# RR-004/ADR-0033: the PUT blocks until quorum commit or the 5s deadline, so allow
+# for commit-wait latency (--max-time 8) — a 200 here is a real committed write.
+code=$(curl -s -o /dev/null -w "%{http_code}" --max-time 8 -X PUT -d "smoke-value-2" \
        "http://$(api "$NEWLEADER")/v1/config/smoke/k2")
 [ "$code" = "200" ] || fail "post-failover PUT returned $code"
 # poll the new leader for the value (commit + apply)

@@ -33,8 +33,13 @@
 #             gate-1 is green while one routine network fault freezes a node.
 #   - RR-003/RR-005: the restart-after-compaction data-loss path is
 #             unreachable by the suite (compaction is unreachable).
-#   - RR-004: the suite asserts the IMPLEMENTED pre-commit-ack behavior
-#             (R-14, ack != commit), not the documented contract.
+#   - RR-004: RESOLVED in Session 2 (ADR-0033) — ack is now commit-confirmed
+#             (HTTP 200 "Committed: seq=S" only after quorum commit + apply).
+#             The discriminating proof lives in the unit/sim suites, NOT here:
+#             configd-testkit AckEqualsCommitTest (randomized leader-kill in the
+#             append->commit window, 3 fault shapes), configd-consensus-core
+#             CommitOutcomeSeamTest, configd-server RaftProposerCommitConfirmTest.
+#             gate-1's smoke-multinode now writes really-committed entries.
 # Additional limits: the TLC step checks SMOKE bounds only (Session 2 owns
 # bound adequacy); JMH executability != a performance baseline; the multinode
 # smoke is control-plane only (edge fan-out is not demonstrable, RR-001);
