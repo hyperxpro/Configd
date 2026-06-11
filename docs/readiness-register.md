@@ -311,6 +311,16 @@ list (its row stays S3-owned for the crash-recovery half that RR-003's fix now a
 
 **Proof-layer (charter §4):** adversarial simulator with all fault classes + every-step invariant checking; **10k-seed sweep ran with ZERO safety violations** (7 liveness stalls → RR-095, expected never-healed-partition artifact, P3); 507-seed committed gate set; linearizability checker wired (self-tests 8/8 in CI, discrimination RED/GREEN re-verified, sim-history bridge); jcstress harness (self-test proves the detector fires; **zero FORBIDDEN** across all read-path + transport + boundary targets); every spec invariant now has a runtime twin **observed firing** (18 twins incl. W-1); full TLC trio re-exhausted with the specs extended to model the ack point + durable recovery (both with seeded-bug counterexamples); first model-checked liveness property with a fairness-vacuity proof; §4.6 commit-notification boundary (ADR-0034, bounded + replayable, RR-066 race fixed).
 
-**Gates:** gate-1 PASSES officially. gate-2 (`gates/gate-2.sh`, cumulative) assembled with all 7 steps wired and individually verified; full end-to-end run is the close-out validation.
+**Gates:** gate-1 PASSES officially (1214s, re-confirmed 1140s). **gate-2 (`gates/gate-2.sh`,
+cumulative) TOTAL PASS end-to-end** (`docs/session-2/captures/gate2-official-pass.txt`): gate1 (incl.
+multinode) / p0tests / seeds / linzgate / jcstress 154-of-154 / assertions all PASS; the heavy 3-PIT
+mutation step is the per-PR fast-skip variant (thresholds verified standalone by the S2/mutation-gap
+round at the 70/70/65 floors, RUN_ERROR=0) and runs on the nightly CI schedule. Two gate bugs were
+found+fixed during the close-out: (1) the `-q`/`grep "BUILD SUCCESS"` contradiction (`-q` suppresses
+that line) → switched to Maven exit-code checks; (2) the multinode smoke flapped under CPU-credit
+throttling (RR-006's real 150-300ms election timeout on a starved box) → added leader-resolution
+patience + write-retry-across-churn (a 200 still means a genuine quorum commit). gate-2 is **wired
+into CI** (`.github/workflows/ci.yml`: push/PR fast + nightly full + `workflow_dispatch`); "green in
+CI" executes on merge-to-main (the branch is committed locally, not yet pushed).
 
 **S2-owned rows still OPEN at closeout (honest):** RR-025 (SpotBugs gate policy + MT warnings — disposition owed post-gate-2, candidate re-own to S5 build-hygiene); RR-029 (W-1 tripwire CLOSED; CF-31/W-2 jcstress-confirmed safe-by-construction, residual carried); RR-086 (unit-level fsync pinning done via the kill list; crash-recovery half remains S3); RR-095 (new, expected liveness artifact). RR-021 (GA blocker) and the RR-001 edge plane remain OPEN by design (S7 / S3).
