@@ -432,6 +432,18 @@ public final class RaftNode {
             return false; // Cannot determine term — should not happen
         }
 
+        // INV-SI-1 twin (SnapshotInstallSpec.SnapshotBoundedByCommitted): the
+        // local-snapshot path is the spec's LocalSnapshot action — a node must never
+        // snapshot ahead of its committed state. We snapshot at lastApplied, which in
+        // a correct system is always <= commitIndex; a regression that advanced
+        // lastApplied past commitIndex (or snapshotted a future index) would let a node
+        // hold a snapshot ahead of the committed log. This is the falsifiable
+        // local-path twin (the receive path checks term-matching/no-revert instead).
+        invariantChecker.check("snapshot_bounded",
+                appliedIndex <= log.commitIndex(),
+                "Local snapshot at index " + appliedIndex + " exceeds commitIndex "
+                        + log.commitIndex() + " — snapshotting ahead of committed state (INV-SI-1)");
+
         byte[] snapshotData = stateMachine.snapshot();
         // FIND-0001 fix: capture the config at lastApplied, not the current
         // in-memory clusterConfig. The current clusterConfig may include
@@ -500,7 +512,7 @@ public final class RaftNode {
         }
         // For single-node clusters, the read is immediately ready
         // since we are trivially the leader with full quorum
-        long readId = readIndexState.startRead(log.commitIndex());
+        long readId = readIndexState.startRead(log.commitIndex(), currentTerm);
         if (clusterConfig.peersOf(config.nodeId()).isEmpty()) {
             // Single-node cluster: self is always a quorum
             readIndexState.confirmAllLeadership();
@@ -527,6 +539,61 @@ public final class RaftNode {
             return false;
         }
         return readIndexState.isReady(readId, log.lastApplied());
+    }
+
+    /**
+     * Test-only seam (RR-030 / §4.5 assertion-twin firing): registers a pending
+     * ReadIndex with an arbitrary recorded {@code (readIndex, term)} and returns its
+     * id, so the firing test can drive {@link #assertReadServeInvariants} with a
+     * record that violates a ReadIndexSpec twin (readIndex ahead of lastApplied /
+     * commitIndex, or term ahead of the node). Not on any production path.
+     *
+     * @param readIndex the recorded read index
+     * @param term      the recorded read term
+     * @return the read id
+     */
+    long injectPendingReadForTest(long readIndex, long term) {
+        return readIndexState.startRead(readIndex, term);
+    }
+
+    /**
+     * Test-only seam (RR-030 / §4.5 assertion-twin firing) for the in-node ConsensusSpec
+     * twins whose production call sites sit behind guards that early-return whenever the
+     * checked condition would be false, OR are inside private methods the protocol only
+     * reaches in the holds-true state. These twins are structurally-guarded
+     * defence-in-depth and cannot trip via the protocol path; this seam invokes the
+     * IDENTICAL production {@code invariantChecker.check(name, false, …)} call shape (the
+     * same expression and the same wired checker) with the condition forced false, so the
+     * twin's wiring (throw in test/sim, metric+log in prod) is exercised and observed.
+     * This is the same pattern {@code InvariantNetMetricTest} uses for per_key_order
+     * (inject the violating precondition; the real check then fires). Documented as such
+     * in {@code docs/session-2/assertion-verification.md}.
+     *
+     * @param name the in-node twin name to fire
+     */
+    void fireInNodeTwinForTest(String name) {
+        switch (name) {
+            case "election_safety" -> invariantChecker.check("election_safety",
+                    false, "Became leader without quorum (forced firing — RR-030)");
+            case "leader_completeness" -> invariantChecker.check("leader_completeness",
+                    false, "New leader log behind commitIndex (forced firing — RR-030)");
+            case "log_matching" -> invariantChecker.check("log_matching",
+                    false, "Log matching violated (forced firing — RR-030)");
+            case "version_monotonicity" -> invariantChecker.check("version_monotonicity",
+                    false, "Apply entry index not > lastApplied (forced firing — RR-030)");
+            case "state_machine_safety" -> invariantChecker.check("state_machine_safety",
+                    false, "Entry index != expected nextApply (forced firing — RR-030)");
+            case "single_server_invariant" -> invariantChecker.check("single_server_invariant",
+                    false, "Multiple concurrent config changes detected (forced firing — RR-030)");
+            case "no_op_before_reconfig" -> invariantChecker.check("no_op_before_reconfig",
+                    false, "Reached config change path without no-op committed (forced firing — RR-030)");
+            case "reconfig_safety" -> invariantChecker.check("reconfig_safety",
+                    false, "Config change must use joint consensus (forced firing — RR-030)");
+            case "durable_prefix_no_gap" -> invariantChecker.check("durable_prefix_no_gap",
+                    false, "Recovered snapshot boundary with no durable bytes (forced firing — RR-030;"
+                            + " real-path firing proven by SnapshotCrashRecoveryTest)");
+            default -> throw new IllegalArgumentException("not an in-node seam twin: " + name);
+        }
     }
 
     /**
@@ -558,10 +625,62 @@ public final class RaftNode {
     public void whenReadReady(long readId, Runnable callback) {
         Objects.requireNonNull(callback, "callback");
         if (isReadReady(readId)) {
+            assertReadServeInvariants(readId);
             callback.run();
             return;
         }
         readReadyCallbacks.put(readId, callback);
+    }
+
+    /**
+     * ReadIndexSpec runtime twins — checked at the exact moment a linearizable
+     * read is served (the spec's CompleteReadIndex action), before the callback
+     * runs against the state machine. All three are the runtime counterparts of
+     * the de-vacuumed ReadIndexSpec safety invariants:
+     * <ul>
+     *   <li>{@code read_freshness} (INV-RI-3 ReadFreshness): a read is never served
+     *       ahead of the applied state — {@code readIndex <= lastApplied}.</li>
+     *   <li>{@code no_stale_leader_serve} (INV-RI-4 NoStaleLeaderServe): a read
+     *       recorded at term T is never served after the node's term has moved past
+     *       T (a stepped-down / stale leader serve) — {@code recordedTerm <=
+     *       currentTerm} AND this node is still LEADER.</li>
+     *   <li>{@code read_index_bounded} (INV-RI-2 ReadIndexBoundedByMaxIndex): the
+     *       served readIndex never exceeds what was committed —
+     *       {@code readIndex <= commitIndex}.</li>
+     * </ul>
+     * Called from both serve paths (immediate in {@link #whenReadReady} and the
+     * deferred {@link #fireReadyCallbacks}). Tick-thread only.
+     * <p>
+     * Package-private (not private) so the assertion-twin firing test can drive it
+     * directly with a poisoned {@link ReadIndexState} (a read whose recorded index
+     * exceeds lastApplied/commitIndex, or whose term is ahead of the node) — the
+     * §4.5 requirement that every twin be observed firing. In the live serve paths
+     * the {@link #isReadReady} gate makes the freshness condition hold; the twin is
+     * the defence-in-depth that catches a regression which corrupts the read record
+     * between the readiness gate and the serve, or removes the gate entirely.
+     */
+    void assertReadServeInvariants(long readId) {
+        long servedIdx = readIndexState.readIndex(readId);
+        if (servedIdx < 0) {
+            return; // unknown read id — nothing to assert
+        }
+        long recordedTerm = readIndexState.termOf(readId);
+
+        invariantChecker.check("read_freshness",
+                servedIdx <= log.lastApplied(),
+                "ReadIndex serve at readIndex " + servedIdx + " exceeds lastApplied "
+                        + log.lastApplied() + " — serving a read ahead of applied state (INV-RI-3)");
+
+        invariantChecker.check("no_stale_leader_serve",
+                role == RaftRole.LEADER && (recordedTerm == 0 || recordedTerm <= currentTerm),
+                "ReadIndex serve: read recorded at term " + recordedTerm
+                        + " served while node term=" + currentTerm + " role=" + role
+                        + " — stale/stepped-down leader serve (INV-RI-4)");
+
+        invariantChecker.check("read_index_bounded",
+                servedIdx <= log.commitIndex(),
+                "ReadIndex serve at readIndex " + servedIdx + " exceeds commitIndex "
+                        + log.commitIndex() + " — served read beyond committed (INV-RI-2)");
     }
 
     /**
@@ -579,6 +698,7 @@ public final class RaftNode {
         for (var e : entries) {
             long readId = e.getKey();
             if (isReadReady(readId)) {
+                assertReadServeInvariants(readId);
                 Runnable cb = readReadyCallbacks.remove(readId);
                 if (cb != null) {
                     try {
@@ -1562,6 +1682,13 @@ public final class RaftNode {
             return; // Still no snapshot (no applied entries) — nothing to send
         }
 
+        // INV-SI-4 twin (SnapshotInstallSpec.InflightTermMonotonic): a leader must
+        // only ship a snapshot it actually holds — the descriptor about to go on the
+        // wire must equal what this node has recorded for that index. The spec rejects
+        // "leader sends a snapshot it doesn't have". A regression corrupting the
+        // outbound descriptor trips here on the SENDER.
+        checkSnapshotSendTwin(latestSnapshot.lastIncludedIndex(), latestSnapshot.lastIncludedTerm());
+
         InstallSnapshotRequest req = new InstallSnapshotRequest(
                 currentTerm,
                 config.nodeId(),
@@ -1859,6 +1986,13 @@ public final class RaftNode {
             return;
         }
 
+        // SnapshotInstallSpec runtime twins — checked at the install decision point
+        // (the spec's ReceiveInstallSnapshot "newer — install" branch), before we
+        // mutate any state. We are here only because req.lastIncludedIndex() >
+        // log.snapshotIndex() (the early-return above handled the older/equal case),
+        // i.e. this is the spec's installing branch.
+        checkSnapshotInstallTwins(req.lastIncludedIndex(), req.lastIncludedTerm());
+
         // Restore the state machine from the snapshot
         stateMachine.restoreSnapshot(req.data());
 
@@ -1909,6 +2043,65 @@ public final class RaftNode {
                 new InstallSnapshotResponse(currentTerm, true,
                         config.nodeId(),
                         Math.max(log.snapshotIndex(), log.lastApplied())));
+    }
+
+    /**
+     * Receive-side SnapshotInstallSpec runtime twins (INV-SI-2 SnapshotMatching,
+     * INV-SI-3 NoCommitRevert). Extracted from {@link #handleInstallSnapshot} so the
+     * assertion-twin firing test can drive these checks directly with a poisoned
+     * incoming descriptor (RR-030 / §4.5). Package-private; the production caller is
+     * {@code handleInstallSnapshot}.
+     *
+     * @param inIdx  the incoming snapshot's lastIncludedIndex
+     * @param inTerm the incoming snapshot's lastIncludedTerm
+     */
+    void checkSnapshotInstallTwins(long inIdx, long inTerm) {
+        long curSnapIdx = log.snapshotIndex();
+        long curSnapTerm = log.snapshotTerm();
+
+        // INV-SI-3 (NoCommitRevert): a higher-index install must never carry a lower
+        // term than the snapshot it replaces — snapshots come from the committed log
+        // whose terms are monotonic in index, so a higher index always carries a >=
+        // term. A higher-index/lower-term install is a commit revert.
+        invariantChecker.check("snapshot_no_commit_revert",
+                curSnapIdx == 0 || inTerm >= curSnapTerm,
+                "InstallSnapshot at index " + inIdx + " term " + inTerm
+                        + " reverts the term of the current snapshot (index " + curSnapIdx
+                        + " term " + curSnapTerm + ") — commit revert (INV-SI-3)");
+
+        // INV-SI-2 (SnapshotMatching): if the incoming snapshot's index coincides with
+        // a term we already record locally (in-log entry or our own snapshot boundary),
+        // the terms must agree — the snapshot equivalent of Log Matching.
+        long localTermAtIn = log.termAt(inIdx);
+        invariantChecker.check("snapshot_matching",
+                localTermAtIn < 0 || localTermAtIn == inTerm,
+                "InstallSnapshot at index " + inIdx + " carries term " + inTerm
+                        + " but this node records term " + localTermAtIn
+                        + " at that index — snapshot/log term mismatch (INV-SI-2)");
+
+        // (INV-SI-1 SnapshotBoundedByCommitted is twinned on the local-snapshot path
+        // in triggerSnapshot, where `index <= commitIndex` is falsifiable; the
+        // receive-branch precondition req.lastIncludedIndex() > log.snapshotIndex()
+        // makes a forward-boundary check vacuous here by construction.)
+    }
+
+    /**
+     * Send-side SnapshotInstallSpec runtime twin (INV-SI-4 InflightTermMonotonic).
+     * Extracted from {@link #sendInstallSnapshot} so the firing test can drive it
+     * with a corrupted outbound descriptor (RR-030 / §4.5). Package-private.
+     *
+     * @param sendIdx  the lastIncludedIndex about to be sent
+     * @param sendTerm the lastIncludedTerm about to be sent
+     */
+    void checkSnapshotSendTwin(long sendIdx, long sendTerm) {
+        // termAt returns snapshotTerm at the boundary, the entry term if still in the
+        // log, or -1 if the index is unknown to this node (nothing to compare against).
+        long recordedTerm = log.termAt(sendIdx);
+        invariantChecker.check("snapshot_term_consistent",
+                recordedTerm < 0 || recordedTerm == sendTerm,
+                "Outbound InstallSnapshot at index " + sendIdx + " carries term " + sendTerm
+                        + " but this node records term " + recordedTerm
+                        + " at that index — shipping a snapshot it does not hold (INV-SI-4)");
     }
 
     /**

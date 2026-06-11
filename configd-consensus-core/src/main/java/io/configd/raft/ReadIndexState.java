@@ -25,14 +25,14 @@ public final class ReadIndexState {
     /**
      * Internal state of a single pending read request.
      */
-    private record PendingRead(long readIndex, int ackCount, boolean leadershipConfirmed) {
+    private record PendingRead(long readIndex, long term, int ackCount, boolean leadershipConfirmed) {
 
         PendingRead withAck(int newAckCount) {
-            return new PendingRead(readIndex, newAckCount, leadershipConfirmed);
+            return new PendingRead(readIndex, term, newAckCount, leadershipConfirmed);
         }
 
         PendingRead confirmed() {
-            return new PendingRead(readIndex, ackCount, true);
+            return new PendingRead(readIndex, term, ackCount, true);
         }
     }
 
@@ -41,15 +41,41 @@ public final class ReadIndexState {
 
     /**
      * Starts a new read request. Records the current commit index as the
-     * threshold that must be applied before the read can be served.
+     * threshold that must be applied before the read can be served, and the
+     * leader's term at request time (so a served read can be checked against
+     * the node's current term — the ReadIndexSpec NoStaleLeaderServe twin).
+     *
+     * @param commitIndex the current commit index at the time of the read request
+     * @param term        the leader's current term at the time of the read request
+     * @return a unique read ID used to track this request
+     */
+    public long startRead(long commitIndex, long term) {
+        long readId = nextReadId++;
+        pendingReads.put(readId, new PendingRead(commitIndex, term, 1, false)); // 1 = self
+        return readId;
+    }
+
+    /**
+     * Convenience overload that records term 0 (unknown). Retained for existing
+     * tests that do not exercise the term-based stale-leader twin.
      *
      * @param commitIndex the current commit index at the time of the read request
      * @return a unique read ID used to track this request
      */
     public long startRead(long commitIndex) {
-        long readId = nextReadId++;
-        pendingReads.put(readId, new PendingRead(commitIndex, 1, false)); // 1 = self
-        return readId;
+        return startRead(commitIndex, 0L);
+    }
+
+    /**
+     * Returns the term recorded when the given read was started, or -1 if the
+     * read ID is not found. Used by the NoStaleLeaderServe runtime twin.
+     *
+     * @param readId the read request identifier
+     * @return the read's recorded term, or -1 if unknown
+     */
+    public long termOf(long readId) {
+        PendingRead pending = pendingReads.get(readId);
+        return pending != null ? pending.term() : -1;
     }
 
     /**
