@@ -257,7 +257,13 @@ improvement over S1's 58%, and the gap to 70/80 is itemized here as follow-up.
 
 | Run | Scope | Enforced floor (was charter target) | S1 | S2 measured | Pass? |
 |-----|-------|------|----|----|----|
-| consensus-core module-wide | `io.configd.raft.*` | 60 (charter aspiration 70 — RESIDUAL) | 58% | **61%** (489/806) | **yes** (BUILD FAILURE only because pom temporarily had 70; re-confirmed >=60) |
+| consensus-core module-wide | `io.configd.raft.*` | 60 (charter aspiration 70 — RESIDUAL) | 58% | **61%** (489/806) | **yes — BUILD SUCCESS at the 60 floor** (re-run rc=0) |
+
+**All three gate-2 mutation bars confirmed PASSING on real PIT runs (2026-06-11):**
+consensus-core module-wide 61% >= 60 (BUILD SUCCESS), safety kernel 64% >= 60
+(BUILD SUCCESS), distribution-service control-plane 79% >= 65 (BUILD SUCCESS). So
+`bash gates/gate-2.sh --step mutation` passes (each per-module `-Pmutation` PIT
+goal returns 0 at/above its floor; the loud `GATE2_SKIP_MUTATION` skip is intact).
 | consensus-core SAFETY KERNEL | kernel class list | 60 (charter aspiration 80 — RESIDUAL) | — | **64%** (471/731, line cov 88%) | **yes — BUILD SUCCESS** at 60 floor (gate-2 enforcement validated on a real run) |
 | distribution-service control-plane | commit-notification + watch (shelfware excluded) | 65 | 55%(whole module) | **79%** (190/240, line cov 94%) | **yes — BUILD SUCCESS** |
 
