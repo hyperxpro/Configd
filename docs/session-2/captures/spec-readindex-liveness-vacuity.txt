@@ -1,0 +1,130 @@
+TLC2 Version 2026.04.09.014118 (rev: 389440f)
+Running breadth-first search Model-Checking with fp 25 and seed -5108774792506863967 with 2 workers on 2 cores with 2731MB heap and 64MB offheap memory [pid: 217721] (Linux 7.0.0-1006-aws amd64, Amazon.com Inc. 25 64bit, MSBDiskFPSet, DiskStateQueue).
+Parsing file /tmp/tmp.kq0ePu5zqy/ReadIndexSpec.tla
+Parsing file /tmp/tlc-6917790221393878266/Integers.tla (jar:file:/home/ubuntu/Code/Configd/spec/tla2tools.jar!/tla2sany/StandardModules/Integers.tla)
+Parsing file /tmp/tlc-6917790221393878266/FiniteSets.tla (jar:file:/home/ubuntu/Code/Configd/spec/tla2tools.jar!/tla2sany/StandardModules/FiniteSets.tla)
+Parsing file /tmp/tlc-6917790221393878266/TLC.tla (jar:file:/home/ubuntu/Code/Configd/spec/tla2tools.jar!/tla2sany/StandardModules/TLC.tla)
+Parsing file /tmp/tlc-6917790221393878266/_TLCTrace.tla (jar:file:/home/ubuntu/Code/Configd/spec/tla2tools.jar!/tla2sany/StandardModules/_TLCTrace.tla)
+Parsing file /tmp/tlc-6917790221393878266/Naturals.tla (jar:file:/home/ubuntu/Code/Configd/spec/tla2tools.jar!/tla2sany/StandardModules/Naturals.tla)
+Parsing file /tmp/tlc-6917790221393878266/Sequences.tla (jar:file:/home/ubuntu/Code/Configd/spec/tla2tools.jar!/tla2sany/StandardModules/Sequences.tla)
+Parsing file /tmp/tlc-6917790221393878266/TLCExt.tla (jar:file:/home/ubuntu/Code/Configd/spec/tla2tools.jar!/tla2sany/StandardModules/TLCExt.tla)
+Semantic processing of module Naturals
+Semantic processing of module Integers
+Semantic processing of module Sequences
+Semantic processing of module FiniteSets
+Semantic processing of module TLC
+Semantic processing of module TLCExt
+Semantic processing of module _TLCTrace
+Semantic processing of module ReadIndexSpec
+Linting of module TLCExt
+Linting of module _TLCTrace
+Linting of module ReadIndexSpec
+Starting... (2026-06-11 05:02:36)
+Implied-temporal checking--satisfiability problem has 1 branches.
+Computing initial states...
+Finished computing initial states: 1 distinct state generated at 2026-06-11 05:02:37.
+Checking temporal properties for the current state space with 12199 total distinct states at (2026-06-11 05:02:40)
+Error: Temporal property ReadEventuallyServed was violated.
+
+Error: The following behavior constitutes a counter-example:
+
+State 1: <Initial predicate>
+/\ state = (n1 :> "follower" @@ n2 :> "follower" @@ n3 :> "follower")
+/\ currentTerm = (n1 :> 0 @@ n2 :> 0 @@ n3 :> 0)
+/\ appliedIndex = (n1 :> 0 @@ n2 :> 0 @@ n3 :> 0)
+/\ pendingReads = (n1 :> {} @@ n2 :> {} @@ n3 :> {})
+/\ servedReads = {}
+/\ commitIndex = (n1 :> 0 @@ n2 :> 0 @@ n3 :> 0)
+
+State 2: <BecomeLeader(n3) line 93, col 5 to line 109, col 59 of module ReadIndexSpec>
+/\ state = (n1 :> "follower" @@ n2 :> "follower" @@ n3 :> "leader")
+/\ currentTerm = (n1 :> 0 @@ n2 :> 0 @@ n3 :> 1)
+/\ appliedIndex = (n1 :> 0 @@ n2 :> 0 @@ n3 :> 0)
+/\ pendingReads = (n1 :> {} @@ n2 :> {} @@ n3 :> {})
+/\ servedReads = {}
+/\ commitIndex = (n1 :> 0 @@ n2 :> 0 @@ n3 :> 0)
+
+State 3: <BecomeLeader(n1) line 93, col 5 to line 109, col 59 of module ReadIndexSpec>
+/\ state = (n1 :> "leader" @@ n2 :> "follower" @@ n3 :> "follower")
+/\ currentTerm = (n1 :> 2 @@ n2 :> 0 @@ n3 :> 1)
+/\ appliedIndex = (n1 :> 0 @@ n2 :> 0 @@ n3 :> 0)
+/\ pendingReads = (n1 :> {} @@ n2 :> {} @@ n3 :> {})
+/\ servedReads = {}
+/\ commitIndex = (n1 :> 0 @@ n2 :> 0 @@ n3 :> 0)
+
+State 4: <CommitEntry(n1) line 114, col 5 to line 118, col 46 of module ReadIndexSpec>
+/\ state = (n1 :> "leader" @@ n2 :> "follower" @@ n3 :> "follower")
+/\ currentTerm = (n1 :> 2 @@ n2 :> 0 @@ n3 :> 1)
+/\ appliedIndex = (n1 :> 0 @@ n2 :> 0 @@ n3 :> 0)
+/\ pendingReads = (n1 :> {} @@ n2 :> {} @@ n3 :> {})
+/\ servedReads = {}
+/\ commitIndex = (n1 :> 1 @@ n2 :> 0 @@ n3 :> 0)
+
+State 5: <ReplicateToFollower(n1,n3) line 130, col 5 to line 135, col 67 of module ReadIndexSpec>
+/\ state = (n1 :> "leader" @@ n2 :> "follower" @@ n3 :> "follower")
+/\ currentTerm = (n1 :> 2 @@ n2 :> 0 @@ n3 :> 2)
+/\ appliedIndex = (n1 :> 0 @@ n2 :> 0 @@ n3 :> 0)
+/\ pendingReads = (n1 :> {} @@ n2 :> {} @@ n3 :> {})
+/\ servedReads = {}
+/\ commitIndex = (n1 :> 1 @@ n2 :> 0 @@ n3 :> 1)
+
+State 6: <ApplyEntry(n3) line 122, col 5 to line 125, col 46 of module ReadIndexSpec>
+/\ state = (n1 :> "leader" @@ n2 :> "follower" @@ n3 :> "follower")
+/\ currentTerm = (n1 :> 2 @@ n2 :> 0 @@ n3 :> 2)
+/\ appliedIndex = (n1 :> 0 @@ n2 :> 0 @@ n3 :> 1)
+/\ pendingReads = (n1 :> {} @@ n2 :> {} @@ n3 :> {})
+/\ servedReads = {}
+/\ commitIndex = (n1 :> 1 @@ n2 :> 0 @@ n3 :> 1)
+
+State 7: <InitiateReadIndex(n1) line 146, col 5 to line 154, col 79 of module ReadIndexSpec>
+/\ state = (n1 :> "leader" @@ n2 :> "follower" @@ n3 :> "follower")
+/\ currentTerm = (n1 :> 2 @@ n2 :> 0 @@ n3 :> 2)
+/\ appliedIndex = (n1 :> 0 @@ n2 :> 0 @@ n3 :> 1)
+/\ pendingReads = (n1 :> {[acked |-> {n1}, readIdx |-> 1, term |-> 2]} @@ n2 :> {} @@ n3 :> {})
+/\ servedReads = {}
+/\ commitIndex = (n1 :> 1 @@ n2 :> 0 @@ n3 :> 1)
+
+State 8: <ApplyEntry(n1) line 122, col 5 to line 125, col 46 of module ReadIndexSpec>
+/\ state = (n1 :> "leader" @@ n2 :> "follower" @@ n3 :> "follower")
+/\ currentTerm = (n1 :> 2 @@ n2 :> 0 @@ n3 :> 2)
+/\ appliedIndex = (n1 :> 1 @@ n2 :> 0 @@ n3 :> 1)
+/\ pendingReads = (n1 :> {[acked |-> {n1}, readIdx |-> 1, term |-> 2]} @@ n2 :> {} @@ n3 :> {})
+/\ servedReads = {}
+/\ commitIndex = (n1 :> 1 @@ n2 :> 0 @@ n3 :> 1)
+
+State 9: <ReplicateToFollower(n1,n2) line 130, col 5 to line 135, col 67 of module ReadIndexSpec>
+/\ state = (n1 :> "leader" @@ n2 :> "follower" @@ n3 :> "follower")
+/\ currentTerm = (n1 :> 2 @@ n2 :> 2 @@ n3 :> 2)
+/\ appliedIndex = (n1 :> 1 @@ n2 :> 0 @@ n3 :> 1)
+/\ pendingReads = (n1 :> {[acked |-> {n1}, readIdx |-> 1, term |-> 2]} @@ n2 :> {} @@ n3 :> {})
+/\ servedReads = {}
+/\ commitIndex = (n1 :> 1 @@ n2 :> 1 @@ n3 :> 1)
+
+State 10: <Next line 200, col 40 to line 201, col 37 of module ReadIndexSpec>
+/\ state = (n1 :> "leader" @@ n2 :> "follower" @@ n3 :> "follower")
+/\ currentTerm = (n1 :> 2 @@ n2 :> 2 @@ n3 :> 2)
+/\ appliedIndex = (n1 :> 1 @@ n2 :> 0 @@ n3 :> 1)
+/\ pendingReads = ( n1 :> {[acked |-> {n1, n2}, readIdx |-> 1, term |-> 2]} @@
+  n2 :> {} @@
+  n3 :> {} )
+/\ servedReads = {}
+/\ commitIndex = (n1 :> 1 @@ n2 :> 1 @@ n3 :> 1)
+
+State 11: <ApplyEntry(n2) line 122, col 5 to line 125, col 46 of module ReadIndexSpec>
+/\ state = (n1 :> "leader" @@ n2 :> "follower" @@ n3 :> "follower")
+/\ currentTerm = (n1 :> 2 @@ n2 :> 2 @@ n3 :> 2)
+/\ appliedIndex = (n1 :> 1 @@ n2 :> 1 @@ n3 :> 1)
+/\ pendingReads = ( n1 :> {[acked |-> {n1, n2}, readIdx |-> 1, term |-> 2]} @@
+  n2 :> {} @@
+  n3 :> {} )
+/\ servedReads = {}
+/\ commitIndex = (n1 :> 1 @@ n2 :> 1 @@ n3 :> 1)
+
+State 12: Stuttering
+Warning: The stuttering counterexample above may be caused by the absence of a fairness constraint in the behavior specification Spec defined at line 204, col 1 to line 204, col 29 of module ReadIndexSpec. To rule out such counterexamples, conjoin a suitable fairness constraint to Spec (compare Chapter 8, page 87ff of Specifying Systems at https://lamport.azurewebsites.net/tla/book.html).
+(Use the -nowarning option to disable this warning.)
+Finished checking temporal properties in 00s at 2026-06-11 05:02:40
+43015 states generated, 12199 distinct states found, 3967 states left on queue.
+The depth of the complete state graph search is 12.
+Finished in 04s at (2026-06-11 05:02:40)
+Trace exploration spec path: ./ReadIndexSpec_TTrace_1781154156.tla

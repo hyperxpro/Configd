@@ -51,6 +51,18 @@ vars == <<currentTerm, state, commitIndex, appliedIndex,
 
 Quorum == {Q \in SUBSET Nodes : Cardinality(Q) * 2 > Cardinality(Nodes)}
 
+\* True iff some leader holds a SERVEABLE read: heartbeat-quorum acked, applied through
+\* its readIdx, at the leader's current term — CompleteReadIndex's exact precondition.
+\* A serveable read MUST NOT starve (used by the RR-026 liveness property and to gate
+\* InitiateReadIndex so the no-starvation claim is well-posed).
+HasServeableRead ==
+    \E n \in Nodes:
+        \E r \in pendingReads[n]:
+            /\ state[n] = "leader"
+            /\ r.acked \in Quorum
+            /\ appliedIndex[n] >= r.readIdx
+            /\ currentTerm[n] = r.term
+
 \* ---- Initial State ----
 
 Init ==
@@ -125,9 +137,15 @@ ReplicateToFollower(leader, follower) ==
 \* ---- ReadIndex Protocol ----
 
 \* Step 1: leader initiates a ReadIndex by recording its current commitIndex.
+\* Liveness well-posedness (RR-026): do not pile on a new read while a serveable read is
+\* already waiting to be served — otherwise churn could keep HasServeableRead true forever
+\* while individual reads are served, making the no-starvation property ill-posed. This
+\* gate does not weaken safety (a deferred read is still eventually initiated once the
+\* serveable one drains) and only affects the liveness model.
 InitiateReadIndex(n) ==
     /\ state[n] = "leader"
     /\ Cardinality(pendingReads[n]) < 2  \* state-space bound
+    /\ ~HasServeableRead
     /\ pendingReads' = [pendingReads EXCEPT ![n] =
             pendingReads[n] \cup
             {[readIdx |-> commitIndex[n],
@@ -264,5 +282,39 @@ SafetyInvariants ==
     /\ ReadIndexBoundedByMaxIndex
     /\ ReadFreshness
     /\ NoStaleLeaderServe
+
+\* ---- Liveness (RR-026) ----
+\*
+\* True iff some leader is holding a SERVEABLE read: one with a heartbeat-quorum ack,
+\* A fair specification. The base Spec (`Init /\ [][Next]_vars`) admits stuttering forever,
+\* so any liveness check is vacuous — RR-026's exact gap. FairNext adds weak fairness to
+\* the read-progress actions (the heartbeat ack and apply that DRIVE a read to serveable,
+\* and the serve itself). To keep the progress claim well-posed, InitiateReadIndex is
+\* gated to not pile on a NEW read while a serveable one is already waiting (see the
+\* action's `~HasServeableRead` guard) — so a serveable read is the continuous
+\* completion witness and weak fairness suffices to drain it (no churn-masking).
+FairNext ==
+    /\ WF_vars(\E n \in Nodes: \E r \in pendingReads[n]: CompleteReadIndex(n, r))
+    /\ WF_vars(\E n \in Nodes: ApplyEntry(n))
+    /\ WF_vars(\E n \in Nodes: \E m \in Nodes: \E r \in pendingReads[n]:
+                    ReadHeartbeatAck(n, m, r))
+
+LiveSpec == Init /\ [][Next]_vars /\ FairNext
+
+\* LIVE-RI-1: ReadEventuallyServed — a serveable read never starves: whenever a leader
+\* holds a serveable read, eventually no serveable read remains (it was served via
+\* CompleteReadIndex, which removes it and grows servedReads, or the leader stepped down).
+\* The InitiateReadIndex `~HasServeableRead` gate prevents churn from keeping
+\* HasServeableRead true forever while individual reads are served, so this is the honest
+\* no-read-starves progress guarantee of the ReadIndex path (a state-level leads-to TLC
+\* can check, unlike a per-pending-element temporal quantifier).
+\*
+\* WRONG-FAIRNESS VACUITY CHECK: under the UNFAIR base Spec (no WF) this property FAILS —
+\* TLC finds the stutter counterexample (a serveable read sits forever because nothing is
+\* forced to run). That demonstration lives in
+\* gates/spec-smoke/ReadIndexSpec-livenessvacuity.cfg (same PROPERTIES under Spec →
+\* violated), proving the GREEN result under LiveSpec is earned by the fairness.
+ReadEventuallyServed ==
+    HasServeableRead ~> (~HasServeableRead)
 
 =============================================================================

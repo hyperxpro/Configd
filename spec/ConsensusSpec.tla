@@ -17,7 +17,11 @@ CONSTANTS
     Nodes,          \* Set of all possible node IDs
     MaxTerm,        \* Maximum term to explore (bound for model checking)
     MaxLogLen,      \* Maximum log length to explore
-    Values          \* Set of possible config values
+    Values,         \* Set of possible config values
+    ACK_ON_APPEND   \* RR-004 defect switch (BOOLEAN): FALSE = ADR-0033 fixed model
+                    \* (ack only at commit); TRUE = reproduce the ack≠commit
+                    \* counterexample (ack on local append). The default cfg sets FALSE;
+                    \* the AckOnAppend smoke cfg sets TRUE and TLC catches the violation.
 
 VARIABLES
     currentTerm,    \* currentTerm[n]: current term of node n
@@ -41,11 +45,16 @@ VARIABLES
                     \* entry in its current term (prerequisite for config changes)
     \* Edge propagation tracking
     edgeVersion,    \* edgeVersion[e]: last applied version at edge node e
+    \* Client acknowledgement tracking (RR-004 / ADR-0033)
+    acked,          \* acked: set of <<index, term>> positions the system has
+                    \* acknowledged to a client with a commit sequence. ADR-0033:
+                    \* an ack is returned ONLY after the entry at that position is
+                    \* quorum-committed AND applied — never on leader-local append.
     messages        \* Set of in-flight messages
 
 vars == <<currentTerm, votedFor, log, commitIndex, state,
           votesGranted, nextIndex, matchIndex,
-          config, leaderHasCommittedNoOp, edgeVersion, messages>>
+          config, leaderHasCommittedNoOp, edgeVersion, acked, messages>>
 
 Nil == -1
 
@@ -250,6 +259,22 @@ NoOpBeforeReconfig ==
                     /\ log[n][j].term = log[n][i].term
                     /\ log[n][j].type = "noop"
 
+\* INV-ACK: AckImpliesCommitted (RR-004 / ADR-0033) — every acknowledged client write
+\* is committed and durable. For every <<idx, term>> the system has acked, SOME node
+\* has that exact entry (same index AND term) within its committed prefix
+\* (idx <= commitIndex). The commit-confirmed ClientAck only acks committed slots, so
+\* this holds in the fixed model. The pre-fix ClientAckOnAppend acks merely-appended
+\* slots; a slot appended on a leader that then loses an election can be truncated and
+\* replaced (a different term, or shorter log), so no node ends up with that committed
+\* <<idx, term>> — an acknowledged write that vanished on failover, exactly the RR-004
+\* defect. TLC reports the counterexample when ACK_ON_APPEND = TRUE.
+AckImpliesCommitted ==
+    \A pair \in acked:
+        \E n \in Nodes:
+            /\ pair[1] <= commitIndex[n]
+            /\ Len(log[n]) >= pair[1]
+            /\ log[n][pair[1]].term = pair[2]
+
 \* ---- Temporal Properties (Liveness) ----
 
 \* LIVE-1: Every committed write eventually reaches every edge.
@@ -283,6 +308,7 @@ Init ==
     /\ config = [n \in Nodes |-> InitConfig]
     /\ leaderHasCommittedNoOp = [n \in Nodes |-> FALSE]
     /\ edgeVersion = [n \in Nodes |-> 0]
+    /\ acked = {}
     /\ messages = {}
 
 \* ---- Actions ----
@@ -300,7 +326,7 @@ BecomeCandidate(n) ==
     /\ votesGranted' = [votesGranted EXCEPT ![n] = {n}]
     /\ leaderHasCommittedNoOp' = [leaderHasCommittedNoOp EXCEPT ![n] = FALSE]
     /\ UNCHANGED <<log, commitIndex, nextIndex, matchIndex,
-                    config, edgeVersion, messages>>
+                    config, edgeVersion, acked, messages>>
 
 \* Node m grants vote to candidate n.
 \* Votes are granted only by voting members of the candidate's configuration.
@@ -314,7 +340,7 @@ GrantVote(n, m) ==
     /\ currentTerm' = [currentTerm EXCEPT ![m] = currentTerm[n]]
     /\ votesGranted' = [votesGranted EXCEPT ![n] = votesGranted[n] \cup {m}]
     /\ UNCHANGED <<log, commitIndex, state, nextIndex, matchIndex,
-                    config, leaderHasCommittedNoOp, edgeVersion, messages>>
+                    config, leaderHasCommittedNoOp, edgeVersion, acked, messages>>
 
 \* Candidate n wins election.
 \* Under joint consensus, the candidate must receive votes from a quorum
@@ -327,7 +353,7 @@ BecomeLeader(n) ==
     /\ matchIndex' = [matchIndex EXCEPT ![n] = [m \in Nodes |-> 0]]
     /\ leaderHasCommittedNoOp' = [leaderHasCommittedNoOp EXCEPT ![n] = FALSE]
     /\ UNCHANGED <<currentTerm, votedFor, log, commitIndex, votesGranted,
-                    config, edgeVersion, messages>>
+                    config, edgeVersion, acked, messages>>
 
 \* Leader n appends a no-op entry in its current term.
 \* Per Raft, a new leader must commit a no-op to learn the commit index
@@ -344,7 +370,7 @@ LeaderAppendNoOp(n) ==
                 [term |-> currentTerm[n], value |-> Nil, type |-> "noop"])]
     /\ UNCHANGED <<currentTerm, votedFor, commitIndex, state, votesGranted,
                     nextIndex, matchIndex, config, leaderHasCommittedNoOp,
-                    edgeVersion, messages>>
+                    edgeVersion, acked, messages>>
 
 \* Leader n appends a new data entry (client request).
 \* Data entries can be appended at any time (they are not configuration changes).
@@ -355,7 +381,7 @@ ClientRequest(n, v) ==
                 [term |-> currentTerm[n], value |-> v, type |-> "data"])]
     /\ UNCHANGED <<currentTerm, votedFor, commitIndex, state, votesGranted,
                     nextIndex, matchIndex, config, leaderHasCommittedNoOp,
-                    edgeVersion, messages>>
+                    edgeVersion, acked, messages>>
 
 \* ---- Reconfiguration Actions ----
 
@@ -389,7 +415,7 @@ ProposeConfigChange(n, newMembers) ==
        /\ config' = [config EXCEPT ![n] = jointCfg]
     /\ UNCHANGED <<currentTerm, votedFor, commitIndex, state, votesGranted,
                     nextIndex, matchIndex, leaderHasCommittedNoOp,
-                    edgeVersion, messages>>
+                    edgeVersion, acked, messages>>
 
 \* CommitJointConfig(n): Leader n, after the joint config entry has been
 \* committed (replicated to a quorum of BOTH old and new), appends a
@@ -418,7 +444,7 @@ CommitJointConfig(n) ==
        /\ config' = [config EXCEPT ![n] = newCfg]
     /\ UNCHANGED <<currentTerm, votedFor, commitIndex, state, votesGranted,
                     nextIndex, matchIndex, leaderHasCommittedNoOp,
-                    edgeVersion, messages>>
+                    edgeVersion, acked, messages>>
 
 \* ---- Replication (config-aware) ----
 
@@ -462,7 +488,7 @@ AppendEntry(n, m) ==
                          ELSE Append(log[m], entry)
           IN config' = [config EXCEPT ![m] = EffectiveConfig(newLog)]
        /\ UNCHANGED <<commitIndex, votesGranted,
-                       leaderHasCommittedNoOp, edgeVersion, messages>>
+                       leaderHasCommittedNoOp, edgeVersion, acked, messages>>
 
 \* Leader advances commit index.
 \* Uses configuration-aware quorum: in joint phase, requires majorities
@@ -482,14 +508,60 @@ AdvanceCommitIndex(n) ==
                 /\ log[n][i].term = currentTerm[n]
                 /\ log[n][i].type = "noop"]
         /\ UNCHANGED <<currentTerm, votedFor, log, state, votesGranted,
-                        nextIndex, matchIndex, config, edgeVersion, messages>>
+                        nextIndex, matchIndex, config, edgeVersion, acked, messages>>
 
 \* Edge node e applies committed entries (propagation)
 EdgeApply(e) ==
     /\ edgeVersion[e] < commitIndex[e]
     /\ edgeVersion' = [edgeVersion EXCEPT ![e] = commitIndex[e]]
     /\ UNCHANGED <<currentTerm, votedFor, log, commitIndex, state, votesGranted,
-                    nextIndex, matchIndex, config, leaderHasCommittedNoOp, messages>>
+                    nextIndex, matchIndex, config, leaderHasCommittedNoOp, acked,
+                    messages>>
+
+\* ---- Client Acknowledgement (RR-004 / ADR-0033) ----
+\*
+\* The system acknowledges a client write at position <<idx, term>> with a commit
+\* sequence. ADR-0033 fixes the ack≠commit defect: an ack is returned ONLY after the
+\* entry is quorum-committed (idx <= commitIndex[n]) AND applied on the acking leader,
+\* and only for the entry that actually occupies that slot (log[n][idx].term = term).
+\* We model "applied" by the leader's commitIndex (apply tracks commit in this abstract
+\* model; the runtime read-freshness twin enforces apply >= readIdx separately).
+\*
+\* The PRE-FIX defect (the thing RR-004 fixed) was acking on leader-LOCAL APPEND, before
+\* commit: that is the action `ClientAckOnAppend` below, gated by the model constant
+\* ACK_ON_APPEND. With ACK_ON_APPEND = FALSE (the fixed model) only the commit-confirmed
+\* ack is enabled and AckImpliesCommitted holds. Flip ACK_ON_APPEND = TRUE to reproduce
+\* the seeded counterexample (TLC catches the ack-on-append defect — the spec-level
+\* test-the-tester for ADR-0033). See ConsensusSpec.cfg / the AckOnAppend smoke cfg.
+ClientAck(n) ==
+    /\ state[n] = "leader"
+    \* State-space bound: one acked position is enough to exercise AckImpliesCommitted
+    \* (the invariant is per-position; a single ack that could be lost is the witness).
+    /\ Cardinality(acked) < 1
+    /\ \E idx \in 1..commitIndex[n]:
+        \* Commit-confirmed: the slot is committed on this leader and holds a real
+        \* (data) entry of the leader's view. Ack the <<idx, term>> position.
+        /\ <<idx, log[n][idx].term>> \notin acked
+        /\ acked' = acked \cup {<<idx, log[n][idx].term>>}
+    /\ UNCHANGED <<currentTerm, votedFor, log, commitIndex, state, votesGranted,
+                    nextIndex, matchIndex, config, leaderHasCommittedNoOp,
+                    edgeVersion, messages>>
+
+\* PRE-FIX DEFECT MODEL (RR-004): ack on leader-local append, BEFORE commit. Enabled
+\* only when ACK_ON_APPEND = TRUE. This is the ack≠commit bug — the leader acks a slot
+\* it has merely appended (idx <= Len(log[n])) but not yet committed (idx may be >
+\* commitIndex[n]); a later election can truncate that slot, leaving an acked-but-lost
+\* write. AckImpliesCommitted catches it.
+ClientAckOnAppend(n) ==
+    /\ ACK_ON_APPEND
+    /\ state[n] = "leader"
+    /\ Cardinality(acked) < 1   \* one acked-on-append position is enough (see ClientAck)
+    /\ \E idx \in 1..Len(log[n]):
+        /\ <<idx, log[n][idx].term>> \notin acked
+        /\ acked' = acked \cup {<<idx, log[n][idx].term>>}
+    /\ UNCHANGED <<currentTerm, votedFor, log, commitIndex, state, votesGranted,
+                    nextIndex, matchIndex, config, leaderHasCommittedNoOp,
+                    edgeVersion, messages>>
 
 \* ---- Next State ----
 
@@ -505,6 +577,8 @@ Next ==
     \/ \E n, m \in Nodes: AppendEntry(n, m)
     \/ \E n \in Nodes: AdvanceCommitIndex(n)
     \/ \E e \in Nodes: EdgeApply(e)
+    \/ \E n \in Nodes: ClientAck(n)
+    \/ \E n \in Nodes: ClientAckOnAppend(n)
 
 \* ---- Specification ----
 
@@ -522,5 +596,6 @@ SafetyInvariants ==
     /\ ReconfigSafety
     /\ SingleServerInvariant
     /\ NoOpBeforeReconfig
+    /\ AckImpliesCommitted
 
 =============================================================================

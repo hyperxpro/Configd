@@ -1,0 +1,160 @@
+TLC2 Version 2026.04.09.014118 (rev: 389440f)
+Running breadth-first search Model-Checking with fp 114 and seed -1180122451312258287 with 2 workers on 2 cores with 2731MB heap and 64MB offheap memory [pid: 214715] (Linux 7.0.0-1006-aws amd64, Amazon.com Inc. 25 64bit, MSBDiskFPSet, DiskStateQueue).
+Parsing file /tmp/tmp.O7tG8poDZl/ConsensusSpec.tla
+Parsing file /tmp/tlc-773861961294530597/Integers.tla (jar:file:/home/ubuntu/Code/Configd/spec/tla2tools.jar!/tla2sany/StandardModules/Integers.tla)
+Parsing file /tmp/tlc-773861961294530597/Sequences.tla (jar:file:/home/ubuntu/Code/Configd/spec/tla2tools.jar!/tla2sany/StandardModules/Sequences.tla)
+Parsing file /tmp/tlc-773861961294530597/FiniteSets.tla (jar:file:/home/ubuntu/Code/Configd/spec/tla2tools.jar!/tla2sany/StandardModules/FiniteSets.tla)
+Parsing file /tmp/tlc-773861961294530597/TLC.tla (jar:file:/home/ubuntu/Code/Configd/spec/tla2tools.jar!/tla2sany/StandardModules/TLC.tla)
+Parsing file /tmp/tlc-773861961294530597/_TLCTrace.tla (jar:file:/home/ubuntu/Code/Configd/spec/tla2tools.jar!/tla2sany/StandardModules/_TLCTrace.tla)
+Parsing file /tmp/tlc-773861961294530597/Naturals.tla (jar:file:/home/ubuntu/Code/Configd/spec/tla2tools.jar!/tla2sany/StandardModules/Naturals.tla)
+Parsing file /tmp/tlc-773861961294530597/TLCExt.tla (jar:file:/home/ubuntu/Code/Configd/spec/tla2tools.jar!/tla2sany/StandardModules/TLCExt.tla)
+Semantic processing of module Naturals
+Semantic processing of module Integers
+Semantic processing of module Sequences
+Semantic processing of module FiniteSets
+Semantic processing of module TLC
+Semantic processing of module TLCExt
+Semantic processing of module _TLCTrace
+Semantic processing of module ConsensusSpec
+Linting of module TLCExt
+Linting of module _TLCTrace
+Linting of module ConsensusSpec
+Starting... (2026-06-11 04:35:38)
+Computing initial states...
+Finished computing initial states: 1 distinct state generated at 2026-06-11 04:35:39.
+Error: Invariant AckImpliesCommitted is violated.
+Error: The behavior up to this point is:
+State 1: <Initial predicate>
+/\ messages = {}
+/\ edgeVersion = (n1 :> 0 @@ n2 :> 0 @@ n3 :> 0)
+/\ matchIndex = ( n1 :> (n1 :> 0 @@ n2 :> 0 @@ n3 :> 0) @@
+  n2 :> (n1 :> 0 @@ n2 :> 0 @@ n3 :> 0) @@
+  n3 :> (n1 :> 0 @@ n2 :> 0 @@ n3 :> 0) )
+/\ log = (n1 :> <<>> @@ n2 :> <<>> @@ n3 :> <<>>)
+/\ state = (n1 :> "follower" @@ n2 :> "follower" @@ n3 :> "follower")
+/\ leaderHasCommittedNoOp = (n1 :> FALSE @@ n2 :> FALSE @@ n3 :> FALSE)
+/\ commitIndex = (n1 :> 0 @@ n2 :> 0 @@ n3 :> 0)
+/\ config = ( n1 :> [phase |-> "stable", old |-> {n1, n2, n3}, new |-> {n1, n2, n3}] @@
+  n2 :> [phase |-> "stable", old |-> {n1, n2, n3}, new |-> {n1, n2, n3}] @@
+  n3 :> [phase |-> "stable", old |-> {n1, n2, n3}, new |-> {n1, n2, n3}] )
+/\ currentTerm = (n1 :> 0 @@ n2 :> 0 @@ n3 :> 0)
+/\ nextIndex = ( n1 :> (n1 :> 1 @@ n2 :> 1 @@ n3 :> 1) @@
+  n2 :> (n1 :> 1 @@ n2 :> 1 @@ n3 :> 1) @@
+  n3 :> (n1 :> 1 @@ n2 :> 1 @@ n3 :> 1) )
+/\ votesGranted = (n1 :> {} @@ n2 :> {} @@ n3 :> {})
+/\ acked = {}
+/\ votedFor = (n1 :> -1 @@ n2 :> -1 @@ n3 :> -1)
+
+State 2: <BecomeCandidate(n1) line 320, col 5 to line 329, col 58 of module ConsensusSpec>
+/\ messages = {}
+/\ edgeVersion = (n1 :> 0 @@ n2 :> 0 @@ n3 :> 0)
+/\ matchIndex = ( n1 :> (n1 :> 0 @@ n2 :> 0 @@ n3 :> 0) @@
+  n2 :> (n1 :> 0 @@ n2 :> 0 @@ n3 :> 0) @@
+  n3 :> (n1 :> 0 @@ n2 :> 0 @@ n3 :> 0) )
+/\ log = (n1 :> <<>> @@ n2 :> <<>> @@ n3 :> <<>>)
+/\ state = (n1 :> "candidate" @@ n2 :> "follower" @@ n3 :> "follower")
+/\ leaderHasCommittedNoOp = (n1 :> FALSE @@ n2 :> FALSE @@ n3 :> FALSE)
+/\ commitIndex = (n1 :> 0 @@ n2 :> 0 @@ n3 :> 0)
+/\ config = ( n1 :> [phase |-> "stable", old |-> {n1, n2, n3}, new |-> {n1, n2, n3}] @@
+  n2 :> [phase |-> "stable", old |-> {n1, n2, n3}, new |-> {n1, n2, n3}] @@
+  n3 :> [phase |-> "stable", old |-> {n1, n2, n3}, new |-> {n1, n2, n3}] )
+/\ currentTerm = (n1 :> 1 @@ n2 :> 0 @@ n3 :> 0)
+/\ nextIndex = ( n1 :> (n1 :> 1 @@ n2 :> 1 @@ n3 :> 1) @@
+  n2 :> (n1 :> 1 @@ n2 :> 1 @@ n3 :> 1) @@
+  n3 :> (n1 :> 1 @@ n2 :> 1 @@ n3 :> 1) )
+/\ votesGranted = (n1 :> {n1} @@ n2 :> {} @@ n3 :> {})
+/\ acked = {}
+/\ votedFor = (n1 :> n1 @@ n2 :> -1 @@ n3 :> -1)
+
+State 3: <GrantVote(n1,n2) line 334, col 5 to line 343, col 82 of module ConsensusSpec>
+/\ messages = {}
+/\ edgeVersion = (n1 :> 0 @@ n2 :> 0 @@ n3 :> 0)
+/\ matchIndex = ( n1 :> (n1 :> 0 @@ n2 :> 0 @@ n3 :> 0) @@
+  n2 :> (n1 :> 0 @@ n2 :> 0 @@ n3 :> 0) @@
+  n3 :> (n1 :> 0 @@ n2 :> 0 @@ n3 :> 0) )
+/\ log = (n1 :> <<>> @@ n2 :> <<>> @@ n3 :> <<>>)
+/\ state = (n1 :> "candidate" @@ n2 :> "follower" @@ n3 :> "follower")
+/\ leaderHasCommittedNoOp = (n1 :> FALSE @@ n2 :> FALSE @@ n3 :> FALSE)
+/\ commitIndex = (n1 :> 0 @@ n2 :> 0 @@ n3 :> 0)
+/\ config = ( n1 :> [phase |-> "stable", old |-> {n1, n2, n3}, new |-> {n1, n2, n3}] @@
+  n2 :> [phase |-> "stable", old |-> {n1, n2, n3}, new |-> {n1, n2, n3}] @@
+  n3 :> [phase |-> "stable", old |-> {n1, n2, n3}, new |-> {n1, n2, n3}] )
+/\ currentTerm = (n1 :> 1 @@ n2 :> 1 @@ n3 :> 0)
+/\ nextIndex = ( n1 :> (n1 :> 1 @@ n2 :> 1 @@ n3 :> 1) @@
+  n2 :> (n1 :> 1 @@ n2 :> 1 @@ n3 :> 1) @@
+  n3 :> (n1 :> 1 @@ n2 :> 1 @@ n3 :> 1) )
+/\ votesGranted = (n1 :> {n1, n2} @@ n2 :> {} @@ n3 :> {})
+/\ acked = {}
+/\ votedFor = (n1 :> n1 @@ n2 :> n1 @@ n3 :> -1)
+
+State 4: <BecomeLeader(n1) line 349, col 5 to line 356, col 58 of module ConsensusSpec>
+/\ messages = {}
+/\ edgeVersion = (n1 :> 0 @@ n2 :> 0 @@ n3 :> 0)
+/\ matchIndex = ( n1 :> (n1 :> 0 @@ n2 :> 0 @@ n3 :> 0) @@
+  n2 :> (n1 :> 0 @@ n2 :> 0 @@ n3 :> 0) @@
+  n3 :> (n1 :> 0 @@ n2 :> 0 @@ n3 :> 0) )
+/\ log = (n1 :> <<>> @@ n2 :> <<>> @@ n3 :> <<>>)
+/\ state = (n1 :> "leader" @@ n2 :> "follower" @@ n3 :> "follower")
+/\ leaderHasCommittedNoOp = (n1 :> FALSE @@ n2 :> FALSE @@ n3 :> FALSE)
+/\ commitIndex = (n1 :> 0 @@ n2 :> 0 @@ n3 :> 0)
+/\ config = ( n1 :> [phase |-> "stable", old |-> {n1, n2, n3}, new |-> {n1, n2, n3}] @@
+  n2 :> [phase |-> "stable", old |-> {n1, n2, n3}, new |-> {n1, n2, n3}] @@
+  n3 :> [phase |-> "stable", old |-> {n1, n2, n3}, new |-> {n1, n2, n3}] )
+/\ currentTerm = (n1 :> 1 @@ n2 :> 1 @@ n3 :> 0)
+/\ nextIndex = ( n1 :> (n1 :> 1 @@ n2 :> 1 @@ n3 :> 1) @@
+  n2 :> (n1 :> 1 @@ n2 :> 1 @@ n3 :> 1) @@
+  n3 :> (n1 :> 1 @@ n2 :> 1 @@ n3 :> 1) )
+/\ votesGranted = (n1 :> {n1, n2} @@ n2 :> {} @@ n3 :> {})
+/\ acked = {}
+/\ votedFor = (n1 :> n1 @@ n2 :> n1 @@ n3 :> -1)
+
+State 5: <LeaderAppendNoOp(n1) line 362, col 5 to line 373, col 50 of module ConsensusSpec>
+/\ messages = {}
+/\ edgeVersion = (n1 :> 0 @@ n2 :> 0 @@ n3 :> 0)
+/\ matchIndex = ( n1 :> (n1 :> 0 @@ n2 :> 0 @@ n3 :> 0) @@
+  n2 :> (n1 :> 0 @@ n2 :> 0 @@ n3 :> 0) @@
+  n3 :> (n1 :> 0 @@ n2 :> 0 @@ n3 :> 0) )
+/\ log = ( n1 :> <<[type |-> "noop", value |-> -1, term |-> 1]>> @@
+  n2 :> <<>> @@
+  n3 :> <<>> )
+/\ state = (n1 :> "leader" @@ n2 :> "follower" @@ n3 :> "follower")
+/\ leaderHasCommittedNoOp = (n1 :> FALSE @@ n2 :> FALSE @@ n3 :> FALSE)
+/\ commitIndex = (n1 :> 0 @@ n2 :> 0 @@ n3 :> 0)
+/\ config = ( n1 :> [phase |-> "stable", old |-> {n1, n2, n3}, new |-> {n1, n2, n3}] @@
+  n2 :> [phase |-> "stable", old |-> {n1, n2, n3}, new |-> {n1, n2, n3}] @@
+  n3 :> [phase |-> "stable", old |-> {n1, n2, n3}, new |-> {n1, n2, n3}] )
+/\ currentTerm = (n1 :> 1 @@ n2 :> 1 @@ n3 :> 0)
+/\ nextIndex = ( n1 :> (n1 :> 1 @@ n2 :> 1 @@ n3 :> 1) @@
+  n2 :> (n1 :> 1 @@ n2 :> 1 @@ n3 :> 1) @@
+  n3 :> (n1 :> 1 @@ n2 :> 1 @@ n3 :> 1) )
+/\ votesGranted = (n1 :> {n1, n2} @@ n2 :> {} @@ n3 :> {})
+/\ acked = {}
+/\ votedFor = (n1 :> n1 @@ n2 :> n1 @@ n3 :> -1)
+
+State 6: <ClientAckOnAppend(n1) line 553, col 5 to line 560, col 43 of module ConsensusSpec>
+/\ messages = {}
+/\ edgeVersion = (n1 :> 0 @@ n2 :> 0 @@ n3 :> 0)
+/\ matchIndex = ( n1 :> (n1 :> 0 @@ n2 :> 0 @@ n3 :> 0) @@
+  n2 :> (n1 :> 0 @@ n2 :> 0 @@ n3 :> 0) @@
+  n3 :> (n1 :> 0 @@ n2 :> 0 @@ n3 :> 0) )
+/\ log = ( n1 :> <<[type |-> "noop", value |-> -1, term |-> 1]>> @@
+  n2 :> <<>> @@
+  n3 :> <<>> )
+/\ state = (n1 :> "leader" @@ n2 :> "follower" @@ n3 :> "follower")
+/\ leaderHasCommittedNoOp = (n1 :> FALSE @@ n2 :> FALSE @@ n3 :> FALSE)
+/\ commitIndex = (n1 :> 0 @@ n2 :> 0 @@ n3 :> 0)
+/\ config = ( n1 :> [phase |-> "stable", old |-> {n1, n2, n3}, new |-> {n1, n2, n3}] @@
+  n2 :> [phase |-> "stable", old |-> {n1, n2, n3}, new |-> {n1, n2, n3}] @@
+  n3 :> [phase |-> "stable", old |-> {n1, n2, n3}, new |-> {n1, n2, n3}] )
+/\ currentTerm = (n1 :> 1 @@ n2 :> 1 @@ n3 :> 0)
+/\ nextIndex = ( n1 :> (n1 :> 1 @@ n2 :> 1 @@ n3 :> 1) @@
+  n2 :> (n1 :> 1 @@ n2 :> 1 @@ n3 :> 1) @@
+  n3 :> (n1 :> 1 @@ n2 :> 1 @@ n3 :> 1) )
+/\ votesGranted = (n1 :> {n1, n2} @@ n2 :> {} @@ n3 :> {})
+/\ acked = {<<1, 1>>}
+/\ votedFor = (n1 :> n1 @@ n2 :> n1 @@ n3 :> -1)
+
+557 states generated, 224 distinct states found, 126 states left on queue.
+The depth of the complete state graph search is 6.
+Finished in 02s at (2026-06-11 04:35:40)
+Trace exploration spec path: ./ConsensusSpec_TTrace_1781152537.tla

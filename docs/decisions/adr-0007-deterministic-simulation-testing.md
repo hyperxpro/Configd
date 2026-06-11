@@ -63,3 +63,27 @@ Every TLA+ invariant has a corresponding runtime assertion in Java:
 - principal-distributed-systems-architect: ✅
 - formal-methods-engineer: ✅
 - qa-test-engineer: ✅
+
+## Amendment 2026-06-11 (Session 2, RR-027) — `@Buggify` superseded by the seed-derived sim fault layer
+
+The Decision §2 mechanism "`@Buggify` annotation on production code paths … ~1000 injection points"
+is **superseded** and is not the mechanism of record. The `@Buggify` / `BuggifyRuntime` primitive was
+implemented but has **0 call sites** outside `configd-common` (verified by grep, RR-027) and was
+deliberately not adopted: its `enabledPoints`/`random` are global static mutable state, so two simulations
+in one JVM would share fault state — incompatible with the seed-deterministic, sim-instance-scoped model
+RR-010 established.
+
+The capability `@Buggify` was meant to provide (inject extra latency, dropped/duplicated messages,
+per-node clock skew, slow/faulty disk, crash/restart-with-state-loss) is instead provided by the
+**centralized, seed-derived adversarial simulation layer**: `AdversarialSchedule` / `AdversarialNetwork`
+/ `AdversarialSim` (message duplication + drop windows + partitions + delay spikes), per-node
+`SkewedClock` (±50 ms bounded), and the RR-003 `CrashStorage` crash/restart seam. All faults are a pure
+function of the master seed (same seed ⇒ byte-identical schedule), replayable by seed alone, and the
+10k-seed adversarial sweep exercises them with 0 safety violations.
+
+This amendment is documentation-only and does **not** reopen RR-027 (which stays RESOLVED-with-note): the
+load-bearing substance — the fault-class *capability* — is present and stronger than the original
+primitive; only the specific `@Buggify` mechanism named in 2024 is retired. Evidence: the second-agent
+review `docs/session-2/reviews/sim-work-review.md` §7; design `docs/session-2/adversarial-sim-design.md`.
+TLA+ tooling note: per ADR-0035/RR-063, Apalache (named in §1) is descoped; **TLC** is the model checker
+of record for the three specs.
