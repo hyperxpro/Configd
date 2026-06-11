@@ -1,6 +1,6 @@
 # ADR-0035: Reconcile the per-entry HLC fiction — amend the contract to a measurable staleness definition (RR-015)
 
-- **Status:** Proposed (review-architect sign-off recorded below; second-reviewer pending)
+- **Status:** Accepted (review-architect APPROVED 2026-06-11 — sign-off recorded below; second-reviewer co-sign rides the RR-031/RR-015 consolidated contract pass that applies the §2/§4 patch plan)
 - **Date:** 2026-06-10
 - **Session:** 2 (Control-Plane Correctness)
 - **Finding:** RR-015 (P1) — "the contract's HLC is fiction" (MX-1; CM-010/CM-037/CM-044/CM-064; CF-17)
@@ -231,8 +231,8 @@ not a TLC safety invariant. See `docs/session-2/assertion-verification.md` INV-S
 
 ## Sign-off
 
-- review-architect: _pending (signs off after second-reviewer pass per Session-2 rule 7)_
-- second reviewer (consensus-correctness-engineer): _pending_
+- review-architect: **APPROVED 2026-06-11.** The AMEND/descope decision is sound and the cited evidence is accurate (verified against the live code and contract): `LogEntry` has no HLC field; `HybridClock` has zero `src/main` consumers; `StalenessTracker.recordUpdate(version, timestamp)` documents `timestamp` "(informational)" and stores `clock.nanoTime()` instead (`configd-edge-cache/src/main/java/io/configd/edge/StalenessTracker.java:96,100,154`); the §2/§4/§5.3/§9/INV-W2 anchors match the contract verbatim; `DEFAULT_RAFT_GROUP = 0` confirms the ADR-0030 single-group premise that makes cross-group HLC ordering moot. The §4 seq reconciliation is consistent with ADR-0033 as independently verified in the RR-004 fix review — the client-visible S is the applied-mutation counter that skips no-op/RCFG entries and is surfaced by `StateMachine.apply` (now `long`); the proposed §4/INV-V1/INV-V2 rewording ("gap-free over the mutation stream") matches the implemented behavior. The §2 single-leader-clock redefinition is more honest than per-entry HLC (avoids conflating propagation latency with inter-node clock skew) and is implementable against ADR-0033's apply seam with no `LogEntry`/WAL/snapshot/codec format change (no RR-064 wire-compat reopening). Scope is correct: this ADR authorizes the DECISION only; the actual `consistency-contract.md` §2/§4 edits are explicitly deferred to the RR-031/RR-015 consolidated pass (contract read-only this session), and the staleness-measurement implementation is handed to Session 3. One non-substantive nit for the consolidated pass: the ADR cites `configd-observability` for `StalenessTracker`; it actually lives in `configd-edge-cache` (line numbers/behavior are correct). No required changes to the decision.
+- second reviewer (consensus-correctness-engineer): _pending — co-sign on the RR-031/RR-015 consolidated contract pass (applies the §2/§4 patch plan)_
 
 > Open question for the lead recorded in the §"What Session 3 must implement" item 1: the commit-timestamp
 > emission is control-plane work that *enables* an edge guarantee. Confirm it rides the §4.6/ADR-0034
