@@ -1,0 +1,42 @@
+[WARNING] Tests run: 6, Failures: 0, Errors: 0, Skipped: 6, Time elapsed: 0.010 s -- in io.configd.linz.CheckerSelfTest
+[INFO] Tests run: 4, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.461 s -- in io.configd.linz.HistoryWriterUnitTest
+[WARNING] Tests run: 10, Failures: 0, Errors: 0, Skipped: 6
+GATE-1 build: tests run=21435 failures=0 errors=0 skipped=8
+GATE-1 build: OK (skips=8; 8 are known/accounted — see build-report.md)
+GATE-1 linz: building Porcupine checker with go version go1.26.4 linux/amd64
+GATE-1 linz: PORCUPINE_BIN=/home/ubuntu/Code/Configd/configd-linz/bin/porcupine-check
+[INFO] Tests run: 6, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 1.030 s -- in io.configd.linz.CheckerSelfTest
+[INFO] Tests run: 6, Failures: 0, Errors: 0, Skipped: 0
+GATE-1 linz: [INFO] Tests run: 6, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 1.030 s -- in io.configd.linz.CheckerSelfTest
+GATE-1 linz: OK (6/6 gated self-tests ran, 0 skips)
+GATE-1 jmh: HamtReadBenchmark OK (size=10000, 9s)
+GATE-1 jmh: HamtWriteBenchmark OK (size=10000, 9s)
+GATE-1 jmh: HistogramBenchmark OK (no param, 14s)
+GATE-1 jmh: HybridClockBenchmark OK (clockType=system, 23s)
+GATE-1 jmh: PlumtreeFanOutBenchmark OK (fanOut=50, 13s)
+GATE-1 jmh: RaftCommitBenchmark OK (clusterSize=3, 6s)
+GATE-1 jmh: SubscriptionMatchBenchmark OK (prefixes=1000, 6s)
+GATE-1 jmh: VersionedStoreReadBenchmark OK (size=10000, 17s)
+GATE-1 jmh: WatchFanOutBenchmark OK (watcherCount=100, 12s)
+GATE-1 jmh: OK (9/9 classes executable — NOT performance evidence)
+GATE-1 tlc: ConsensusSpec-smoke OK (3110023 states generated, 380s)
+GATE-1 tlc: ReadIndexSpec-smoke OK (353944 states generated, 30s)
+GATE-1 tlc: SnapshotInstallSpec-smoke OK (702937 states generated, 33s)
+GATE-1 tlc: OK (3/3 smoke configs 'No error' — smoke bounds, NOT full assurance)
+  PASS: all 3 nodes /health/ready == 200 (leader elected)
+  PASS: leader elected: node 1 (api 127.0.0.1:8081)
+  PASS: write committed (200)
+  PASS: default GET == smoke-value-1 on all 3 nodes (committed + replicated)
+  PASS: linearizable GET on leader == smoke-value-1
+  PASS: new leader elected: node 2
+  PASS: post-failover write read back == smoke-value-2
+  PASS: pre-failover write survived failover
+SMOKE PASS: control-plane multi-node smoke succeeded (edge step intentionally excluded — not demonstrable)
+build        PASS       629s
+linz         PASS       22s
+jmh          PASS       109s
+tlc          PASS       443s
+multinode    PASS       11s
+TOTAL        PASS       1214s
+
+Full log: /tmp/gate1-official.log (run 2026-06-11, branch session-2-correctness, post RR-002/003/004/094 fixes)
