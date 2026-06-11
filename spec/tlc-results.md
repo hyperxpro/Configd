@@ -8,11 +8,33 @@
 
 ## Summary
 
-| Spec | Constants | States | Distinct | Depth | Result |
+**Session-2 full re-run (2026-06-11, this box, `-workers 2`, with the new
+invariants/actions/variables):**
+
+| Spec | Constants | States | Distinct | Result | Wall |
 |---|---|---|---|---|---|
-| ConsensusSpec | Nodes=3, MaxTerm=3, MaxLogLen=3, Values={v1,v2} | 13,775,323 | 3,299,086 | 25 | No error |
-| ReadIndexSpec | Nodes=3, MaxTerm=2, MaxIndex=2 | 12,403,444 | 2,276,125 | 38 | No error |
-| SnapshotInstallSpec | Nodes=3, MaxTerm=3, MaxIndex=4 | 5,995,717 | 847,124 | 14 | No error |
+| ConsensusSpec | Nodes=3, MaxTerm=**2**, MaxLogLen=3, Values={v1,v2}, ACK_ON_APPEND=FALSE | 9,735,403 | 2,285,001 | **No error** | 28m29s |
+| ReadIndexSpec | Nodes=3, MaxTerm=2, MaxIndex=2 | 10,743,169 | 2,036,131 | **No error** | 4m25s |
+| SnapshotInstallSpec | Nodes=3, MaxTerm=2, MaxIndex=**2**, PERSIST_BEFORE_TRUNCATE=TRUE | 18,112,899 | 1,797,096 | **No error** | 13m26s |
+
+> **Bound reductions (B7 — authorized by the task: "document and reduce bounds with
+> justification" when the new actions blow up runtime >3x historical):**
+> - **ConsensusSpec MaxTerm 3→2.** The `acked` variable (capped to one ack position) +
+>   `ClientAck` + `AckImpliesCommitted` (RR-004) multiply the reachable space against the
+>   term/reconfig product. At historical MaxTerm=3/MaxLogLen=3 the full run did NOT exhaust
+>   in 40 min (16.6M states / 4.19M distinct / depth 19, 1.2M queued, **0 violations** in the
+>   explored prefix). At MaxTerm=2 it EXHAUSTS (2.285M distinct, No error, 28m29s). Election +
+>   re-election, joint reconfiguration, client writes, edge propagation, and the
+>   commit-confirmed ack cycle all stay reachable. The ack≠commit defect is proven at full
+>   term dynamics by `ConsensusSpec-ackonappend.cfg`.
+> - **SnapshotInstallSpec MaxIndex 4→2.** The RR-003 durability model (4 new per-node
+>   variables + always-enabled `CrashRestart`) is a fundamental state-space change; see the
+>   per-spec note below.
+> - **ReadIndexSpec** kept its historical bounds — the `~HasServeableRead` liveness gate
+>   slightly REDUCES the safety space (2.036M vs the prior 2.276M distinct), no change needed.
+>
+> **Historical (pre-Session-2):** ConsensusSpec 3.30M distinct @ MaxTerm=3; ReadIndexSpec
+> 2.276M distinct; SnapshotInstallSpec 847K distinct @ MaxIndex=4.
 
 ---
 
@@ -24,8 +46,9 @@
 > test-the-tester** counterexample cfgs prove the new invariants are non-vacuous (below).
 
 ## ConsensusSpec
-- **Config:** `ConsensusSpec.cfg` · Nodes={n1,n2,n3}, MaxTerm=3, MaxLogLen=3, Values={v1,v2},
-  `ACK_ON_APPEND=FALSE`
+- **Config:** `ConsensusSpec.cfg` · Nodes={n1,n2,n3}, MaxTerm=2 (reduced from 3 — see Summary),
+  MaxLogLen=3, Values={v1,v2}, `ACK_ON_APPEND=FALSE`
+- **Full result (Session-2):** 9,735,403 states / 2,285,001 distinct / No error / 28m29s.
 - **Invariants (live):** TypeOK, ElectionSafety, StateMachineSafety, LeaderCompleteness, LogMatching,
   VersionMonotonicity, ReconfigSafety, SingleServerInvariant, NoOpBeforeReconfig, **AckImpliesCommitted**
   (new, RR-004) — **all PASS**.
@@ -35,13 +58,12 @@
   (`ACK_ON_APPEND=TRUE`) makes TLC report **`AckImpliesCommitted is violated`** in ~1s — a write acked on
   local append (pre-commit) is truncated on a leader change and lost (the RR-004 defect). Capture:
   `docs/session-2/captures/spec-ack-on-append-counterexample.txt`.
-- **Full result:** _see Summary table (Session-2 re-run)._
 
 ## ReadIndexSpec
 - **Config:** `ReadIndexSpec.cfg` · Nodes={n1,n2,n3}, MaxTerm=2, MaxIndex=2
 - **Invariants (live):** TypeOK, ElectionSafety, ReadIndexBoundedByMaxIndex, ReadFreshness,
   NoStaleLeaderServe — **all PASS**.
-- **Result:** _see Summary table (Session-2 re-run)._
+- **Full result (Session-2):** 10,743,169 states / 2,036,131 distinct / No error / 4m25s.
 - **Liveness (RR-026, NEW):** `LiveSpec == Init /\ [][Next]_vars /\ FairNext` (weak fairness on
   CompleteReadIndex / ApplyEntry / ReadHeartbeatAck) checks **`ReadEventuallyServed`** (a serveable read
   never starves) **GREEN** at smoke bounds (`gates/spec-smoke/ReadIndexSpec-liveness.cfg`, 24s).
@@ -65,6 +87,9 @@
 - **Smoke (`gates/spec-smoke/`, MaxIndex=1):** 6,915 distinct / No error / 4s (durability model + always-
   enabled crash-restart enlarge the space; MaxIndex cut to 1 for the smoke bound — the full
   commit→WAL→snapshot→persist→truncate→crash cycle is still exercised).
+- **Full result (Session-2, MaxIndex=2):** 18,112,899 states / 1,797,096 distinct / No error / 13m26s.
+  (At the historical MaxIndex=4 the durability model is intractable; MaxIndex=2 exhausts and still
+  exercises snapshot-of-snapshot + the full commit→WAL→snapshot→persist→truncate→crash cycle + install.)
 - **DurablePrefix non-vacuity (test-the-tester):** `spec/SnapshotInstallSpec-truncatebeforepersist.cfg`
   (`PERSIST_BEFORE_TRUNCATE=FALSE`) makes TLC report **`DurablePrefix is violated`** in ~1s — the WAL
   prefix is truncated while the snapshot is RAM-only, so a crash/restart leaves a committed index in
