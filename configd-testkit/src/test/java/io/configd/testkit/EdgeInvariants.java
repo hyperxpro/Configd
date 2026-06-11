@@ -212,6 +212,13 @@ final class EdgeInvariants {
                             && connected.test(edgeId);
                     if (eligible) {
                         activity.recordDeliveryViolation(o.seq, edgeId, o.publishedAtMs, lateness);
+                    } else {
+                        // NOTE-1 (design review §C): an edge ineligible (crashed / lagging /
+                        // partitioned) EXACTLY at the deadline tick is excused for this seq.
+                        // Count it so excused-vs-delivered is observable — this keeps the
+                        // liveness checker honest (a high excused count under a should-deliver
+                        // schedule flags a possible fan-out bug) without making it throw.
+                        activity.recordExcusedAtDeadline();
                     }
                     // Drop eligible (recorded) AND ineligible (excused) edges so the
                     // entry retires; an edge that becomes eligible again would be
@@ -227,14 +234,31 @@ final class EdgeInvariants {
 
     /**
      * End-of-run convergence (invariant c): after the harness heals all faults and
-     * drains, every live edge's store must byte-equal the authoritative CP leader
-     * store (key → value bytes + version). Throws {@link SimInvariants.SafetyViolation}
-     * with a precise diff on the first divergence.
-     * <p>
-     * Called by tests via {@link EdgeFanOutSim#finalCheck()} after a heal-all +
-     * drain window. With {@link StreamDriver#NONE} the edges never receive anything,
-     * so this diverges (an empty edge vs a populated leader) — that is the backlog
-     * surfacing, and {@link EdgePropagationBacklogTest} asserts it.
+     * drains, every live edge's store must converge to the authoritative CP leader store.
+     * Throws {@link SimInvariants.SafetyViolation} with a precise diff on the first
+     * divergence.
+     *
+     * <h2>Convergence is over EFFECT (value bytes + store version), not per-key version
+     * provenance</h2>
+     * Convergence is asserted on the <b>effect</b> the contract guarantees: the same key
+     * set, the same value bytes per key, and the same store version (ADR-0034 §4:
+     * "exactly-once over <em>effect</em>" — the edge observes every mutation's effect on the
+     * store). It deliberately does NOT require per-key {@link VersionedValue#version()}
+     * equality. Reason: a snapshot-recovered edge legitimately carries different per-key
+     * version stamps. The C1 catch-up snapshot is the ADR-0028 byte format, which carries no
+     * per-key versions; {@code ConfigStateMachine.restoreSnapshot} (and the edge's
+     * {@code EdgeSnapshotCodec}) therefore stamp every restored entry with the snapshot seq,
+     * exactly as a Raft {@code InstallSnapshot} does on a follower. So a key the leader last
+     * wrote at version 18, delivered to a snapshot-recovered edge inside a snapshot at seq
+     * 30, has per-key version 30 on the edge and 18 on the leader — identical value bytes,
+     * identical store version, different provenance stamp. That divergence is inherent to
+     * snapshot recovery and is NOT a data error; requiring per-key version equality would
+     * make the invariant assert something the system (by ADR-0028/0034 design) does not
+     * guarantee across a snapshot boundary. Per-key version MONOTONICITY (no decrease within
+     * an incarnation) is a separate invariant (b) and is unaffected.
+     *
+     * <p>As a guard against masking a real bug behind this relaxation, the edge's per-key
+     * version must still be ≤ the edge's store version (no impossible future stamp).
      *
      * @param edges            live edge roster
      * @param authoritative    the CP leader's authoritative snapshot (the convergence target)
@@ -245,8 +269,9 @@ final class EdgeInvariants {
             if (!edge.alive()) {
                 continue; // crashed-and-not-restarted edge has no state to converge
             }
-            Map<String, VersionedValue> edgeView = sortedView(edge.snapshot());
-            String diff = diff(leader, edgeView);
+            ConfigSnapshot edgeSnap = edge.snapshot();
+            Map<String, VersionedValue> edgeView = sortedView(edgeSnap);
+            String diff = diff(leader, edgeView, authoritative.version(), edgeSnap.version());
             if (diff != null) {
                 throw new SimInvariants.SafetyViolation(
                         "edge convergence violated (seed=" + seed + ") at edge "
@@ -265,11 +290,18 @@ final class EdgeInvariants {
     }
 
     /**
-     * Returns a precise, deterministic description of the first key where the two
-     * views differ (value bytes or version), or {@code null} if they are byte-equal.
+     * Returns a precise, deterministic description of the first key where the two views
+     * differ in EFFECT (key set, value bytes, or store version), or {@code null} if they
+     * converge. Per-key version stamps are NOT required to match (see {@link #finalCheck}'s
+     * Javadoc) — only that the edge's stamp is a sane value ≤ its own store version.
      */
     private static String diff(Map<String, VersionedValue> leader,
-                               Map<String, VersionedValue> edge) {
+                               Map<String, VersionedValue> edge,
+                               long leaderVersion, long edgeVersion) {
+        // Store version is the convergence anchor (effect): both must agree.
+        if (leaderVersion != edgeVersion) {
+            return "store version mismatch: leader " + leaderVersion + " vs edge " + edgeVersion;
+        }
         // Keys present in the leader but missing/divergent on the edge.
         for (var entry : leader.entrySet()) {
             String key = entry.getKey();
@@ -278,12 +310,16 @@ final class EdgeInvariants {
             if (ev == null) {
                 return "missing key '" + key + "' (leader version " + lv.version() + ")";
             }
-            if (lv.version() != ev.version()) {
-                return "key '" + key + "' version mismatch: leader " + lv.version()
-                        + " vs edge " + ev.version();
-            }
             if (!Arrays.equals(lv.valueUnsafe(), ev.valueUnsafe())) {
-                return "key '" + key + "' value bytes mismatch at version " + lv.version();
+                return "key '" + key + "' value bytes mismatch (leader v" + lv.version()
+                        + ", edge v" + ev.version() + ")";
+            }
+            // Sanity: the edge's per-key stamp must not exceed its store version (no
+            // impossible future write); a snapshot stamps to the snapshot seq, deltas to
+            // their seq — both are ≤ the store version.
+            if (ev.version() > edgeVersion) {
+                return "key '" + key + "' has an impossible future version " + ev.version()
+                        + " > edge store version " + edgeVersion;
             }
         }
         // Keys present on the edge but absent from the leader (stale leftover).

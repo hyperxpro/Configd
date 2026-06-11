@@ -58,7 +58,11 @@
                 commit-notification boundary — the just-landed control plane);
             WatchService, WatchCoalescer, WatchEvent, SubscriptionManager,
             PlumtreeNode, RolloutController                    (active watch /
-                dissemination / rollout control plane).
+                dissemination / rollout control plane);
+            io.configd.distribution.wire.*                     (C1 / gate-3: the
+                edge protocol model + EdgeFrameCodec + EdgeSnapshotCodec);
+            io.configd.distribution.fanout.*                   (C1 / gate-3: the
+                FanOutSessionCore + config/sink/metrics/demotion seams).
 
           EXCLUDED shelfware (RR-088 / RR-001 — no consumer-facing wire path
           exists yet; tracked, not held to a bar here):
@@ -86,6 +90,8 @@
                                 <param>io.configd.distribution.SubscriptionManager*</param>
                                 <param>io.configd.distribution.PlumtreeNode*</param>
                                 <param>io.configd.distribution.RolloutController*</param>
+                                <param>io.configd.distribution.wire.*</param>
+                                <param>io.configd.distribution.fanout.*</param>
                             </targetClasses>
                             <excludedClasses>
                                 <param>io.configd.distribution.HyParViewOverlay*</param>
@@ -94,6 +100,8 @@
                             </excludedClasses>
                             <targetTests>
                                 <param>io.configd.distribution.*</param>
+                                <param>io.configd.distribution.wire.*</param>
+                                <param>io.configd.distribution.fanout.*</param>
                             </targetTests>
                             <mutationThreshold>65</mutationThreshold>
                             <failWhenNoMutations>true</failWhenNoMutations>

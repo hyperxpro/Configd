@@ -146,7 +146,15 @@ final class EdgeFanOutSim {
                 // production wiring forwards stateMachine.lastSignature()/epoch/nonce;
                 // the sim's ConfigStateMachine has no signer, so signature is null.
                 ConfigDelta delta = new ConfigDelta(fromVersion, version, mutations);
-                long commitTimestampMillis = cpSim.currentTime();
+                // C-1 review fix: capture the PUBLISHING node's SKEWED clock as the commit
+                // timestamp — mirroring production, where the leader's (skewed) clock stamps
+                // the commit on the apply thread. Previously this used the global unskewed
+                // cpSim.currentTime(), which could not exercise the ±50 ms NTP-skew error
+                // term the contract names as the only residual error (blocker for C2's
+                // CT-01/02/07/08 staleness/skew-tripwire tests). The CP digest folds
+                // role/term/leader/log-indices/store-version — NOT commit timestamps — so
+                // this change leaves EdgeSeedCompatTest byte-identical (verified).
+                long commitTimestampMillis = cpSim.skewedClock(cpNode).currentTimeMillis();
                 buffer.publish(new CommitNotification(version, commitTimestampMillis, delta));
                 recordPublicationObligation(version, cpNode, commitTimestampMillis);
                 // OBSERVER-ONLY (Phase V2): publish ts = leader commit timestamp
@@ -335,8 +343,71 @@ final class EdgeFanOutSim {
         invariants.finalCheck(edges, authoritative);
     }
 
-    /** Bounded drain window for {@link #finalCheck()} (ample for edge-network latency). */
-    private static final int DRAIN_WINDOW_TICKS = 200;
+    /**
+     * Like {@link #finalCheck()} but FIRST heals the CP-side faults (network partitions /
+     * delay spikes) and ticks the CP cluster to quiescence, so a genuine quiet drain window
+     * exists for the edges to converge against a settled CP store.
+     * <p>
+     * This is the convergence check the adversarial gate sweep uses: under the full CP fault
+     * schedule the cluster is mid-divergence at end of run; healing CP + ticking it to a
+     * stable single leader+committed prefix is the "where a quiet drain window exists"
+     * precondition for edge convergence (otherwise an edge subscribed to a behind follower
+     * can never catch the leader). It throws {@link SimInvariants.SafetyViolation} on edge
+     * divergence exactly like {@link #finalCheck()} — callers that treat convergence as
+     * recorded-liveness (the sweep) catch it; the no-fault scenario tests do not.
+     */
+    void finalCheckHealingCp() {
+        settleCp();
+        // Run the standard edge heal + drain + convergence against the settled CP.
+        finalCheck();
+    }
+
+    /**
+     * Heals the CP network and ticks the CP cluster to quiescence (re-election +
+     * replication + commit). Idempotent enough for a single end-of-run settle.
+     */
+    void settleCp() {
+        cpSim.network().healAll();
+        for (int t = 0; t < CP_SETTLE_TICKS; t++) {
+            cpSim.tick();
+        }
+        currentTimeMs = cpSim.currentTime();
+    }
+
+    /**
+     * True iff, right now, every CP node's store version equals the current leader's — i.e.
+     * the CP cluster has fully converged, so a genuine quiet drain window exists for the
+     * edges. Used by the gate sweep to bucket "convergence expected" seeds from
+     * "never-healed" ones (an edge subscribed to a frozen/behind CP node legitimately cannot
+     * converge — that is a CP-sim liveness limit, not a C1 fault). Returns false when there is
+     * no leader.
+     */
+    boolean cpFullyConverged() {
+        int leader = cpSim.findLeader();
+        if (leader < 0) {
+            return false;
+        }
+        long lv = cpSim.store(leader).currentVersion();
+        for (int i = 0; i < cpSim.nodeCount(); i++) {
+            if (cpSim.store(i).currentVersion() != lv) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /**
+     * Bounded drain window for {@link #finalCheck()}. Sized to let the C1 recovery loop
+     * complete: a stranded edge recovers via the server's ack-lag demotion → snapshot →
+     * (network latency 1–10 ms) → edge apply → ack cycle, which the session retries every
+     * couple of ticks until the edge's CURSOR_ACK confirms the snapshot. A few hundred ticks
+     * is ample for the handful of edges per sim; 600 leaves generous margin over the
+     * worst-case retry chain without making the no-fault tests slow.
+     */
+    private static final int DRAIN_WINDOW_TICKS = 600;
+
+    /** CP settle window for {@link #finalCheckHealingCp()} (re-election + replication). */
+    private static final int CP_SETTLE_TICKS = 300;
 
     // -----------------------------------------------------------------------
     // Internals

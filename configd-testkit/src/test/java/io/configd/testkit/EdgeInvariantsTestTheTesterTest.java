@@ -61,15 +61,16 @@ class EdgeInvariantsTestTheTesterTest {
         EdgeInvariants inv = new EdgeInvariants(SEED, activity);
         EdgeActor edge = newEdge(0);
 
-        // Drive the read store to version 10 via a doctored Snapshot (the GAP
-        // recovery path applies wholesale with no monotonicity guard).
+        // Drive the read store to version 10 via a doctored Snapshot.
         edge.deliver(new EdgeStream.Snapshot(snapshotWith(10, "k", "v10", 10), 10));
         edge.tick();
         inv.checkAll(List.of(edge), now.get(), e -> true); // records baseline version 10
 
-        // Now decrease the store version to 5 within the SAME incarnation.
-        edge.deliver(new EdgeStream.Snapshot(snapshotWith(5, "k", "v5", 5), 5));
-        edge.tick();
+        // Force a regression to version 5 within the SAME incarnation, BYPASSING the
+        // production backward-snapshot guard (which now correctly refuses it — see the
+        // separate guard test below). This models a hypothetical bug so the checker's
+        // non-vacuity is still provable.
+        edge.forceLoadSnapshotUnsafeForTest(snapshotWith(5, "k", "v5", 5), 5);
 
         SimInvariants.SafetyViolation ex = assertThrows(SimInvariants.SafetyViolation.class,
                 () -> inv.checkAll(List.of(edge), now.get(), e -> true),
@@ -78,6 +79,34 @@ class EdgeInvariantsTestTheTesterTest {
                         && ex.getMessage().contains("seed=" + SEED),
                 "firing message must name the invariant and the seed: " + ex.getMessage());
         System.out.println("[capture a] " + ex.getMessage());
+    }
+
+    /**
+     * The complementary half of (a): the production {@link EdgeActor#applySnapshot} now
+     * REFUSES a backward snapshot (one whose seq is below the edge's current cursor), so the
+     * edge never regresses through the real apply path — production correctness protects the
+     * monotonicity invariant. (Found while building the C1 driver: a demotion snapshot taken
+     * from a transiently-behind subscribed node would otherwise regress the edge.)
+     */
+    @Test
+    void productionApplySnapshotRefusesBackwardSnapshotSoTheStoreNeverRegresses() {
+        EdgeActivity activity = new EdgeActivity();
+        EdgeInvariants inv = new EdgeInvariants(SEED, activity);
+        EdgeActor edge = newEdge(0);
+
+        // Reach version 10 via the real apply path.
+        edge.deliver(new EdgeStream.Snapshot(snapshotWith(10, "k", "v10", 10), 10));
+        edge.tick();
+        assertEquals(10, edge.currentVersion());
+        inv.checkAll(List.of(edge), now.get(), e -> true);
+
+        // A backward snapshot (seq 5 < cursor 10) delivered through the REAL path is refused;
+        // the edge stays at version 10, so the monotonicity checker has nothing to catch.
+        edge.deliver(new EdgeStream.Snapshot(snapshotWith(5, "k", "v5", 5), 5));
+        edge.tick();
+        assertEquals(10, edge.currentVersion(), "backward snapshot must be refused (no regression)");
+        // The checker passes (no decrease occurred) — production guard protected it.
+        inv.checkAll(List.of(edge), now.get(), e -> true);
     }
 
     // ---- (b) no-stale-overwrite fires + production guard protects ----------

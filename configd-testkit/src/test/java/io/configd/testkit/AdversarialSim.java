@@ -43,6 +43,14 @@ final class AdversarialSim implements ClusterView {
     private final List<VersionedConfigStore> stores = new ArrayList<>();
     private final List<ConfigStateMachine> stateMachines = new ArrayList<>();
     private final List<CrashStorageHandle> storages = new ArrayList<>();
+    /**
+     * Per-node skewed clock (C-1 review fix). Retained so a composing harness can read the
+     * PUBLISHING node's clock for its commit timestamp — matching production, where the
+     * leader's (skewed) clock stamps the commit on the apply thread. Previously the clock
+     * was a constructor local that was dropped after wiring the state machine, so the only
+     * timestamp surface a composer could reach was the global unskewed {@link #currentTime()}.
+     */
+    private final List<SkewedClock> skewedClocks = new ArrayList<>();
     private final SimInvariants invariants;
     private final Activity activity = new Activity();
     private final HistoryRecorder history;
@@ -85,6 +93,7 @@ final class AdversarialSim implements ClusterView {
             // surface (RaftNode itself is tick-driven; see SkewedClock).
             long skewMs = skewRng.nextInt(101) - 50;
             SkewedClock clock = new SkewedClock(() -> currentTimeMs, skewMs);
+            skewedClocks.add(clock);
             ConfigStateMachine sm = new ConfigStateMachine(store, clock);
 
             RaftTransport transport = (target, message) ->
@@ -130,6 +139,17 @@ final class AdversarialSim implements ClusterView {
     /** The {@link ConfigStateMachine} for CP node {@code i} (additive accessor). */
     ConfigStateMachine stateMachine(int i) {
         return stateMachines.get(i);
+    }
+
+    /**
+     * The per-node {@link SkewedClock} for CP node {@code i} (additive accessor; C-1 review
+     * fix). A composing harness reads this node's {@code currentTimeMillis()} as the commit
+     * timestamp when that node publishes — mirroring production's "leader's skewed clock on
+     * the apply thread", so the ±50 ms skew error term the contract names as the only
+     * residual error is actually present on the fan-out stream.
+     */
+    SkewedClock skewedClock(int i) {
+        return skewedClocks.get(i);
     }
 
     /** The CP {@link AdversarialNetwork} (additive accessor — same instance). */

@@ -1,34 +1,25 @@
 package io.configd.testkit;
 
-import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * The Phase V1 executable backlog (RR-001). With {@link StreamDriver#NONE} — the
- * honest current state, because no fan-out service exists in {@code src/main} — a
- * committed write at a CP node never reaches an edge, so:
- * <ul>
- *   <li>every published commit notification breaches the eventual-delivery bound
- *       (contract §2 INV-S2), recorded into {@link EdgeActivity}; and</li>
- *   <li>the live edges never converge to the CP leader's authoritative store
- *       (contract §1 INV-L1 / §4), so {@link EdgeFanOutSim#finalCheck()} throws.</li>
- * </ul>
+ * The Phase V1 backlog (RR-001) — NOW GREEN under component C1. With
+ * {@link StreamDriver#NONE} this test was the executable backlog (no fan-out service
+ * existed, so nothing was ever delivered and it FAILED). It is re-enabled <em>verbatim</em>
+ * with the real {@link C1StreamDriver} (= ADR-0034's consumer loop driving the production
+ * {@link io.configd.distribution.fanout.FanOutSessionCore}): over a no-edge-fault schedule a
+ * healthy edge data plane now (1) delivers every published commit notification within the
+ * bound (contract §2 INV-S2) and (2) converges every live edge to the CP leader's
+ * authoritative store (contract §1 INV-L1 / §4). The captured pre-implementation failure is
+ * in {@code docs/session-3/captures/phase-v-backlog-failures.txt}; the now-green capture is
+ * {@code docs/session-3/captures/c1-backlog-green.txt}.
  *
- * <p><b>This test FAILS today.</b> Its assertions are REAL and will be re-enabled
- * <em>verbatim</em> when component C1 (the fan-out/streaming service implementing
- * the {@link StreamDriver} contract = ADR-0034's consumer loop) lands — at which
- * point a no-fault schedule must deliver every notification within the bound and
- * every live edge must converge. The captured pre-implementation failure is in
- * {@code docs/session-3/captures/phase-v-backlog-failures.txt}.
- *
- * @see StreamDriver
+ * @see C1StreamDriver
  * @see EdgeInvariants
  */
-@Disabled("S3-BACKLOG(C1): no fan-out service exists; see contract-test-map row CT-39"
-        + " (eventual delivery + convergence, the V1 invariant set) — enable when C1 lands")
 class EdgePropagationBacklogTest {
 
     private static final int CP_NODES = 5;
@@ -39,13 +30,12 @@ class EdgePropagationBacklogTest {
     /**
      * Over a no-edge-fault schedule, a healthy edge data plane must (1) deliver every
      * published commit notification within the bound and (2) converge every live
-     * edge to the CP leader's authoritative store. With {@link StreamDriver#NONE}
-     * both fail — this is the backlog.
+     * edge to the CP leader's authoritative store. With the C1 driver both now hold.
      */
     @Test
     void noFaultScheduleDeliversAndConverges() {
         EdgeFanOutSim sim = new EdgeFanOutSim(SEED, CP_NODES, EDGES, TICKS,
-                /* edgeFaults */ false, StreamDriver.NONE,
+                /* edgeFaults */ false, new C1StreamDriver(),
                 AdversarialSchedule.defaultIntensity(), EdgeInvariants.BOUND_MS);
         sim.run();
 

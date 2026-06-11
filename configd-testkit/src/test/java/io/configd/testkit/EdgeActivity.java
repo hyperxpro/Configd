@@ -47,6 +47,16 @@ final class EdgeActivity {
     private int gapsDetected;
     private int snapshotsApplied;
 
+    /**
+     * NOTE-1 (design review §C): publications excused EXACTLY at their deadline tick — a
+     * still-owing edge that was ineligible (crashed / lagging / partitioned) on the precise
+     * tick the deadline was evaluated, so it was excused rather than recorded as a
+     * violation. Exposed so excused-vs-delivered is observable: a reviewer can see whether
+     * excusals correlate with a fan-out bug (a high excused count under a SHOULD-deliver
+     * schedule is a smell), keeping the liveness checker honest without making it throw.
+     */
+    private long excusedAtDeadline;
+
     /** edgeId -> max lateness ms ever recorded for it (sorted for determinism). */
     private final Map<Integer, Long> perEdgeMaxLatenessMs = new TreeMap<>();
 
@@ -91,6 +101,11 @@ final class EdgeActivity {
         snapshotsApplied += n;
     }
 
+    /** NOTE-1: an edge excused at the deadline tick (ineligible exactly when checked). */
+    void recordExcusedAtDeadline() {
+        excusedAtDeadline++;
+    }
+
     long deliveredCount() { return deliveredCount; }
 
     List<DeliveryViolation> deliveryViolations() {
@@ -113,6 +128,9 @@ final class EdgeActivity {
 
     int snapshotsApplied() { return snapshotsApplied; }
 
+    /** NOTE-1: count of publications excused exactly at their deadline tick. */
+    long excusedAtDeadline() { return excusedAtDeadline; }
+
     Map<Integer, Long> perEdgeMaxLatenessMs() {
         return Map.copyOf(perEdgeMaxLatenessMs);
     }
@@ -126,6 +144,7 @@ final class EdgeActivity {
                 + ", edgeRestarts=" + edgeRestarts
                 + ", gapsDetected=" + gapsDetected
                 + ", snapshotsApplied=" + snapshotsApplied
+                + ", excusedAtDeadline=" + excusedAtDeadline
                 + ", maxLateness=" + perEdgeMaxLatenessMs + "]";
     }
 }

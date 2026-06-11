@@ -15,6 +15,7 @@ import io.configd.store.ReadResult;
 import java.util.ArrayDeque;
 import java.util.Deque;
 import java.util.Objects;
+import java.util.function.LongConsumer;
 import java.util.function.LongSupplier;
 
 /**
@@ -120,6 +121,27 @@ final class EdgeActor {
     private int snapshotsApplied;
     private long deliveredCount;
 
+    /**
+     * The server-side commit-timestamp / latest-seq from the most recent HEARTBEAT, and a
+     * count of heartbeats observed. C1 stores these as a carrier only — the idle-staleness
+     * frontier wiring is C2 (ADR-0039). {@code lastHeartbeatServerNowMillis} is -1 until the
+     * first heartbeat. Survives across the tick loop; reset on crash/restart (fresh actor).
+     */
+    private long lastHeartbeatServerNowMillis = -1L;
+    private long lastHeartbeatLatestSeq = -1L;
+    private int heartbeatsObserved;
+
+    /**
+     * Edge→server CURSOR_ACK sink: invoked with the highest applied seq after the edge
+     * applies a {@link EdgeStream.NotifyBatch} or a {@link EdgeStream.Snapshot}. The C1
+     * stream driver wires this to the owning {@code FanOutSessionCore.onCursorAck} so the
+     * server's bounded-queue accounting is released. {@code NONE} by default (the
+     * V1 DirectInjectionDriver path does not ack).
+     */
+    private LongConsumer cursorAckSink = NONE_ACK;
+
+    private static final LongConsumer NONE_ACK = seq -> { };
+
     EdgeActor(int edgeId, int subscribedCpNode, LongSupplier timeSource) {
         if (edgeId < EDGE_ID_BASE) {
             throw new IllegalArgumentException(
@@ -144,6 +166,33 @@ final class EdgeActor {
         this.applier = new DeltaApplier(client);
         this.readStore = new LocalConfigStore(ConfigSnapshot.EMPTY, clock, monitor);
         this.cursor = 0L;
+        // Heartbeat carrier state is per-incarnation (a fresh cache knows no server frontier).
+        this.lastHeartbeatServerNowMillis = -1L;
+        this.lastHeartbeatLatestSeq = -1L;
+        this.heartbeatsObserved = 0;
+    }
+
+    /**
+     * Wires the edge→server CURSOR_ACK sink (C1). The stream driver passes the owning
+     * session's {@code onCursorAck}; passing null resets to the no-op (V1 path).
+     */
+    void setCursorAckSink(LongConsumer sink) {
+        this.cursorAckSink = (sink == null) ? NONE_ACK : sink;
+    }
+
+    /**
+     * TEST-ONLY: forces a wholesale store load that BYPASSES the backward-snapshot guard in
+     * {@link #applySnapshot}, modelling a hypothetical regression bug. Used solely by the
+     * test-the-tester ({@code EdgeInvariantsTestTheTesterTest}) to drive the version-
+     * monotonicity / no-stale-overwrite checkers into firing, since the production
+     * {@link #applySnapshot} now correctly refuses a backward snapshot and so can no longer
+     * be used to manufacture a regression. The production code never calls this.
+     */
+    void forceLoadSnapshotUnsafeForTest(ConfigSnapshot snapshot, long seq) {
+        client.loadSnapshot(snapshot);
+        readStore.loadSnapshot(snapshot);
+        applier.resetGap();
+        cursor = seq;
     }
 
     // -----------------------------------------------------------------------
@@ -177,9 +226,39 @@ final class EdgeActor {
             EdgeStream message = inbox.pollFirst();
             switch (message) {
                 case EdgeStream.Notify notify -> applyNotify(notify.notification());
+                case EdgeStream.NotifyBatch batch -> applyNotifyBatch(batch);
                 case EdgeStream.Snapshot snap -> applySnapshot(snap.snapshot(), snap.seq());
+                case EdgeStream.Heartbeat hb -> applyHeartbeat(hb);
             }
         }
+    }
+
+    /**
+     * Applies a frame-level NOTIFY batch (ADR-0038): each verbatim notification in seq
+     * order through the real {@link DeltaApplier}, then sends a single CURSOR_ACK for the
+     * highest applied seq (one ack per batch — the design's "send CURSOR_ACK after applying
+     * (per notify batch)"). A gap/stale mid-batch is recorded exactly as for a single
+     * notify; the ack reflects the cursor actually reached.
+     */
+    private void applyNotifyBatch(EdgeStream.NotifyBatch batch) {
+        for (CommitNotification n : batch.notifications()) {
+            applyNotify(n);
+        }
+        // Ack the highest seq the edge has now applied (its cursor). If nothing applied
+        // (all gap/stale), cursor is unchanged and the ack is the current cursor — a
+        // benign no-op for the server's watermark (it ignores stale acks).
+        cursorAckSink.accept(cursor);
+    }
+
+    /**
+     * Records a HEARTBEAT (C1 design §3; carrier only). Stores the server's latest-seq and
+     * clock and counts it; the idle-staleness frontier measure is C2 (ADR-0039), so no
+     * staleness state is computed here.
+     */
+    private void applyHeartbeat(EdgeStream.Heartbeat hb) {
+        lastHeartbeatServerNowMillis = hb.serverNowMillis();
+        lastHeartbeatLatestSeq = hb.latestSeq();
+        heartbeatsObserved++;
     }
 
     private void applyNotify(CommitNotification notification) {
@@ -213,12 +292,26 @@ final class EdgeActor {
 
     private void applySnapshot(ConfigSnapshot snapshot, long seq) {
         deliveredCount++;
+        // A snapshot that would move the store BACKWARD is stale and must be rejected — the
+        // edge never regresses (the per-edge version-monotonicity invariant / contract §3
+        // INV-M1). This is the wholesale-load analogue of DeltaApplier's STALE_DELTA guard:
+        // it can arise when the subscribed CP node the replay source reads is transiently
+        // behind the edge (e.g. the edge applied committed deltas streamed earlier from a
+        // node that was ahead, and the demotion snapshot is now taken from a node still
+        // catching up). Re-ack the edge's CURRENT (higher) cursor so the server's ack-lag
+        // clears against the real applied position and it stops re-sending the stale snapshot.
+        if (seq < cursor) {
+            cursorAckSink.accept(cursor);
+            return;
+        }
         snapshotsApplied++;
         // GAP recovery (ADR-0034 §"Handoff" step 2): apply wholesale, reset cursor.
         client.loadSnapshot(snapshot);
         readStore.loadSnapshot(snapshot);
         applier.resetGap();
         cursor = seq;
+        // Ack the snapshot point so the server resumes tailing from a clean cursor.
+        cursorAckSink.accept(cursor);
     }
 
     // -----------------------------------------------------------------------
@@ -318,4 +411,13 @@ final class EdgeActor {
     int snapshotsApplied() { return snapshotsApplied; }
 
     long deliveredCount() { return deliveredCount; }
+
+    /** Heartbeats observed in this incarnation (C1 carrier; C2 wires staleness). */
+    int heartbeatsObserved() { return heartbeatsObserved; }
+
+    /** The {@code serverNowMillis} of the last HEARTBEAT, or -1 if none (C1 carrier). */
+    long lastHeartbeatServerNowMillis() { return lastHeartbeatServerNowMillis; }
+
+    /** The {@code latestSeq} of the last HEARTBEAT, or -1 if none (C1 carrier). */
+    long lastHeartbeatLatestSeq() { return lastHeartbeatLatestSeq; }
 }
