@@ -294,3 +294,23 @@ none may exit Session 2 owned-and-unfixed):
 
 Cross-noted: RR-086's unit-level fsync/persistence pinning is executed here with the RR-085 kill
 list (its row stays S3-owned for the crash-recovery half that RR-003's fix now also covers).
+
+---
+
+## Session-2 closeout (2026-06-11, branch `session-2-correctness`)
+
+**The four P0/P0-class findings in scope — all RESOLVED, second-agent-verified:**
+- **RR-004** ack≠commit → ADR-0033 commit-confirmed ack (200 `Committed: seq=S` only post quorum-commit+apply). Pre-fix capture: 119–180/200 acked writes lost on window-kill across 3 fault shapes; post-fix 0. Verified by sim (`AckEqualsCommitTest`) + live linz 8/8 LINEARIZABLE matrix with 200⇒`:ok`.
+- **RR-003** restart-after-compaction loss → persist-before-truncate + `durable_prefix_no_gap` recovery assertion. Pre-fix: 180/240 crash cells lost the snapshot prefix; post-fix 0. Follower path fixed symmetrically.
+- **RR-002** timeout-less connect freeze → bounded connect/handshake off the tick thread. Pre-fix: 134 s tick stall / 26-of-28 drill rounds failed; post-fix 30/30 commits through a 40 s DROP window.
+- **RR-094** gate-1 TLS flake → keytool hoisted to un-budgeted fixtures. **Lead's official `gate-1.sh` run: TOTAL PASS (1214 s).**
+
+**The 10 handoff P1s:** RR-006 (timing 10×, live re-election now ~0.25 s), RR-010 (sim determinism), RR-012 (sweep de-vacuation + test-the-tester 50/50 catch), RR-015 (HLC → ADR-0035 descope), RR-016 (linz in CI + discrimination re-run), RR-018 (reconfig de-vacuation + in-sim joint consensus; live admin seam re-owned S6), RR-020 (fail-closed strong reads), RR-085 (mutation kill list), RR-087 (server seams 61→72% line) — **all RESOLVED, second-agent-verified.** None left owned-and-unfixed.
+
+**§4.1 mutation thresholds (LEAD DECISION recorded):** distribution-service control-plane **79% ≥ 65 ✓**; consensus-core module-wide **73.1% ≥ 70 ✓**; consensus-core safety kernel **72.8%** vs the 80 aspiration — **short by 7 pts, accepted with the enforced floor at 70 and a documented residual.** Disposition is charter-compliant (anti-"ran out of time"): a full gap-closing round drove the kernel 64→72.8% and module 61→73.1%, killing every reachable mutant at reasonable cost; the residual is itemized as proven-equivalents + one named killable-but-high-cost cluster (commit-outcome snapshot-fold-after-stepdown NO_COVERAGE, whose safety behavior is independently covered by `SnapshotCrashRecoveryTest`). Named Session-1 safety-kernel survivors are ALL killed; **RR-089 genuinely closed** (ObservingChecker kills the InvariantChecker call-removals B3 had thought equivalent). The kernel-80 numeric bar is carried forward as a documented hardening residual. (PIT-contamination caveat baked into the kill-list: a `RUN_ERROR>0` run reported a false 80% — always verify `RUN_ERROR==0`.)
+
+**Proof-layer (charter §4):** adversarial simulator with all fault classes + every-step invariant checking; **10k-seed sweep ran with ZERO safety violations** (7 liveness stalls → RR-095, expected never-healed-partition artifact, P3); 507-seed committed gate set; linearizability checker wired (self-tests 8/8 in CI, discrimination RED/GREEN re-verified, sim-history bridge); jcstress harness (self-test proves the detector fires; **zero FORBIDDEN** across all read-path + transport + boundary targets); every spec invariant now has a runtime twin **observed firing** (18 twins incl. W-1); full TLC trio re-exhausted with the specs extended to model the ack point + durable recovery (both with seeded-bug counterexamples); first model-checked liveness property with a fairness-vacuity proof; §4.6 commit-notification boundary (ADR-0034, bounded + replayable, RR-066 race fixed).
+
+**Gates:** gate-1 PASSES officially. gate-2 (`gates/gate-2.sh`, cumulative) assembled with all 7 steps wired and individually verified; full end-to-end run is the close-out validation.
+
+**S2-owned rows still OPEN at closeout (honest):** RR-025 (SpotBugs gate policy + MT warnings — disposition owed post-gate-2, candidate re-own to S5 build-hygiene); RR-029 (W-1 tripwire CLOSED; CF-31/W-2 jcstress-confirmed safe-by-construction, residual carried); RR-086 (unit-level fsync pinning done via the kill list; crash-recovery half remains S3); RR-095 (new, expected liveness artifact). RR-021 (GA blocker) and the RR-001 edge plane remain OPEN by design (S7 / S3).
