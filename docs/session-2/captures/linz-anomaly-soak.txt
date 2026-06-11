@@ -1,0 +1,33 @@
+===============================================================================
+ configd-linz — ANOMALY SOAK (RR-028 owed item: the ledger's 'unresolved rare anomaly')
+===============================================================================
+date    : 2026-06-11T04:12:39Z
+branch  : session-2-correctness @ df8450d
+
+Method  : unmodified shaded jar (RR-004/ADR-0033, 200=>:ok mapping). Distinct seeds
+          5001.., alternating 3- and 5-node, 12s workload + faults each, on the live
+          separate-JVM cluster. Any NON-LINEARIZABLE verdict preserves its history for
+          minimization; LINEARIZABLE/INDETERMINATE logs are dropped. Budget: 35 min.
+
+--- result ---
+[soak] start 03:36:46 budget=2100s
+[soak] 03:42:19 runs=10 lin=10 nonlin=0 indet=0 (elapsed 333s)
+[soak] 03:47:54 runs=20 lin=20 nonlin=0 indet=0 (elapsed 668s)
+[soak] 03:53:45 runs=30 lin=30 nonlin=0 indet=0 (elapsed 1019s)
+[soak] 04:00:19 runs=40 lin=40 nonlin=0 indet=0 (elapsed 1413s)
+[soak] 04:06:09 runs=50 lin=50 nonlin=0 indet=0 (elapsed 1763s)
+[soak] 04:11:42 runs=60 lin=60 nonlin=0 indet=0 (elapsed 2096s)
+[soak] done 04:12:14 TOTAL runs=61 LINEARIZABLE=61 NON-LINEARIZABLE=0 INDETERMINATE=0
+[soak] INPUT drill rules after: 0
+
+TOTAL: 61 faulted runs, 61 LINEARIZABLE, 0 NON-LINEARIZABLE, 0 INDETERMINATE.
+The 'unresolved rare anomaly' did NOT reproduce in 61 runs.
+INPUT-chain drill rules: 0 after the soak. No stray server JVMs.
+
+HONEST SCOPE: 61 runs is a bounded soak, NOT a proof of absence. The earlier A3-B
+single non-reproducing non-linearizable history remains formally unexplained; this
+soak raises confidence it is a rare/transient recorder-or-timing artifact rather than
+a reproducible safety bug, but a longer soak (or one seeded from the original history,
+which was not preserved) would be needed to close it with certainty. Recorded as
+'not reproduced in 61 runs', not 'closed'.
+===============================================================================
