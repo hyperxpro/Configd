@@ -130,6 +130,25 @@ public final class ConnectionManager {
     }
 
     /**
+     * Returns how long (ms) until the peer is eligible for the next
+     * reconnection attempt: {@code 0} if it may reconnect now (CONNECTED or the
+     * backoff period has elapsed), otherwise the remaining backoff time. Lets a
+     * connector schedule a reconnect that respects the backoff without polling.
+     *
+     * @param peer the peer
+     * @return remaining backoff in ms, or 0 if eligible now
+     */
+    public long backoffRemainingMs(NodeId peer) {
+        PeerConnection conn = peers.get(peer);
+        if (conn == null || conn.state != ConnectionState.BACKING_OFF) {
+            return 0;
+        }
+        long elapsed = clock.currentTimeMillis() - conn.lastAttemptMs;
+        long remaining = conn.currentBackoffMs - elapsed;
+        return Math.max(0, remaining);
+    }
+
+    /**
      * Returns all tracked peers.
      */
     public Set<NodeId> peers() {
