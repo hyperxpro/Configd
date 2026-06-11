@@ -135,7 +135,38 @@ step_mutation() {
     echo "GATE-2 mutation: SKIPPED by GATE2_SKIP_MUTATION=1 (LOUD: thresholds NOT verified this run)"
     return 0
   fi
-  echo "GATE-2 mutation: NOT WIRED — failing loudly (B3 PIT profile pending)"; return 1
+  cd "$ROOT"
+  # B3 / charter §4.1: PIT mutation thresholds, enforced per module by the
+  # -Pmutation profile. Each module pom sets `mutationThreshold`, so the pitest
+  # goal returns non-zero (BUILD FAILURE) when the module is UNDER target — that
+  # propagates out as the step failing. Three enforced bars, one per-module PIT
+  # run each (~25 min/module on 2 vCPU):
+  #   (1) consensus-core module-wide        >= 70   (-Pmutation)
+  #   (2) consensus-core SAFETY KERNEL       >= 80   (-Pmutation,mutation-kernel:
+  #       RaftNode/RaftLog/DurableRaftState/ReadIndexState/ClusterConfig)
+  #   (3) distribution-service control-plane >= 65   (-Pmutation; the RR-001/RR-088
+  #       shelfware fan-out/gossip classes are excluded in that module's pom)
+  # The upstream main artifacts must be installed first so PIT's classpath
+  # resolves them (sibling test sources are skipped, as in step_jcstress).
+  $MVN -q -pl configd-consensus-core,configd-distribution-service -am \
+    install -Dmaven.test.skip=true 2>&1 | tee "$LOGDIR/mutation-install.log" | tail -3
+
+  $MVN -Pmutation -pl configd-consensus-core org.pitest:pitest-maven:mutationCoverage \
+    2>&1 | tee "$LOGDIR/mutation-consensus.log" | tail -6
+  grep -qE "BUILD SUCCESS" "$LOGDIR/mutation-consensus.log" \
+    || { echo "GATE-2 mutation: consensus-core module-wide < 70 (or PIT error)"; return 1; }
+
+  $MVN -Pmutation,mutation-kernel -pl configd-consensus-core org.pitest:pitest-maven:mutationCoverage \
+    2>&1 | tee "$LOGDIR/mutation-kernel.log" | tail -6
+  grep -qE "BUILD SUCCESS" "$LOGDIR/mutation-kernel.log" \
+    || { echo "GATE-2 mutation: consensus-core safety kernel < 80 (or PIT error)"; return 1; }
+
+  $MVN -Pmutation -pl configd-distribution-service org.pitest:pitest-maven:mutationCoverage \
+    2>&1 | tee "$LOGDIR/mutation-distribution.log" | tail -6
+  grep -qE "BUILD SUCCESS" "$LOGDIR/mutation-distribution.log" \
+    || { echo "GATE-2 mutation: distribution-service control-plane < 65 (or PIT error)"; return 1; }
+
+  echo "GATE-2 mutation: OK (consensus-core >=70, safety-kernel >=80, distribution control-plane >=65)"
 }
 
 step_jcstress() {
@@ -143,7 +174,29 @@ step_jcstress() {
     echo "GATE-2 jcstress: SKIPPED by GATE2_SKIP_JCSTRESS=1 (LOUD: races NOT verified this run)"
     return 0
   fi
-  echo "GATE-2 jcstress: NOT WIRED — failing loudly (B6 curated subset pending)"; return 1
+  cd "$ROOT"
+  # Build the jcstress uber-jar against FRESH upstream sources, then run the
+  # curated subset (run-curated-subset.sh: the 6 RR-002 transport interleavings +
+  # the decisive RR-066 / RR-029 read-path races, sanity mode, deterministic
+  # 2-actor tests only — the intentionally-forbidden harness self-test and the
+  # 3-actor test are excluded). Per docs/session-2/jcstress-results.md the clean
+  # 2-vCPU sanity pass is a SMOKE; the full multi-fork run is the operator's
+  # higher-confidence pass.
+  # maven.test.skip (not just -DskipTests) so a sibling module's in-progress,
+  # non-compiling TEST sources never block the harness build — jcstress only
+  # needs the upstream MAIN artifacts. (Sessions run many agents on one branch.)
+  $MVN -q -o -pl configd-config-store,configd-distribution-service,configd-transport -am \
+    install -Dmaven.test.skip=true 2>&1 | tee "$LOGDIR/jcstress-install.log" | tail -3
+  $MVN -q -o -pl configd-jcstress clean package -Dmaven.test.skip=true \
+    2>&1 | tee "$LOGDIR/jcstress-build.log" | tail -3
+  if [ ! -f "$ROOT/configd-jcstress/target/jcstress.jar" ]; then
+    echo "GATE-2 jcstress: uber-jar not produced"; return 1
+  fi
+  JCSTRESS_CPUS="${JCSTRESS_CPUS:-2}" bash "$ROOT/configd-jcstress/run-curated-subset.sh" \
+    "$LOGDIR/jcstress-results" 2>&1 | tee "$LOGDIR/jcstress.log" | tail -4
+  grep -qE "jcstress curated subset: OK" "$LOGDIR/jcstress.log" \
+    || { echo "GATE-2 jcstress: curated subset did NOT pass"; return 1; }
+  echo "GATE-2 jcstress: OK (curated subset, no forbidden outcomes)"
 }
 
 step_assertions() {
