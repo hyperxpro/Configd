@@ -40,15 +40,18 @@ import java.util.concurrent.atomic.AtomicReferenceArray;
  *       This is exact even when seq has natural gaps (no-op/RCFG entries skip
  *       sequence numbers) because it compares the cursor against an actual
  *       evicted seq, not a position arithmetic.</li>
- *   <li><b>Per-slot eviction re-validation.</b> While copying retained slots the
- *       reader re-reads {@code tail} after each slot read; if the slot position
- *       has fallen below {@code tail} the appender lapped it mid-copy, so the
- *       reader abandons the partial run and returns GAP. The appender's
- *       publish order — {@code ring.set(slot)} → {@code head++} → (on overflow)
- *       {@code lastEvictedSeq} → {@code tail = head - capacity} — combined with
- *       the reader reading {@code head} first then validating against {@code tail}
- *       guarantees any notification the reader includes was in {@code [tail, head)}
- *       at copy time.</li>
+ *   <li><b>Verify-after-read with evict-before-overwrite (RR-096).</b> The reader
+ *       reads {@code tail} (t1), then {@code head} (h), copies the window
+ *       {@code [t1, h)}, then re-reads {@code tail} (t2) and returns GAP unless
+ *       {@code t2 == t1}. This is sound ONLY because the appender's evicting
+ *       publish order is {@code lastEvictedSeq} → {@code tail = tail + 1} →
+ *       {@code ring.set(slot)} → {@code head++}: the tail advance precedes the
+ *       in-place overwrite in the volatile total order, so a reader that observed
+ *       an overwritten (lapped) slot value necessarily observes {@code t2 > t1}
+ *       and reports GAP. (The original order — overwrite before tail advance —
+ *       let a reader copy a lapped slot and still pass the {@code t2 == t1} check,
+ *       yielding a duplicate/non-ascending run; caught by
+ *       {@code FanOutBufferRaceTest} on a 4-vCPU CI runner, registered as RR-096.)</li>
  * </ol>
  * The append path remains allocation-free (it wraps the incoming
  * {@link CommitNotification} reference into the ring; no per-append allocation).
@@ -109,13 +112,24 @@ public final class FanOutBuffer implements CommitNotificationSource {
     public void publish(CommitNotification notification) {
         Objects.requireNonNull(notification, "notification must not be null");
         int slot = (int) (head % capacity);
-        // Determine eviction BEFORE the write: when the ring is full, the slot we
-        // are about to write IS the slot currently holding the oldest entry
-        // (head % capacity == tail % capacity), so writing overwrites it. We must
-        // capture the evicted entry's seq for the RR-066 watermark before it is
-        // clobbered, and publish that watermark BEFORE advancing tail — so a
-        // reader that observes the advanced tail also observes the watermark and
-        // reports GAP rather than serving a truncated run.
+        // RR-096: on eviction the tail MUST advance BEFORE the in-place overwrite.
+        // The original order (ring.set -> head++ -> tail=) had a hole: a reader
+        // mid-copy could read the just-overwritten slot (a lapped, newer
+        // notification at an old position) and then read tail BEFORE the writer's
+        // tail-advance store executed — its t2==t1 verify passed and the non-GAP
+        // run contained a duplicate/non-ascending seq (observed on a 4-vCPU CI
+        // runner; see the register row). With tail advanced first, any reader that
+        // observes the overwritten slot value is — by the volatile total order
+        // (W_tail precedes W_ring, so R_slot seeing W_ring implies R_tail sees
+        // W_tail) — guaranteed to observe t2 > t1 and return GAP.
+        //
+        // Order within an evicting publish:
+        //   1. capture evicted seq from the slot (before it is clobbered)
+        //   2. lastEvictedSeq.set(evictedSeq)   — watermark BEFORE tail advance,
+        //      so a reader observing the advanced tail also observes the watermark
+        //   3. tail = tail + 1                  — retire the position BEFORE clobber
+        //   4. ring.set(slot, notification)     — the in-place overwrite
+        //   5. head = head + 1                  — publish the new position
         boolean willEvict = (head - tail) >= capacity;
         if (willEvict) {
             CommitNotification evicting = ring.get(slot);
@@ -124,12 +138,10 @@ public final class FanOutBuffer implements CommitNotificationSource {
             }
             droppedTotal.incrementAndGet();
             metrics.onDropped();
+            tail = tail + 1;            // volatile write — retire oldest BEFORE overwrite
         }
         ring.set(slot, notification);   // volatile write — publishes slot content
         head = head + 1;                // volatile write — publishes the new head
-        if (willEvict) {
-            tail = head - capacity;     // volatile write — evict oldest
-        }
     }
 
     /**
