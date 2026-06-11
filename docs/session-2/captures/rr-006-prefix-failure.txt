@@ -1,0 +1,97 @@
+================================================================================
+RR-006 (P1) — `...Ms`-named Raft timing config consumed as 10 ms tick counts
+DISCRIMINATING PRE-FIX FAILURE CAPTURE
+================================================================================
+
+Finding : RR-006 / CF-50 / CM-191. RaftConfig carries election/heartbeat budgets
+          in fields documented and named as MILLISECONDS (electionTimeoutMinMs
+          150, electionTimeoutMaxMs 300, heartbeatIntervalMs 50). RaftNode is
+          tick-driven and consumed those millisecond VALUES directly as TICK
+          COUNTS. Production schedules one tick every 10 ms
+          (ConfigdServer.TICK_PERIOD_MS = 10; scheduleAtFixedRate at
+          ConfigdServer.java:561,583). So every documented interval ran 10x long:
+            - election timeout  150-300 ticks x 10 ms = 1.5 - 3.0 s   (doc: 150-300 ms)
+            - heartbeat          50 ticks    x 10 ms = 0.5 s          (doc: 50 ms)
+          Every contract failover / staleness budget stated in ms was wrong as
+          deployed by a factor of 10.
+
+Pre-fix  : RaftNode.resetElectionTimeout (RaftNode.java:2020-2023, pre-fix):
+defect        electionTimeoutTicks = config.electionTimeoutMinMs()
+sites                              + random.nextInt(config.electionTimeoutMaxMs()
+                                     - config.electionTimeoutMinMs() + 1);
+            -- the ms VALUES (150..300) become the tick TARGET directly.
+          RaftNode.tickHeartbeat (RaftNode.java:1036, pre-fix):
+              if (heartbeatTicksElapsed >= config.heartbeatIntervalMs()) { ... }
+            -- the ms VALUE (50) becomes the tick threshold directly.
+          RaftNode never knew the tick period; nothing converted ms -> ticks.
+
+Live      : docs/audit-session-1/smoke-test.md:257-265 (NOT edited; cited as
+evidence    evidence). 3-node localhost cluster, leader (node 3, pid 12949)
+            kill -9 at 18:14:43 (kill_epoch=1781115283.776); survivors 8081/8082
+            polled via probe PUT until a new leader accepted the write.
+              "Re-election ~= 2.3 s"  (smoke-test.md:265)
+            That ~2.3 s sits squarely inside the buggy 1.5-3.0 s election window
+            and is ~10x the documented 150-300 ms. It could NOT be produced by a
+            correctly-converted timeout.
+
+--------------------------------------------------------------------------------
+DISCRIMINATING UNIT TEST (fails pre-fix, passes post-fix)
+--------------------------------------------------------------------------------
+Test    : RaftNodeTest.TimingConversionTests.nodeElectionTargetUsesDerivedTickBounds
+          (configd-consensus-core/src/test/.../RaftNodeTest.java)
+          Builds a RaftConfig with the production tick period (10 ms) via
+          RaftConfig.of(nodeId, peers, 10) and asserts the node's randomized
+          election target lands in [15, 30] ticks (150-300 ms / 10 ms) and the
+          heartbeat fires every 5 ticks (50 ms / 10 ms) -- i.e. the documented
+          millisecond budgets, NOT the raw ms-as-ticks numbers.
+
+Pre-fix run (SUT temporarily reverted to ms-as-ticks: RaftNode caches
+config.electionTimeoutMinMs()/MaxMs()/heartbeatIntervalMs() as tick counts):
+
+  Tests run: 4, Failures: 1, Errors: 0, Skipped: 0  <<< FAILURE!
+  io.configd.raft.RaftNodeTest$TimingConversionTests.nodeElectionTargetUsesDerivedTickBounds
+  org.opentest4j.AssertionFailedError: election target must be derived from
+    150-300ms / 10ms == [15,30] ticks, got 217 (pre-fix would be in [150,300])
+    ==> expected: <true> but was: <false>
+    at ...TimingConversionTests.nodeElectionTargetUsesDerivedTickBounds(RaftNodeTest.java:1213)
+
+  (217 ticks x 10 ms = 2.17 s realized election timeout -- the same ~2.3 s seen
+   in the live smoke-test capture above.)
+
+Post-fix run (RaftNode converts ms -> ticks via config.tickPeriodMs()):
+
+  Tests run: 4, Failures: 0, Errors: 0, Skipped: 0   <-- green
+  (derivedTickCountsConvertMsByTickPeriod, conversionRoundsToNearestAndFloorsAtOne,
+   nodeElectionTargetUsesDerivedTickBounds, rejectsTickPeriodTooCoarseForElectionHeartbeatRatio)
+
+--------------------------------------------------------------------------------
+FIX
+--------------------------------------------------------------------------------
+RaftConfig: added trailing `int tickPeriodMs` (ms per RaftNode.tick()); derived
+  accessors electionTimeoutMin/MaxTicks() and heartbeatIntervalTicks() do
+  round-to-nearest(ms / tickPeriodMs) with a floor of 1; compact constructor
+  validates tickPeriodMs > 0 AND that the derived electionMin:heartbeat tick
+  ratio >= 3 (MIN_ELECTION_HEARTBEAT_TICK_RATIO) so a tick period too coarse for
+  the durations is rejected at construction. RaftConfig.of(nodeId, peers) keeps
+  tickPeriodMs = 1 (one tick == one ms -> identity, preserves every existing
+  simulation/unit-test schedule byte-for-byte); RaftConfig.of(nodeId, peers,
+  tickPeriodMs) is the production builder.
+RaftNode: caches the three derived tick counts in the constructor and uses them
+  in resetElectionTimeout() and tickHeartbeat(); no longer reads any ...Ms field
+  as a tick count.
+ConfigdServer: builds the production config with RaftConfig.of(nodeId, peers,
+  TICK_PERIOD_MS) (= 10), so the documented 150-300 ms / 50 ms are realized.
+
+--------------------------------------------------------------------------------
+MUTATION-REVERT PAIRS (each fails a named test)
+--------------------------------------------------------------------------------
+(i)  Revert RaftNode to cache config.electionTimeoutMinMs()/MaxMs() as tick
+     counts (the original bug)
+       -> nodeElectionTargetUsesDerivedTickBounds FAILS (election target 217,
+          not in [15,30]).  [DEMONSTRATED ABOVE]
+(ii) Make RaftConfig.of(nodeId, peers) default tickPeriodMs to 10 instead of 1
+       -> the simulation's heartbeat collapses 50 -> 5 ticks while network
+          latency stays 1-10 ticks, producing election churn; sim suites
+          (ConsistencyPropertyTests / AckEqualsCommitTest) regress. Kept at 1 so
+          sim schedules are byte-identical.
+================================================================================

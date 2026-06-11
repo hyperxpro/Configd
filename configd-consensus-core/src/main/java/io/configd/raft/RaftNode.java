@@ -57,7 +57,14 @@ public final class RaftNode {
     private volatile NodeId leaderId;     // null if unknown
 
     // ---- Timer state (tick-based, not wall-clock) ----
-    private int electionTimeoutTicks;  // randomized target
+    // RR-006: the RaftConfig durations are real milliseconds; they are converted
+    // to tick counts once via config.tickPeriodMs() so the documented budgets
+    // are realized regardless of how often the caller invokes tick(). Election
+    // bounds (min/max) and the heartbeat interval are cached in ticks here.
+    private final int electionTimeoutMinTicks;
+    private final int electionTimeoutMaxTicks;
+    private final int heartbeatTimeoutTicks;
+    private int electionTimeoutTicks;  // randomized target in [min, max] ticks
     private int electionTicksElapsed;
     private int heartbeatTicksElapsed;
 
@@ -188,6 +195,13 @@ public final class RaftNode {
         this.stateMachine = Objects.requireNonNull(stateMachine, "stateMachine");
         this.random = Objects.requireNonNull(random, "random");
         this.invariantChecker = invariantChecker != null ? invariantChecker : InvariantChecker.NOOP;
+
+        // RR-006: convert the millisecond timing budgets to tick counts once,
+        // using the configured tick period. RaftConfig already validated that the
+        // derived election:heartbeat ratio is sane.
+        this.electionTimeoutMinTicks = config.electionTimeoutMinTicks();
+        this.electionTimeoutMaxTicks = config.electionTimeoutMaxTicks();
+        this.heartbeatTimeoutTicks = config.heartbeatIntervalTicks();
 
         // Load persisted state (currentTerm, votedFor) from durable storage
         this.durableState = new DurableRaftState(Objects.requireNonNull(storage, "storage"));
@@ -1033,7 +1047,7 @@ public final class RaftNode {
 
     private void tickHeartbeat() {
         heartbeatTicksElapsed++;
-        if (heartbeatTicksElapsed >= config.heartbeatIntervalMs()) {
+        if (heartbeatTicksElapsed >= heartbeatTimeoutTicks) {
             heartbeatTicksElapsed = 0;
             // CheckQuorum: verify that a quorum of peers have been active.
             // Uses set-based isQuorum() to correctly handle joint consensus
@@ -2018,7 +2032,26 @@ public final class RaftNode {
     // ========================================================================
 
     private void resetElectionTimeout() {
-        electionTimeoutTicks = config.electionTimeoutMinMs()
-                + random.nextInt(config.electionTimeoutMaxMs() - config.electionTimeoutMinMs() + 1);
+        // RR-006: randomize within the tick-domain bounds derived from the
+        // millisecond budgets (electionTimeoutMin/MaxMs / tickPeriodMs). With the
+        // simulation's 1ms tick this is identical to the prior ms-as-ticks values
+        // (150..300); in production (10ms tick) it is 15..30 ticks == 150..300ms.
+        electionTimeoutTicks = electionTimeoutMinTicks
+                + random.nextInt(electionTimeoutMaxTicks - electionTimeoutMinTicks + 1);
+    }
+
+    // ---- Test seam (RR-006) ----
+    // Package-private accessors that expose the *derived* tick counts so a unit
+    // test can pin the ms->tick conversion directly (production code never reads
+    // these; the timer logic above uses the cached fields).
+
+    /** The current randomized election-timeout target, in ticks. */
+    int electionTimeoutTicksForTest() {
+        return electionTimeoutTicks;
+    }
+
+    /** The heartbeat interval the leader actually fires at, in ticks. */
+    int heartbeatTimeoutTicksForTest() {
+        return heartbeatTimeoutTicks;
     }
 }

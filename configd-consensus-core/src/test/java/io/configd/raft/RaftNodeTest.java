@@ -1143,11 +1143,93 @@ class RaftNodeTest {
         @Test
         void invalidConfigRejected() {
             assertThrows(IllegalArgumentException.class, () ->
-                    new RaftConfig(NodeId.of(1), Set.of(), 0, 300, 50, 64, 256 * 1024, 1024, 10));
+                    new RaftConfig(NodeId.of(1), Set.of(), 0, 300, 50, 64, 256 * 1024, 1024, 10, 1));
             assertThrows(IllegalArgumentException.class, () ->
-                    new RaftConfig(NodeId.of(1), Set.of(), 150, 100, 50, 64, 256 * 1024, 1024, 10));
+                    new RaftConfig(NodeId.of(1), Set.of(), 150, 100, 50, 64, 256 * 1024, 1024, 10, 1));
             assertThrows(IllegalArgumentException.class, () ->
-                    new RaftConfig(NodeId.of(1), Set.of(), 150, 300, 150, 64, 256 * 1024, 1024, 10));
+                    new RaftConfig(NodeId.of(1), Set.of(), 150, 300, 150, 64, 256 * 1024, 1024, 10, 1));
+        }
+    }
+
+    // ========================================================================
+    // RR-006: millisecond timing config -> tick-count conversion
+    //
+    // Before RR-006 the ...Ms values were consumed directly as tick counts, so
+    // at the production 10ms tick period a documented 150-300ms election timeout
+    // ran for 150-300 ticks == 1.5-3.0s, and a 50ms heartbeat ran every 50 ticks
+    // == 500ms (10x every documented value; live re-election measured ~2.3s).
+    // These tests pin the conversion so the documented millisecond budgets are
+    // the budgets actually realized. They FAIL against the pre-fix code, which
+    // returns 150-300 / 50 ticks at tickPeriodMs=10 instead of 15-30 / 5.
+    // ========================================================================
+
+    @Nested
+    class TimingConversionTests {
+
+        @Test
+        void derivedTickCountsConvertMsByTickPeriod() {
+            // Production tick period is 10ms.
+            RaftConfig prod = RaftConfig.of(NodeId.of(1), Set.of(), 10);
+            assertEquals(15, prod.electionTimeoutMinTicks(), "150ms / 10ms == 15 ticks");
+            assertEquals(30, prod.electionTimeoutMaxTicks(), "300ms / 10ms == 30 ticks");
+            assertEquals(5, prod.heartbeatIntervalTicks(), "50ms / 10ms == 5 ticks");
+
+            // Simulation tick period is 1ms: ms map one-to-one onto ticks, i.e.
+            // identical to the pre-RR-006 tick-domain values (no schedule drift).
+            RaftConfig sim = RaftConfig.of(NodeId.of(1), Set.of(), 1);
+            assertEquals(150, sim.electionTimeoutMinTicks());
+            assertEquals(300, sim.electionTimeoutMaxTicks());
+            assertEquals(50, sim.heartbeatIntervalTicks());
+        }
+
+        @Test
+        void conversionRoundsToNearestAndFloorsAtOne() {
+            // round-to-nearest, not truncation: 50ms / 30ms == 1.67 -> 2 ticks,
+            // 300ms / 30ms == 10 ticks. (Election kept large enough relative to
+            // the heartbeat that the ratio guard still passes at this coarse tick.)
+            RaftConfig rounding = new RaftConfig(
+                    NodeId.of(1), Set.of(), 300, 600, 50, 64, 256 * 1024, 1024, 10, 30);
+            assertEquals(2, rounding.heartbeatIntervalTicks(), "round(50/30) == 2");
+            assertEquals(10, rounding.electionTimeoutMinTicks(), "round(300/30) == 10");
+
+            // A tick period coarser than a duration must still floor at >=1 tick
+            // (never 0, which would fire every tick). 50ms / 100ms == 0.5 -> 1.
+            RaftConfig coarse = new RaftConfig(
+                    NodeId.of(1), Set.of(), 1500, 3000, 50, 64, 256 * 1024, 1024, 10, 100);
+            assertEquals(1, coarse.heartbeatIntervalTicks(), "round(50/100) floored to 1");
+        }
+
+        @Test
+        void nodeElectionTargetUsesDerivedTickBounds() {
+            // At the production 10ms tick period the randomized election target
+            // must land in [15, 30] ticks, NOT [150, 300] (the pre-fix bug), and
+            // the heartbeat fires every 5 ticks.
+            RaftConfig config = RaftConfig.of(NodeId.of(1), Set.of(NodeId.of(2), NodeId.of(3)), 10);
+            RandomGenerator rng = RandomGenerator.of("L64X128MixRandom");
+            RaftNode node = new RaftNode(config, new RaftLog(), new TestTransport(),
+                    new TestStateMachine(), rng);
+
+            int electionTarget = node.electionTimeoutTicksForTest();
+            assertTrue(electionTarget >= 15 && electionTarget <= 30,
+                    "election target must be derived from 150-300ms / 10ms == [15,30] ticks, got "
+                            + electionTarget + " (pre-fix would be in [150,300])");
+            assertEquals(5, node.heartbeatTimeoutTicksForTest(),
+                    "heartbeat must fire every 50ms / 10ms == 5 ticks (pre-fix: 50)");
+        }
+
+        @Test
+        void rejectsTickPeriodTooCoarseForElectionHeartbeatRatio() {
+            // A 60ms tick period collapses the 150ms election timeout to round(2.5)
+            // == 3 ticks and the 50ms heartbeat to round(0.83) -> 1 tick. 3 >= 3*1
+            // still holds, so that is allowed. But a 90ms tick gives election
+            // round(150/90)==2 and heartbeat round(50/90)->1: 2 < 3*1, rejected.
+            assertThrows(IllegalArgumentException.class, () ->
+                            new RaftConfig(NodeId.of(1), Set.of(), 150, 300, 50, 64, 256 * 1024, 1024, 10, 90),
+                    "tickPeriod that drops election:heartbeat below the safety ratio must be rejected");
+
+            // Zero / negative tick period is rejected.
+            assertThrows(IllegalArgumentException.class, () ->
+                    new RaftConfig(NodeId.of(1), Set.of(), 150, 300, 50, 64, 256 * 1024, 1024, 10, 0));
         }
     }
 
@@ -1191,7 +1273,7 @@ class RaftNodeTest {
         void proposalRejectedWhenOverloaded() {
             // Create config with very small maxPendingProposals
             RaftConfig config = new RaftConfig(
-                    NodeId.of(1), Set.of(), 150, 300, 50, 64, 256 * 1024, 3, 10);
+                    NodeId.of(1), Set.of(), 150, 300, 50, 64, 256 * 1024, 3, 10, 1);
             RaftLog log = new RaftLog();
             TestTransport transport = new TestTransport();
             TestStateMachine sm = new TestStateMachine();
@@ -1214,7 +1296,7 @@ class RaftNodeTest {
             NodeId n2 = NodeId.of(2);
             NodeId n3 = NodeId.of(3);
             RaftConfig config3 = new RaftConfig(
-                    n1, Set.of(n2, n3), 150, 300, 50, 64, 256 * 1024, 3, 10);
+                    n1, Set.of(n2, n3), 150, 300, 50, 64, 256 * 1024, 3, 10, 1);
             RaftLog log3 = new RaftLog();
             TestTransport transport3 = new TestTransport();
             TestStateMachine sm3 = new TestStateMachine();
@@ -1252,7 +1334,7 @@ class RaftNodeTest {
             // Single-node cluster: proposals always commit immediately,
             // so backpressure should never trigger with reasonable limits
             RaftConfig config = new RaftConfig(
-                    NodeId.of(1), Set.of(), 150, 300, 50, 64, 256 * 1024, 1024, 10);
+                    NodeId.of(1), Set.of(), 150, 300, 50, 64, 256 * 1024, 1024, 10, 1);
             RaftLog log = new RaftLog();
             TestTransport transport = new TestTransport();
             TestStateMachine sm = new TestStateMachine();
@@ -1285,7 +1367,7 @@ class RaftNodeTest {
             NodeId n2 = NodeId.of(2);
             NodeId n3 = NodeId.of(3);
             RaftConfig config = new RaftConfig(
-                    n1, Set.of(n2, n3), 150, 300, 50, 64, 256 * 1024, 1024, 2);
+                    n1, Set.of(n2, n3), 150, 300, 50, 64, 256 * 1024, 1024, 2, 1);
             RaftLog log = new RaftLog();
             TestTransport transport = new TestTransport();
             TestStateMachine sm = new TestStateMachine();
@@ -1326,7 +1408,7 @@ class RaftNodeTest {
             NodeId n1 = NodeId.of(1);
             NodeId n2 = NodeId.of(2);
             RaftConfig config = new RaftConfig(
-                    n1, Set.of(n2), 150, 300, 50, 64, 256 * 1024, 1024, 1);
+                    n1, Set.of(n2), 150, 300, 50, 64, 256 * 1024, 1024, 1, 1);
             RaftLog log = new RaftLog();
             TestTransport transport = new TestTransport();
             TestStateMachine sm = new TestStateMachine();

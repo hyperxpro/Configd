@@ -211,8 +211,13 @@ public final class ConfigdServer {
         ConfigStateMachine stateMachine =
                 new ConfigStateMachine(configStore, clock, smInvariantChecker, configSigner);
 
-        // Initialize Raft with durable WAL storage
-        RaftConfig raftConfig = RaftConfig.of(config.nodeId(), config.peers());
+        // Initialize Raft with durable WAL storage.
+        // RR-006: pass the real scheduler tick period (TICK_PERIOD_MS) so the
+        // documented millisecond budgets (150-300ms election timeout, 50ms
+        // heartbeat) are converted to the correct tick counts and realized at
+        // runtime. Before this fix the ms values were consumed as raw tick
+        // counts, inflating every interval 10x (re-election measured ~2.3s).
+        RaftConfig raftConfig = RaftConfig.of(config.nodeId(), config.peers(), TICK_PERIOD_MS);
         RaftLog raftLog = new RaftLog(storage);
         RandomGenerator random = RandomGeneratorFactory.getDefault().create(
                 config.nodeId().id() * 31L + System.nanoTime());
