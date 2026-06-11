@@ -269,6 +269,19 @@ SnapshotReplaySource 0/1) and the RR-001/RR-088 shelfware (HyParViewOverlay,
 CatchUpService, SlowConsumerPolicy) is correctly EXCLUDED. 79% >= the 65 floor;
 the whole-module S1 55% was dragged by exactly that excluded shelfware.
 
+### RR-087 configd-server coverage (JaCoCo, before/after)
+| | S1 baseline | S2 (after seam tests) |
+|---|---|---|
+| LINE | 61% (480/792) | **72% (645/884)** |
+| BRANCH | 46% (133/292) | **63% (213/336)** |
+
+The lift comes from the new real-HTTP/auth tests (`ConfigHandlerAuthTest` — the
+`checkAuth` gate was 0/14 branches), `ServerConfigTest$PeerAddressParsing`
+(`parsePeerAddresses` was 0/15), and `RaftTransportAdapterLoopbackTest` (the
+`RaftTransportAdapter` encode→TCP→decode seam was 0/16 lines). 112 server tests
+green. (The denominators grew because the previously-zero-covered seam classes
+are now counted as executed code.)
+
 ### Named-survivor fate (headline)
 | Survivor | Killing test | Fate |
 |----------|--------------|------|
