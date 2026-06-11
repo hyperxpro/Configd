@@ -27,7 +27,10 @@
 # =============================================================================
 set -u
 
-JAR="${CONFIGD_JAR:-/home/ubuntu/ws-smoke/configd-server/target/configd-server-0.1.0-SNAPSHOT.jar}"
+# Default to THIS repo's freshly-built shaded jar, not a stale external clone.
+# (Resolve relative to this script so the gate quotes the jar it actually built.)
+SMOKE_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+JAR="${CONFIGD_JAR:-$(ls "$SMOKE_ROOT"/configd-server/target/configd-server-*.jar 2>/dev/null | grep -v original- | head -1)}"
 BASE="${SMOKE_BASE:-/tmp/configd-smoke-$$}"
 RAFT_BASE=9090           # raft ports 9091,9092,9093
 API_BASE=8080            # api  ports 8081,8082,8083
@@ -40,8 +43,11 @@ pass() { echo "  PASS: $*"; }
 
 cleanup() {
   for pid in "${PIDS[@]:-}"; do kill -9 "$pid" 2>/dev/null; done
-  # belt-and-suspenders: any JVM bound to our jar
-  pkill -9 -f "$JAR" 2>/dev/null
+  # belt-and-suspenders: only JVMs we launched, matched by data-dir under $BASE.
+  # (Do NOT `pkill -f "$JAR"` — that pattern also matches the invoking shell's
+  # own command line when CONFIGD_JAR=<path> is passed inline, killing the
+  # caller. Match on our private data-dir instead, which only our JVMs carry.)
+  pkill -9 -f -- "--data-dir $BASE/" 2>/dev/null
   rm -rf "$BASE" 2>/dev/null
 }
 trap cleanup EXIT
