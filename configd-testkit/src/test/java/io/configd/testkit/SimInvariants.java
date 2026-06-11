@@ -49,7 +49,7 @@ final class SimInvariants {
         }
     }
 
-    private final ConsistencyPropertyTests.ClusterHarness cluster;
+    private final ClusterView cluster;
     private final long seed;
     private final int nodeCount;
 
@@ -63,7 +63,7 @@ final class SimInvariants {
      */
     private final Map<Long, String> committedCommandByIndex = new HashMap<>();
 
-    SimInvariants(ConsistencyPropertyTests.ClusterHarness cluster, long seed) {
+    SimInvariants(ClusterView cluster, long seed) {
         this.cluster = cluster;
         this.seed = seed;
         this.nodeCount = cluster.nodeCount();

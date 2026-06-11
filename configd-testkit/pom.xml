@@ -23,6 +23,19 @@
             <artifactId>configd-consensus-core</artifactId>
             <version>${project.version}</version>
         </dependency>
+        <!--
+          B4: consume consensus-core's test-jar so the adversarial simulation can
+          reuse the RR-003 crash-capable durability fixtures (CrashStorage,
+          KvStateMachine) instead of duplicating them. Test scope: only the sim's
+          own tests use these fixtures.
+        -->
+        <dependency>
+            <groupId>io.configd</groupId>
+            <artifactId>configd-consensus-core</artifactId>
+            <version>${project.version}</version>
+            <type>test-jar</type>
+            <scope>test</scope>
+        </dependency>
         <dependency>
             <groupId>io.configd</groupId>
             <artifactId>configd-config-store</artifactId>

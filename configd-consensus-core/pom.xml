@@ -32,4 +32,29 @@
             <artifactId>jctools-core</artifactId>
         </dependency>
     </dependencies>
+
+    <build>
+        <plugins>
+            <!--
+              B4 / RR-003 reuse seam: publish this module's TEST classes as a
+              test-jar so configd-testkit's adversarial simulation can consume the
+              crash-capable durability fixtures (CrashStorage, KvStateMachine)
+              without duplicating them. testkit(main/test) -> consensus-core(test-jar)
+              is acyclic; the reverse direction would cycle, so the test-jar must be
+              produced here and consumed there. Lead decision (S2 risky-point #1).
+            -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-jar-plugin</artifactId>
+                <executions>
+                    <execution>
+                        <id>test-jar</id>
+                        <goals>
+                            <goal>test-jar</goal>
+                        </goals>
+                    </execution>
+                </executions>
+            </plugin>
+        </plugins>
+    </build>
 </project>

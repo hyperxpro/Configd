@@ -40,7 +40,7 @@ class ConsistencyPropertyTests {
      * All communication flows through the {@link SimulatedNetwork}. Time is
      * driven by the {@link SimulatedClock}. Single-threaded, deterministic.
      */
-    static final class ClusterHarness {
+    static final class ClusterHarness implements ClusterView {
 
         private final RaftSimulation sim;
         private final List<RaftNode> nodes;
@@ -109,11 +109,11 @@ class ConsistencyPropertyTests {
         }
 
         RaftSimulation sim() { return sim; }
-        RaftNode node(int i) { return nodes.get(i); }
-        RaftLog log(int i) { return logs.get(i); }
+        @Override public RaftNode node(int i) { return nodes.get(i); }
+        @Override public RaftLog log(int i) { return logs.get(i); }
         ConfigStateMachine stateMachine(int i) { return stateMachines.get(i); }
-        VersionedConfigStore store(int i) { return stores.get(i); }
-        int nodeCount() { return nodeCount; }
+        @Override public VersionedConfigStore store(int i) { return stores.get(i); }
+        @Override public int nodeCount() { return nodeCount; }
 
         /**
          * Single simulation step: advance clock by 1ms, deliver due messages,
