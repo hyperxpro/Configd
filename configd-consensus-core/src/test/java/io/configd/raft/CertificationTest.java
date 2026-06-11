@@ -209,6 +209,75 @@ class CertificationTest {
             deliverAllMessages(10);
         }
 
+        /**
+         * RR-085 / Figure-8 helper: delivers only the messages whose sender is in
+         * {@code from} and target is in {@code to}; all other queued messages for
+         * those senders are LEFT in place (not dropped), so a subsequent targeted
+         * delivery can pick them up. Used to deliver a leader's AppendEntries to a
+         * single follower while withholding the rest.
+         */
+        void deliverFromTo(Set<NodeId> from, Set<NodeId> to) {
+            Map<NodeId, List<RaftMessage>> toDeliver = new HashMap<>();
+            for (var entry : transports.entrySet()) {
+                if (!from.contains(entry.getKey())) {
+                    continue;
+                }
+                List<TestTransport.SentMessage> keep = new ArrayList<>();
+                for (var msg : entry.getValue().messages()) {
+                    if (to.contains(msg.target())) {
+                        toDeliver.computeIfAbsent(msg.target(), k -> new ArrayList<>()).add(msg.message());
+                    } else {
+                        keep.add(msg);
+                    }
+                }
+                entry.getValue().clear();
+                entry.getValue().messages().addAll(keep);
+            }
+            for (var entry : toDeliver.entrySet()) {
+                RaftNode target = nodes.get(entry.getKey());
+                if (target != null) {
+                    for (RaftMessage msg : entry.getValue()) {
+                        target.handleMessage(msg);
+                    }
+                }
+            }
+        }
+
+        /**
+         * RR-085 / Figure-8 helper: drives {@code candidate} through
+         * PreVote+election among {@code members} (clearing the others' recent-leader
+         * gates first, as {@code ReconfigurationTest.electAmong} does) and STOPS the
+         * instant the candidate reaches LEADER — dropping all pending messages — so
+         * the new leader's current-term no-op has NOT yet been replicated/committed.
+         * That intermediate state is exactly where the §5.4.2 commit guard is
+         * observable. Returns the new leader, or null if none emerged.
+         */
+        RaftNode electAmongStopAtLeader(NodeId candidate, Set<NodeId> members, int attempts) {
+            for (int a = 0; a < attempts; a++) {
+                for (NodeId id : members) {
+                    if (!id.equals(candidate)) triggerElectionTimeout(id);
+                }
+                dropAllMessages();
+                triggerElectionTimeout(candidate);
+                for (int r = 0; r < 60; r++) {
+                    boolean any = transports.values().stream().anyMatch(t -> !t.messages().isEmpty());
+                    if (!any) break;
+                    deliverMessagesBetween(members, members);
+                    if (nodes.get(candidate).role() == RaftRole.LEADER) {
+                        dropAllMessages();
+                        return nodes.get(candidate);
+                    }
+                }
+                for (NodeId id : members) {
+                    if (nodes.get(id).role() == RaftRole.LEADER) {
+                        dropAllMessages();
+                        return nodes.get(id);
+                    }
+                }
+            }
+            return null;
+        }
+
         RaftNode findLeader() {
             for (RaftNode node : nodes.values()) {
                 if (node.role() == RaftRole.LEADER) return node;
@@ -249,76 +318,86 @@ class CertificationTest {
          */
         @Test
         void leaderCannotCommitPriorTermEntryByReplicationCountAlone() {
-            // 5-node cluster: n1, n2, n3, n4, n5
-            TestCluster cluster = new TestCluster(5);
-
-            NodeId n1 = NodeId.of(1), n2 = NodeId.of(2), n3 = NodeId.of(3);
-            NodeId n4 = NodeId.of(4), n5 = NodeId.of(5);
-
-            // Step 1: n1 becomes leader in term 1 (via PreVote + election)
-            cluster.electLeader(n1);
-            RaftNode leader1 = cluster.nodes.get(n1);
-            assertEquals(RaftRole.LEADER, leader1.role());
-            long term1 = leader1.currentTerm();
-
-            // Step 2: n1 proposes a command, replicated only to n2 (minority)
-            // We deliver the no-op + command only to n2, not to n3/n4/n5
-            cluster.dropAllMessages(); // clear any pending heartbeats
-            leader1.propose("term1-entry".getBytes());
-            // Deliver only to n2 (n1's AppendEntries)
-            cluster.deliverMessagesTo(Set.of(n2));
-            // Deliver n2's response back to n1
-            cluster.deliverMessagesTo(Set.of(n1));
-            // At this point: n1 has the entry at its lastIndex, n2 has it too
-
-            // Record the entry from term 1
-            long term1EntryIndex = leader1.log().lastIndex();
-            assertEquals(term1, leader1.log().termAt(term1EntryIndex));
-
-            // Step 3: Simulate n1 crash — just stop sending to/from it.
-            // First, tick n4 and n5 past election timeout so they clear leaderId
-            // (otherwise they reject PreVote due to hasRecentLeader check).
-            cluster.dropAllMessages();
-            cluster.triggerElectionTimeout(n4);
-            cluster.dropAllMessages(); // drop n4's own PreVote requests
-            cluster.triggerElectionTimeout(n5);
-            cluster.dropAllMessages(); // drop n5's own PreVote requests
-
-            // Now n3 times out and starts PreVote + election.
-            // n4/n5 no longer have a recent leader, so they will grant PreVote.
-            for (int round = 0; round < 3; round++) {
-                cluster.triggerElectionTimeout(n3);
-                for (int i = 0; i < 15; i++) {
-                    cluster.deliverMessagesBetween(Set.of(n3, n4, n5), Set.of(n3, n4, n5));
-                }
-            }
-
-            // n3 should have advanced the term
-            RaftNode node3 = cluster.nodes.get(n3);
-            long term2 = node3.currentTerm();
-            assertTrue(term2 > term1, "n3 should have a higher term than term1");
-
-            // Step 4: The critical safety check — if n1 were to come back
-            // and replicate the old term-1 entry to a majority, the commit
-            // index must NOT advance for that entry.
+            // RR-085 #1 / RR-091 F-C1: this body used to assert a by-construction
+            // tautology (`term1EntryIndex > commitBefore || termAt(idx) == term1`,
+            // both disjuncts always true) and so could NOT see the §5.4.2 guard
+            // mutant (`log.termAt(n) != currentTerm` -> `false` at
+            // RaftNode.maybeAdvanceCommitIndex), which makes the Figure-8
+            // lost-write reachable. The body below CONSTRUCTS Raft Figure 8 and
+            // drives the production maybeAdvanceCommitIndex (via the real
+            // handleAppendEntriesResponse entry point) with a prior-term entry at
+            // a quorum, asserting the guard blocks the early commit. Deleting the
+            // guard fails this test (capture:
+            // docs/session-2/captures/rr-085-figure8.txt).
             //
-            // Verify: the leader's maybeAdvanceCommitIndex() only commits
-            // entries from the current term. The term-1 entry on n1/n2 should
-            // remain uncommitted even if a majority has it.
-            RaftNode node1 = cluster.nodes.get(n1);
-            // n1 is still leader of an old term (in reality it would have
-            // stepped down, but the key invariant is:
-            // even if an entry is replicated to a majority, commitIndex only
-            // advances for entries from the leader's current term)
-            long commitBefore = node1.log().commitIndex();
+            // Figure 8 (Raft §5.4.2): an old entry replicated to a MAJORITY by a
+            // re-elected leader must NOT be considered committed by replication
+            // count alone — only committing a CURRENT-term entry commits it
+            // indirectly. Otherwise a later leader without the entry can still win
+            // and overwrite it.
+            TestCluster cluster = new TestCluster(3);
+            NodeId n1 = NodeId.of(1), n2 = NodeId.of(2), n3 = NodeId.of(3);
 
-            // Verify the term check in maybeAdvanceCommitIndex:
-            // The leader's log contains term-1 entries that are on n1+n2,
-            // but since they're from a prior term, commitIndex should not
-            // advance past them without a current-term entry at a higher index.
-            // This is guaranteed by the `log.termAt(n) != currentTerm` check.
-            assertTrue(term1EntryIndex > commitBefore || leader1.log().termAt(term1EntryIndex) == term1,
-                    "The term-1 entry must not have been committed by replication count alone");
+            // (a) n1 leader at term 1; propose entry X and deliver it to n2 ONLY,
+            //     dropping n2's response so n1 never commits X at term 1.
+            cluster.electLeader(n1);
+            RaftNode leader = cluster.nodes.get(n1);
+            assertEquals(RaftRole.LEADER, leader.role());
+            long term1 = leader.currentTerm();
+
+            cluster.dropAllMessages();
+            leader.propose("X".getBytes());
+            cluster.deliverFromTo(Set.of(n1), Set.of(n2)); // n2 appends X
+            cluster.dropAllMessages();                     // drop n2's ack
+
+            long idxX = leader.log().lastIndex();
+            assertEquals(term1, leader.log().termAt(idxX), "X must be a term-1 entry");
+            assertTrue(leader.log().commitIndex() < idxX, "precondition: X uncommitted at term 1");
+
+            // (b) n1 is RE-ELECTED at a higher term (Figure 8: the same server
+            //     returns as leader still holding the uncommitted prior-term entry
+            //     X), and we STOP the instant it wins — before any post-election
+            //     AppendEntries response lands — so its current-term no-op is NOT
+            //     yet committed (commitIndex stays low). becomeLeader appended that
+            //     no-op above X.
+            RaftNode reLeader = cluster.electAmongStopAtLeader(n1, Set.of(n1, n2, n3), 8);
+            assertNotNull(reLeader, "n1 (holding X) must re-win leadership");
+            assertEquals(n1, reLeader.nodeId(), "n1 must be the new leader (most up-to-date log)");
+            long term2 = leader.currentTerm();
+            assertTrue(term2 > term1, "re-election must be at a strictly higher term");
+
+            long noopIdx = leader.log().lastIndex();
+            assertEquals(term1, leader.log().termAt(idxX), "X stays a prior-term entry");
+            assertEquals(term2, leader.log().termAt(noopIdx), "tail is the current-term no-op");
+            assertTrue(noopIdx > idxX, "the current-term no-op sits above X");
+            assertTrue(leader.log().commitIndex() < idxX,
+                    "precondition: nothing is committed past idxX-1 at the start of the new term");
+
+            // (c) Drive the production commit-advance with a prior-term entry at a
+            //     QUORUM but NO current-term entry at a quorum. A follower reports
+            //     matchIndex = idxX (it has X, term1). Now {n1(self), reporter} = a
+            //     majority of 3 hold X. The §5.4.2 guard MUST refuse to commit X
+            //     (its term != currentTerm). WITHOUT the guard
+            //     (`termAt(n)!=currentTerm -> false`), maybeAdvanceCommitIndex
+            //     commits X here by replication count — the Figure-8 lost-write.
+            long commitBeforeX = leader.log().commitIndex();
+            leader.handleMessage(new AppendEntriesResponse(term2, true, idxX, n3));
+            assertEquals(commitBeforeX, leader.log().commitIndex(),
+                    "§5.4.2: the prior-term entry X (idx=" + idxX + ", term=" + term1
+                            + ") is at a quorum but MUST NOT be committed by replication count"
+                            + " alone while the leader serves term " + term2
+                            + " and no current-term entry has reached quorum");
+            assertTrue(leader.log().commitIndex() < idxX,
+                    "commitIndex must not have reached X");
+
+            // (d) Liveness sanity (and the indirect-commit half of §5.4.2): once a
+            //     CURRENT-term entry — the no-op at noopIdx — reaches a quorum, the
+            //     commit advances and X is committed INDIRECTLY (commit >= idxX).
+            leader.handleMessage(new AppendEntriesResponse(term2, true, noopIdx, n2));
+            assertTrue(leader.log().commitIndex() >= noopIdx,
+                    "the current-term no-op at a quorum must commit");
+            assertTrue(leader.log().commitIndex() >= idxX,
+                    "committing the current-term no-op commits X indirectly (§5.4.2)");
         }
 
         /**

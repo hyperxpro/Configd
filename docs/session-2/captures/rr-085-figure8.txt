@@ -1,0 +1,56 @@
+RR-085 #1 / RR-091 F-C1 — §5.4.2 prior-term commit guard: mutant-kill capture
+==============================================================================
+
+Survivor (Session-1 PIT, test-forensics §1.3 #1):
+  RaftNode.maybeAdvanceCommitIndex  — RemoveConditional / "replaced equality
+  check with false" on the guard:
+
+      for (long n = log.lastIndex(); n > log.commitIndex(); n--) {
+          if (log.termAt(n) != currentTerm) {   // <-- §5.4.2 guard
+              continue;
+          }
+          ...commit n if a quorum has replicated it...
+      }
+
+  This guard IS Raft §5.4.2: a leader must not commit a prior-term entry by
+  replication count alone. Removing it makes the Figure-8 lost-write reachable.
+
+Why it SURVIVED in Session 1:
+  Its named certification test
+  CertificationTest.leaderCannotCommitPriorTermEntryByReplicationCountAlone
+  asserted a by-construction TAUTOLOGY at :319-320:
+      assertTrue(term1EntryIndex > commitBefore
+                 || leader1.log().termAt(term1EntryIndex) == term1, ...)
+  - first disjunct: idxX (a real log index) is always > commitBefore (nothing
+    committed yet) -> always true;
+  - second disjunct: termAt(idxX)==term1 was already asserted at :276.
+  The assertion can never fail regardless of the guard. PIT empirically proved
+  the suite could not see the most famous data-loss bug in Raft.
+
+The fix (this session):
+  The test now CONSTRUCTS Raft Figure 8 and drives the PRODUCTION
+  maybeAdvanceCommitIndex via the real handleAppendEntriesResponse entry point:
+    (a) n1 leader@term1 proposes X; X delivered to n2 only, n2's ack dropped ->
+        X (term1, idx2) is in the log but uncommitted.
+    (b) n1 is RE-ELECTED at term2 holding X, stopped the instant it wins so its
+        current-term no-op (idx3, term2) is NOT yet committed (commitIndex=1).
+        Log shape: idx1=t1(noop), idx2=t1(X), idx3=t2(noop).
+    (c) a follower reports matchIndex=idx2 -> X is at a QUORUM {n1,reporter} but
+        is a PRIOR-term entry. The guard MUST refuse to commit it.
+    (d) a follower reports matchIndex=idx3 -> the CURRENT-term no-op reaches a
+        quorum, commit advances to 3, committing X indirectly (§5.4.2 liveness).
+
+Discrimination (verified 2026-06-11):
+  GUARD PRESENT (production):
+    Tests run: 1, Failures: 0  — BUILD SUCCESS
+    step (c): commitIndex stays 1 (X not committed by replication count).
+  GUARD REMOVED (`if (log.termAt(n) != currentTerm)` -> `if (false)`, the PIT
+  mutant):
+    Tests run: 1, Failures: 1  — BUILD FAILURE
+    org.opentest4j.AssertionFailedError: §5.4.2: the prior-term entry X (idx=2,
+      term=1) is at a quorum but MUST NOT be committed by replication count
+      alone ... ==> expected: <1> but was: <2>
+    step (c): commitIndex jumps to 2 — the Figure-8 lost-write — and the test
+    catches it.
+
+The new test KILLS the exact mutant the old tautological body could not see.
