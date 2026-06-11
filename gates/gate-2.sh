@@ -88,7 +88,46 @@ step_seeds() {
 }
 
 step_linzgate() {
-  echo "GATE-2 linzgate: NOT WIRED — failing loudly (B5 gate-2 step spec pending)"; return 1
+  cd "$ROOT"
+  # (i) checker self-tests (count-agnostic: BUILD SUCCESS + 0 skips; the suite
+  # grew 6->7->8 this session and the gate must not rot on the number).
+  if [ -z "${PORCUPINE_BIN:-}" ]; then
+    local GO=""
+    if command -v go >/dev/null 2>&1; then GO=go;
+    elif [ -x "$HOME/sdk/go/bin/go" ]; then GO="$HOME/sdk/go/bin/go"; fi
+    [ -n "$GO" ] || { echo "GATE-2 linzgate: no Go toolchain and PORCUPINE_BIN unset"; return 1; }
+    GOTOOLCHAIN=local "$GO" -C "$ROOT/configd-linz/src/main/go/porcupine-check" \
+      build -o "$ROOT/configd-linz/bin/porcupine-check" .
+    export PORCUPINE_BIN="$ROOT/configd-linz/bin/porcupine-check"
+  fi
+  $MVN -q -pl configd-linz -am test -Dtest='CheckerSelfTest,HistoryWriterUnitTest' \
+    -Dsurefire.failIfNoSpecifiedTests=false 2>&1 | tee "$LOGDIR/linz-selftests.log" | tail -3
+  grep -qE "BUILD SUCCESS" "$LOGDIR/linz-selftests.log" || { echo "GATE-2 linzgate: self-tests FAILED"; return 1; }
+  if grep -qE "Skipped: [1-9]" "$LOGDIR/linz-selftests.log"; then
+    echo "GATE-2 linzgate: self-tests SKIPPED tests (PORCUPINE_BIN gating?) — failing"; return 1
+  fi
+  # (ii) sim-history linearizability over the gate seed (cheap, no cluster, no sudo).
+  $MVN -q -pl configd-testkit -am test -Dtest='OpHistoryTest' \
+    -Dsurefire.failIfNoSpecifiedTests=false 2>&1 | tee "$LOGDIR/linz-simhist-gen.log" | tail -3
+  grep -qE "BUILD SUCCESS" "$LOGDIR/linz-simhist-gen.log" || { echo "GATE-2 linzgate: sim-history generation FAILED"; return 1; }
+  local hist
+  hist="$(ls "$ROOT"/configd-testkit/target/sim-histories/history-*.jsonl 2>/dev/null | head -1 || true)"
+  [ -n "$hist" ] || { echo "GATE-2 linzgate: no sim history emitted"; return 1; }
+  java --enable-preview -cp "$ROOT/configd-linz/target/classes" \
+    io.configd.linz.runner.SimHistoryCheck "$hist" 2>&1 | tee "$LOGDIR/linz-simhist.log" | tail -2
+  grep -q "LINEARIZABLE" "$LOGDIR/linz-simhist.log" || { echo "GATE-2 linzgate: sim-history check not LINEARIZABLE"; return 1; }
+  # (iii) live faulted seed-matrix (needs sudo iptables + a fresh shaded jar) —
+  # NIGHTLY variant, opt-in. Discrimination runs are deliberately NOT gated
+  # (they mutate source; they are harness verification, captured under
+  # docs/session-2/captures/linz-discrimination.txt and re-runnable manually).
+  if [ "${GATE2_FAULTED:-0}" = "1" ]; then
+    $MVN -q -pl configd-server -am clean package -DskipTests >/dev/null
+    bash "$ROOT/configd-linz/scripts/run-gate.sh" "2001 2002 2003 2004" 2>&1 | tee "$LOGDIR/linz-faulted.log" | tail -5
+    grep -q "GATE (iii)+(iv) PASS" "$LOGDIR/linz-faulted.log" || { echo "GATE-2 linzgate: faulted seed matrix FAILED"; return 1; }
+  else
+    echo "GATE-2 linzgate: faulted live matrix SKIPPED (GATE2_FAULTED!=1 — LOUD: nightly/self-hosted only)"
+  fi
+  echo "GATE-2 linzgate: OK"
 }
 
 step_mutation() {
@@ -108,7 +147,18 @@ step_jcstress() {
 }
 
 step_assertions() {
-  echo "GATE-2 assertions: NOT WIRED — failing loudly (B7 twin manifest pending)"; return 1
+  cd "$ROOT"
+  # Machine-checkable twin manifest: every spec invariant's runtime twin is
+  # OBSERVED to fire (AssertionTwinFiringTest, both owning modules), and the
+  # human-readable matrix contains no UNVERIFIED status cell.
+  $MVN -q -pl configd-consensus-core,configd-config-store -am test \
+    -Dtest='AssertionTwinFiringTest' -Dsurefire.failIfNoSpecifiedTests=false \
+    2>&1 | tee "$LOGDIR/assertions.log" | tail -3
+  grep -qE "BUILD SUCCESS" "$LOGDIR/assertions.log" || { echo "GATE-2 assertions: twin firing tests FAILED"; return 1; }
+  if grep -qE '\| *UNVERIFIED' "$ROOT/docs/session-2/assertion-verification.md"; then
+    echo "GATE-2 assertions: matrix contains an UNVERIFIED row"; return 1
+  fi
+  echo "GATE-2 assertions: OK (every twin observed firing; matrix complete)"
 }
 
 # ---- child-process dispatch -------------------------------------------------
