@@ -79,5 +79,5 @@ configd-server 125/0/0/0, configd-testkit 1168/0 (2 expected nightly skips).
 
 ## Sign-off
 
-- review-architect: _pending_
+- review-architect: **SIGN-OFF** 2026-06-11 — DONE per charter §1 rule 2 (507-seed sweep reviewer-reproduced safetyViolations=0; unit/property battery green; prior conditions 1-4 honored, 5-6 C2-scheduled). 1 REQUIRED (register hygiene, C4-tracked) + 4 NOTEs, none prod-blocking. See `docs/session-3/reviews/c1-signoff-review.md`.
 - contract-qa-engineer: _pending_
