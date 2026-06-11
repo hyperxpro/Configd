@@ -78,4 +78,48 @@
             </plugin>
         </plugins>
     </build>
+
+    <profiles>
+        <!--
+          B3 / RR-087: configd-server seam mutation MEASUREMENT. RR-087 is a
+          COVERAGE finding (the deployable artifact's correctness seams were at
+          61% line / 46% branch, the auth gate and the real network seam at
+          zero), so the primary before/after evidence is JaCoCo (parent
+          `-Pmutation` wires prepare-agent + report). This profile additionally
+          measures mutation strength over the correctness-bearing seam classes
+          — the HTTP handler + auth gate, arg parsing, the transport adapter,
+          and the wire codec — so the new HTTP-level / loopback tests can be
+          shown to KILL mutants, not just execute lines.
+
+          No hard mutationThreshold gate here: configd-server is NOT one of the
+          three charter §4.1 gate-enforced bars (consensus-core 70/80,
+          distribution-service 65), and a full-module ConfigdServer PIT run is
+          heavy and starts background sockets/executors. We scope to the seam
+          classes and let gate-2 enforce the consensus/distribution bars.
+        -->
+        <profile>
+            <id>mutation</id>
+            <build>
+                <plugins>
+                    <plugin>
+                        <groupId>org.pitest</groupId>
+                        <artifactId>pitest-maven</artifactId>
+                        <configuration>
+                            <targetClasses>
+                                <param>io.configd.server.HttpApiServer*</param>
+                                <param>io.configd.server.ServerConfig*</param>
+                                <param>io.configd.server.RaftTransportAdapter*</param>
+                                <param>io.configd.server.RaftMessageCodec*</param>
+                                <param>io.configd.server.StrongReadPolicy*</param>
+                            </targetClasses>
+                            <targetTests>
+                                <param>io.configd.server.*</param>
+                            </targetTests>
+                            <failWhenNoMutations>true</failWhenNoMutations>
+                        </configuration>
+                    </plugin>
+                </plugins>
+            </build>
+        </profile>
+    </profiles>
 </project>

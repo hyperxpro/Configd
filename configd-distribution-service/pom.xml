@@ -37,4 +37,70 @@
             <artifactId>jctools-core</artifactId>
         </dependency>
     </dependencies>
+
+    <profiles>
+        <!--
+          B3 / RR-087 (distribution-service control-plane mutation, charter
+          §4.1). Activated with the parent `-Pmutation`. This module is mixed:
+          a live CONTROL PLANE (the commit-notification boundary that landed in
+          S2 §4.6 / ADR-0034 — the surface Session 3 consumes — plus the active
+          watch/dissemination path) and SHELFWARE (the RR-001 edge-data-plane
+          fan-out/gossip machinery, blocked on the implement-or-descope ADR).
+
+          We hold the CONTROL PLANE to mutationThreshold 65 and EXCLUDE the
+          shelfware explicitly (listed, never silently omitted — the RR-012 /
+          RR-085 lesson). RR-088 tracks raising the shelfware once RR-001 is
+          resolved; until then a 65 bar over dead-pending code would be noise.
+
+          CONTROL-PLANE targetClasses (held to 65):
+            CommitNotification, CommitNotificationSource, FanOutBuffer,
+            FanOutMetrics, ReplaySource, SnapshotReplaySource  (§4.6/ADR-0034
+                commit-notification boundary — the just-landed control plane);
+            WatchService, WatchCoalescer, WatchEvent, SubscriptionManager,
+            PlumtreeNode, RolloutController                    (active watch /
+                dissemination / rollout control plane).
+
+          EXCLUDED shelfware (RR-088 / RR-001 — no consumer-facing wire path
+          exists yet; tracked, not held to a bar here):
+            HyParViewOverlay   — gossip membership overlay; failure-repair
+                                 machinery untested, pending the edge data plane.
+            CatchUpService     — untouched; part of the unbuilt fan-out drain.
+            SlowConsumerPolicy — no consumer; pending the wire path.
+        -->
+        <profile>
+            <id>mutation</id>
+            <build>
+                <plugins>
+                    <plugin>
+                        <groupId>org.pitest</groupId>
+                        <artifactId>pitest-maven</artifactId>
+                        <configuration>
+                            <targetClasses>
+                                <param>io.configd.distribution.CommitNotification*</param>
+                                <param>io.configd.distribution.FanOut*</param>
+                                <param>io.configd.distribution.ReplaySource*</param>
+                                <param>io.configd.distribution.SnapshotReplaySource*</param>
+                                <param>io.configd.distribution.WatchService*</param>
+                                <param>io.configd.distribution.WatchCoalescer*</param>
+                                <param>io.configd.distribution.WatchEvent*</param>
+                                <param>io.configd.distribution.SubscriptionManager*</param>
+                                <param>io.configd.distribution.PlumtreeNode*</param>
+                                <param>io.configd.distribution.RolloutController*</param>
+                            </targetClasses>
+                            <excludedClasses>
+                                <param>io.configd.distribution.HyParViewOverlay*</param>
+                                <param>io.configd.distribution.CatchUpService*</param>
+                                <param>io.configd.distribution.SlowConsumerPolicy*</param>
+                            </excludedClasses>
+                            <targetTests>
+                                <param>io.configd.distribution.*</param>
+                            </targetTests>
+                            <mutationThreshold>65</mutationThreshold>
+                            <failWhenNoMutations>true</failWhenNoMutations>
+                        </configuration>
+                    </plugin>
+                </plugins>
+            </build>
+        </profile>
+    </profiles>
 </project>

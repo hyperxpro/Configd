@@ -214,4 +214,115 @@
             </plugin>
         </plugins>
     </build>
+
+    <profiles>
+        <!--
+          B3 / RR-085–RR-092: the `-Pmutation` mutation-testing + coverage
+          profile. Lives in a PROFILE (not the always-on build) so it never
+          slows the default reactor build or gate-1 (PIT is ~25 min/module on
+          2 vCPU). gate-2 step (e) activates it.
+
+          Threshold enforcement is per MODULE: the parent only supplies the
+          shared plugin configuration (mutators, threads, timeouts, JDK-25
+          preview flag, report formats). Each target module's own pom declares
+          a `mutation` profile with its `targetClasses` / `excludedClasses` /
+          `mutationThreshold` so the build FAILS under threshold
+          (charter §4.1). Modules without a `mutation` profile inherit only the
+          config and are not mutation-tested.
+
+          Tooling versions are the test-forensics §5 working recipe:
+            PIT 1.25.4 + pitest-junit5-plugin 1.2.3 parse JDK-25 class files
+            (major 69); JaCoCo 0.8.14 likewise. The `@{argLine}` surefire
+            prepend lets JaCoCo's prepare-agent inject its agent while keeping
+            the inherited enable-preview flag.
+        -->
+        <profile>
+            <id>mutation</id>
+            <properties>
+                <!-- Empty default so surefire's late-bound @{argLine} resolves
+                     when the JaCoCo agent is absent; prepare-agent overwrites
+                     it at runtime. -->
+                <argLine></argLine>
+            </properties>
+            <build>
+                <pluginManagement>
+                    <plugins>
+                        <plugin>
+                            <groupId>org.apache.maven.plugins</groupId>
+                            <artifactId>maven-surefire-plugin</artifactId>
+                            <configuration>
+                                <!-- @{argLine} prepended so the JaCoCo agent
+                                     (set via the argLine property) is honoured;
+                                     the inherited enable-preview flag is kept. -->
+                                <argLine>@{argLine} --enable-preview</argLine>
+                            </configuration>
+                        </plugin>
+                        <plugin>
+                            <groupId>org.jacoco</groupId>
+                            <artifactId>jacoco-maven-plugin</artifactId>
+                            <version>0.8.14</version>
+                            <executions>
+                                <execution>
+                                    <id>mutation-jacoco-prepare</id>
+                                    <goals>
+                                        <goal>prepare-agent</goal>
+                                    </goals>
+                                </execution>
+                                <execution>
+                                    <id>mutation-jacoco-report</id>
+                                    <phase>test</phase>
+                                    <goals>
+                                        <goal>report</goal>
+                                    </goals>
+                                </execution>
+                            </executions>
+                        </plugin>
+                        <plugin>
+                            <groupId>org.pitest</groupId>
+                            <artifactId>pitest-maven</artifactId>
+                            <version>1.25.4</version>
+                            <dependencies>
+                                <dependency>
+                                    <groupId>org.pitest</groupId>
+                                    <artifactId>pitest-junit5-plugin</artifactId>
+                                    <version>1.2.3</version>
+                                </dependency>
+                            </dependencies>
+                            <configuration>
+                                <mutators>
+                                    <mutator>DEFAULTS</mutator>
+                                </mutators>
+                                <threads>2</threads>
+                                <timeoutConstant>8000</timeoutConstant>
+                                <timeoutFactor>1.5</timeoutFactor>
+                                <jvmArgs>
+                                    <jvmArg>--enable-preview</jvmArg>
+                                </jvmArgs>
+                                <outputFormats>
+                                    <outputFormat>XML</outputFormat>
+                                    <outputFormat>HTML</outputFormat>
+                                </outputFormats>
+                                <timestampedReports>false</timestampedReports>
+                                <!-- Default: do not fail when no targetClasses
+                                     are declared (so non-target modules are
+                                     inert under -Pmutation). Target modules
+                                     override failWhenNoMutations + threshold. -->
+                                <failWhenNoMutations>false</failWhenNoMutations>
+                            </configuration>
+                        </plugin>
+                    </plugins>
+                </pluginManagement>
+                <plugins>
+                    <plugin>
+                        <groupId>org.jacoco</groupId>
+                        <artifactId>jacoco-maven-plugin</artifactId>
+                    </plugin>
+                    <plugin>
+                        <groupId>org.pitest</groupId>
+                        <artifactId>pitest-maven</artifactId>
+                    </plugin>
+                </plugins>
+            </build>
+        </profile>
+    </profiles>
 </project>

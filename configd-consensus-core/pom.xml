@@ -57,4 +57,84 @@
             </plugin>
         </plugins>
     </build>
+
+    <profiles>
+        <!--
+          B3 / RR-085: consensus-core mutation thresholds (charter §4.1).
+          Activated with the parent `-Pmutation` profile, which supplies the
+          shared PIT/JaCoCo plugin config; this module adds the targetClasses
+          split and the enforced thresholds.
+
+          TWO enforced runs (gate-2 step (e) runs both):
+            * `mutation`        — MODULE-WIDE, mutationThreshold 70 over the
+                                  whole consensus package.
+            * `mutation-kernel` — the SAFETY KERNEL only, mutationThreshold 80.
+
+          SAFETY-KERNEL DEFINITION (the "election/log/commit/persistence"
+          classes, by class because the whole module is one package
+          io.configd.raft):
+            RaftNode          — election, commit-rule (§5.4.2), leader/append,
+                                ReadIndex dispatch, snapshot install.
+            RaftLog           — the log + WAL persistence/truncation/compaction
+                                (durable-prefix).
+            DurableRaftState  — term + vote persistence (Election Safety).
+            ReadIndexState    — linearizable-read commit/confirmation state.
+            ClusterConfig     — quorum / joint-consensus membership math.
+          The remaining classes are the sealed RaftMessage records, enums
+          (RaftRole), the small value types (LogEntry, SnapshotState,
+          CommitOutcome, ProposeOutcome, ProposalResult, RaftConfig,
+          RaftMetrics) and the RaftTransport/StateMachine SAM interfaces —
+          boilerplate/value carriers, not the safety logic; they count toward
+          the 70 module-wide bar but are NOT held to the 80 kernel bar.
+
+          No shelfware is excluded here: every consensus-core class is live on
+          the consensus path.
+        -->
+        <profile>
+            <id>mutation</id>
+            <build>
+                <plugins>
+                    <plugin>
+                        <groupId>org.pitest</groupId>
+                        <artifactId>pitest-maven</artifactId>
+                        <configuration>
+                            <targetClasses>
+                                <param>io.configd.raft.*</param>
+                            </targetClasses>
+                            <targetTests>
+                                <param>io.configd.raft.*</param>
+                            </targetTests>
+                            <mutationThreshold>70</mutationThreshold>
+                            <failWhenNoMutations>true</failWhenNoMutations>
+                        </configuration>
+                    </plugin>
+                </plugins>
+            </build>
+        </profile>
+        <profile>
+            <id>mutation-kernel</id>
+            <build>
+                <plugins>
+                    <plugin>
+                        <groupId>org.pitest</groupId>
+                        <artifactId>pitest-maven</artifactId>
+                        <configuration>
+                            <targetClasses>
+                                <param>io.configd.raft.RaftNode*</param>
+                                <param>io.configd.raft.RaftLog*</param>
+                                <param>io.configd.raft.DurableRaftState*</param>
+                                <param>io.configd.raft.ReadIndexState*</param>
+                                <param>io.configd.raft.ClusterConfig*</param>
+                            </targetClasses>
+                            <targetTests>
+                                <param>io.configd.raft.*</param>
+                            </targetTests>
+                            <mutationThreshold>80</mutationThreshold>
+                            <failWhenNoMutations>true</failWhenNoMutations>
+                        </configuration>
+                    </plugin>
+                </plugins>
+            </build>
+        </profile>
+    </profiles>
 </project>

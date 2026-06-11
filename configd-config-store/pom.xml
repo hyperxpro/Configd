@@ -28,4 +28,38 @@
             <artifactId>agrona</artifactId>
         </dependency>
     </dependencies>
+
+    <profiles>
+        <!--
+          B3 / RR-092: config-store mutation measurement. The module is already
+          above the 60 line (Session-1 71%); RR-092 closes specific point holes
+          (delete/applyBatch version-regression guards; decodeTrailer boundary
+          checks). This profile measures the whole store package and locks a 70
+          regression floor so a future change that re-opens those holes fails
+          the gate. Not one of the three charter §4.1 gate-2-enforced bars
+          (those are consensus-core 70/80 and distribution-service 65), but
+          wired so RR-092's gains are durable.
+        -->
+        <profile>
+            <id>mutation</id>
+            <build>
+                <plugins>
+                    <plugin>
+                        <groupId>org.pitest</groupId>
+                        <artifactId>pitest-maven</artifactId>
+                        <configuration>
+                            <targetClasses>
+                                <param>io.configd.store.*</param>
+                            </targetClasses>
+                            <targetTests>
+                                <param>io.configd.store.*</param>
+                            </targetTests>
+                            <mutationThreshold>70</mutationThreshold>
+                            <failWhenNoMutations>true</failWhenNoMutations>
+                        </configuration>
+                    </plugin>
+                </plugins>
+            </build>
+        </profile>
+    </profiles>
 </project>
