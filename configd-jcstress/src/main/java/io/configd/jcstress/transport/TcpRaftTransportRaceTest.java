@@ -64,12 +64,14 @@ public final class TcpRaftTransportRaceTest {
 
         @Arbiter
         public void arbiter(I_Result r) {
-            // After both, drain any pending connect to completion (the connector
-            // would run it). If frames remain queued, a connect MUST be pending or
-            // have run; out!=null OR a scheduled/in-flight connect covers delivery.
+            // No-wedge invariant: if frames remain queued, delivery must be covered
+            // by EITHER a live connection (out != null → its writer drains) OR a
+            // connect that is currently pending/in-flight (pendingConnects > 0 ||
+            // connectInFlight). The wedge bug is frames queued with out == null AND
+            // no connect pending AND not in-flight — nothing will ever drain them.
             boolean framesRemain = p.queueSize() > 0;
             boolean connectPath = p.out() != null
-                    || p.scheduledConnects.get() > 0
+                    || p.pendingConnects.get() > 0
                     || p.connectInFlight.get();
             r.r1 = (!framesRemain || connectPath) ? 1 : 9;
         }
@@ -82,20 +84,20 @@ public final class TcpRaftTransportRaceTest {
     @JCStressTest
     @State
     @Description("(2) scheduleConnect CAS vs connect finally reset — exactly one pending connect")
-    @Outcome(id = "1", expect = Expect.ACCEPTABLE, desc = "frames remain → a connect is pending/in-flight")
+    @Outcome(id = "1", expect = Expect.ACCEPTABLE, desc = "frames remain → exactly one connect pending/in-flight")
     @Outcome(id = "0", expect = Expect.ACCEPTABLE, desc = "queue genuinely empty → no connect needed")
-    @Outcome(id = "9", expect = Expect.FORBIDDEN, desc = "LOST RESCHEDULE: frames remain, no connect pending")
+    @Outcome(id = "9", expect = Expect.FORBIDDEN, desc = "LOST RESCHEDULE (0 pending w/ frames) or DOUBLE SCHEDULE (>1 pending)")
     public static class CasVsFinallyReset {
         final PeerModel p = new PeerModel(4);
 
         public CasVsFinallyReset() {
-            p.enqueueOrDrop(new byte[]{1}); // one frame queued, a connect scheduled
+            p.enqueueOrDrop(new byte[]{1}); // one frame queued, a connect scheduled (pending=1)
         }
 
         @Actor
         public void connector() {
             // The scheduled connect runs and FAILS; its finally resets the flag and
-            // reschedules because the queue is non-empty.
+            // reschedules because the queue is non-empty (pending: 1 -> 0 -> 1).
             p.connectAndStartWriterFailure();
         }
 
@@ -107,12 +109,23 @@ public final class TcpRaftTransportRaceTest {
 
         @Arbiter
         public void arbiter(I_Result r) {
+            // Invariant: connectInFlight (single-in-flight CAS) admits AT MOST one
+            // pending connect at a time. After the race, if frames remain there must
+            // be exactly one connect pending (the finally's reschedule OR the sender's
+            // — never both, never neither). pendingConnects models scheduled-not-run.
             boolean framesRemain = p.queueSize() > 0;
-            boolean connectPending = p.connectInFlight.get() || p.scheduledConnects.get() > 0;
+            int pending = p.pendingConnects.get();
             if (!framesRemain) {
-                r.r1 = 0;
+                // Genuinely empty queue → no connect needed; but if one is still
+                // pending that is harmless (it will run and find nothing). Either is
+                // legal; 0 keeps the outcome distinct from the frames-remain case.
+                r.r1 = (pending <= 1) ? 0 : 9; // >1 pending is a double-schedule even when empty
             } else {
-                r.r1 = connectPending ? 1 : 9;
+                // Exactly one pending (or in-flight) is correct; 0 = lost reschedule,
+                // >1 = double schedule. Both forbidden.
+                boolean exactlyOne = (pending == 1)
+                        || (pending == 0 && p.connectInFlight.get());
+                r.r1 = exactlyOne ? 1 : 9;
             }
         }
     }

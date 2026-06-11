@@ -53,8 +53,16 @@ public final class PeerModel {
     public final AtomicInteger writersStarted = new AtomicInteger();
     /** Set if a writer was ever started against a null stream (a publish/visibility bug). */
     public final AtomicBoolean writerSawNullStream = new AtomicBoolean(false);
-    /** Number of connects actually handed to the (modelled) connector. */
+    /** Number of connects actually handed to the (modelled) connector (monotonic, lifetime). */
     public final AtomicInteger scheduledConnects = new AtomicInteger();
+    /**
+     * Connects currently PENDING (scheduled-but-not-yet-run): incremented when a
+     * connect is handed to the connector, decremented when the connector picks it
+     * up to run. The {@code connectInFlight} CAS guarantees this never exceeds 1;
+     * a value &gt; 1 is a double-schedule, a value of 0 with frames still queued is
+     * a lost reschedule. Lets the (2) test detect BOTH failure shapes.
+     */
+    public final AtomicInteger pendingConnects = new AtomicInteger();
     /** A monotonic id generator for published streams. */
     private final AtomicInteger streamIds = new AtomicInteger();
     /** "running" flag — true for the lifetime of a test (close() flips closed, not this). */
@@ -105,6 +113,7 @@ public final class PeerModel {
         }
         // Source then calls connectExecutor.schedule(this::connectAndStartWriter).
         scheduledConnects.incrementAndGet();
+        pendingConnects.incrementAndGet(); // a connect is now pending until the connector runs it
     }
 
     /**
@@ -113,6 +122,7 @@ public final class PeerModel {
      * stream (in source order) and start exactly one writer, then run the finally.
      */
     public void connectAndStartWriterSuccess() {
+        pendingConnects.decrementAndGet(); // the connector picked up the scheduled connect
         boolean connected = false;
         try {
             if (closed.get() || !running.get()) {
@@ -139,6 +149,7 @@ public final class PeerModel {
      * no publish, run the finally (reset flag, reschedule if frames remain).
      */
     public void connectAndStartWriterFailure() {
+        pendingConnects.decrementAndGet(); // the connector picked up the scheduled connect
         boolean connected = false;
         try {
             if (closed.get() || !running.get()) {
