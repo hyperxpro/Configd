@@ -106,6 +106,15 @@ final class EdgeActor {
     private boolean alive = true;
     private boolean lagging;
 
+    /**
+     * OBSERVER-ONLY apply seam (Phase V2). Fired on every {@code APPLIED} notification
+     * so the {@link io.configd.probe.PropagationProbe} can sample logical visibility
+     * time. Defaults to {@link EdgeApplyObserver#NONE} (no-op) so V1 behavior and the
+     * determinism digest are unchanged. Survives crash/restart — it is a harness
+     * binding, not edge state, so {@link #freshState()} does not touch it.
+     */
+    private EdgeApplyObserver applyObserver = EdgeApplyObserver.NONE;
+
     // Per-tick / lifetime counters surfaced to EdgeActivity and the invariants.
     private int gapsDetected;
     private int snapshotsApplied;
@@ -184,6 +193,10 @@ final class EdgeActor {
                 // delta + same clock ⇒ byte-identical to the client's store.
                 readStore.applyDelta(notification.delta());
                 cursor = notification.seq();
+                // OBSERVER-ONLY (Phase V2): sample logical visibility time. Reads only
+                // already-computed values; NONE by default → no behavior/digest change.
+                applyObserver.onApplied(edgeId, notification.seq(),
+                        notification.commitTimestampMillis(), timeSource.getAsLong());
             }
             case GAP_DETECTED -> gapsDetected++;
             case STALE_DELTA -> {
@@ -250,6 +263,15 @@ final class EdgeActor {
         lagging = false;
         inbox.clear();
         freshState();
+    }
+
+    /**
+     * Attaches the OBSERVER-ONLY Phase V2 apply seam. Passing
+     * {@link EdgeApplyObserver#NONE} (the default) is a no-op. Never affects behavior
+     * or the determinism digest — see {@link EdgeApplyObserver}.
+     */
+    void setApplyObserver(EdgeApplyObserver observer) {
+        this.applyObserver = (observer == null) ? EdgeApplyObserver.NONE : observer;
     }
 
     /** Stops inbox processing; the inbox keeps queueing (models a lagging consumer). */

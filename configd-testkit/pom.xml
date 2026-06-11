@@ -51,10 +51,35 @@
             <artifactId>configd-distribution-service</artifactId>
             <version>${project.version}</version>
         </dependency>
+        <!--
+          S3 Phase V2 (charter §3 V2): LivePropagationProbeMain starts an in-process
+          single-node ConfigdServer and tails its ADR-0034 commit-notification boundary
+          to measure live commit->boundary propagation. This is an internal reactor
+          module (no new external dependency); configd-server does NOT depend on
+          configd-testkit in any scope, so the reactor simply topologically orders
+          configd-server before configd-testkit — no cycle.
+        -->
+        <dependency>
+            <groupId>io.configd</groupId>
+            <artifactId>configd-server</artifactId>
+            <version>${project.version}</version>
+        </dependency>
         <dependency>
             <groupId>io.configd</groupId>
             <artifactId>configd-transport</artifactId>
             <version>${project.version}</version>
+        </dependency>
+        <!--
+          S3 Phase V2 (charter §3 V2): the synthetic propagation probe records
+          staleness distributions via HdrHistogram (PropagationProbe, io.configd.probe).
+          Version is pinned in the root pom dependencyManagement (2.2.2); this is an
+          already-managed dependency, NOT a new external one. It is already present
+          transitively on the test classpath (observability → LatencyUtils), declared
+          here explicitly because the probe lives in src/main/java.
+        -->
+        <dependency>
+            <groupId>org.hdrhistogram</groupId>
+            <artifactId>HdrHistogram</artifactId>
         </dependency>
         <dependency>
             <groupId>org.junit.jupiter</groupId>

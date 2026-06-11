@@ -6,6 +6,7 @@ import io.configd.distribution.CommitNotificationSource;
 import io.configd.distribution.FanOutBuffer;
 import io.configd.distribution.ReplaySource;
 import io.configd.distribution.SnapshotReplaySource;
+import io.configd.probe.PropagationProbe;
 import io.configd.store.ConfigDelta;
 import io.configd.store.ConfigSnapshot;
 
@@ -14,6 +15,7 @@ import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 
 /**
@@ -88,6 +90,15 @@ final class EdgeFanOutSim {
     /** Per-cpNode seqs already turned into a liveness obligation (dedup). */
     private final Map<Integer, Set<Long>> recordedPublications = new HashMap<>();
 
+    /**
+     * OBSERVER-ONLY propagation probe (Phase V2 — charter §3 V2). Null until
+     * {@link #attachProbe} is called. When attached it samples
+     * {@code recordPublished} at the FanOutBuffer publish site and {@code recordVisible}
+     * at each edge's apply moment. Strictly observer-only: it reads already-computed
+     * values and never perturbs the determinism digest ({@code ProbeMechanismTest}).
+     */
+    private PropagationProbe probe;
+
     private long currentTimeMs;
     private int tickIndex;
     private int edgeFaultCursor;
@@ -138,6 +149,12 @@ final class EdgeFanOutSim {
                 long commitTimestampMillis = cpSim.currentTime();
                 buffer.publish(new CommitNotification(version, commitTimestampMillis, delta));
                 recordPublicationObligation(version, cpNode, commitTimestampMillis);
+                // OBSERVER-ONLY (Phase V2): publish ts = leader commit timestamp
+                // (ADR-0035 §2 / contract §2 INV-S1). Keyed by seq; overwriting on a
+                // re-publish is idempotent. No-op when no probe is attached.
+                if (probe != null) {
+                    probe.recordPublished(version, commitTimestampMillis);
+                }
             });
         }
 
@@ -178,6 +195,28 @@ final class EdgeFanOutSim {
     // -----------------------------------------------------------------------
     // Accessors
     // -----------------------------------------------------------------------
+
+    /**
+     * Attaches an OBSERVER-ONLY {@link io.configd.probe.PropagationProbe} (Phase V2 —
+     * charter §3 V2). Publish samples are fed at the FanOutBuffer publish site
+     * (publish ts = leader commit timestamp); visibility samples are fed at each edge's
+     * apply moment (visible ts = logical sim time) via the {@link EdgeApplyObserver}
+     * seam. The probe records {@code staleness = visibleTs − publishTs} (contract §2
+     * INV-S1) per seq and edge.
+     * <p>
+     * This is strictly observer-only and MUST NOT change behavior or the determinism
+     * digest — {@code ProbeMechanismTest} proves the digest is identical with and
+     * without a probe attached. Idempotent re-attach replaces the probe binding.
+     *
+     * @param probe the probe to attach (non-null)
+     */
+    void attachProbe(PropagationProbe probe) {
+        this.probe = Objects.requireNonNull(probe, "probe must not be null");
+        for (EdgeActor edge : edges) {
+            edge.setApplyObserver((edgeId, seq, commitTsMillis, visibleTsMillis) ->
+                    probe.recordVisible(edgeId, seq, visibleTsMillis));
+        }
+    }
 
     EdgeActivity activity() { return activity; }
 

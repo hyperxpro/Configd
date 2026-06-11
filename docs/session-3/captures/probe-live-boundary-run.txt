@@ -1,0 +1,41 @@
+=== Configd propagation probe — LIVE BOUNDARY MODE ===
+BOUNDARY-ONLY MODE: no edge data plane exists yet (RR-001); this measures commit->boundary visibility, not edge staleness. Edge mode lands with C6.
+HARDWARE CAVEAT: 2-vCPU throttled box — wall-clock numbers are honest but not a performance target (Session 5 owns p99 < 500 ms).
+staleness sample = visible_ts(System.currentTimeMillis at consume) - publish_ts(CommitNotification.commitTimestampMillis, ADR-0035 §2 / contract §2 INV-S1)
+writes=200 key-prefix=probe/ api-port=18080 node-id=1
+
+WARNING: ************************************************************
+WARNING: Authentication is DISABLED (--auth-token not set).
+WARNING: All write/delete/admin endpoints are unauthenticated.
+WARNING: DO NOT run in production without --auth-token.
+WARNING: ************************************************************
+  Write rate   : 10000/s (burst 10000)
+  Strong reads : [secure/] (fail-closed linearizable, ADR-0030 INV-1)
+drove 200 committed writes; highest seq=200
+
+=== propagation staleness: scope=observer-0 ===
+  count   = 200
+  min     = 0 ms
+  p50     = 0 ms
+  p90     = 2 ms
+  p99     = 4 ms
+  p999    = 5 ms
+  p9999   = 5 ms
+  max     = 5 ms
+  unmatched = 0
+  overflow  = 0 (clamped to 600000 ms)
+PROBE-HISTOGRAM: scope=observer-0 count=200 p50=0 p99=4 p999=5 max=5 unit=ms
+=== propagation staleness: scope=global ===
+  count   = 200
+  min     = 0 ms
+  p50     = 0 ms
+  p90     = 2 ms
+  p99     = 4 ms
+  p999    = 5 ms
+  p9999   = 5 ms
+  max     = 5 ms
+  unmatched = 0
+  overflow  = 0 (clamped to 600000 ms)
+PROBE-HISTOGRAM: scope=global count=200 p50=0 p99=4 p999=5 max=5 unit=ms
+
+Configd shutting down...

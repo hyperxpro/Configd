@@ -1,0 +1,40 @@
+=== Configd propagation probe — SIM MODE (logical time) ===
+constructed staleness distribution: edge-100={+10ms,+50ms} edge-101={+499ms,+501ms}; logical time → exact, no tolerance bands.
+staleness sample = visibleTs(logical apply) - publishTs(leader commit ts, ADR-0035 §2 / contract §2 INV-S1)
+
+=== propagation staleness: scope=observer-100 ===
+  count   = 2
+  min     = 10 ms
+  p50     = 10 ms
+  p90     = 50 ms
+  p99     = 50 ms
+  p999    = 50 ms
+  p9999   = 50 ms
+  max     = 50 ms
+  unmatched = 0
+  overflow  = 0 (clamped to 600000 ms)
+PROBE-HISTOGRAM: scope=observer-100 count=2 p50=10 p99=50 p999=50 max=50 unit=ms
+=== propagation staleness: scope=observer-101 ===
+  count   = 2
+  min     = 499 ms
+  p50     = 499 ms
+  p90     = 501 ms
+  p99     = 501 ms
+  p999    = 501 ms
+  p9999   = 501 ms
+  max     = 501 ms
+  unmatched = 0
+  overflow  = 0 (clamped to 600000 ms)
+PROBE-HISTOGRAM: scope=observer-101 count=2 p50=499 p99=501 p999=501 max=501 unit=ms
+=== propagation staleness: scope=global ===
+  count   = 4
+  min     = 10 ms
+  p50     = 50 ms
+  p90     = 501 ms
+  p99     = 501 ms
+  p999    = 501 ms
+  p9999   = 501 ms
+  max     = 501 ms
+  unmatched = 0
+  overflow  = 0 (clamped to 600000 ms)
+PROBE-HISTOGRAM: scope=global count=4 p50=50 p99=501 p999=501 max=501 unit=ms
