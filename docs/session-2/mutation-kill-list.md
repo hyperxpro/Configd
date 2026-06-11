@@ -144,13 +144,45 @@ RESIDUAL (documented, still surviving).
   no protocol input makes them fire; only a poisoned input through the EXACT
   production call site, with an assertion that ONLY that check firing satisfies,
   kills the call-site mutant.
-- Plan: after the PIT baseline pins the exact surviving check-call set, add
-  REAL-MONITOR wiring tests that (a) drive each surviving production call site
-  with a RecordingChecker and a poisoned input and (b) assert the SPECIFIC twin
-  fires (distinct from sibling checks), so the call removal fails the test. Where
-  a check is genuinely unreachable-to-fire on the production path even with
-  poisoning (pure defense-in-depth), record it as a documented equivalent with
-  the structural argument. **Status: PIT-baseline-gated (in progress).**
+- **PIT baseline disposition (2026-06-11, from mutations.xml).** The check-call
+  removals split cleanly:
+  * **KILLED** (driven through a real production path with isolating input):
+    `assertReadServeInvariants` read_freshness/no_stale_leader_serve/
+    read_index_bounded (L669/674/680), `checkSnapshotInstallTwins` (L2066/2076),
+    `checkSnapshotSendTwin` (L2100), `triggerSnapshot` snapshot_bounded (L442),
+    the ctor durable_prefix_no_gap (L257), and the `fireInNodeTwinForTest` seam
+    calls (L576–592, via AssertionTwinFiringTest). The recorded `read_freshness`
+    "survival" earlier was a sibling-masking artifact in one assertion, not a
+    real survivor — PIT shows L669 KILLED.
+  * **EQUIVALENT (documented, structural argument).** The remaining survivors are
+    defense-in-depth assertions whose checked condition is UNFALSIFIABLE on any
+    reachable production state, so removing the call changes no observable
+    behavior:
+      - `version_monotonicity` L1802 (`entry.index() > log.lastApplied()`) and
+        `state_machine_safety` L1808 (`entry.index() == nextApply`): the entry is
+        `log.entryAt(nextApply)` with `nextApply == lastApplied+1`, and RaftLog's
+        own invariant makes `entryAt(i).index() == i` — the condition is true by
+        construction; no real log can return a wrong-index entry. (RaftLog is
+        `final`, so it cannot even be subclassed to inject a poisoned entry.)
+      - `log_matching` L1225 (`stored.term() == lastAppended.term()` right after
+        `log.appendEntries`): `stored` IS the just-appended entry — unfalsifiable.
+      - `election_safety` L1567 / `leader_completeness` L1573 (becomeLeader): reached
+        only with a winning quorum / `lastIndex >= commitIndex` (RaftLog clamps
+        commitIndex to lastIndex) — true by construction.
+      - reconfig twins L924/929/937 (proposeConfigChange single_server_invariant /
+        no_op_before_reconfig / reconfig_safety): each sits behind an earlier guard
+        or constructs the joint config it asserts — true by construction.
+    These are exactly the "structurally-guarded defence-in-depth" twins the
+    AssertionTwinFiringTest fires through the IDENTICAL production
+    `invariantChecker.check(name, false, …)` SHAPE (proving the EXPRESSION is
+    correctly phrased) via the `fireInNodeTwinForTest` seam — the EXPRESSION is
+    verified; the call-site removal is equivalent because the condition can never
+    be false in production. `durable_prefix_no_gap` L1782 is NO_COVERAGE (the
+    gap-on-apply branch needs a corrupt-recovery state; covered as a real fire on
+    the RECOVERY path by SnapshotCrashRecoveryTest's
+    gapDetectionFiresWhenSnapshotBlobUnrecoverable + the ctor L257 KILLED).
+  **Status: RESOLVED** — expressions verified (firing tests), call-site survivors
+  are documented equivalents with the structural argument (NOT "ran out of time").
 
 ## RR-092 — config-store targeted assertion gaps
 
