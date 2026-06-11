@@ -1,57 +1,50 @@
 ===============================================================================
- configd-linz — OFFLINE checker self-test re-verification (B5 prep, Session 2)
- Re-verifies the checker-correctness half of CM-135/CM-137 at HEAD with a
- checker built FRESH from repo Go sources. No Maven, no cluster, no iptables.
+ configd-linz — checker self-tests at HEAD (execution round, post-ADR-0033)
+ 7 CheckerSelfTest (incl. new OK-PUT pair) + 5 HistoryWriterUnitTest, via Maven,
+ against a checker built FRESH from repo Go sources.
 ===============================================================================
-date           : 2026-06-11T00:18:47Z
-branch / HEAD   : session-2-correctness @ 6cbeb21
-go toolchain    : go version go1.26.4 linux/amd64   (user-local ~/sdk/go; not on PATH)
-porcupine pin   : module configd.io/porcupine-check
+date    : 2026-06-11T03:35:35Z
+branch  : session-2-correctness @ d42e875
+go      : go version go1.26.4 linux/amd64   porcupine: module configd.io/porcupine-check
 require github.com/anishathalye/porcupine v1.2.0 // indirect
-checker source  : configd-linz/src/main/go/porcupine-check/main.go
 
---- build (offline; GOPROXY=off proves the module cache is self-sufficient) ---
-$ GOTOOLCHAIN=local GOPROXY=off go -C configd-linz/src/main/go/porcupine-check \
-      build -o configd-linz/bin/porcupine-check .
-build exit=0  -> ELF 64-bit LSB executable, x86-64, version 1 (SYSV)
+--- build checker offline (GOPROXY=off proves module cache is self-sufficient) ---
+build exit=0
 
---- checker-decided self-tests (the CheckerSelfTest verdicts, run via the binary) ---
-Each synthetic history is the PorcupineHistoryWriter encoding of a CheckerSelfTest
-case (FAIL ops dropped, INFO reads dropped, writes confirm-bound/float-to-END, OK
-reads keep [call,ret]). exit 0=LINEARIZABLE 1=NON-LINEARIZABLE 2=INDETERMINATE.
-CheckerSelfTest #6 (duplicate-token recorder precondition) is pure-Java, no checker
-call — re-verified structurally in HistoryRecorder.record()/recordPut() (throws).
-
-[PASS] test1 sequential-sane            (GREEN) exit=0 (want 0)  VERDICT: LINEARIZABLE
-[PASS] test2 stale-read-anomaly         (RED) exit=1 (want 1)  VERDICT: NON-LINEARIZABLE
-[PASS] test3a timeout-as-INFO           (GREEN) exit=0 (want 0)  VERDICT: LINEARIZABLE
-[PASS] test3b timeout-flipped-to-FAIL   (RED) exit=1 (want 1)  VERDICT: NON-LINEARIZABLE
-[PASS] test4a linread-503-INFO          (GREEN) exit=0 (want 0)  VERDICT: LINEARIZABLE
-[PASS] test4b linread-503-flip-to-OK    (RED) exit=1 (want 1)  VERDICT: NON-LINEARIZABLE
-[PASS] test5a stale-GET-as-INFO         (GREEN) exit=0 (want 0)  VERDICT: LINEARIZABLE
-[PASS] test5b stale-GET-as-linread      (RED) exit=1 (want 1)  VERDICT: NON-LINEARIZABLE
-
-RESULT: 8/8 checker-decided self-test verdicts correct
-        (= CheckerSelfTest 6/6: tests 3,4,5 are GREEN/RED pairs => 8 checker calls;
-         the decisive info<->fail and info<->ok flips all behave.)
-
---- RED diagnostic (PORCUPINE_DUMP=1) on test2 stale-read-anomaly ---
-key "k"                      ops=5     -> Illegal
-  --- ops for illegal key "k" (sorted by call) ---
-  c0  write val="v1"               call=1            ret=3
-  c0  read  val="v1"               call=2            ret=3
-  c0  write val="v2"               call=4            ret=6
-  c1  read  val="v2"               call=5            ret=6
-  c2  read  val="v1"               call=7            ret=8
-VERDICT: NON-LINEARIZABLE
-
---- edge: empty history ---
-(empty history)
+--- Maven: CheckerSelfTest + HistoryWriterUnitTest (targeted -pl configd-linz -am) ---
+$ PORCUPINE_BIN=... ./mvnw -pl configd-linz -am test \
+      -Dtest=CheckerSelfTest,HistoryWriterUnitTest -Dsurefire.failIfNoSpecifiedTests=false
+[self-test] 4a linread-503-INFO -> exit=0
 VERDICT: LINEARIZABLE
-exit=0
+[self-test] 4b linread-503-flipped-to-OK -> exit=1
+VERDICT: NON-LINEARIZABLE
+[self-test] 5a stale-GET-as-INFO -> exit=0
+VERDICT: LINEARIZABLE
+[self-test] 5b stale-GET-as-linread -> exit=1
+VERDICT: NON-LINEARIZABLE
+[self-test] 7a committed-OK-write-read-your-writes -> exit=0
+VERDICT: LINEARIZABLE
+[self-test] 7b committed-OK-write-vanished -> exit=1
+VERDICT: NON-LINEARIZABLE
+[self-test] 2 stale-read-anomaly -> exit=1
+VERDICT: NON-LINEARIZABLE
+[self-test] 1 sequential-sane -> exit=0
+VERDICT: LINEARIZABLE
+[self-test] 3a timeout-as-INFO -> exit=0
+VERDICT: LINEARIZABLE
+[self-test] 3b timeout-flipped-to-FAIL -> exit=1
+VERDICT: NON-LINEARIZABLE
+[INFO] Tests run: 7, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.292 s -- in io.configd.linz.CheckerSelfTest
+[INFO] Tests run: 5, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.063 s -- in io.configd.linz.HistoryWriterUnitTest
+[INFO] BUILD SUCCESS
+
+Key cases (all pinned verdicts hold):
+  test3a/3b: timeout-as-INFO GREEN vs timeout-flipped-to-FAIL RED (info<->fail flip)
+  test4a/4b: linread-503-INFO GREEN vs flipped-to-OK RED (info<->ok flip)
+  test7a/7b: [NEW, ADR-0033] committed-OK-write read-your-writes GREEN vs
+             committed-OK-write vanished RED — the OK-PUT path the 200=>:ok flip adds.
 
 ===============================================================================
- VERDICT: checker-correctness half of CM-135/CM-137 RE-VERIFIED at HEAD.
- NOT covered here (needs the execution round, owns RR-028): the live faulted
- multi-node runs, discrimination gate (ii) RED, seed matrix, gate (iv) repro.
+ RESULT: 7/7 CheckerSelfTest + 5/5 HistoryWriterUnitTest GREEN, 0 skips.
+ The checker-correctness half of CM-135/CM-137 holds at HEAD with the new OK-PUT surface.
 ===============================================================================

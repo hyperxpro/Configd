@@ -18,9 +18,14 @@ import java.util.Optional;
  * {@link Op.Status} exactly as the design's §7 table requires:
  *
  * <ul>
- *   <li>PUT/DELETE 200 Accepted -> {@code INFO} (ack != commit, may or may not have committed)</li>
+ *   <li>PUT/DELETE 200 {@code Committed: seq=S} -> {@code OK} (ADR-0033: 200 is returned ONLY
+ *       after quorum commit + local apply, so the write definitely happened — was {@code INFO}
+ *       pre-RR-004 when 200 meant a leader-local append, a lie)</li>
+ *   <li>PUT/DELETE 504 Indeterminate (commit unconfirmed within the deadline) -> {@code INFO}
+ *       (ADR-0033: the write MAY still commit later; not a definite failure)</li>
  *   <li>PUT/DELETE timeout / conn-refused / 5xx-other -> {@code INFO} (may have committed)</li>
- *   <li>PUT/DELETE 503 NotLeader (no usable hint) / 400 / 403 / 429 -> {@code FAIL} (rejected, did not happen)</li>
+ *   <li>PUT/DELETE 503 Lost/NotLeader (no usable hint) / 400 / 403 / 429 -> {@code FAIL}
+ *       (definite non-commit, did not happen)</li>
  *   <li>linearizable GET 200 -> {@code OK} read of the body; 404 -> {@code OK} read of "" (absent)</li>
  *   <li>linearizable GET 503 (flaky / not leader) or timeout -> {@code INFO} (indeterminate read, dropped)</li>
  * </ul>
@@ -85,8 +90,15 @@ public final class ConfigClient {
                 HttpResponse<String> resp = http.send(req, HttpResponse.BodyHandlers.ofString());
                 int code = resp.statusCode();
                 if (code == 200) {
+                    // ADR-0033: 200 "Committed: seq=S" is returned ONLY after quorum commit +
+                    // local apply, so the write definitely happened -> OK (was INFO pre-RR-004).
                     suspectedLeaderId = node.id();
-                    return new OpResult(Op.Status.INFO, value, call, System.nanoTime()); // ack != commit
+                    return new OpResult(Op.Status.OK, value, call, System.nanoTime());
+                }
+                if (code == 504) {
+                    // ADR-0033: Indeterminate — commit unconfirmed within the deadline; the write
+                    // MAY still commit later, so it is INFO (indeterminate), never a definite FAIL.
+                    return new OpResult(Op.Status.INFO, value, call, System.nanoTime());
                 }
                 if (code == 503) {
                     Optional<Integer> hint = leaderHint(resp);
@@ -98,7 +110,7 @@ public final class ConfigClient {
                             continue;
                         }
                     }
-                    return new OpResult(Op.Status.FAIL, value, call, System.nanoTime()); // definite NotLeader
+                    return new OpResult(Op.Status.FAIL, value, call, System.nanoTime()); // definite Lost/NotLeader
                 }
                 // 400 / 403 / 429 and other definite rejections
                 return new OpResult(Op.Status.FAIL, value, call, System.nanoTime());

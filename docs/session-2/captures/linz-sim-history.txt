@@ -1,0 +1,43 @@
+===============================================================================
+ §4.4 BRIDGE — sim-produced history checked by the trusted Porcupine checker
+ (the cheap, fully-replayable half of the linearizability story; RR-016)
+===============================================================================
+date    : 2026-06-11T03:33:13Z
+branch  : session-2-correctness @ d42e875
+
+Source : configd-testkit AdversarialSim + HistoryRecorder (sim-design §6), seed 4242,
+         5 nodes x 1500 ticks, default fault intensity (partitions/isolation/clock-skew/
+         crash) + randomized client workload + failover. Replayable by seed alone.
+Emitter: OpHistoryTest -> target/sim-histories/history-4242.jsonl (checker-neutral jsonl).
+Bridge : configd-linz SimHistoryCheck maps the sim jsonl -> linz Op model -> the SAME
+         PorcupineHistoryWriter encoding -> the SAME porcupine-check binary the real-
+         binary harness uses (one trusted checker, ADR-0032 — not a second hand-rolled one).
+
+--- regenerate the sim history (Maven, targeted) ---
+$ ./mvnw -q -pl configd-testkit test -Dtest=OpHistoryTest -Dsurefire.failIfNoSpecifiedTests=false
+    -> target/sim-histories/history-4242.jsonl  (39 ops:
+       30 writes / 9 reads)
+
+--- check the sim history (expect LINEARIZABLE) ---
+$ PORCUPINE_BIN=... java -cp configd-linz/target/classes \
+      io.configd.linz.runner.SimHistoryCheck target/sim-histories/history-4242.jsonl
+[sim-check] parsed 39 ops from configd-testkit/target/sim-histories/history-4242.jsonl
+key "k0"                     ops=10    -> Ok
+key "k1"                     ops=11    -> Ok
+key "k2"                     ops=14    -> Ok
+key "k3"                     ops=4     -> Ok
+VERDICT: LINEARIZABLE
+[sim-check] VERDICT -> LINEARIZABLE
+exit=0
+
+--- bridge soundness: a sim-format stale-read anomaly MUST go RED (not vacuously green) ---
+[sim-check] parsed 5 ops from /tmp/sim-neg.jsonl
+key "k"                      ops=5     -> Illegal
+VERDICT: NON-LINEARIZABLE
+[sim-check] VERDICT -> NON_LINEARIZABLE
+exit=1
+
+===============================================================================
+ RESULT: the adversarial sim's faulted+failover history is LINEARIZABLE under the
+ trusted checker; the bridge is discriminating (REDs on a real anomaly). §4.4 wired.
+===============================================================================

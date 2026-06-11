@@ -1,0 +1,67 @@
+===============================================================================
+ configd-linz — GATE (ii) DISCRIMINATION re-run at HEAD (CM-137 / RR-016 / RR-028)
+ Each seeded bug must turn the trusted Porcupine checker RED; controls GREEN.
+ Real separate-JVM cluster, OS faults, post-ADR-0033 (200=>OK) client mapping.
+===============================================================================
+date    : 2026-06-11T03:27:22Z
+branch  : session-2-correctness @ d42e875
+jar     : configd-server shaded, verified via javap to carry RR-004/ADR-0033
+          (propose->ProposeOutcome, whenCommitOutcome, HTTP body 'Committed: seq=')
+checker : configd-linz/bin/porcupine-check (built from repo Go sources, anishathalye/porcupine v1.2.0)
+
+================ STALE-READ (RaftNode.readIndex/isReadReady leader guards) ================
+--- CONTROL (unmutated jar) — expect GREEN/LINEARIZABLE ---
+[staleread/ctl3] leader=node3 lagging-follower=node1
+[staleread/ctl3] isolated follower node1
+[staleread/ctl3] v2 committed + confirmed on the leader
+[staleread/ctl3] follower read: status=INFO value=''
+key "staleread"              ops=4     -> Ok
+VERDICT: LINEARIZABLE
+[ctl3] VERDICT -> LINEARIZABLE
+--- MUTATED (stale-read.patch: delete the leader gate + quorum confirm) — expect RED ---
+[staleread/mut] leader=node2 lagging-follower=node1
+[staleread/mut] isolated follower node1
+[staleread/mut] v2 committed + confirmed on the leader
+[staleread/mut] follower read: status=OK value='v1'
+key "staleread"              ops=5     -> Illegal
+VERDICT: NON-LINEARIZABLE
+[mut] VERDICT -> NON_LINEARIZABLE
+RESULT: control GREEN, mutated RED -> harness is NOT blind to the stale-read class.
+
+================ LOST-ACKED-WRITE (FileStorage.appendToLog durability no-op) ================
+--- CONTROL (unmutated jar) — expect GREEN/LINEARIZABLE ---
+[lostwrite/ctl2] leader=node3
+[lostwrite/ctl2] confirmed T_new (committed + applied)
+[lostwrite/ctl2] kill -9 all nodes
+[lostwrite/ctl2] restart all nodes
+[lostwrite/ctl2] post-restart read: status=OK value='Tnew'
+key "lostwrite"              ops=3     -> Ok
+VERDICT: LINEARIZABLE
+[ctl2] VERDICT -> LINEARIZABLE
+--- MUTATED (lost-acked-write.patch: WAL append is a no-op) — expect RED ---
+[lostwrite/mut] leader=node2
+[lostwrite/mut] confirmed T_new (committed + applied)
+[lostwrite/mut] kill -9 all nodes
+[lostwrite/mut] restart all nodes
+[lostwrite/mut] post-restart read: status=OK value=''
+key "lostwrite"              ops=3     -> Illegal
+VERDICT: NON-LINEARIZABLE
+[mut] VERDICT -> NON_LINEARIZABLE
+RESULT: control GREEN, mutated RED -> harness is NOT blind to the lost-acked-write class.
+
+--- POST-RR-003 INTERACTION (task-flagged unknown, RESOLVED) ---
+The lost-acked-write no-op patch was feared to trip RR-003's durable_prefix_no_gap
+assertion (loud startup/recovery failure) BEFORE the checker sees a silent lost write.
+OBSERVED: it does NOT. The mutated run committed+applied+confirmed T_new, then on
+full-cluster kill-9 + restart the committed write VANISHED (post-restart read = OK of
+'' / absent) -> RED. All 3 nodes restarted clean (2 starts each, 0 exceptions, no
+durable_prefix throw). Reason: the short run triggers NO snapshot, so there is no
+snapshot-boundary gap for durable_prefix_no_gap to detect; the node restarts from an
+empty WAL with the committed entry simply gone. The bug class is INTACT and the
+ProposeOutcome-seam ack-on-append fallback mutation (plan §3) was NOT needed.
+
+--- iptables hygiene: INPUT-chain drill rules 0 before AND after every run ---
+current INPUT drill rules: 0
+===============================================================================
+GATE (ii) DISCRIMINATION PASS: both seeded bugs turn the checker RED; controls GREEN.
+===============================================================================

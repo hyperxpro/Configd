@@ -133,4 +133,30 @@ class CheckerSelfTest {
                 () -> rec.recordPut(1, "k2", "dup", Op.Status.INFO, 2, 2),
                 "reusing a PUT token must fail the recorder precondition");
     }
+
+    // 7. THE ADR-0033 one: a 200 is now a COMMITTED write recorded as OK (was INFO when
+    //    200 was a leader-local-append lie). An OK PUT is a definite write — it must be
+    //    treated exactly as strongly as the register model treats any kept write.
+    //    7a: an OK PUT observed by a later read -> GREEN (committed value is what's read).
+    //    7b: an OK PUT of v2 confirmed, then a later linearizable read returns the
+    //        superseded v1 -> RED (a committed write cannot be un-observed by a later
+    //        real-time read). This is the exact RR-004 read-your-writes guarantee.
+    @Test
+    void test7_committedOkWriteReadYourWrites() throws Exception {
+        // 7a: OK PUT then OK read of the same token -> linearizable.
+        List<Op> ok = List.of(
+                put(0, "k", "C", Op.Status.OK, 1),         // 200 Committed
+                read(1, "k", "C", Op.Status.OK, 2, 3));    // reads the committed value
+        assertEquals(Verdict.LINEARIZABLE, verdict("7a committed-OK-write-read-your-writes", ok));
+
+        // 7b: OK PUT v1, confirm v1; OK PUT v2, confirm v2; then a stale OK read of v1
+        //     after v2 was committed -> non-linearizable (a committed write was lost).
+        List<Op> stale = List.of(
+                put(0, "k", "v1", Op.Status.OK, 1),
+                read(0, "k", "v1", Op.Status.OK, 2, 3),
+                put(0, "k", "v2", Op.Status.OK, 4),        // 200 Committed: v2
+                read(1, "k", "v2", Op.Status.OK, 5, 6),    // confirm v2 committed
+                read(2, "k", "v1", Op.Status.OK, 7, 8));   // stale: committed v2 vanished -> RED
+        assertEquals(Verdict.NON_LINEARIZABLE, verdict("7b committed-OK-write-vanished", stale));
+    }
 }

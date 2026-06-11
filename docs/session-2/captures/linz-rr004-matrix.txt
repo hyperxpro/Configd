@@ -1,0 +1,58 @@
+===============================================================================
+ configd-linz — RR-004 200=>:ok FLIP + GATE (iii) seed matrix + GATE (iv) repro
+ (RR-028 residuals; the proof RR-004's RESOLVED flip waits on)
+===============================================================================
+date    : 2026-06-11T03:35:17Z
+branch  : session-2-correctness @ d42e875
+client  : ConfigClient maps 200 'Committed: seq=S' -> Op.Status.OK (ADR-0033),
+          504 Indeterminate -> INFO; jar verified via javap to carry RR-004/ADR-0033.
+
+================ RR-004 FLIP EVIDENCE (unmodified build, 200=>:ok ACTIVE) ================
+Canonical faulted run, seed 4242, 3-node — must be LINEARIZABLE under live OS faults.
+[driver] HarnessMain seed=4242 nodes=3 raft=11400 api=10400 03:27:47
+[harness] seed=4242 nodes=3 clients=4 keys=8 duration=15000ms
+[harness] schedule -> /home/ubuntu/Code/Configd/configd-linz/runs/schedule-4242-n3.json (4 faults, 801 planned ops)
+[fault] +2575ms kill -9 node 2, restart in 1605ms
+[fault] +5218ms kill -9 node 3, restart in 1362ms
+[fault] +8025ms isolate node 3 for 1772ms
+[fault] +10942ms isolate node 2 for 1336ms
+[harness] recorded 801 ops; history -> /home/ubuntu/Code/Configd/configd-linz/runs/history-4242-n3.json; checking...
+key "k0"                     ops=64    -> Ok
+key "k1"                     ops=82    -> Ok
+key "k2"                     ops=65    -> Ok
+key "k3"                     ops=51    -> Ok
+key "k4"                     ops=57    -> Ok
+key "k5"                     ops=75    -> Ok
+key "k6"                     ops=75    -> Ok
+key "k7"                     ops=68    -> Ok
+VERDICT: LINEARIZABLE
+[harness] seed=4242 nodes=3 faults=4 ops=801 -> LINEARIZABLE
+
+Proof the 200=>OK mapping is LIVE (not 'no 200s occurred'): the checked history carries
+150 committed PUTs +
+369 OK reads (FAIL puts + INFO reads are dropped by the writer).
+=> 'linz reruns with 200=>:ok (not :info) and stays LINEARIZABLE' — RR-004's required flip proof.
+
+================ GATE (iii): seed matrix 2001-2004 x {3,5}-node (faults active) ================
+n=3 seed=2001 exit=0 faults=4 ops=809 INPUT_drill=0 -> VERDICT: LINEARIZABLE
+n=3 seed=2002 exit=0 faults=4 ops=804 INPUT_drill=0 -> VERDICT: LINEARIZABLE
+n=3 seed=2003 exit=0 faults=1 ops=803 INPUT_drill=0 -> VERDICT: LINEARIZABLE
+n=3 seed=2004 exit=0 faults=2 ops=799 INPUT_drill=0 -> VERDICT: LINEARIZABLE
+n=5 seed=2001 exit=0 faults=3 ops=809 INPUT_drill=0 -> VERDICT: LINEARIZABLE
+n=5 seed=2002 exit=0 faults=4 ops=804 INPUT_drill=0 -> VERDICT: LINEARIZABLE
+n=5 seed=2003 exit=0 faults=2 ops=803 INPUT_drill=0 -> VERDICT: LINEARIZABLE
+n=5 seed=2004 exit=0 faults=2 ops=799 INPUT_drill=0 -> VERDICT: LINEARIZABLE
+RESULT: 8/8 LINEARIZABLE, all with faults>0, INPUT-chain drill rules 0 throughout.
+
+================ GATE (iv): same seed -> byte-identical schedule (no cluster) ================
+$ HarnessMain --seed 777 --nodes 3 ... --schedule-only true   (run twice, diff)
+  schedule-777-n3.json: 58042 bytes, diff -> byte-identical
+  sha256(run a) = 724fd2d7c2a23088daefe602a25a39ff30cbd97f2fce0af4d22da5865fa0d60a
+  sha256(run b) = 724fd2d7c2a23088daefe602a25a39ff30cbd97f2fce0af4d22da5865fa0d60a
+  faults in schedule: 799
+RESULT: byte-identical -> the external fault+workload schedule is reproducible by seed (ADR-0032).
+
+===============================================================================
+ RR-028 gates re-verified at HEAD: (ii) discrimination RED [linz-discrimination.txt],
+ (iii) seed matrix 8/8 GREEN, (iv) byte-identical schedule. RR-004 flip proof captured.
+===============================================================================

@@ -80,4 +80,23 @@ class HistoryWriterUnitTest {
         rec.recordPut(0, "k", "t", Op.Status.INFO, 2, 2); // must not throw
         assertEquals(2, rec.size());
     }
+
+    @Test
+    void committedOkPutIsKeptAndConfirmBound() throws Exception {
+        // ADR-0033: a 200 is now an OK (committed) PUT. It is a kept write, encoded
+        // exactly like an INFO write — confirm-bound to an observing read, else float.
+        List<Op> ops = List.of(
+                new Op(0, "k", Op.Type.PUT, "committed", Op.Status.OK, 10, 10), // 200 Committed
+                new Op(0, "k", Op.Type.READ, "committed", Op.Status.OK, 20, 30) // observes it -> pin to 30
+        );
+        Path tmp = Files.createTempFile("linz-unit-", ".json");
+        try {
+            PorcupineHistoryWriter.write(ops, tmp);
+            String json = Files.readString(tmp);
+            assertEquals(2, json.split("\"client\"").length - 1, json);
+            assertTrue(json.contains("\"type\":\"put\",\"value\":\"committed\",\"call\":10,\"ret\":30"), json);
+        } finally {
+            Files.deleteIfExists(tmp);
+        }
+    }
 }
