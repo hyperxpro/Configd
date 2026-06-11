@@ -1,0 +1,91 @@
+================================================================================
+RR-020 (P1) — GLOBAL/security keys lack the required fail-closed linearizable
+strong-read path (ADR-0030 INV-1)
+DISCRIMINATING PRE-FIX FAILURE CAPTURE
+================================================================================
+
+Finding : RR-020 / CM-097 (carried R-10). ADR-0030 Amendment A1 / INV-1
+          (adr-0030...:679-683) mandates: enforcement points MUST fail CLOSED
+          (deny) for a GLOBAL/security key when the linearizable root read path
+          is unavailable, and MUST NOT fall back to a bounded-stale edge/local
+          copy. Pre-fix there was NO strong-read key class, NO enforcement, and
+          NO contract entry: a GET with default consistency went straight to the
+          node's LOCAL store (HttpApiServer.handleGet -> configStore.get(key)),
+          which on a FOLLOWER serves bounded-stale state. A revoked
+          security.killswitch could therefore be read as still-permitting on any
+          lagging follower — exactly the unbounded-damage case INV-1 forbids.
+
+Pre-fix  : HttpApiServer.handleGet (pre-fix):
+defect        boolean linearizable = query != null && query.contains("consistency=linearizable");
+              ReadResult result;
+              if (linearizable && readService != null) { result = readService.linearizableRead(key); ... }
+              else { result = configStore.get(key); }   // <-- secure/ key, default
+                                                        //     consistency => LOCAL/STALE
+          No branch consulted any notion of a security/GLOBAL key class, so a
+          `secure/`-prefixed key was treated like any other config key.
+
+--------------------------------------------------------------------------------
+DISCRIMINATING TEST (fails pre-fix, passes post-fix)
+--------------------------------------------------------------------------------
+Test    : StrongReadFailClosedTest.followerFailsClosedForStrongReadKeyNeverServesStale
+          (configd-server/src/test/.../StrongReadFailClosedTest.java)
+          A real HttpApiServer over loopback. Backing store seeded with
+          secure/killswitch="DENY" (a follower's local copy). The leadership
+          confirmer returns false (a FOLLOWER), so the linearizable path cannot
+          be confirmed. The test asserts: GET /v1/config/secure/killswitch ->
+          503, X-Fail-Closed: strong-read, X-Leader-Hint: 3, and the stale
+          "DENY" body NEVER appears.
+
+Pre-fix run (SUT temporarily reverted: `boolean strongReadKey = false;` in
+handleGet — i.e. "no strong-read key class existed"):
+
+  Tests run: 1, Failures: 1, Errors: 0, Skipped: 0  <<< FAILURE!
+  io.configd.server.StrongReadFailClosedTest.followerFailsClosedForStrongReadKeyNeverServesStale
+  org.opentest4j.AssertionFailedError: INV-1: a strong-read key on a non-leader
+    must DENY, not serve local state ==> expected: <503> but was: <200>
+    at ...followerFailsClosedForStrongReadKeyNeverServesStale(StrongReadFailClosedTest.java:136)
+
+  i.e. pre-fix the follower served the STALE local "DENY" with HTTP 200 — the
+  forbidden stale-able security read.
+
+Post-fix run (strong-read class + fail-closed enforcement):
+
+  Tests run: 9, Failures: 0, Errors: 0, Skipped: 0   <-- all green
+  (leaderServesStrongReadKeyLinearizably, followerFailsClosedForStrongReadKeyNeverServesStale,
+   leaderThatLosesConfirmationFailsClosed [partitioned-leader / ReadIndex-unconfirmable],
+   strongReadKeyIgnoresExplicitStaleRequest, failsClosedWhenNoLinearizableReadPathConfigured,
+   ordinaryKeyOnFollowerStillServesStale, blankPrefixRejected, emptyPolicyDisablesEnforcement,
+   customPrefixHonored)
+
+--------------------------------------------------------------------------------
+FIX
+--------------------------------------------------------------------------------
+StrongReadPolicy (new): config-driven key class — a key is strong-read iff it
+  starts with one of a configured prefix set (default "secure/"). Blank prefix
+  rejected (would match everything). Key-class assignment is config-driven
+  pending the fuller ConfigScope story (RR-078, Session 6).
+ServerConfig: new --strong-read-prefixes flag (comma-separated); omitted => safe
+  default {secure/}; explicit empty => enforcement disabled (deliberate opt-out).
+HttpApiServer.handleGet: a strong-read key is ALWAYS served via the linearizable
+  ReadIndex path regardless of the requested consistency; if it cannot be served
+  (readService null, OR linearizableRead returns null = not leader / ReadIndex
+  confirm fails / timeout) -> failClosed(): 503 + "X-Fail-Closed: strong-read" +
+  X-Leader-Hint, distinguishing body citing ADR-0030 INV-1, and the local/stale
+  value is NEVER written. Ordinary keys are unchanged (stale serving allowed).
+ConfigdServer: builds the policy from config.strongReadPrefixes() and passes
+  raftNode::leaderId as the X-Leader-Hint source.
+
+--------------------------------------------------------------------------------
+MUTATION-REVERT PAIRS (each fails a named test)
+--------------------------------------------------------------------------------
+(i)  Remove the prefix match (`boolean strongReadKey = false;` — strong key
+     falls through to configStore.get)
+       -> followerFailsClosedForStrongReadKeyNeverServesStale FAILS (503 expected,
+          200 stale "DENY" served).  [DEMONSTRATED ABOVE]
+(ii) Make the fail-closed branch serve local state instead of denying (replace
+     failClosed(...) with `result = configStore.get(key);` and fall through)
+       -> followerFailsClosedForStrongReadKeyNeverServesStale FAILS on the body
+          assertion (stale "DENY" returned with 200) AND the X-Fail-Closed header
+          assertion. (ordinaryKeyOnFollowerStillServesStale still passes, proving
+          the discrimination is specific to the strong-read class.)
+================================================================================

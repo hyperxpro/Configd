@@ -11,6 +11,7 @@ import io.configd.api.ConfigReadService;
 import io.configd.api.ConfigWriteService;
 import io.configd.api.HealthService;
 import io.configd.common.ConfigScope;
+import io.configd.common.NodeId;
 import io.configd.observability.MetricsRegistry;
 import io.configd.observability.PrometheusExporter;
 import io.configd.store.ReadResult;
@@ -21,7 +22,9 @@ import java.io.IOException;
 import java.io.OutputStream;
 import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
+import java.util.Objects;
 import java.util.concurrent.Executors;
+import java.util.function.Supplier;
 
 /**
  * HTTP API server for Configd. Uses JDK's built-in {@link HttpServer}
@@ -53,6 +56,9 @@ public final class HttpApiServer {
      * @param readService    config read service for linearizable reads (may be null)
      * @param authInterceptor auth interceptor, or null if auth disabled
      * @param aclService     ACL service, or null if ACLs disabled
+     * @param strongReadPolicy strong-read key-class policy (ADR-0030 INV-1 / RR-020); must not be null
+     * @param leaderHintSupplier supplies the currently-known leader NodeId for
+     *                       {@code X-Leader-Hint} (may return null when unknown); must not be null
      */
     public HttpApiServer(int port,
                          SSLContext sslContext,
@@ -62,7 +68,9 @@ public final class HttpApiServer {
                          ConfigWriteService writeService,
                          ConfigReadService readService,
                          AuthInterceptor authInterceptor,
-                         AclService aclService) throws IOException {
+                         AclService aclService,
+                         StrongReadPolicy strongReadPolicy,
+                         Supplier<NodeId> leaderHintSupplier) throws IOException {
         if (sslContext != null) {
             HttpsServer httpsServer = HttpsServer.create(new InetSocketAddress(port), 0);
             httpsServer.setHttpsConfigurator(new HttpsConfigurator(sslContext));
@@ -80,7 +88,9 @@ public final class HttpApiServer {
         // protected on the same footing as the /v1/config/ endpoints.
         server.createContext("/metrics", new MetricsHandler(prometheusExporter, authInterceptor));
         server.createContext("/v1/config/", new ConfigHandler(
-                configStore, writeService, readService, authInterceptor, aclService));
+                configStore, writeService, readService, authInterceptor, aclService,
+                Objects.requireNonNull(strongReadPolicy, "strongReadPolicy must not be null"),
+                Objects.requireNonNull(leaderHintSupplier, "leaderHintSupplier must not be null")));
 
         server.setExecutor(Executors.newVirtualThreadPerTaskExecutor());
     }
@@ -188,17 +198,23 @@ public final class HttpApiServer {
         private final ConfigReadService readService; // nullable
         private final AuthInterceptor authInterceptor;
         private final AclService aclService;
+        private final StrongReadPolicy strongReadPolicy;
+        private final Supplier<NodeId> leaderHintSupplier;
 
         ConfigHandler(VersionedConfigStore configStore,
                       ConfigWriteService writeService,
                       ConfigReadService readService,
                       AuthInterceptor authInterceptor,
-                      AclService aclService) {
+                      AclService aclService,
+                      StrongReadPolicy strongReadPolicy,
+                      Supplier<NodeId> leaderHintSupplier) {
             this.configStore = configStore;
             this.writeService = writeService;
             this.readService = readService;
             this.authInterceptor = authInterceptor;
             this.aclService = aclService;
+            this.strongReadPolicy = strongReadPolicy;
+            this.leaderHintSupplier = leaderHintSupplier;
         }
 
         @Override
@@ -228,15 +244,48 @@ public final class HttpApiServer {
                 return;
             }
 
+            // RR-020 / ADR-0030 INV-1: GLOBAL/security ("strong-read") keys MUST be
+            // served via the fail-closed linearizable path. The requested
+            // consistency is IGNORED for these keys — a strong-read key is ALWAYS
+            // linearizable — and if the linearizable read cannot be confirmed
+            // (not leader / ReadIndex confirm fails / timeout, all surfaced as a
+            // null linearizableRead result) we DENY (503), never falling back to
+            // local/bounded-stale state. A stale "allow" on a revoked security key
+            // is unbounded damage, so the safe failure is to refuse to answer.
+            boolean strongReadKey = strongReadPolicy.isStrongReadKey(key);
+
             // Support linearizable reads via ?consistency=linearizable query parameter
             String query = exchange.getRequestURI().getQuery();
-            boolean linearizable = query != null && query.contains("consistency=linearizable");
+            boolean linearizableRequested = query != null && query.contains("consistency=linearizable");
+            boolean linearizable = strongReadKey || linearizableRequested;
 
             ReadResult result;
-            if (linearizable && readService != null) {
+            if (strongReadKey) {
+                if (readService == null) {
+                    // No linearizable path wired (stale-only deployment): a
+                    // strong-read key has no safe answer here — fail closed.
+                    failClosed(exchange, key,
+                            "no linearizable read path is configured on this node");
+                    return;
+                }
                 result = readService.linearizableRead(key);
                 if (result == null) {
-                    // Leadership confirmation failed — cannot serve linearizable read
+                    // Leadership / ReadIndex confirmation failed: fail CLOSED.
+                    failClosed(exchange, key,
+                            "linearizable read could not be confirmed (not leader / ReadIndex unconfirmed)");
+                    return;
+                }
+            } else if (linearizableRequested && readService != null) {
+                result = readService.linearizableRead(key);
+                if (result == null) {
+                    // Ordinary (non-strong) key: an explicit linearizable request
+                    // that can't be served is reported as Not Leader. This is NOT
+                    // a strong-read fail-closed (a stale read of this key is
+                    // contract-permitted), so we do not deny future stale reads.
+                    if (leaderHintSupplier.get() != null) {
+                        exchange.getResponseHeaders()
+                                .set("X-Leader-Hint", String.valueOf(leaderHintSupplier.get().id()));
+                    }
                     sendResponse(exchange, 503, "Not Leader - cannot serve linearizable read");
                     return;
                 }
@@ -252,10 +301,34 @@ public final class HttpApiServer {
             exchange.getResponseHeaders().set("Content-Type", "application/octet-stream");
             exchange.getResponseHeaders().set("X-Config-Version", String.valueOf(result.version()));
             exchange.getResponseHeaders().set("X-Consistency", linearizable ? "linearizable" : "stale");
+            if (strongReadKey) {
+                exchange.getResponseHeaders().set("X-Strong-Read", "true");
+            }
             exchange.sendResponseHeaders(200, value.length);
             try (OutputStream os = exchange.getResponseBody()) {
                 os.write(value);
             }
+        }
+
+        /**
+         * Emits the RR-020 / ADR-0030 INV-1 fail-closed response: 503 with a
+         * distinguishing body and {@code X-Fail-Closed: strong-read} header (so a
+         * client can tell this denial from an ordinary 503), plus an
+         * {@code X-Leader-Hint} when a leader is known so the client can retry the
+         * linearizable read against the right node. The local/stale value is NEVER
+         * served for a strong-read key on this path.
+         */
+        private void failClosed(HttpExchange exchange, String key, String reason) throws IOException {
+            exchange.getResponseHeaders().set("X-Fail-Closed", "strong-read");
+            NodeId hint = leaderHintSupplier.get();
+            if (hint != null) {
+                exchange.getResponseHeaders().set("X-Leader-Hint", String.valueOf(hint.id()));
+            }
+            sendResponse(exchange, 503,
+                    "Fail-closed: strong-read (GLOBAL/security) key '" + key
+                            + "' must be served linearizably (ADR-0030 INV-1) but " + reason
+                            + "; refusing to serve a stale value"
+                            + (hint != null ? " (leader=" + hint + ")" : ""));
         }
 
         private void handlePut(HttpExchange exchange, String key) throws IOException {

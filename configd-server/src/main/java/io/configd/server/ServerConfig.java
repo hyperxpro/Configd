@@ -26,6 +26,9 @@ import java.util.stream.Collectors;
  * @param tlsTrustStorePath path to the TLS trust store (PKCS12), or null if TLS disabled
  * @param authToken       simple bearer token for API auth, or null if auth disabled
  * @param peerAddresses   map of peer NodeId to network address, or null if not configured
+ * @param strongReadPrefixes key prefixes whose GETs MUST be served fail-closed
+ *                        linearizable (ADR-0030 INV-1 / RR-020); defaults to
+ *                        {@code secure/}. Empty disables strong-read enforcement.
  */
 public record ServerConfig(
         NodeId nodeId,
@@ -39,7 +42,8 @@ public record ServerConfig(
         Path tlsTrustStorePath,
         String authToken,
         Map<NodeId, InetSocketAddress> peerAddresses,
-        Path signingKeyFile
+        Path signingKeyFile,
+        Set<String> strongReadPrefixes
 ) {
 
     /**
@@ -57,6 +61,8 @@ public record ServerConfig(
      *   --tls-key         path to TLS key store (optional)
      *   --tls-trust-store path to TLS trust store (optional)
      *   --auth-token      bearer token for API auth (optional)
+     *   --strong-read-prefixes comma-separated key prefixes served fail-closed
+     *                     linearizable (ADR-0030 INV-1 / RR-020); default "secure/"
      * </pre>
      *
      * @param args command-line arguments
@@ -76,6 +82,10 @@ public record ServerConfig(
         String authToken = null;
         String peerAddressesStr = null;
         String signingKeyFile = null;
+        // RR-020 / ADR-0030 INV-1: a fail-closed default. If the operator does
+        // not configure prefixes, "secure/" is still protected so security keys
+        // are never silently served stale just because the flag was omitted.
+        String strongReadPrefixesStr = null;
 
         for (int i = 0; i < args.length; i++) {
             switch (args[i]) {
@@ -127,6 +137,10 @@ public record ServerConfig(
                     requireNextArg(args, i, "--signing-key-file");
                     signingKeyFile = args[++i];
                 }
+                case "--strong-read-prefixes" -> {
+                    requireNextArg(args, i, "--strong-read-prefixes");
+                    strongReadPrefixesStr = args[++i];
+                }
                 default -> throw new IllegalArgumentException("Unknown argument: " + args[i]);
             }
         }
@@ -144,6 +158,7 @@ public record ServerConfig(
         Set<NodeId> peers = parsePeers(peersStr);
         Map<NodeId, InetSocketAddress> peerAddresses = peerAddressesStr != null
                 ? parsePeerAddresses(peerAddressesStr) : null;
+        Set<String> strongReadPrefixes = parseStrongReadPrefixes(strongReadPrefixesStr);
 
         return new ServerConfig(
                 NodeId.of(nodeId),
@@ -157,7 +172,8 @@ public record ServerConfig(
                 tlsTrustStore != null ? Path.of(tlsTrustStore) : null,
                 authToken,
                 peerAddresses,
-                signingKeyFile != null ? Path.of(signingKeyFile) : null
+                signingKeyFile != null ? Path.of(signingKeyFile) : null,
+                strongReadPrefixes
         );
     }
 
@@ -213,6 +229,29 @@ public record ServerConfig(
             result.put(NodeId.of(id), new InetSocketAddress(hostPort[0], Integer.parseInt(hostPort[1])));
         }
         return Map.copyOf(result);
+    }
+
+    /**
+     * Parses the strong-read prefix list (RR-020 / ADR-0030 INV-1).
+     * <ul>
+     *   <li>flag omitted ({@code null}) &rarr; the safe default {@code secure/}
+     *       (security keys stay protected even if the operator forgot the flag);</li>
+     *   <li>explicit empty / blank value &rarr; empty set (enforcement disabled,
+     *       a deliberate opt-out);</li>
+     *   <li>otherwise &rarr; the comma-separated, trimmed, non-blank prefixes.</li>
+     * </ul>
+     */
+    private static Set<String> parseStrongReadPrefixes(String str) {
+        if (str == null) {
+            return Set.of(StrongReadPolicy.DEFAULT_PREFIX);
+        }
+        if (str.isBlank()) {
+            return Set.of(); // explicit opt-out
+        }
+        return List.of(str.split(",")).stream()
+                .map(String::trim)
+                .filter(s -> !s.isEmpty())
+                .collect(Collectors.toUnmodifiableSet());
     }
 
     private static void requireNextArg(String[] args, int currentIndex, String flag) {

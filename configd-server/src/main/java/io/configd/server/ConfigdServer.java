@@ -542,11 +542,19 @@ public final class ConfigdServer {
         // ---------------------------------------------------------------
         io.configd.observability.PrometheusExporter prometheusExporter =
                 new io.configd.observability.PrometheusExporter(metricsRegistry);
+        // RR-020 / ADR-0030 INV-1: strong-read (GLOBAL/security) key class is
+        // config-driven via --strong-read-prefixes (default "secure/"); those
+        // keys are served fail-closed linearizable, with raftNode.leaderId() as
+        // the X-Leader-Hint source for retries.
+        StrongReadPolicy strongReadPolicy = new StrongReadPolicy(config.strongReadPrefixes());
+        System.out.println("  Strong reads : " + strongReadPolicy.prefixes()
+                + " (fail-closed linearizable, ADR-0030 INV-1)");
         HttpApiServer httpApiServer;
         try {
             httpApiServer = new HttpApiServer(
                     config.apiPort(), sslContext, healthService, prometheusExporter,
-                    configStore, writeService, readService, authInterceptor, aclService);
+                    configStore, writeService, readService, authInterceptor, aclService,
+                    strongReadPolicy, () -> raftNode.leaderId());
             httpApiServer.start();
         } catch (Exception e) {
             throw new RuntimeException("Failed to start HTTP API server on port " + config.apiPort(), e);
