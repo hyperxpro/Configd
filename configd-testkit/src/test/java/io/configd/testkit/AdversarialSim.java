@@ -119,6 +119,29 @@ final class AdversarialSim implements ClusterView {
         return activity;
     }
 
+    // -----------------------------------------------------------------------
+    // Additive, read-only accessors for composition (EdgeFanOutSim, §V1).
+    // No behavior change: these expose existing per-node objects so the edge
+    // harness can wire the production fan-out listener + read the CP clock.
+    // Existing tests (digests, gate sweep) are unaffected — nothing here is
+    // called on the CP-only path.
+    // -----------------------------------------------------------------------
+
+    /** The {@link ConfigStateMachine} for CP node {@code i} (additive accessor). */
+    ConfigStateMachine stateMachine(int i) {
+        return stateMachines.get(i);
+    }
+
+    /** The CP {@link AdversarialNetwork} (additive accessor — same instance). */
+    AdversarialNetwork network() {
+        return network;
+    }
+
+    /** The current CP sim logical time in ms (additive accessor). */
+    long currentTime() {
+        return currentTimeMs;
+    }
+
     @Override
     public RaftNode node(int i) {
         return nodes.get(i);

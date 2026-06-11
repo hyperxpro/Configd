@@ -1,0 +1,84 @@
+package io.configd.testkit;
+
+import io.configd.distribution.CommitNotificationSource;
+import io.configd.distribution.ReplaySource;
+
+import java.util.List;
+
+/**
+ * The server-side, per-edge streaming seam (Phase V1) — the simulator's stand-in
+ * for the fan-out service that pushes committed mutations to subscribed edges.
+ * <p>
+ * <b>C1 implements this; the contract is ADR-0034's "Handoff to Session 3"
+ * consumer loop.</b> A faithful implementation, per subscribed edge, holds a
+ * cursor and each driver step:
+ * <ol>
+ *   <li>calls {@link CommitNotificationSource#readSince(long) source.readSince(cursor)}
+ *       on the edge's subscribed CP node;</li>
+ *   <li>on {@code Ok(notifications)} pushes one {@link EdgeStream.Notify} per
+ *       notification over the edge network in seq order and advances the cursor to
+ *       the last seq;</li>
+ *   <li>on {@code Gap(oldestRetainedSeq)} calls
+ *       {@link ReplaySource#replayFromSnapshot()}, pushes an
+ *       {@link EdgeStream.Snapshot}, sets the cursor to the replay seq, and resumes
+ *       tailing — exactly-once over effect, no hole, no duplicate.</li>
+ * </ol>
+ * That real implementation is component <b>C1</b> and is intentionally <b>NOT</b>
+ * written here: Phase V1 is verification machinery built before the data-plane
+ * component exists, so the simulator must NOT smuggle the production drain in.
+ *
+ * <p>V1 ships exactly two implementations:
+ * <ul>
+ *   <li>{@link #NONE} — the honest current state of the system: nothing is ever
+ *       delivered. This is the default, and it is why {@link EdgePropagationBacklogTest}
+ *       fails (the executable backlog).</li>
+ *   <li>{@link DirectInjectionDriver} — a TEST-ONLY driver that pushes handcrafted
+ *       (including deliberately invalid) message sequences so the edge invariants
+ *       and {@link EdgeActor} apply paths can be exercised directly (RR-012
+ *       test-the-tester).</li>
+ * </ul>
+ */
+interface StreamDriver {
+
+    /**
+     * The per-tick context handed to the driver: the per-CP-node commit-notification
+     * sources and replay sources (the ADR-0034 seams), the edge network it pushes
+     * over, the edge roster, and the current sim time. A real C1 driver consumes
+     * {@code source(cpNode)} / {@code replaySource(cpNode)}; {@link #NONE} ignores
+     * everything.
+     */
+    interface Context {
+
+        /** Live edges (deterministic order). The driver streams to each. */
+        List<EdgeActor> edges();
+
+        /** The {@link CommitNotificationSource} for CP node {@code cpNode}. */
+        CommitNotificationSource source(int cpNode);
+
+        /** The {@link ReplaySource} for CP node {@code cpNode}. */
+        ReplaySource replaySource(int cpNode);
+
+        /** Pushes a message to {@code edge} over the edge network (latency applies). */
+        void send(EdgeActor edge, EdgeStream message);
+
+        /** Current sim logical time in ms. */
+        long nowMs();
+    }
+
+    /**
+     * Advances the server-side streaming by one tick: read new notifications from
+     * each subscribed source and push them toward the edges (or recover on GAP).
+     *
+     * @param ctx the per-tick streaming context
+     */
+    void drive(Context ctx);
+
+    /**
+     * The honest default: nothing is ever delivered. With {@code NONE} the edge
+     * data plane does not exist — every published notification is an eventual-
+     * delivery-bound violation (recorded), which is exactly the Phase V1 backlog.
+     * This is the only behavior that truthfully reflects "no fan-out service exists"
+     * (RR-001 OPEN).
+     */
+    StreamDriver NONE = ctx -> { /* deliberately empty — see EdgePropagationBacklogTest */ };
+}
