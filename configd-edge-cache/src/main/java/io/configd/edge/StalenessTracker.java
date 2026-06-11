@@ -173,6 +173,22 @@ public final class StalenessTracker {
     }
 
     /**
+     * Records an applied version WITHOUT a frontier advance. Used for snapshot cutover
+     * when the snapshot carries no commit timestamp (ADR-0028 bodies encode
+     * {@code [seq][entries]} only — {@code ConfigSnapshot.timestamp() == 0} after
+     * {@code EdgeSnapshotCodec.deserialize}): fabricating a frontier of 0 would either
+     * regress the frontier or trip the CT-08 implausibility counter on every legitimate
+     * cutover, polluting the skew tripwire with false positives. The frontier instead
+     * heals from the first post-snapshot NOTIFY commit timestamp or cursor-matched
+     * HEARTBEAT (ADR-0039).
+     *
+     * @param version the applied-mutation seq of the loaded snapshot
+     */
+    public void recordVersion(long version) {
+        this.lastVersion = version;
+    }
+
+    /**
      * Records a HEARTBEAT-carried frontier (ADR-0039 §Decision 2). Advances the covered
      * frontier to {@code serverNowMillis} <b>iff</b> {@code heartbeatLatestSeq == cursor}
      * — i.e. the server attests "nothing you have not seen as of my clock T". When

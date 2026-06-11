@@ -235,7 +235,17 @@ public final class EdgeConfigClient {
     public void loadSnapshot(ConfigSnapshot snapshot) {
         Objects.requireNonNull(snapshot, "snapshot must not be null");
         store.loadSnapshot(snapshot);
-        stalenessTracker.recordUpdate(snapshot.version(), snapshot.timestamp());
+        if (snapshot.timestamp() > 0) {
+            stalenessTracker.recordUpdate(snapshot.version(), snapshot.timestamp());
+        } else {
+            // ADR-0028 snapshot bodies carry no commit timestamp (EdgeSnapshotCodec
+            // deserializes with timestamp 0 = "unknown"). Record the version but leave
+            // the frontier untouched: advancing it to 0 would trip the CT-08
+            // implausibility counter on every legitimate cutover (false positives mask
+            // real skew). The first post-snapshot NOTIFY commitTs or cursor-matched
+            // HEARTBEAT heals the frontier (ADR-0039).
+            stalenessTracker.recordVersion(snapshot.version());
+        }
     }
 
     // -----------------------------------------------------------------------

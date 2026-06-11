@@ -102,8 +102,8 @@ Once a client reads a value at version V from any edge node, all subsequent read
 When a client reconnects to a different edge node after failover:
 1. Client passes its last `VersionCursor` in the connection handshake.
 2. New edge node checks if its local version >= cursor.
-3. If behind: waits briefly for catch-up (same timeout as above).
-4. If still behind: serves stale with notification. Client can retry or accept.
+3. If behind: the read is **refused immediately** — `404` + `X-Configd-Refused: cursor-behind` (and the cursor the edge IS at, via `X-Configd-Cursor`), incrementing `edge_read_refusals_cursor_behind_total` (the per-reason expansion of the `edge_read_refusals_total{reason}` family — the registry is label-less) and `invariant.violation.monotonic_read`. It does **not** wait for catch-up and does **not** block.
+4. The edge **never serves stale on a cursor-behind read** — the refusal rule is uniform across steady state, catch-up after reconnect, and failover (the consistent-refusal semantics of the §3 mechanism above, per ADR-0035 staleness/refusal and the ADR-0039 frontier measure). The client retries (the new edge converges via its cursor-resumed subscription) or fails over again. (The earlier steps 3–4 text — "waits briefly for catch-up" / "serves stale with notification" — described the unimplemented blocking-catch-up variant of CM-017/CM-041 and contradicted the mechanism paragraph; resolved at the C2 contract pass per the c2-c5-design-screen C2-4 ruling. Pinned end-to-end by `EdgeFailoverTest` — kill-mid-stream, cursor carried to the next endpoint, refusals during catch-up, cursor-monotonic resume.)
 
 ### Formal Invariant
 ```

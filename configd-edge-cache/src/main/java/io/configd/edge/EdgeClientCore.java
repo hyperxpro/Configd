@@ -6,9 +6,11 @@ import io.configd.distribution.wire.EdgeFrame;
 import io.configd.distribution.wire.EdgeSnapshotCodec;
 import io.configd.observability.InvariantMonitor;
 import io.configd.observability.MetricsRegistry;
+import io.configd.store.ConfigSigner;
 import io.configd.store.ConfigSnapshot;
 import io.configd.store.ReadResult;
 
+import java.nio.file.Path;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Deque;
@@ -175,9 +177,11 @@ public final class EdgeClientCore {
     private int backwardSnapshotsRefused;
     private int heartbeatsObserved;
     private int frontierAdvances;
+    private int verifyRejections;
 
     /**
-     * Full constructor.
+     * Sim/test constructor: no signature verifier, no epoch persistence (signature rows
+     * are exercised by the C2 integration test with a real key, not this core's sim).
      *
      * @param clock              the injected clock (non-null)
      * @param invariantMonitor   the INV-M1 ({@code monotonic_read}) + INV-S1 monitor wired
@@ -193,6 +197,36 @@ public final class EdgeClientCore {
                           MetricsRegistry.Counter implausibleCounter,
                           StrongReadKeyClass strongReadKeyClass, FrameSink sink,
                           long heartbeatMs, int silenceFactor) {
+        this(clock, invariantMonitor, implausibleCounter, strongReadKeyClass, sink,
+                heartbeatMs, silenceFactor, null, null);
+    }
+
+    /**
+     * Full (production / C2 process) constructor: wires the F-0052 signed-chain
+     * verification and the SEC-017 epoch sidecar into the real {@link DeltaApplier}.
+     *
+     * @param clock              the injected clock (non-null)
+     * @param invariantMonitor   the INV-M1 ({@code monotonic_read}) + INV-S1 monitor wired
+     *                           into the read store and staleness tracker (may be null in
+     *                           tests that do not assert the seam)
+     * @param implausibleCounter the ADR-0039 implausible-frontier counter (may be null)
+     * @param strongReadKeyClass the ADR-0038 strong-read key class (always-store; non-null)
+     * @param sink               the outbound frame sink (non-null; use {@link FrameSink#NONE})
+     * @param heartbeatMs        the assumed heartbeat cadence for silence detection (&gt;0)
+     * @param silenceFactor      reconnect after {@code silenceFactor × heartbeatMs} silence (&gt;0)
+     * @param verifier           optional Ed25519 verifier (CT-23: signed-chain verification;
+     *                           null = sim/unsigned mode — a SIGNED delta is then rejected
+     *                           fail-closed by the applier, F-0052)
+     * @param epochLockDir       optional directory for the SEC-017 {@code epoch.lock}
+     *                           sidecar ({@code --data-dir}; null = no epoch persistence).
+     *                           Only epoch metadata is written here — never values (RR-098:
+     *                           {@code secure/} values stay in memory only)
+     */
+    public EdgeClientCore(Clock clock, InvariantMonitor invariantMonitor,
+                          MetricsRegistry.Counter implausibleCounter,
+                          StrongReadKeyClass strongReadKeyClass, FrameSink sink,
+                          long heartbeatMs, int silenceFactor,
+                          ConfigSigner verifier, Path epochLockDir) {
         this.clock = Objects.requireNonNull(clock, "clock must not be null");
         Objects.requireNonNull(strongReadKeyClass, "strongReadKeyClass must not be null");
         this.sink = Objects.requireNonNull(sink, "sink must not be null");
@@ -206,9 +240,7 @@ public final class EdgeClientCore {
         this.silenceFactor = silenceFactor;
         this.client = new EdgeConfigClient(clock, invariantMonitor, implausibleCounter,
                 strongReadKeyClass);
-        // V1/C2 sim path: no signature verifier (signature rows are exercised by the C2
-        // integration test with a real key, not this core's sim). Real gap/stale logic.
-        this.applier = new DeltaApplier(client);
+        this.applier = new DeltaApplier(client, verifier, epochLockDir);
         this.readStore = new LocalConfigStore(ConfigSnapshot.EMPTY, clock, invariantMonitor);
         this.cursor = 0L;
         this.lastAckedSeq = 0L;
@@ -308,10 +340,12 @@ public final class EdgeClientCore {
                 // Re-delivered/older notification: recorded, not applied. Cursor unchanged
                 // — never a stale overwrite (contract §3 INV-M1 / §4 monotonicity).
             }
-            // No verifier on this core's apply path, so the signature/replay results cannot
-            // occur here; count defensively (a future wiring change that produced one must
-            // be visible, never silently dropped).
-            case UNSIGNED_REJECTED, SIGNATURE_INVALID, REPLAY_REJECTED -> gapsDetected++;
+            // F-0052 / CT-23: a rejected signature/replay is NOT a gap (the chain is
+            // contiguous; the content failed verification). Counted on its own series so
+            // edge_gaps_total stays an honest gap signal — the cursor does not advance, so
+            // the server's ack-lag eventually demotes + re-snapshots a persistently
+            // rejecting edge.
+            case UNSIGNED_REJECTED, SIGNATURE_INVALID, REPLAY_REJECTED -> verifyRejections++;
         }
     }
 
@@ -560,6 +594,14 @@ public final class EdgeClientCore {
     /** Number of heartbeats that advanced the frontier (cursor-matched). */
     public int frontierAdvances() {
         return frontierAdvances;
+    }
+
+    /**
+     * Number of notifications rejected by signed-chain verification (unsigned / invalid
+     * signature / epoch replay — F-0052 / CT-23). Distinct from {@link #gapsDetected()}.
+     */
+    public int verifyRejections() {
+        return verifyRejections;
     }
 
     /** True if a snapshot transfer is in progress (between BEGIN and END). */

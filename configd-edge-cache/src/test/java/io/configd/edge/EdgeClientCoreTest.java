@@ -538,4 +538,97 @@ class EdgeClientCoreTest {
             assertFalse(core.hasDirective());
         }
     }
+
+    // -----------------------------------------------------------------------
+    // Signed-chain verification seam (F-0052 / CT-23 — the C2 process wiring)
+    // -----------------------------------------------------------------------
+
+    @Nested
+    class VerificationSeam {
+
+        @Test
+        void signedDeltaWithNoVerifierIsRejectedOnItsOwnCounterNotAsGap() {
+            // F-0052 fail-closed: a SIGNED delta on a core with no verifier configured is
+            // rejected. The rejection is a verification event, NOT a gap — edge_gaps_total
+            // must stay an honest gap signal.
+            ConfigDelta signed = new ConfigDelta(0, 1,
+                    List.of(new ConfigMutation.Put("a", bytes("1"))), new byte[64]);
+            core.onFrame(new EdgeFrame.Notify(List.of(
+                    new CommitNotification(1, clock.timeMs, signed))));
+            assertEquals(1, core.verifyRejections(), "rejection counted on verifyRejections");
+            assertEquals(0, core.gapsDetected(), "a verification rejection is not a gap");
+            assertEquals(0, core.cursor(), "rejected delta never advances the cursor");
+            assertFalse(core.get("a").found(), "rejected delta never applies");
+        }
+
+        @Test
+        void verifierConstructorAcceptsAndAppliesUnsignedlessFlowViaEpochDir(
+                @org.junit.jupiter.api.io.TempDir java.nio.file.Path tmp) throws Exception {
+            // The full constructor wires a real verifier + the SEC-017 epoch.lock dir.
+            java.security.KeyPair kp =
+                    java.security.KeyPairGenerator.getInstance("Ed25519").generateKeyPair();
+            io.configd.store.ConfigSigner leaderSigner = new io.configd.store.ConfigSigner(kp);
+            io.configd.store.ConfigSigner edgeVerifier =
+                    new io.configd.store.ConfigSigner(kp.getPublic());
+
+            EdgeClientCore verified = new EdgeClientCore(clock, monitor,
+                    metrics.counter(StalenessTracker.IMPLAUSIBLE_METRIC),
+                    StrongReadKeyClass.DEFAULT, sink,
+                    EdgeClientCore.DEFAULT_HEARTBEAT_MS, EdgeClientCore.DEFAULT_SILENCE_FACTOR,
+                    edgeVerifier, tmp);
+
+            // A correctly signed delta (epoch 1, canonical payload) applies.
+            ConfigDelta unsigned = new ConfigDelta(0, 1,
+                    List.of(new ConfigMutation.Put("k", bytes("v"))), null, 1L, new byte[8]);
+            byte[] sig = leaderSigner.sign(unsigned.signingPayload());
+            ConfigDelta signed = new ConfigDelta(0, 1, unsigned.mutations(), sig, 1L, new byte[8]);
+            verified.onFrame(new EdgeFrame.Notify(List.of(
+                    new CommitNotification(1, clock.timeMs, signed))));
+            assertEquals(1, verified.cursor(), "a correctly signed delta applies");
+            assertEquals(0, verified.verifyRejections());
+
+            // A tampered signature is rejected on the verification counter.
+            ConfigDelta bad = new ConfigDelta(1, 2,
+                    List.of(new ConfigMutation.Put("k", bytes("x"))), new byte[64], 2L, new byte[8]);
+            verified.onFrame(new EdgeFrame.Notify(List.of(
+                    new CommitNotification(2, clock.timeMs, bad))));
+            assertEquals(1, verified.verifyRejections());
+            assertEquals(1, verified.cursor(), "tampered delta never advances the cursor");
+
+            // SEC-017: the epoch sidecar landed in the data dir (metadata only, no values).
+            assertTrue(java.nio.file.Files.exists(tmp.resolve("epoch.lock")),
+                    "epoch.lock persisted under the supplied dir");
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // CT-08 signal integrity: a legitimate snapshot cutover must NOT trip the
+    // implausibility counter (ADR-0028 bodies carry no commit timestamp)
+    // -----------------------------------------------------------------------
+
+    @Nested
+    class SnapshotFrontierIntegrity {
+
+        @Test
+        void snapshotCutoverDoesNotTripImplausibilityCounter() {
+            // Establish a real frontier first (an applied delta at the current clock).
+            core.onFrame(new EdgeFrame.Notify(List.of(notif(1, 0, 1, clock.timeMs, "a", "1"))));
+            long before = metrics.counter(StalenessTracker.IMPLAUSIBLE_METRIC).get();
+
+            // A forward snapshot arrives over the wire. EdgeSnapshotCodec bodies carry no
+            // commit timestamp (deserialize stamps 0 = unknown) — the cutover must record
+            // the version WITHOUT a frontier advance, never as an implausible sample.
+            for (EdgeFrame f : snapshotFrames(snapshot(5, "a", "1", "b", "2"), 5)) {
+                core.onFrame(f);
+            }
+            assertEquals(5, core.cursor());
+            assertEquals(before, metrics.counter(StalenessTracker.IMPLAUSIBLE_METRIC).get(),
+                    "a legitimate snapshot cutover must not fire the CT-08 tripwire");
+
+            // The frontier then heals from the post-snapshot tail (commitTs of the next
+            // NOTIFY) — staleness returns to CURRENT.
+            core.onFrame(new EdgeFrame.Notify(List.of(notif(6, 5, 6, clock.timeMs, "c", "3"))));
+            assertEquals(StalenessTracker.State.CURRENT, core.stalenessState());
+        }
+    }
 }
