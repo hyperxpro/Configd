@@ -63,6 +63,14 @@ step_gate1() {
 
 step_p0tests() {
   cd "$ROOT"
+  # Stale-artifact guard: step_gate1 ran `clean verify` (not install), so ~/.m2
+  # holds the PRE-build jars while target/ holds fresh classes — a `-pl X -am
+  # test` run can then mix stale upstream jars with new classes and fail
+  # spuriously. Install the reactor once (no clean; reuses gate-1's compiled
+  # output) so every module-scoped step below resolves HEAD artifacts. This
+  # install persists across the sibling `--step` children via ~/.m2.
+  $MVN -q install -DskipTests 2>&1 | tee "$LOGDIR/p0-install.log" | tail -2
+  grep -qE "BUILD SUCCESS" "$LOGDIR/p0-install.log" || { echo "GATE-2 p0tests: reactor install failed"; return 1; }
   # Named discriminating tests, one surefire run per owning module.
   $MVN -q -pl configd-consensus-core -am test \
     -Dtest='CommitOutcomeSeamTest,SnapshotCrashRecoveryTest,TimingConversionTests,ReconfigurationTest' \

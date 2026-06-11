@@ -102,7 +102,18 @@ find_leader() {
   done
   return 1
 }
-LEADER=$(find_leader) || fail "no node accepted a write (no leader)"
+# Resolve the initial leader with patience: on a CPU-credit-throttled box the
+# RR-006 real-millisecond election timeout (150-300ms) can let leadership churn
+# faster than a single probe scan, so a node that is leader at probe time may
+# step down before the probe write commits. Retry the whole scan over a generous
+# window (additive patience only — a single 200 still means a real committed
+# write) so a transiently-flapping cluster gets time to settle.
+LEADER=""
+for _i in $(seq 1 40); do
+  if LEADER=$(find_leader); then break; fi
+  sleep 0.5
+done
+[ -n "$LEADER" ] || fail "no node accepted a write (no leader) after ~20s of retries"
 pass "leader elected: node $LEADER (api $(api "$LEADER"))"
 
 # ---- step 3: write a config (RR-004/ADR-0033: 200 == COMMITTED) -------------
