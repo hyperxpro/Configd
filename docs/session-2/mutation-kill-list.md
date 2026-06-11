@@ -115,7 +115,41 @@ RESIDUAL (documented, still surviving).
 - (pending PIT confirmation of which AssertionTwinFiringTest kills land)
 
 ## RR-092 — config-store targeted assertion gaps
-- (in progress)
+
+### `VersionedConfigStore.delete` + `.applyBatch` — sequence-monotonicity guard
+- Mutant: RemoveConditional ORDER_ELSE on `if (sequence <= currentSnapshot.version())
+  throw ...` (delete:114 and applyBatch:137). Only `put`'s guard was regression-tested.
+- Killing tests: `VersionedConfigStoreTest$SequenceMonotonicityGuard.`
+  `deleteWithStaleSequenceThrows`, `applyBatchWithStaleSequenceThrows`
+  (+ `monotonicDeleteAndBatchStillApply` for liveness). A replayed delete/batch at a
+  stale-or-equal sequence must throw and must NOT regress the version or mutate state.
+- Status: **KILLED** (both). Verified 2026-06-11: present -> pass; both guards
+  removed -> 2 failures (the stale-delete and stale-batch tests).
+
+### `ConfigStateMachine.decodeTrailer` — 9 boundary survivors
+- Killing tests: `ConfigStateMachineTest$SnapshotTrailerCompatibility` (10 new
+  boundary cases: empty/legacy, 7-byte reject, raw-8-epoch, 8-byte TLV,
+  trailerLen==MAX accept, MAX+1 reject, negative reject, truncated reject,
+  trailerLen<Long.BYTES skip-no-epoch, trailerLen==Long.BYTES read-epoch-no-tail).
+- LOAD-BEARING boundaries KILLED (verified 2026-06-11, clean builds):
+  * `trailerLen > MAX` -> `>= MAX`  (tlvTrailerLengthAtMaxIsAccepted) — KILLED
+  * `trailerLen >= Long.BYTES` -> `> Long.BYTES` (tlvTrailerExactlyEpochSizeReadsEpochWithNoTail) — KILLED
+  * `buf.remaining() < trailerLen` -> `<= ` (tlvTruncatedTrailerIsRejected) — KILLED
+  * `trailerLen < 0` reject — pinned (tlvNegativeTrailerLengthIsRejected)
+- DOCUMENTED EQUIVALENT / near-equivalent boundary mutants (verified surviving even
+  with the new tests, with the reason — NOT papered over):
+  * `unknownTail > 0` -> `unknownTail >= 0`: the guarded body is
+    `buf.position(buf.position() + unknownTail)`; with unknownTail==0 that is a
+    no-op (`position(+0)`). `> 0` vs `>= 0` is behaviorally identical. **EQUIVALENT.**
+  * `remaining >= 8` -> `remaining > 8` (the magic gate): only differs for an
+    exactly-8-byte trailer that starts with the MAGIC. Such a trailer misrouted to
+    the raw-epoch path reads the 8 magic+len bytes as a long = 0xC0FD7A1100000000,
+    which is NEGATIVE; the carry-forward guard `restoredEpoch > signingEpoch(0)` is
+    then false, so the epoch stays 0 — identical observable to the TLV path
+    (entries load, epoch 0). The fixed magic's sign makes this **near-EQUIVALENT**
+    for the only observable (signingEpoch); the lower side (remaining<8) is pinned
+    by sevenTrailerBytesIsRejected. PIT-baseline will confirm the exact survivor
+    set; these two are documented equivalents, not residual gaps.
 
 ---
 

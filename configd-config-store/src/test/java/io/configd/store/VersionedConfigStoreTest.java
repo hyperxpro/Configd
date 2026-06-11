@@ -95,6 +95,65 @@ class VersionedConfigStoreTest {
     }
 
     // -----------------------------------------------------------------------
+    // RR-092: the MVCC sequence-monotonicity guard must hold on ALL write paths.
+    //
+    // Session-1 PIT survivors: VersionedConfigStore.delete and .applyBatch each
+    // carry `if (sequence <= currentSnapshot.version()) throw ...`, but only
+    // `put`'s guard was regression-tested (nonMonotonicSequenceThrows above), so
+    // the RemoveConditional ORDER_ELSE mutant on delete/applyBatch SURVIVED. A
+    // replayed/duplicate delete or batch at a STALE sequence would otherwise be
+    // applied, silently REGRESSING the store version (the version-regression bug
+    // an at-least-once apply must reject). These tests pin both guards.
+    // -----------------------------------------------------------------------
+
+    @Nested
+    class SequenceMonotonicityGuard {
+
+        @Test
+        void deleteWithStaleSequenceThrows() {
+            store.put("k", bytes("v"), 10);
+            // A replayed delete at a sequence <= the current version must be rejected.
+            assertThrows(IllegalArgumentException.class,
+                    () -> store.delete("k", 5), "delete below the current version must throw");
+            assertThrows(IllegalArgumentException.class,
+                    () -> store.delete("k", 10), "delete at the current version (equal, not >) must throw");
+            // The store is unchanged: version stays 10 and the key is still present.
+            assertEquals(10, store.currentVersion(), "a rejected delete must not regress the version");
+            assertTrue(store.get("k").found(), "a rejected delete must not remove the key");
+        }
+
+        @Test
+        void applyBatchWithStaleSequenceThrows() {
+            store.put("k", bytes("v"), 10);
+            List<ConfigMutation> batch = List.of(
+                    new ConfigMutation.Put("a", bytes("1")),
+                    new ConfigMutation.Delete("k"));
+            // A replayed batch at a sequence <= the current version must be rejected.
+            assertThrows(IllegalArgumentException.class,
+                    () -> store.applyBatch(batch, 5), "batch below the current version must throw");
+            assertThrows(IllegalArgumentException.class,
+                    () -> store.applyBatch(batch, 10), "batch at the current version (equal, not >) must throw");
+            // The store is unchanged: version stays 10, the new key was not added,
+            // and the targeted key was not deleted.
+            assertEquals(10, store.currentVersion(), "a rejected batch must not regress the version");
+            assertFalse(store.get("a").found(), "a rejected batch must not apply any of its mutations");
+            assertTrue(store.get("k").found(), "a rejected batch must not delete the key");
+        }
+
+        @Test
+        void monotonicDeleteAndBatchStillApply() {
+            // Liveness: the guard must NOT reject legitimately-increasing sequences.
+            store.put("k", bytes("v"), 10);
+            store.delete("k", 11);
+            assertFalse(store.get("k").found(), "a delete at a higher sequence must apply");
+            assertEquals(11, store.currentVersion());
+            store.applyBatch(List.of(new ConfigMutation.Put("a", bytes("1"))), 12);
+            assertTrue(store.get("a").found(), "a batch at a higher sequence must apply");
+            assertEquals(12, store.currentVersion());
+        }
+    }
+
+    // -----------------------------------------------------------------------
     // Batch apply
     // -----------------------------------------------------------------------
 

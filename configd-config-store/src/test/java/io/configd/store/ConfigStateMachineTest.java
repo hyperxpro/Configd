@@ -1001,5 +1001,183 @@ class ConfigStateMachineTest {
                     () -> dst.restoreSnapshot(junk),
                     "malformed trailer must throw rather than silently accept");
         }
+
+        // -------------------------------------------------------------------
+        // RR-092: decodeTrailer BOUNDARY survivors (9 surviving boundary
+        // mutants, test-forensics §1.3 #9). decodeTrailer dispatches on the
+        // bytes AFTER the entries:
+        //   remaining == 0                         -> legacy (accept, no epoch)
+        //   remaining >= 8 && first4 == MAGIC      -> TLV form
+        //     trailerLen < 0 || trailerLen > MAX   -> reject
+        //     remaining < trailerLen               -> reject (truncated)
+        //     trailerLen >= Long.BYTES             -> read epoch (+ skip tail)
+        //     else                                 -> skip trailerLen bytes
+        //   remaining == Long.BYTES (8)            -> raw-epoch form
+        //   else                                   -> malformed (reject)
+        // The off-by-one mutants on those comparisons accept a corrupt trailer
+        // or reject a valid one. These tests pin each boundary. The base is an
+        // EMPTY store so the trailer is the only region exercised.
+        // -------------------------------------------------------------------
+
+        private static final int MAX_SNAPSHOT_TRAILER_LEN = 65_536;
+
+        /** Header for an EMPTY store: [sequence=0][entryCount=0], no trailer. */
+        private static byte[] emptyEntries() {
+            ByteBuffer b = ByteBuffer.allocate(8 + 4);
+            b.putLong(0L);
+            b.putInt(0);
+            return b.array();
+        }
+
+        /** entriesOnly + raw trailer bytes. */
+        private static byte[] withTrailer(byte[] trailer) {
+            byte[] head = emptyEntries();
+            ByteBuffer b = ByteBuffer.allocate(head.length + trailer.length);
+            b.put(head);
+            b.put(trailer);
+            return b.array();
+        }
+
+        private static ConfigStateMachine freshMachine() {
+            return new ConfigStateMachine(new VersionedConfigStore());
+        }
+
+        @Test
+        void emptyTrailerIsAcceptedAsLegacy() {
+            // remaining == 0 boundary: a snapshot with no trailer loads (legacy).
+            ConfigStateMachine dst = freshMachine();
+            assertDoesNotThrow(() -> dst.restoreSnapshot(emptyEntries()));
+            assertEquals(0L, dst.signingEpoch(), "legacy snapshot carries no epoch");
+        }
+
+        @Test
+        void sevenTrailerBytesIsRejected() {
+            // remaining == 7: below the `>= 8` magic gate AND != 8 (raw epoch) ->
+            // the final malformed throw. Pins the `>= 8` lower boundary.
+            ConfigStateMachine dst = freshMachine();
+            assertThrows(IllegalArgumentException.class,
+                    () -> dst.restoreSnapshot(withTrailer(new byte[7])),
+                    "7 trailer bytes (not 0, not 8, not a TLV) must be rejected");
+        }
+
+        @Test
+        void rawEightByteEpochAtBoundaryLoads() {
+            // remaining == Long.BYTES (8) with no magic -> raw-epoch form.
+            ByteBuffer t = ByteBuffer.allocate(8);
+            t.putLong(123L);
+            ConfigStateMachine dst = freshMachine();
+            assertDoesNotThrow(() -> dst.restoreSnapshot(withTrailer(t.array())));
+            assertEquals(123L, dst.signingEpoch(), "raw 8-byte trailer must restore the epoch");
+        }
+
+        @Test
+        void tlvTrailerLengthAtMaxIsAccepted() {
+            // trailerLen == MAX_SNAPSHOT_TRAILER_LEN: the high boundary is INCLUSIVE
+            // (`> MAX` rejects, `== MAX` accepts). Build a payload of exactly MAX
+            // bytes: 8-byte epoch + (MAX-8) unknown tail.
+            int trailerLen = MAX_SNAPSHOT_TRAILER_LEN;
+            ByteBuffer t = ByteBuffer.allocate(4 + 4 + trailerLen);
+            t.putInt(SNAPSHOT_TRAILER_MAGIC);
+            t.putInt(trailerLen);
+            t.putLong(77L);
+            // remaining (MAX-8) unknown-tail bytes are already zero.
+            ConfigStateMachine dst = freshMachine();
+            assertDoesNotThrow(() -> dst.restoreSnapshot(withTrailer(t.array())),
+                    "trailerLen == MAX must be accepted (the > MAX guard is exclusive)");
+            assertEquals(77L, dst.signingEpoch());
+        }
+
+        @Test
+        void tlvTrailerLengthAboveMaxIsRejected() {
+            // trailerLen == MAX+1: just over the high boundary -> reject. We do NOT
+            // need to supply the bytes; the length check fires first.
+            int trailerLen = MAX_SNAPSHOT_TRAILER_LEN + 1;
+            ByteBuffer t = ByteBuffer.allocate(4 + 4 + 8);
+            t.putInt(SNAPSHOT_TRAILER_MAGIC);
+            t.putInt(trailerLen);
+            t.putLong(0L);
+            ConfigStateMachine dst = freshMachine();
+            IllegalArgumentException ex = assertThrows(IllegalArgumentException.class,
+                    () -> dst.restoreSnapshot(withTrailer(t.array())),
+                    "trailerLen == MAX+1 must be rejected");
+            assertTrue(ex.getMessage().contains("out of range"),
+                    "the length-range guard must fire; got: " + ex.getMessage());
+        }
+
+        @Test
+        void tlvNegativeTrailerLengthIsRejected() {
+            // trailerLen < 0 boundary.
+            ByteBuffer t = ByteBuffer.allocate(4 + 4 + 8);
+            t.putInt(SNAPSHOT_TRAILER_MAGIC);
+            t.putInt(-1);
+            t.putLong(0L);
+            ConfigStateMachine dst = freshMachine();
+            assertThrows(IllegalArgumentException.class,
+                    () -> dst.restoreSnapshot(withTrailer(t.array())),
+                    "a negative trailerLen must be rejected");
+        }
+
+        @Test
+        void tlvTruncatedTrailerIsRejected() {
+            // remaining < trailerLen by exactly one: claims 8 payload bytes but
+            // supplies only 7. Pins the truncation boundary.
+            ByteBuffer t = ByteBuffer.allocate(4 + 4 + 7);
+            t.putInt(SNAPSHOT_TRAILER_MAGIC);
+            t.putInt(8);          // claims 8 payload bytes
+            t.put(new byte[7]);   // but only 7 present
+            ConfigStateMachine dst = freshMachine();
+            IllegalArgumentException ex = assertThrows(IllegalArgumentException.class,
+                    () -> dst.restoreSnapshot(withTrailer(t.array())),
+                    "a trailer claiming more bytes than present must be rejected");
+            assertTrue(ex.getMessage().contains("truncated"),
+                    "the truncation guard must fire; got: " + ex.getMessage());
+        }
+
+        @Test
+        void tlvTrailerLengthBelowEpochSizeSkipsWithoutReadingEpoch() {
+            // trailerLen == Long.BYTES - 1 (7): below the `>= Long.BYTES` gate, so
+            // the epoch is NOT read — the 7 bytes are skipped and the epoch stays 0.
+            ByteBuffer t = ByteBuffer.allocate(4 + 4 + 7);
+            t.putInt(SNAPSHOT_TRAILER_MAGIC);
+            t.putInt(7);
+            t.put(new byte[7]);
+            ConfigStateMachine dst = freshMachine();
+            assertDoesNotThrow(() -> dst.restoreSnapshot(withTrailer(t.array())),
+                    "a sub-epoch-length TLV payload must load (fields skipped)");
+            assertEquals(0L, dst.signingEpoch(),
+                    "trailerLen < Long.BYTES must NOT read an epoch — it stays 0");
+        }
+
+        @Test
+        void tlvTrailerOfExactlyEightBytesIsParsedAsTlvNotRawEpoch() {
+            // remaining == 8 with the MAGIC prefix: a minimal TLV (magic + len=0,
+            // no payload). The `remaining >= 8` magic gate is INCLUSIVE, so this is
+            // a TLV (trailerLen 0, epoch left unchanged), NOT the raw-epoch form.
+            // With `>= 8` -> `> 8` the magic gate would skip an exactly-8-byte
+            // trailer and the bytes would be (mis)read as a raw 8-byte epoch.
+            ByteBuffer t = ByteBuffer.allocate(8);
+            t.putInt(SNAPSHOT_TRAILER_MAGIC);
+            t.putInt(0); // trailerLen 0
+            ConfigStateMachine dst = freshMachine();
+            assertDoesNotThrow(() -> dst.restoreSnapshot(withTrailer(t.array())),
+                    "an 8-byte magic+len=0 TLV trailer must load as a (payload-less) TLV");
+            assertEquals(0L, dst.signingEpoch(),
+                    "a zero-length TLV payload carries no epoch — it must NOT be read as a raw epoch "
+                            + "(which would interpret the magic+len bytes as the epoch value)");
+        }
+
+        @Test
+        void tlvTrailerExactlyEpochSizeReadsEpochWithNoTail() {
+            // trailerLen == Long.BYTES (8): the `>= Long.BYTES` gate is inclusive
+            // and unknownTail == 0 (the `unknownTail > 0` skip boundary).
+            ByteBuffer t = ByteBuffer.allocate(4 + 4 + 8);
+            t.putInt(SNAPSHOT_TRAILER_MAGIC);
+            t.putInt(8);
+            t.putLong(55L);
+            ConfigStateMachine dst = freshMachine();
+            assertDoesNotThrow(() -> dst.restoreSnapshot(withTrailer(t.array())));
+            assertEquals(55L, dst.signingEpoch(),
+                    "trailerLen == Long.BYTES must read exactly the epoch (no tail)");
+        }
     }
 }
