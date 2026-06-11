@@ -207,7 +207,9 @@ arraycopy-removal survivor → **RR-009**.
 
 ## Gate-1 blockers
 
-**One RR row currently fails gate-1 on the audit box: RR-094.** The clean-checkout build+suite
+**Session-2 update (2026-06-11): gate-1 PASSES — RR-094 RESOLVED** (lead's official run, all 5
+steps, `docs/session-2/captures/gate1-official-pass.txt`). The paragraph below is the Session-1
+record, kept for history. **One RR row failed gate-1 at Session-1 close: RR-094.** The clean-checkout build+suite
 was green when run with CPU credits available (fresh clone, `./mvnw -B -fae clean verify` →
 BUILD SUCCESS, 21,408 / 0 / 0 / 8 — build-report.md §2–§6), but the end-of-session gate
 verification (4 runs, after the burstable instance was credit-throttled by a day of audit
