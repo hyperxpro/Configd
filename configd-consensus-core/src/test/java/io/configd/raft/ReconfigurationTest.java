@@ -548,14 +548,39 @@ class ReconfigurationTest {
             cluster.deliverAllMessages(20);
             long committedBefore = leader.log().commitIndex();
 
-            // Enter joint and COMMIT C_old,new across the cluster, but isolate n1
-            // before it can finalize so the transition is mid-flight.
+            // Enter joint. Capture the joint entry's index so we can deliver
+            // EXACTLY until C_old,new commits — and isolate the leader while a
+            // SURVIVOR is still in the joint phase (a5-batch-review §RR-018: the
+            // old body delivered 30 rounds, by which point the transition had
+            // already finalized, so the election never actually happened "during
+            // the joint phase").
             assertTrue(leader.proposeConfigChange(Set.of(n1, n2, n3, n4)));
             assertTrue(leader.clusterConfig().isJoint());
-            // One replication round to commit the joint entry on the followers.
-            cluster.deliverAllMessages(30);
+            long jointIndex = leader.log().lastIndex(); // the C_old,new entry
 
-            // Leadership change: isolate n1, elect a survivor among {2,3,4}.
+            // Deliver round-by-round only until the joint entry is COMMITTED on the
+            // leader (so a new leader will inherit it), but STOP before C_new
+            // commits cluster-wide. When C_old,new applies, the leader transitions
+            // its own in-memory config to C_new and appends the C_new entry, but
+            // the FOLLOWERS keep the joint config in-memory until the C_new entry
+            // reaches their logs — so a survivor is genuinely mid-joint here.
+            boolean jointCommitted = false;
+            for (int r = 0; r < 30 && !jointCommitted; r++) {
+                cluster.deliverMessages();
+                jointCommitted = leader.log().commitIndex() >= jointIndex;
+            }
+            assertTrue(jointCommitted, "C_old,new must commit so the new leader inherits it");
+
+            // THE PINNED CLAIM: at the isolation point, a survivor we will elect is
+            // STILL in the joint phase (its in-memory config has not yet adopted
+            // C_new). This is what makes the subsequent election a "during joint
+            // phase" election. (The old leader has already moved to C_new in-memory,
+            // which is why the review found asserting isJoint() on n1 was wrong.)
+            assertTrue(cluster.nodes.get(n2).clusterConfig().isJoint(),
+                    "RR-018: the survivor n2 must still be MID-JOINT before the isolation — "
+                            + "this is the 'leader election DURING the joint phase' the test name claims");
+
+            // Leadership change: isolate n1, elect the still-joint survivor n2.
             cluster.dropAllMessages();
             long oldTerm = leader.currentTerm();
             Set<NodeId> survivors = Set.of(n2, n3, n4);
