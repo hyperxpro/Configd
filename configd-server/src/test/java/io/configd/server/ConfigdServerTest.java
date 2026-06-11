@@ -396,15 +396,25 @@ class ConfigdServerTest {
             // The REAL production inbound seam (no try/catch around routeMessage).
             var inbound = ConfigdServer.raftInboundHandler(driver, GROUP, raftExecutor);
 
-            // A fixed-rate tick task on the SAME executor — the thing FIND-0005 is about.
+            // A fixed-rate tick task on the SAME executor — the thing FIND-0005 is
+            // about. Use a latch-based liveness signal so the assertions are
+            // DETERMINISTIC (await with a generous timeout) rather than racing a
+            // wall-clock sleep, which is flaky under load / JaCoCo instrumentation.
             AtomicInteger tickCount = new AtomicInteger();
-            var ticker = raftExecutor.scheduleAtFixedRate(tickCount::incrementAndGet,
-                    0, 2, java.util.concurrent.TimeUnit.MILLISECONDS);
+            java.util.concurrent.atomic.AtomicReference<java.util.concurrent.CountDownLatch> tickLatch =
+                    new java.util.concurrent.atomic.AtomicReference<>(new java.util.concurrent.CountDownLatch(1));
+            var ticker = raftExecutor.scheduleAtFixedRate(() -> {
+                tickCount.incrementAndGet();
+                tickLatch.get().countDown();
+            }, 0, 2, java.util.concurrent.TimeUnit.MILLISECONDS);
             try {
-                // Let the tick task run, then capture its progress at injection time.
-                Thread.sleep(40);
+                // The tick task MUST run at least once before injection (await it).
+                assertTrue(tickLatch.get().await(10, java.util.concurrent.TimeUnit.SECONDS),
+                        "the fixed-rate tick task must run before injection");
                 int beforeInjection = tickCount.get();
-                assertTrue(beforeInjection > 0, "the tick task must be running before injection");
+
+                // Arm a fresh latch so we can await a tick AFTER the injection.
+                tickLatch.set(new java.util.concurrent.CountDownLatch(1));
 
                 // RR-008: inject through routeMessage. A stale-term (0) AppendEntries
                 // to a leader triggers a reply via the throwing transport, so
@@ -414,13 +424,14 @@ class ConfigdServerTest {
                         "RR-008: the inbound handler swallows the routeMessage throwable (no propagation "
                                 + "to the caller) — the bug is exactly this silent swallow; here we OBSERVE it");
 
-                // FIND-0005: the tick task must keep advancing AFTER the routed task threw.
-                Thread.sleep(60);
-                int afterInjection = tickCount.get();
-                assertTrue(afterInjection > beforeInjection,
+                // FIND-0005: the tick task must keep advancing AFTER the routed task
+                // threw — a dead tick loop is the zombie-tick regression. Await a
+                // post-injection tick deterministically.
+                assertTrue(tickLatch.get().await(10, java.util.concurrent.TimeUnit.SECONDS),
                         "FIND-0005: the fixed-rate tick task must keep running after a routed-message task "
-                                + "threw (before=" + beforeInjection + ", after=" + afterInjection
-                                + ") — a dead tick loop is the zombie-tick regression");
+                                + "threw — a dead tick loop is the zombie-tick regression");
+                assertTrue(tickCount.get() > beforeInjection,
+                        "the tick count must advance past the pre-injection value");
             } finally {
                 ticker.cancel(false);
             }
