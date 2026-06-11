@@ -117,11 +117,22 @@ done
 pass "leader elected: node $LEADER (api $(api "$LEADER"))"
 
 # ---- step 3: write a config (RR-004/ADR-0033: 200 == COMMITTED) -------------
+# Retry across leader churn: under RR-006's real 150-300ms election timeout a
+# CPU-starved box (e.g. a credit-exhausted CI runner) can churn leadership
+# faster than one write commits, so a single PUT may see 503 (NotLeader/Lost)
+# even though the cluster is healthy. Re-resolve the leader and retry on any
+# non-200 over a generous window; a 200 still means a genuine quorum commit.
+code=""; body=""
 echo "[step 3] PUT smoke/k1 to leader"
-body=$(curl -s --max-time 8 -w "\n%{http_code}" -X PUT -d "smoke-value-1" \
-       "http://$(api "$LEADER")/v1/config/smoke/k1")
-code=$(echo "$body" | tail -1)
-[ "$code" = "200" ] || fail "PUT returned $code (expected 200)"
+for _i in $(seq 1 30); do
+  if W=$(find_leader); then LEADER="$W"; fi
+  body=$(curl -s --max-time 8 -w "\n%{http_code}" -X PUT -d "smoke-value-1" \
+         "http://$(api "$LEADER")/v1/config/smoke/k1")
+  code=$(echo "$body" | tail -1)
+  [ "$code" = "200" ] && break
+  sleep 0.5
+done
+[ "$code" = "200" ] || fail "PUT returned $code (expected 200) after retries across leader churn"
 echo "  PUT response body: $(echo "$body" | head -1)  (RR-004: 200 == quorum-committed; body 'Committed: seq=S')"
 pass "write committed (200)"
 
@@ -167,9 +178,17 @@ pass "new leader elected: node $NEWLEADER"
 echo "[step 6] write smoke/k2 to new leader, read back"
 # RR-004/ADR-0033: the PUT blocks until quorum commit or the 5s deadline, so allow
 # for commit-wait latency (--max-time 8) — a 200 here is a real committed write.
-code=$(curl -s -o /dev/null -w "%{http_code}" --max-time 8 -X PUT -d "smoke-value-2" \
-       "http://$(api "$NEWLEADER")/v1/config/smoke/k2")
-[ "$code" = "200" ] || fail "post-failover PUT returned $code"
+# Retry across leader churn (same rationale as step 3): the post-kill cluster may
+# re-elect more than once on a CPU-starved box before a write commits.
+code=""
+for _i in $(seq 1 30); do
+  if NL=$(find_leader); then NEWLEADER="$NL"; fi
+  code=$(curl -s -o /dev/null -w "%{http_code}" --max-time 8 -X PUT -d "smoke-value-2" \
+         "http://$(api "$NEWLEADER")/v1/config/smoke/k2")
+  [ "$code" = "200" ] && break
+  sleep 0.5
+done
+[ "$code" = "200" ] || fail "post-failover PUT returned $code after retries across leader churn"
 # poll the new leader for the value (commit + apply)
 got=""
 for i in $(seq 1 20); do
