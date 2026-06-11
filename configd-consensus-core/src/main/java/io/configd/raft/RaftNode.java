@@ -876,8 +876,14 @@ public final class RaftNode {
         return log.lastApplied();
     }
 
-    /** The most recent applied-mutation seq observed from {@link StateMachine#apply}. */
-    private long lastRecordedSeq = -1;
+    /**
+     * The most recent applied-mutation seq observed from {@link StateMachine#apply}.
+     * Tick-thread-only (written in {@code applyCommitted}, read in
+     * {@code currentAppliedSequence} on the commit-outcome path), so atomicity is
+     * not strictly required; declared {@code volatile} to keep the 64-bit write
+     * atomic and clear the SpotBugs AT_NONATOMIC_64BIT_PRIMITIVE finding (RR-025).
+     */
+    private volatile long lastRecordedSeq = -1;
 
     // ========================================================================
     // Reconfiguration (Joint Consensus — Raft §6)
