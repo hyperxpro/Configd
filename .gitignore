@@ -2,6 +2,8 @@
 target/
 build/
 *.bin
+# jcstress (B6/RR-011) drops a results dump in CWD by default; never commit it
+jcstress-results-*.bin.gz
 *.class
 *.jar
 *.war
