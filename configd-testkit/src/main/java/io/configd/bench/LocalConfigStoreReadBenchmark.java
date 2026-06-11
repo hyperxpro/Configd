@@ -30,6 +30,13 @@ import java.util.concurrent.TimeUnit;
  * <p>Measured on the gate box (size=10000): getMiss ≈6 ns / 0 B; getIntoHit ≈117 ns /
  * 0 B; getHit ≈89 ns / 32 B; getHitWithCursor ≈89 ns / 32 B.
  *
+ * <p><b>Hit-leg variance (why the gate binds only getMiss/getIntoHit):</b> the hit
+ * legs' 32 B/op can read ≈0 B/op on some runs — C2's escape analysis sometimes
+ * scalar-replaces the ReadResult once fully warmed (observed run-to-run on the gate
+ * box). The miss and getInto legs are zero-alloc STRUCTURALLY (no allocation in their
+ * bytecode), so {@code gates/jmh-gc-check.sh} gates exactly those two — a deterministic
+ * zero-vs-nonzero check, immune to JIT luck; the hit legs are captured for trend only.
+ *
  * <p><b>Scope honesty (CT-34):</b> the HTTP serving shell above this path
  * ({@code EdgeHttpServer}) allocates per request (exchange, headers, strings) and is
  * deliberately NOT measured here — it is not the §3 library read path and is honestly

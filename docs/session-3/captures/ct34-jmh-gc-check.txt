@@ -1,0 +1,291 @@
+# CT-34 mechanical gc-profile run (gates/jmh-gc-check.sh)
+# date: 2026-06-11T23:46:19Z  git: 77aa712  size=10000
+# gated legs (must be < 1 B/op): getMiss getIntoHit; getHit/getHitWithCursor captured for trend (one ReadResult by design, not gated)
+
+WARNING: A terminally deprecated method in sun.misc.Unsafe has been called
+WARNING: sun.misc.Unsafe::objectFieldOffset has been called by org.openjdk.jmh.util.Utils (file:/home/ubuntu/Code/Configd/configd-testkit/target/benchmarks.jar)
+WARNING: Please consider reporting this to the maintainers of class org.openjdk.jmh.util.Utils
+WARNING: sun.misc.Unsafe::objectFieldOffset will be removed in a future release
+# JMH version: 1.37
+# VM version: JDK 25, OpenJDK 64-Bit Server VM, 25+36-LTS
+# VM invoker: /home/ubuntu/.sdkman/candidates/java/25-amzn/bin/java
+# VM options: --enable-preview
+# Blackhole mode: compiler (auto-detected, use -Djmh.blackhole.autoDetect=false to disable)
+# Warmup: 3 iterations, 1 s each
+# Measurement: 3 iterations, 1 s each
+# Timeout: 10 min per iteration
+# Threads: 1 thread, will synchronize iterations
+# Benchmark mode: Average time, time/op
+# Benchmark: io.configd.bench.LocalConfigStoreReadBenchmark.getHit
+# Parameters: (size = 10000)
+
+# Run progress: 0.00% complete, ETA 00:00:24
+# Fork: 1 of 1
+WARNING: A terminally deprecated method in sun.misc.Unsafe has been called
+WARNING: sun.misc.Unsafe::objectFieldOffset has been called by org.openjdk.jmh.util.Utils (file:/home/ubuntu/Code/Configd/configd-testkit/target/benchmarks.jar)
+WARNING: Please consider reporting this to the maintainers of class org.openjdk.jmh.util.Utils
+WARNING: sun.misc.Unsafe::objectFieldOffset will be removed in a future release
+# Warmup Iteration   1: 117.718 ns/op
+# Warmup Iteration   2: 108.265 ns/op
+# Warmup Iteration   3: 94.785 ns/op
+Iteration   1: 94.678 ns/op
+                 gc.alloc.rate:      321.872 MB/sec
+                 gc.alloc.rate.norm: 32.001 B/op
+                 gc.count:           3.000 counts
+                 gc.time:            13.000 ms
+
+Iteration   2: 99.791 ns/op
+                 gc.alloc.rate:      304.942 MB/sec
+                 gc.alloc.rate.norm: 32.001 B/op
+                 gc.count:           3.000 counts
+                 gc.time:            15.000 ms
+
+Iteration   3: 91.301 ns/op
+                 gc.alloc.rate:      334.060 MB/sec
+                 gc.alloc.rate.norm: 32.001 B/op
+                 gc.count:           2.000 counts
+                 gc.time:            5.000 ms
+
+
+
+Result "io.configd.bench.LocalConfigStoreReadBenchmark.getHit":
+  95.257 ±(99.9%) 77.983 ns/op [Average]
+  (min, avg, max) = (91.301, 95.257, 99.791), stdev = 4.275
+  CI (99.9%): [17.274, 173.240] (assumes normal distribution)
+
+Secondary result "io.configd.bench.LocalConfigStoreReadBenchmark.getHit:gc.alloc.rate":
+  320.292 ±(99.9%) 266.784 MB/sec [Average]
+  (min, avg, max) = (304.942, 320.292, 334.060), stdev = 14.623
+  CI (99.9%): [53.507, 587.076] (assumes normal distribution)
+
+Secondary result "io.configd.bench.LocalConfigStoreReadBenchmark.getHit:gc.alloc.rate.norm":
+  32.001 ±(99.9%) 0.001 B/op [Average]
+  (min, avg, max) = (32.001, 32.001, 32.001), stdev = 0.001
+  CI (99.9%): [32.000, 32.001] (assumes normal distribution)
+
+Secondary result "io.configd.bench.LocalConfigStoreReadBenchmark.getHit:gc.count":
+  8.000 ±(99.9%) 0.001 counts [Sum]
+  (min, avg, max) = (2.000, 2.667, 3.000), stdev = 0.577
+  CI (99.9%): [8.000, 8.000] (assumes normal distribution)
+
+Secondary result "io.configd.bench.LocalConfigStoreReadBenchmark.getHit:gc.time":
+  33.000 ±(99.9%) 0.001 ms [Sum]
+  (min, avg, max) = (5.000, 11.000, 15.000), stdev = 5.292
+  CI (99.9%): [33.000, 33.000] (assumes normal distribution)
+
+
+# JMH version: 1.37
+# VM version: JDK 25, OpenJDK 64-Bit Server VM, 25+36-LTS
+# VM invoker: /home/ubuntu/.sdkman/candidates/java/25-amzn/bin/java
+# VM options: --enable-preview
+# Blackhole mode: compiler (auto-detected, use -Djmh.blackhole.autoDetect=false to disable)
+# Warmup: 3 iterations, 1 s each
+# Measurement: 3 iterations, 1 s each
+# Timeout: 10 min per iteration
+# Threads: 1 thread, will synchronize iterations
+# Benchmark mode: Average time, time/op
+# Benchmark: io.configd.bench.LocalConfigStoreReadBenchmark.getHitWithCursor
+# Parameters: (size = 10000)
+
+# Run progress: 25.00% complete, ETA 00:00:20
+# Fork: 1 of 1
+WARNING: A terminally deprecated method in sun.misc.Unsafe has been called
+WARNING: sun.misc.Unsafe::objectFieldOffset has been called by org.openjdk.jmh.util.Utils (file:/home/ubuntu/Code/Configd/configd-testkit/target/benchmarks.jar)
+WARNING: Please consider reporting this to the maintainers of class org.openjdk.jmh.util.Utils
+WARNING: sun.misc.Unsafe::objectFieldOffset will be removed in a future release
+# Warmup Iteration   1: 173.207 ns/op
+# Warmup Iteration   2: 119.159 ns/op
+# Warmup Iteration   3: 107.638 ns/op
+Iteration   1: 97.756 ns/op
+                 gc.alloc.rate:      311.674 MB/sec
+                 gc.alloc.rate.norm: 32.001 B/op
+                 gc.count:           3.000 counts
+                 gc.time:            17.000 ms
+
+Iteration   2: 98.058 ns/op
+                 gc.alloc.rate:      311.097 MB/sec
+                 gc.alloc.rate.norm: 32.001 B/op
+                 gc.count:           2.000 counts
+                 gc.time:            8.000 ms
+
+Iteration   3: 102.328 ns/op
+                 gc.alloc.rate:      297.725 MB/sec
+                 gc.alloc.rate.norm: 32.001 B/op
+                 gc.count:           3.000 counts
+                 gc.time:            10.000 ms
+
+
+
+Result "io.configd.bench.LocalConfigStoreReadBenchmark.getHitWithCursor":
+  99.381 ±(99.9%) 46.649 ns/op [Average]
+  (min, avg, max) = (97.756, 99.381, 102.328), stdev = 2.557
+  CI (99.9%): [52.732, 146.030] (assumes normal distribution)
+
+Secondary result "io.configd.bench.LocalConfigStoreReadBenchmark.getHitWithCursor:gc.alloc.rate":
+  306.832 ±(99.9%) 143.983 MB/sec [Average]
+  (min, avg, max) = (297.725, 306.832, 311.674), stdev = 7.892
+  CI (99.9%): [162.849, 450.815] (assumes normal distribution)
+
+Secondary result "io.configd.bench.LocalConfigStoreReadBenchmark.getHitWithCursor:gc.alloc.rate.norm":
+  32.001 ±(99.9%) 0.001 B/op [Average]
+  (min, avg, max) = (32.001, 32.001, 32.001), stdev = 0.001
+  CI (99.9%): [32.000, 32.001] (assumes normal distribution)
+
+Secondary result "io.configd.bench.LocalConfigStoreReadBenchmark.getHitWithCursor:gc.count":
+  8.000 ±(99.9%) 0.001 counts [Sum]
+  (min, avg, max) = (2.000, 2.667, 3.000), stdev = 0.577
+  CI (99.9%): [8.000, 8.000] (assumes normal distribution)
+
+Secondary result "io.configd.bench.LocalConfigStoreReadBenchmark.getHitWithCursor:gc.time":
+  35.000 ±(99.9%) 0.001 ms [Sum]
+  (min, avg, max) = (8.000, 11.667, 17.000), stdev = 4.726
+  CI (99.9%): [35.000, 35.000] (assumes normal distribution)
+
+
+# JMH version: 1.37
+# VM version: JDK 25, OpenJDK 64-Bit Server VM, 25+36-LTS
+# VM invoker: /home/ubuntu/.sdkman/candidates/java/25-amzn/bin/java
+# VM options: --enable-preview
+# Blackhole mode: compiler (auto-detected, use -Djmh.blackhole.autoDetect=false to disable)
+# Warmup: 3 iterations, 1 s each
+# Measurement: 3 iterations, 1 s each
+# Timeout: 10 min per iteration
+# Threads: 1 thread, will synchronize iterations
+# Benchmark mode: Average time, time/op
+# Benchmark: io.configd.bench.LocalConfigStoreReadBenchmark.getIntoHit
+# Parameters: (size = 10000)
+
+# Run progress: 50.00% complete, ETA 00:00:13
+# Fork: 1 of 1
+WARNING: A terminally deprecated method in sun.misc.Unsafe has been called
+WARNING: sun.misc.Unsafe::objectFieldOffset has been called by org.openjdk.jmh.util.Utils (file:/home/ubuntu/Code/Configd/configd-testkit/target/benchmarks.jar)
+WARNING: Please consider reporting this to the maintainers of class org.openjdk.jmh.util.Utils
+WARNING: sun.misc.Unsafe::objectFieldOffset will be removed in a future release
+# Warmup Iteration   1: 151.189 ns/op
+# Warmup Iteration   2: 142.880 ns/op
+# Warmup Iteration   3: 133.928 ns/op
+Iteration   1: 135.842 ns/op
+                 gc.alloc.rate:      0.007 MB/sec
+                 gc.alloc.rate.norm: 0.001 B/op
+                 gc.count:           ≈ 0 counts
+
+Iteration   2: 137.142 ns/op
+                 gc.alloc.rate:      0.007 MB/sec
+                 gc.alloc.rate.norm: 0.001 B/op
+                 gc.count:           ≈ 0 counts
+
+Iteration   3: 131.444 ns/op
+                 gc.alloc.rate:      0.007 MB/sec
+                 gc.alloc.rate.norm: 0.001 B/op
+                 gc.count:           ≈ 0 counts
+
+
+
+Result "io.configd.bench.LocalConfigStoreReadBenchmark.getIntoHit":
+  134.809 ±(99.9%) 54.475 ns/op [Average]
+  (min, avg, max) = (131.444, 134.809, 137.142), stdev = 2.986
+  CI (99.9%): [80.334, 189.285] (assumes normal distribution)
+
+Secondary result "io.configd.bench.LocalConfigStoreReadBenchmark.getIntoHit:gc.alloc.rate":
+  0.007 ±(99.9%) 0.001 MB/sec [Average]
+  (min, avg, max) = (0.007, 0.007, 0.007), stdev = 0.001
+  CI (99.9%): [0.006, 0.007] (assumes normal distribution)
+
+Secondary result "io.configd.bench.LocalConfigStoreReadBenchmark.getIntoHit:gc.alloc.rate.norm":
+  0.001 ±(99.9%) 0.001 B/op [Average]
+  (min, avg, max) = (0.001, 0.001, 0.001), stdev = 0.001
+  CI (99.9%): [0.001, 0.001] (assumes normal distribution)
+
+Secondary result "io.configd.bench.LocalConfigStoreReadBenchmark.getIntoHit:gc.count":
+  ≈ 0 counts
+
+
+# JMH version: 1.37
+# VM version: JDK 25, OpenJDK 64-Bit Server VM, 25+36-LTS
+# VM invoker: /home/ubuntu/.sdkman/candidates/java/25-amzn/bin/java
+# VM options: --enable-preview
+# Blackhole mode: compiler (auto-detected, use -Djmh.blackhole.autoDetect=false to disable)
+# Warmup: 3 iterations, 1 s each
+# Measurement: 3 iterations, 1 s each
+# Timeout: 10 min per iteration
+# Threads: 1 thread, will synchronize iterations
+# Benchmark mode: Average time, time/op
+# Benchmark: io.configd.bench.LocalConfigStoreReadBenchmark.getMiss
+# Parameters: (size = 10000)
+
+# Run progress: 75.00% complete, ETA 00:00:06
+# Fork: 1 of 1
+WARNING: A terminally deprecated method in sun.misc.Unsafe has been called
+WARNING: sun.misc.Unsafe::objectFieldOffset has been called by org.openjdk.jmh.util.Utils (file:/home/ubuntu/Code/Configd/configd-testkit/target/benchmarks.jar)
+WARNING: Please consider reporting this to the maintainers of class org.openjdk.jmh.util.Utils
+WARNING: sun.misc.Unsafe::objectFieldOffset will be removed in a future release
+# Warmup Iteration   1: 7.535 ns/op
+# Warmup Iteration   2: 7.037 ns/op
+# Warmup Iteration   3: 7.106 ns/op
+Iteration   1: 6.703 ns/op
+                 gc.alloc.rate:      0.007 MB/sec
+                 gc.alloc.rate.norm: ≈ 10⁻⁴ B/op
+                 gc.count:           ≈ 0 counts
+
+Iteration   2: 7.112 ns/op
+                 gc.alloc.rate:      0.007 MB/sec
+                 gc.alloc.rate.norm: ≈ 10⁻⁴ B/op
+                 gc.count:           ≈ 0 counts
+
+Iteration   3: 6.912 ns/op
+                 gc.alloc.rate:      0.007 MB/sec
+                 gc.alloc.rate.norm: ≈ 10⁻⁴ B/op
+                 gc.count:           ≈ 0 counts
+
+
+
+Result "io.configd.bench.LocalConfigStoreReadBenchmark.getMiss":
+  6.909 ±(99.9%) 3.728 ns/op [Average]
+  (min, avg, max) = (6.703, 6.909, 7.112), stdev = 0.204
+  CI (99.9%): [3.181, 10.638] (assumes normal distribution)
+
+Secondary result "io.configd.bench.LocalConfigStoreReadBenchmark.getMiss:gc.alloc.rate":
+  0.007 ±(99.9%) 0.001 MB/sec [Average]
+  (min, avg, max) = (0.007, 0.007, 0.007), stdev = 0.001
+  CI (99.9%): [0.006, 0.007] (assumes normal distribution)
+
+Secondary result "io.configd.bench.LocalConfigStoreReadBenchmark.getMiss:gc.alloc.rate.norm":
+  ≈ 10⁻⁴ B/op
+
+Secondary result "io.configd.bench.LocalConfigStoreReadBenchmark.getMiss:gc.count":
+  ≈ 0 counts
+
+
+# Run complete. Total time: 00:00:27
+
+REMEMBER: The numbers below are just data. To gain reusable insights, you need to follow up on
+why the numbers are the way they are. Use profilers (see -prof, -lprof), design factorial
+experiments, perform baseline and negative tests that provide experimental control, make sure
+the benchmarking environment is safe on JVM/OS/HW level, ask for reviews from the domain experts.
+Do not assume the numbers tell you what you want them to tell.
+
+NOTE: Current JVM experimentally supports Compiler Blackholes, and they are in use. Please exercise
+extra caution when trusting the results, look into the generated code to check the benchmark still
+works, and factor in a small probability of new VM bugs. Additionally, while comparisons between
+different JVMs are already problematic, the performance difference caused by different Blackhole
+modes can be very significant. Please make sure you use the consistent Blackhole mode for comparisons.
+
+Benchmark                                                          (size)  Mode  Cnt    Score     Error   Units
+LocalConfigStoreReadBenchmark.getHit                                10000  avgt    3   95.257 ±  77.983   ns/op
+LocalConfigStoreReadBenchmark.getHit:gc.alloc.rate                  10000  avgt    3  320.292 ± 266.784  MB/sec
+LocalConfigStoreReadBenchmark.getHit:gc.alloc.rate.norm             10000  avgt    3   32.001 ±   0.001    B/op
+LocalConfigStoreReadBenchmark.getHit:gc.count                       10000  avgt    3    8.000            counts
+LocalConfigStoreReadBenchmark.getHit:gc.time                        10000  avgt    3   33.000                ms
+LocalConfigStoreReadBenchmark.getHitWithCursor                      10000  avgt    3   99.381 ±  46.649   ns/op
+LocalConfigStoreReadBenchmark.getHitWithCursor:gc.alloc.rate        10000  avgt    3  306.832 ± 143.983  MB/sec
+LocalConfigStoreReadBenchmark.getHitWithCursor:gc.alloc.rate.norm   10000  avgt    3   32.001 ±   0.001    B/op
+LocalConfigStoreReadBenchmark.getHitWithCursor:gc.count             10000  avgt    3    8.000            counts
+LocalConfigStoreReadBenchmark.getHitWithCursor:gc.time              10000  avgt    3   35.000                ms
+LocalConfigStoreReadBenchmark.getIntoHit                            10000  avgt    3  134.809 ±  54.475   ns/op
+LocalConfigStoreReadBenchmark.getIntoHit:gc.alloc.rate              10000  avgt    3    0.007 ±   0.001  MB/sec
+LocalConfigStoreReadBenchmark.getIntoHit:gc.alloc.rate.norm         10000  avgt    3    0.001 ±   0.001    B/op
+LocalConfigStoreReadBenchmark.getIntoHit:gc.count                   10000  avgt    3      ≈ 0            counts
+LocalConfigStoreReadBenchmark.getMiss                               10000  avgt    3    6.909 ±   3.728   ns/op
+LocalConfigStoreReadBenchmark.getMiss:gc.alloc.rate                 10000  avgt    3    0.007 ±   0.001  MB/sec
+LocalConfigStoreReadBenchmark.getMiss:gc.alloc.rate.norm            10000  avgt    3   ≈ 10⁻⁴              B/op
+LocalConfigStoreReadBenchmark.getMiss:gc.count                      10000  avgt    3      ≈ 0            counts
