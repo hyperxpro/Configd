@@ -11,6 +11,8 @@ import io.configd.store.ConfigDelta;
 import io.configd.store.ConfigStateMachine;
 import io.configd.store.ReadResult;
 import io.configd.store.VersionedConfigStore;
+import org.junit.jupiter.api.AfterAll;
+import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.api.io.TempDir;
@@ -18,6 +20,7 @@ import org.junit.jupiter.api.io.TempDir;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -40,6 +43,63 @@ class ConfigdServerTest {
 
     @TempDir
     Path tempDir;
+
+    // RR-094: keytool subprocess spawning (3 per TLS test) dominates the
+    // find0050 runtime and starves under CPU-credit throttling, blowing the
+    // class-level @Timeout(10). Generate the keystore/truststore/cert exactly
+    // ONCE for the whole class in @BeforeAll and reuse the cached paths from
+    // the timed test body. The class-level @Timeout(10) still guards the many
+    // fast lifecycle/wiring tests; the keytool-driven find0050 carries its own
+    // generous hang-detection budget via a method-level @Timeout override.
+    private static Path tlsFixtureDir;
+    private static Path keyStorePath;
+    private static Path trustStorePath;
+    private static Path certFile;
+
+    @BeforeAll
+    static void generateTlsFixture() throws Exception {
+        tlsFixtureDir = Files.createTempDirectory("configd-tls-find0050-");
+        keyStorePath = tlsFixtureDir.resolve("keystore.p12");
+        trustStorePath = tlsFixtureDir.resolve("truststore.p12");
+        certFile = tlsFixtureDir.resolve("cert.pem");
+
+        runKeytool("keytool",
+                "-genkeypair", "-alias", "configd-test",
+                "-keyalg", "EC", "-groupname", "secp256r1",
+                "-sigalg", "SHA256withECDSA", "-validity", "1",
+                "-dname", "CN=configd-test,O=test",
+                "-storetype", "PKCS12",
+                "-keystore", keyStorePath.toString(),
+                "-storepass", "changeit", "-keypass", "changeit");
+        runKeytool("keytool",
+                "-exportcert", "-alias", "configd-test",
+                "-keystore", keyStorePath.toString(),
+                "-storepass", "changeit", "-rfc",
+                "-file", certFile.toString());
+        runKeytool("keytool",
+                "-importcert", "-alias", "configd-test",
+                "-file", certFile.toString(),
+                "-keystore", trustStorePath.toString(),
+                "-storepass", "changeit", "-storetype", "PKCS12",
+                "-noprompt");
+    }
+
+    @AfterAll
+    static void deleteTlsFixture() throws Exception {
+        if (tlsFixtureDir == null) {
+            return;
+        }
+        try (var paths = Files.walk(tlsFixtureDir)) {
+            paths.sorted(Comparator.reverseOrder())
+                    .forEach(p -> {
+                        try {
+                            Files.deleteIfExists(p);
+                        } catch (IOException ignored) {
+                            // best-effort cleanup of a temp fixture
+                        }
+                    });
+        }
+    }
 
     /**
      * Creates a minimal config with ephemeral API port (0) to avoid port conflicts.
@@ -598,36 +658,20 @@ class ConfigdServerTest {
      * → refuse to start. If the getter ever stops reflecting the constructor
      * argument, the fail-closed guard silently becomes a no-op.
      */
+    // RR-094: a generous hang-detection budget (120s), not a performance
+    // assertion. The expensive keytool keystore generation is hoisted to
+    // @BeforeAll (cached in keyStorePath/trustStorePath/certFile), so the
+    // timed body here only constructs a TlsManager/TcpRaftTransport and reads
+    // a getter. The class-level @Timeout(10) is overridden for this single
+    // keytool-adjacent test so CPU-credit throttling cannot flake it.
     @Test
+    @Timeout(120)
     void find0050_tcpRaftTransportExposesTlsManagerGetter() throws Exception {
-        // Build a TlsManager backed by a keystore with a non-empty password
-        // (generated via keytool — the same style TlsManagerTest uses). We
-        // avoid the ConfigdServer.start path here specifically because that
-        // path hardcodes an empty keystore password (TlsConfig.mtls); the
-        // getter we want to exercise works regardless of password policy.
-        Path keyStorePath = tempDir.resolve("keystore.p12");
-        Path trustStorePath = tempDir.resolve("truststore.p12");
-        Path certFile = tempDir.resolve("cert.pem");
-        runKeytool("keytool",
-                "-genkeypair", "-alias", "configd-test",
-                "-keyalg", "EC", "-groupname", "secp256r1",
-                "-sigalg", "SHA256withECDSA", "-validity", "1",
-                "-dname", "CN=configd-test,O=test",
-                "-storetype", "PKCS12",
-                "-keystore", keyStorePath.toString(),
-                "-storepass", "changeit", "-keypass", "changeit");
-        runKeytool("keytool",
-                "-exportcert", "-alias", "configd-test",
-                "-keystore", keyStorePath.toString(),
-                "-storepass", "changeit", "-rfc",
-                "-file", certFile.toString());
-        runKeytool("keytool",
-                "-importcert", "-alias", "configd-test",
-                "-file", certFile.toString(),
-                "-keystore", trustStorePath.toString(),
-                "-storepass", "changeit", "-storetype", "PKCS12",
-                "-noprompt");
-
+        // Build a TlsManager backed by the cached keystore (non-empty
+        // password, the same style TlsManagerTest uses). We avoid the
+        // ConfigdServer.start path here specifically because that path
+        // hardcodes an empty keystore password (TlsConfig.mtls); the getter we
+        // want to exercise works regardless of password policy.
         io.configd.transport.TlsConfig tlsConfig = new io.configd.transport.TlsConfig(
                 certFile, keyStorePath, trustStorePath, true,
                 java.util.List.of("TLS_AES_256_GCM_SHA384"),

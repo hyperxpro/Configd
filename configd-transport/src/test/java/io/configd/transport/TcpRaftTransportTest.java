@@ -1,14 +1,19 @@
 package io.configd.transport;
 
 import io.configd.common.NodeId;
+import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 
 import java.io.IOException;
 import java.net.InetSocketAddress;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CopyOnWriteArrayList;
@@ -26,6 +31,65 @@ import static org.junit.jupiter.api.Assertions.*;
 class TcpRaftTransportTest {
 
     private final List<TcpRaftTransport> transports = new ArrayList<>();
+
+    // RR-094: keytool subprocess spawning (3 per TLS test) is the dominant
+    // cost and starves under CPU-credit throttling, blowing the per-test
+    // budget. Generate the F-0051 keystore/truststore/cert exactly ONCE for
+    // the whole class in @BeforeAll and reuse the cached paths from the timed
+    // test body. The class-level @Timeout(10) still guards the many fast,
+    // plaintext tests; the keytool-driven find0051 carries its own generous
+    // hang-detection budget via a method-level @Timeout override.
+    private static Path tlsFixtureDir;
+    private static Path keyStorePath;
+    private static Path trustStorePath;
+    private static Path certFile;
+
+    @BeforeAll
+    static void generateTlsFixture() throws Exception {
+        tlsFixtureDir = Files.createTempDirectory("configd-tls-find0051-");
+        keyStorePath = tlsFixtureDir.resolve("keystore.p12");
+        trustStorePath = tlsFixtureDir.resolve("truststore.p12");
+        certFile = tlsFixtureDir.resolve("cert.pem");
+
+        // SAN only matches "localhost" (not 127.0.0.2). CN also does not match.
+        runKeytool("keytool",
+                "-genkeypair", "-alias", "server",
+                "-keyalg", "EC", "-groupname", "secp256r1",
+                "-sigalg", "SHA256withECDSA", "-validity", "1",
+                "-dname", "CN=localhost,O=test",
+                "-ext", "san=dns:localhost",
+                "-storetype", "PKCS12",
+                "-keystore", keyStorePath.toString(),
+                "-storepass", "changeit", "-keypass", "changeit");
+        runKeytool("keytool",
+                "-exportcert", "-alias", "server",
+                "-keystore", keyStorePath.toString(),
+                "-storepass", "changeit", "-rfc",
+                "-file", certFile.toString());
+        runKeytool("keytool",
+                "-importcert", "-alias", "server",
+                "-file", certFile.toString(),
+                "-keystore", trustStorePath.toString(),
+                "-storepass", "changeit", "-storetype", "PKCS12",
+                "-noprompt");
+    }
+
+    @AfterAll
+    static void deleteTlsFixture() throws Exception {
+        if (tlsFixtureDir == null) {
+            return;
+        }
+        try (var paths = Files.walk(tlsFixtureDir)) {
+            paths.sorted(Comparator.reverseOrder())
+                    .forEach(p -> {
+                        try {
+                            Files.deleteIfExists(p);
+                        } catch (IOException ignored) {
+                            // best-effort cleanup of a temp fixture
+                        }
+                    });
+        }
+    }
 
     @AfterEach
     void tearDown() {
@@ -394,38 +458,20 @@ class TcpRaftTransportTest {
     // signed by the trust store is accepted, defeating peer pinning.
     // ========================================================================
 
+    // RR-094: a generous hang-detection budget (120s), not a performance
+    // assertion. The expensive keytool keystore generation is hoisted to
+    // @BeforeAll, so the timed body here is only socket setup plus a few
+    // bounded send attempts and a fixed negative-observation window. The
+    // class-level @Timeout(10) is overridden for this single keytool-adjacent
+    // test so CPU-credit throttling cannot flake it while still catching a
+    // genuine handshake hang.
     @Test
-    void find0051_clientHandshakeRejectsCertWithWrongHostname(@org.junit.jupiter.api.io.TempDir java.nio.file.Path tempDir) throws Exception {
-        // Generate a self-signed cert whose SAN only covers "localhost",
-        // but the client will target "127.0.0.2". The cert is otherwise
-        // present in the client's trust store, so the *only* reason the
-        // handshake should fail is hostname verification.
-        java.nio.file.Path keyStorePath = tempDir.resolve("keystore.p12");
-        java.nio.file.Path trustStorePath = tempDir.resolve("truststore.p12");
-        java.nio.file.Path certFile = tempDir.resolve("cert.pem");
-
-        // SAN only matches "localhost" (not 127.0.0.2). CN also does not match.
-        runKeytool("keytool",
-                "-genkeypair", "-alias", "server",
-                "-keyalg", "EC", "-groupname", "secp256r1",
-                "-sigalg", "SHA256withECDSA", "-validity", "1",
-                "-dname", "CN=localhost,O=test",
-                "-ext", "san=dns:localhost",
-                "-storetype", "PKCS12",
-                "-keystore", keyStorePath.toString(),
-                "-storepass", "changeit", "-keypass", "changeit");
-        runKeytool("keytool",
-                "-exportcert", "-alias", "server",
-                "-keystore", keyStorePath.toString(),
-                "-storepass", "changeit", "-rfc",
-                "-file", certFile.toString());
-        runKeytool("keytool",
-                "-importcert", "-alias", "server",
-                "-file", certFile.toString(),
-                "-keystore", trustStorePath.toString(),
-                "-storepass", "changeit", "-storetype", "PKCS12",
-                "-noprompt");
-
+    @Timeout(120)
+    void find0051_clientHandshakeRejectsCertWithWrongHostname() throws Exception {
+        // The cached fixture holds a self-signed cert whose SAN only covers
+        // "localhost", but the client will target "127.0.0.2". The cert is
+        // otherwise present in the client's trust store, so the *only* reason
+        // the handshake should fail is hostname verification.
         TlsConfig tlsConfig = new TlsConfig(certFile, keyStorePath, trustStorePath,
                 true, java.util.List.of("TLS_AES_256_GCM_SHA384"),
                 java.util.List.of("TLSv1.3"), "changeit".toCharArray());
