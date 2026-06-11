@@ -43,8 +43,32 @@ RESIDUAL (documented, still surviving).
 - Status: **KILLED**. Verified 2026-06-11: present -> pass; `vote(...)` removed ->
   FAIL (`recovered.votedFor()` expected Node-2 but was null).
 
-### 3. ReadIndexState::clear on step-down (~becomeFollower) + nextIndex walk-back
-- Status: (in progress)
+### 3. `RaftNode.becomeFollower` — `readIndexState.clear()` on step-down
+- Mutant: VoidMethodCall removal of `readIndexState.clear()` in `becomeFollower`.
+- Killing test: `ReadIndexStepDownClearTest.`
+  `pendingReadIsClearedOnStepDownAndNotServedAfterReElection`. A single-node
+  leader confirms a read, steps down (higher-term AppendEntries), re-elects, and
+  the OLD read id must NOT be serveable. The per-call leadership re-check in
+  `isReadReady` masks the bug while a follower, so the kill is observed across
+  step-down -> re-election: with the clear removed, the old read survives and
+  `isReadReady(oldReadId)` returns true (cross-term stale serve).
+- Status: **KILLED**. Verified 2026-06-11: present -> pass; clear removed -> FAIL
+  (`isReadReady(readId)` expected false but was true).
+
+### 4. `RaftNode.handleAppendEntriesResponse` — nextIndex walk-back arithmetic
+- Mutant(s): `nextIndex.put(from, Math.max(1, ni - 1))` arithmetic — primarily
+  `ni - 1` -> `ni` (the leader freezes prevLogIndex and never reconciles a
+  behind/divergent follower).
+- Killing test: `NextIndexWalkBackTest.`
+  `rejectionWalksNextIndexBackOneStepAtATimeUntilTheFollowerConverges`. Drives the
+  production rejection loop and asserts the retried AppendEntries' prevLogIndex
+  STRICTLY DECREASES by one per rejection, then that the follower converges.
+- Status: **`ni - 1` -> `ni` KILLED** (verified: present -> pass; mutant -> FAIL,
+  prevLogIndex freezes at top). The `Math.max(1, ...)` floor mutant
+  (`max(1,...)` -> `max(0,...)`) is NOT killed by this test and is flagged for
+  PIT verification: it only differs at the ni==1 boundary (nextIndex 0 vs 1 ->
+  prevLogIndex -1 vs 0). Disposition (equivalent vs needs-a-boundary-test)
+  resolved against the PIT baseline.
 
 ## RR-086 — consensus-path `Storage::sync` removals (crash durability)
 
