@@ -4,6 +4,7 @@ import io.configd.raft.RaftLog;
 import io.configd.store.VersionedConfigStore;
 
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.condition.EnabledIfSystemProperty;
 
 import java.io.ByteArrayOutputStream;
 import java.io.DataOutputStream;
@@ -87,6 +88,41 @@ class AdversarialSimTest {
         // And a different seed must diverge (digest is not vacuously constant).
         assertNotEquals(d1, digestOfRun(seed + 1),
                 "Distinct seeds must produce distinct adversarial schedules");
+    }
+
+    /**
+     * The full-scale adversarial sweep (charter exit criterion). Gated on
+     * {@code -Dconfigd.adversarial.nightly=true} so it is not part of the normal
+     * suite; the count defaults to 10,000. Prints runtime, election rate, and the
+     * count of recorded liveness stalls (reported, never failed). Any safety
+     * violation throws with the offending seed.
+     */
+    @Test
+    @EnabledIfSystemProperty(named = "configd.adversarial.nightly", matches = "true")
+    void nightlyAdversarialSweep() {
+        int count = Integer.getInteger("configd.adversarial.sweepCount", 10_000);
+        long start = System.nanoTime();
+        int leaderElected = 0;
+        int livenessStalls = 0;
+        long faults = 0;
+        for (long seed = 0; seed < count; seed++) {
+            AdversarialSim sim = new AdversarialSim(seed, NODES, TICKS);
+            sim.run(); // throws SafetyViolation (with seed) on any breach
+            faults += sim.activity().faultsFired();
+            if (sim.activity().leaderElected()) {
+                leaderElected++;
+            } else {
+                livenessStalls++; // recorded, not failed
+            }
+        }
+        double secs = (System.nanoTime() - start) / 1e9;
+        System.out.printf(
+                "[nightly-adversarial] seeds=%d wall=%.1fs (%.2fms/seed) elected=%d"
+                        + " livenessStalls=%d totalFaults=%d safetyViolations=0%n",
+                count, secs, secs * 1000 / count, leaderElected, livenessStalls, faults);
+        // Liveness stalls are reported, not failed; safety violations would have
+        // already thrown. Sanity: the sweep did real work.
+        assertTrue(faults > 0, "sweep must have injected faults");
     }
 
     private static String digestOfRun(long seed) {

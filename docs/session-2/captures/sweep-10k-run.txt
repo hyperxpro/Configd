@@ -1,0 +1,49 @@
+10k-seed sweep run (charter exit criterion) — Session 2, RR-012 + RR-027
+========================================================================
+Date:   2026-06-11T02:58:03Z
+Branch: session-2-correctness
+Box:    2-vCPU t3a.large (CPU-credit throttling applies; numbers are this run)
+
+RUN A — Full ADVERSARIAL sweep (all fault classes + workload, every invariant,
+         every tick), 5 nodes x 1500 ticks/seed:
+  Command:
+    ./mvnw -pl configd-testkit -am test -Dtest=AdversarialSimTest#nightlyAdversarialSweep \
+      -Dconfigd.adversarial.nightly=true -Dconfigd.adversarial.sweepCount=10000 \
+      -Dsurefire.failIfNoSpecifiedTests=false
+  Result:
+    seeds=10000  wall=59.9s  (5.99 ms/seed)
+    elected=9993  livenessStalls=7 (RECORDED, not failed)  totalFaults=80000
+    safetyViolations=0
+  => exit criterion met: zero safety violations across 10k adversarial schedules.
+     The 7 liveness stalls are seeds where no leader formed within budget under
+     the injected fault schedule — registered as liveness findings, never hidden,
+     never failed (charter). All 7 are replayable by seed number.
+
+RUN B — Canonical de-vacuated SeedSweepTest @ 10k (the RR-012 sweep):
+  Command:
+    ./mvnw -pl configd-testkit -am test -Dtest=SeedSweepTest \
+      -Dconfigd.seedSweep.count=10000 -Dsurefire.failIfNoSpecifiedTests=false
+  Result: Tests run: 20001, Failures: 0, Errors: 0, Skipped: 0 (41.2s test)
+    Now EVERY one of the 20,000 parameterized executions checks the full
+    invariant set on every tick (not a silent end-sample), + 1 vacuity guard.
+
+HONEST ASSERTION ACCOUNTING (replaces the inflated '20,000 tests'):
+  BEFORE (RR-012 defect): 3 bare returns (no-leader/no-commit/no-failover) meant
+    the single durability assertion ran ONLY on seeds that completed all stages;
+    the rest passed green having asserted nothing. The electionSafety method only
+    SAMPLED leadership at the end. Audit measured 1,408 real tests of '21,408'.
+  AFTER: SimInvariants.checkAll() runs 4 cross-node safety predicates AFTER EVERY
+    TICK of EVERY seed, plus the 8 in-node InvariantChecker predicates fire at
+    their mutation sites. For the electionSafety sweep alone (deterministic
+    2000 ticks/seed):
+      10,000 seeds x 2000 ticks x 4 cross-node checks = 80,000,000 safety
+      assertions  (+ in-node checks at every role/commit/apply transition).
+    For commitSurvivesLeaderFailure: ~up to 3600 ticks/seed x 4 => up to
+      ~1.4e8 more, plus the durability assertion on every seed that reached
+      failover, plus the sweep-level sweepActivityIsNotVacuous real-rate guard.
+    Net: from effectively ~1 reached assertion/seed (often 0) to tens of
+    millions of safety assertions across the sweep, every seed contributing.
+
+ANY FAILING SEED: none. (If one appears in future runs: minimize via
+ScheduleMinimizer -> schedule-<seed>-min.json, append seed to the gate
+manifest, register as a finding — do not hide.)
