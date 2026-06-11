@@ -79,8 +79,8 @@ invariants/actions/variables):**
   counterexample) and still model-check green.
 
 ## SnapshotInstallSpec
-- **Config:** `SnapshotInstallSpec.cfg` · Nodes={n1,n2,n3}, MaxTerm=3, MaxIndex=3 (was 4; reduced for the
-  durability model), `PERSIST_BEFORE_TRUNCATE=TRUE`
+- **Config:** `SnapshotInstallSpec.cfg` · Nodes={n1,n2,n3}, MaxTerm=2, MaxIndex=2 (was MaxTerm=3/MaxIndex=4;
+  reduced for the durability model — see the cfg header rationale), `PERSIST_BEFORE_TRUNCATE=TRUE`
 - **Invariants (live):** TypeOK, SnapshotBoundedByCommitted, SnapshotMatching, NoCommitRevert,
   InflightTermMonotonic, **DurablePrefix** (new, RR-003), **RecoveredCoversCommitted** (new, RR-003) —
   **all PASS**.
