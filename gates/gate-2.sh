@@ -69,32 +69,37 @@ step_p0tests() {
   # spuriously. Install the reactor once (no clean; reuses gate-1's compiled
   # output) so every module-scoped step below resolves HEAD artifacts. This
   # install persists across the sibling `--step` children via ~/.m2.
-  $MVN -q install -DskipTests 2>&1 | tee "$LOGDIR/p0-install.log" | tail -2
-  grep -qE "BUILD SUCCESS" "$LOGDIR/p0-install.log" || { echo "GATE-2 p0tests: reactor install failed"; return 1; }
+  # Pass/fail is the Maven EXIT CODE (via `set -o pipefail` + `if !`), NOT a
+  # grep for "BUILD SUCCESS" — `-q` suppresses that INFO line, so grepping for it
+  # always fails even on a green build. `-q` is therefore omitted here so the
+  # logs retain the surefire summary for diagnosis.
+  if ! $MVN install -DskipTests 2>&1 | tee "$LOGDIR/p0-install.log" | tail -2; then
+    echo "GATE-2 p0tests: reactor install failed (see $LOGDIR/p0-install.log)"; return 1; fi
   # Named discriminating tests, one surefire run per owning module.
-  $MVN -q -pl configd-consensus-core -am test \
+  if ! $MVN -pl configd-consensus-core -am test \
     -Dtest='CommitOutcomeSeamTest,SnapshotCrashRecoveryTest,TimingConversionTests,ReconfigurationTest' \
-    -Dsurefire.failIfNoSpecifiedTests=false 2>&1 | tee "$LOGDIR/p0-consensus.log" | tail -3
-  $MVN -q -pl configd-transport -am test \
+    -Dsurefire.failIfNoSpecifiedTests=false 2>&1 | tee "$LOGDIR/p0-consensus.log" | tail -4; then
+    echo "GATE-2 p0tests: consensus-core FAILED (see $LOGDIR/p0-consensus.log)"; return 1; fi
+  if ! $MVN -pl configd-transport -am test \
     -Dtest='TcpRaftTransportBlackholeTest,NoBlockingConnectOnConsensusPathTest' \
-    -Dsurefire.failIfNoSpecifiedTests=false 2>&1 | tee "$LOGDIR/p0-transport.log" | tail -3
-  $MVN -q -pl configd-server -am test \
+    -Dsurefire.failIfNoSpecifiedTests=false 2>&1 | tee "$LOGDIR/p0-transport.log" | tail -4; then
+    echo "GATE-2 p0tests: transport FAILED (see $LOGDIR/p0-transport.log)"; return 1; fi
+  if ! $MVN -pl configd-server -am test \
     -Dtest='RaftProposerCommitConfirmTest,StrongReadFailClosedTest' \
-    -Dsurefire.failIfNoSpecifiedTests=false 2>&1 | tee "$LOGDIR/p0-server.log" | tail -3
-  $MVN -q -pl configd-testkit -am test \
+    -Dsurefire.failIfNoSpecifiedTests=false 2>&1 | tee "$LOGDIR/p0-server.log" | tail -4; then
+    echo "GATE-2 p0tests: server FAILED (see $LOGDIR/p0-server.log)"; return 1; fi
+  if ! $MVN -pl configd-testkit -am test \
     -Dtest='AckEqualsCommitTest,SimulationDeterminismTest' -Dconfigd.seedSweep.count=100 \
-    -Dsurefire.failIfNoSpecifiedTests=false 2>&1 | tee "$LOGDIR/p0-testkit.log" | tail -3
-  for f in p0-consensus p0-transport p0-server p0-testkit; do
-    grep -qE "BUILD SUCCESS" "$LOGDIR/$f.log" || { echo "GATE-2 p0tests: $f FAILED"; return 1; }
-  done
+    -Dsurefire.failIfNoSpecifiedTests=false 2>&1 | tee "$LOGDIR/p0-testkit.log" | tail -4; then
+    echo "GATE-2 p0tests: testkit FAILED (see $LOGDIR/p0-testkit.log)"; return 1; fi
   echo "GATE-2 p0tests: OK (all named discriminating tests green)"
 }
 
 step_seeds() {
   cd "$ROOT"
-  $MVN -q -pl configd-testkit -am test -Dtest='AdversarialGateSeedSweepTest' \
-    -Dsurefire.failIfNoSpecifiedTests=false 2>&1 | tee "$LOGDIR/seeds.log" | tail -3
-  grep -qE "BUILD SUCCESS" "$LOGDIR/seeds.log" || { echo "GATE-2 seeds: gate seed set FAILED"; return 1; }
+  if ! $MVN -pl configd-testkit -am test -Dtest='AdversarialGateSeedSweepTest' \
+    -Dsurefire.failIfNoSpecifiedTests=false 2>&1 | tee "$LOGDIR/seeds.log" | tail -4; then
+    echo "GATE-2 seeds: gate seed set FAILED (see $LOGDIR/seeds.log)"; return 1; fi
   echo "GATE-2 seeds: OK (committed gate seed set, full invariants, zero violations)"
 }
 
@@ -111,16 +116,16 @@ step_linzgate() {
       build -o "$ROOT/configd-linz/bin/porcupine-check" .
     export PORCUPINE_BIN="$ROOT/configd-linz/bin/porcupine-check"
   fi
-  $MVN -q -pl configd-linz -am test -Dtest='CheckerSelfTest,HistoryWriterUnitTest' \
-    -Dsurefire.failIfNoSpecifiedTests=false 2>&1 | tee "$LOGDIR/linz-selftests.log" | tail -3
-  grep -qE "BUILD SUCCESS" "$LOGDIR/linz-selftests.log" || { echo "GATE-2 linzgate: self-tests FAILED"; return 1; }
+  if ! $MVN -pl configd-linz -am test -Dtest='CheckerSelfTest,HistoryWriterUnitTest' \
+    -Dsurefire.failIfNoSpecifiedTests=false 2>&1 | tee "$LOGDIR/linz-selftests.log" | tail -4; then
+    echo "GATE-2 linzgate: self-tests FAILED (see $LOGDIR/linz-selftests.log)"; return 1; fi
   if grep -qE "Skipped: [1-9]" "$LOGDIR/linz-selftests.log"; then
     echo "GATE-2 linzgate: self-tests SKIPPED tests (PORCUPINE_BIN gating?) — failing"; return 1
   fi
   # (ii) sim-history linearizability over the gate seed (cheap, no cluster, no sudo).
-  $MVN -q -pl configd-testkit -am test -Dtest='OpHistoryTest' \
-    -Dsurefire.failIfNoSpecifiedTests=false 2>&1 | tee "$LOGDIR/linz-simhist-gen.log" | tail -3
-  grep -qE "BUILD SUCCESS" "$LOGDIR/linz-simhist-gen.log" || { echo "GATE-2 linzgate: sim-history generation FAILED"; return 1; }
+  if ! $MVN -pl configd-testkit -am test -Dtest='OpHistoryTest' \
+    -Dsurefire.failIfNoSpecifiedTests=false 2>&1 | tee "$LOGDIR/linz-simhist-gen.log" | tail -4; then
+    echo "GATE-2 linzgate: sim-history generation FAILED (see $LOGDIR/linz-simhist-gen.log)"; return 1; fi
   local hist
   hist="$(ls "$ROOT"/configd-testkit/target/sim-histories/history-*.jsonl 2>/dev/null | head -1 || true)"
   [ -n "$hist" ] || { echo "GATE-2 linzgate: no sim history emitted"; return 1; }
@@ -229,10 +234,10 @@ step_assertions() {
   # Machine-checkable twin manifest: every spec invariant's runtime twin is
   # OBSERVED to fire (AssertionTwinFiringTest, both owning modules), and the
   # human-readable matrix contains no UNVERIFIED status cell.
-  $MVN -q -pl configd-consensus-core,configd-config-store -am test \
+  if ! $MVN -pl configd-consensus-core,configd-config-store -am test \
     -Dtest='AssertionTwinFiringTest' -Dsurefire.failIfNoSpecifiedTests=false \
-    2>&1 | tee "$LOGDIR/assertions.log" | tail -3
-  grep -qE "BUILD SUCCESS" "$LOGDIR/assertions.log" || { echo "GATE-2 assertions: twin firing tests FAILED"; return 1; }
+    2>&1 | tee "$LOGDIR/assertions.log" | tail -4; then
+    echo "GATE-2 assertions: twin firing tests FAILED (see $LOGDIR/assertions.log)"; return 1; fi
   if grep -qE '\| *UNVERIFIED' "$ROOT/docs/session-2/assertion-verification.md"; then
     echo "GATE-2 assertions: matrix contains an UNVERIFIED row"; return 1
   fi
