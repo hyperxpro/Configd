@@ -182,6 +182,28 @@ public final class DeltaApplier {
      * @return the result of the apply attempt
      */
     public ApplyResult offer(ConfigDelta delta) {
+        return offer(delta, NO_COMMIT_TIMESTAMP);
+    }
+
+    /**
+     * Sentinel for {@link #offer(ConfigDelta, long)} meaning "no leader commit timestamp
+     * supplied — record the ADR-0039 frontier from the local clock". Distinct from a real
+     * timestamp (which is a non-negative wall-clock millis).
+     */
+    public static final long NO_COMMIT_TIMESTAMP = -1L;
+
+    /**
+     * Offers a delta for application, threading the leader commit timestamp (ADR-0035 §2 /
+     * ADR-0039) into the staleness frontier on a successful apply. Identical gap/stale/
+     * signature evaluation to {@link #offer(ConfigDelta)}; the only difference is that the
+     * APPLIED branch records the frontier from {@code commitTimestampMillis} rather than the
+     * local clock. Use {@link #NO_COMMIT_TIMESTAMP} to fall back to the local clock.
+     *
+     * @param delta                 the delta to apply (non-null)
+     * @param commitTimestampMillis the leader commit timestamp, or {@link #NO_COMMIT_TIMESTAMP}
+     * @return the result of the apply attempt
+     */
+    public ApplyResult offer(ConfigDelta delta, long commitTimestampMillis) {
         Objects.requireNonNull(delta, "delta must not be null");
 
         byte[] signature = delta.signature();
@@ -241,8 +263,13 @@ public final class DeltaApplier {
             return ApplyResult.GAP_DETECTED;
         }
 
-        // Apply the delta
-        client.applyDelta(delta);
+        // Apply the delta (ADR-0038 storage filter inside the client; ADR-0039 frontier
+        // from the leader commit timestamp when supplied, else the local clock).
+        if (commitTimestampMillis == NO_COMMIT_TIMESTAMP) {
+            client.applyDelta(delta);
+        } else {
+            client.applyDelta(delta, commitTimestampMillis);
+        }
         lastAppliedVersion = delta.toVersion();
         if (delta.epoch() > highestSeenEpoch) {
             highestSeenEpoch = delta.epoch();

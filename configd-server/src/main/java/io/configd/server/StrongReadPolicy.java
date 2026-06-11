@@ -1,5 +1,7 @@
 package io.configd.server;
 
+import io.configd.edge.StrongReadKeyClass;
+
 import java.util.LinkedHashSet;
 import java.util.Objects;
 import java.util.Set;
@@ -27,8 +29,12 @@ import java.util.Set;
  */
 public final class StrongReadPolicy {
 
-    /** Default strong-read prefix when none is configured. */
-    public static final String DEFAULT_PREFIX = "secure/";
+    /**
+     * Default strong-read prefix when none is configured. Sourced from the shared
+     * {@link StrongReadKeyClass#DEFAULT_PREFIX} (the single definition both the control
+     * plane and the ADR-0038 edge storage filter agree on) so the two cannot drift.
+     */
+    public static final String DEFAULT_PREFIX = StrongReadKeyClass.DEFAULT_PREFIX;
 
     private final Set<String> prefixes;
 

@@ -240,6 +240,25 @@ final class EdgeFanOutSim {
 
     ReplaySource replaySource(int cpNode) { return replaySources.get(cpNode); }
 
+    /**
+     * TEST SEAM: partitions edge {@code edgeIndex}'s CP→edge channel (the same mechanism the
+     * EDGE_PARTITION_ADD fault uses), so a staleness test can deterministically cut an edge off
+     * from its stream. Additive accessor — never invoked on the gate path, so it does not
+     * perturb {@code EdgeSeedCompatTest}.
+     */
+    void partitionEdge(int edgeIndex) {
+        EdgeActor edge = edges.get(edgeIndex);
+        partitionedEdges.add(edge.edgeId());
+        edgeNetwork.addPartition(NodeId.of(edge.subscribedCpNode()), NodeId.of(edge.edgeId()));
+    }
+
+    /** TEST SEAM: heals a partition created by {@link #partitionEdge(int)}. */
+    void healEdge(int edgeIndex) {
+        EdgeActor edge = edges.get(edgeIndex);
+        partitionedEdges.remove(edge.edgeId());
+        edgeNetwork.removePartition(NodeId.of(edge.subscribedCpNode()), NodeId.of(edge.edgeId()));
+    }
+
     // -----------------------------------------------------------------------
     // Run / tick
     // -----------------------------------------------------------------------

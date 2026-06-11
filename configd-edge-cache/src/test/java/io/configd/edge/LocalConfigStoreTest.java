@@ -212,8 +212,11 @@ class LocalConfigStoreTest {
             nanoTime.addAndGet(25_000_000_000L);
             assertEquals(StalenessTracker.State.DISCONNECTED, tracker.currentState());
 
-            // Record update -> back to CURRENT
-            tracker.recordUpdate(2, 31000);
+            // Record update -> back to CURRENT. ADR-0039: the commit timestamp is the
+            // frontier, so a fresh update's commit ts is wall-now (31s of stall elapsed,
+            // wall clock now 32000ms). A commit ts that LAGGED wall-now would itself be
+            // stale by that lag — which is the ADR-0039 data-age semantics, not a reset.
+            tracker.recordUpdate(2, 32000);
             assertEquals(StalenessTracker.State.CURRENT, tracker.currentState());
         }
 

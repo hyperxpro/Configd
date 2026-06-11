@@ -415,24 +415,26 @@ class ConsistencyPropertyTests {
     class StalenessUpperBoundTest {
 
         /**
-         * Verifies that the StalenessTracker correctly transitions through
-         * CURRENT -> STALE -> DEGRADED -> DISCONNECTED as time elapses
-         * without updates, and resets to CURRENT on update.
+         * Verifies that the StalenessTracker correctly transitions through CURRENT -> STALE
+         * -> DEGRADED -> DISCONNECTED — driven, per ADR-0039, by a TRUE STALL: withholding
+         * BOTH deltas AND heartbeats, so the covered frontier freezes while wall-now marches
+         * past it. Resets to CURRENT on a fresh update whose commit ts is wall-now.
          */
         @Test
         void stalenessStateTransitionsAreCorrect() {
             SimulatedClock clock = new SimulatedClock(10_000L);
             StalenessTracker tracker = new StalenessTracker(clock);
 
-            // Initially DISCONNECTED (no updates ever received)
+            // Initially DISCONNECTED (no frontier known yet)
             assertEquals(StalenessTracker.State.DISCONNECTED, tracker.currentState());
 
-            // Record update -> CURRENT
+            // Record update (commit ts == wall-now) -> CURRENT
             tracker.recordUpdate(1, 10_000);
             assertEquals(StalenessTracker.State.CURRENT, tracker.currentState());
             assertTrue(tracker.stalenessMs() < 500,
                     "INV-S1: staleness must be < 500ms immediately after update");
 
+            // TRUE STALL begins: no further deltas, no heartbeats — the frontier freezes.
             // Advance 499ms -> still CURRENT
             clock.advanceMs(499);
             assertEquals(StalenessTracker.State.CURRENT, tracker.currentState());
@@ -450,9 +452,43 @@ class ConsistencyPropertyTests {
             clock.advanceMs(25000);
             assertEquals(StalenessTracker.State.DISCONNECTED, tracker.currentState());
 
-            // Record update -> back to CURRENT
+            // Record update (commit ts == wall-now 40_001) -> back to CURRENT
             tracker.recordUpdate(2, 40_001);
             assertEquals(StalenessTracker.State.CURRENT, tracker.currentState());
+        }
+
+        /**
+         * THE ADR-0039 REGRESSION TEST (CT-07). An idle-but-heartbeating edge
+         * ({@code latestSeq == cursor}) stays CURRENT across ≥250s of idle time — the exact
+         * defect ADR-0039 fixes. The pre-fix idle-time proxy would have walked this edge to
+         * DISCONNECTED (and triggered a needless re-bootstrap) despite it serving perfectly
+         * fresh data. A heartbeat with {@code latestSeq > cursor} does NOT reset staleness
+         * (the edge is genuinely behind).
+         */
+        @Test
+        void idleButHeartbeatingEdgeStaysCurrentAndBehindHeartbeatDoesNot() {
+            SimulatedClock clock = new SimulatedClock(10_000L);
+            StalenessTracker tracker = new StalenessTracker(clock);
+
+            long cursor = 5;
+            tracker.recordUpdate(cursor, 10_000);
+
+            // 1000 heartbeats over 250s, server attesting "you're caught up" (latestSeq==cursor).
+            for (int i = 0; i < 1000; i++) {
+                clock.advanceMs(250);
+                assertTrue(tracker.recordFrontier(cursor, cursor, clock.currentTimeMillis()),
+                        "a cursor-matched heartbeat advances the frontier");
+                assertEquals(StalenessTracker.State.CURRENT, tracker.currentState(),
+                        "idle-but-heartbeating edge must stay CURRENT (ADR-0039)");
+            }
+
+            // Now the server reports latestSeq > cursor (genuinely behind): the frontier does
+            // NOT advance, and after a stall the edge correctly walks STALE.
+            clock.advanceMs(600);
+            assertFalse(tracker.recordFrontier(cursor + 3, cursor, clock.currentTimeMillis()),
+                    "latestSeq > cursor must NOT advance the frontier");
+            assertEquals(StalenessTracker.State.STALE, tracker.currentState(),
+                    "a behind edge reflects real data-age lag, not a heartbeat reset");
         }
 
         /**

@@ -32,5 +32,74 @@
             <artifactId>configd-observability</artifactId>
             <version>${project.version}</version>
         </dependency>
+        <!--
+          C2: EdgeClientCore consumes the C1 edge wire types (EdgeFrame,
+          EdgeSnapshotCodec, CommitNotification) from the distribution service.
+          No cycle: configd-distribution-service does NOT depend on
+          configd-edge-cache (verified — its deps are common/config-store/
+          transport/agrona/jctools only), so this edge→distribution edge is
+          acyclic. The transport-agnostic wire model carries no java.net/socket
+          types, so EdgeClientCore stays transport-free.
+        -->
+        <dependency>
+            <groupId>io.configd</groupId>
+            <artifactId>configd-distribution-service</artifactId>
+            <version>${project.version}</version>
+        </dependency>
     </dependencies>
+
+    <profiles>
+        <!--
+          C2 (charter §4.1 / RR-087-class mutation discipline). Activated with the parent
+          `-Pmutation`. Scoped to the C2 edge data-plane classes this session built or
+          reworked so the score is not dragged down by pre-existing edge classes (RR-085
+          lesson: list targets explicitly, never a blanket package glob).
+
+          targetClasses (held to 65):
+            EdgeClientCore        — the C2 transport-agnostic client session engine (NEW);
+            StalenessTracker      — the ADR-0039 frontier rework;
+            EdgeConfigClient      — the ADR-0038 storage filter + ADR-0039 frontier wiring;
+            PrefixStorageFilter   — the ADR-0038 storage-filter helper (NEW);
+            StrongReadKeyClass    — the shared strong-read predicate (NEW);
+            DeltaApplier          — the commit-timestamp offer overload added for ADR-0039.
+
+          Pre-existing edge classes NOT raised here (LocalConfigStore, PrefixSubscription,
+          VersionCursor, EdgeMetrics) are out of this session's scope; their bars stay where
+          their own coverage put them. PIT glob `Foo*` does NOT recurse subpackages, but
+          io.configd.edge is flat, so the explicit class names suffice.
+        -->
+        <profile>
+            <id>mutation</id>
+            <build>
+                <plugins>
+                    <plugin>
+                        <groupId>org.pitest</groupId>
+                        <artifactId>pitest-maven</artifactId>
+                        <configuration>
+                            <targetClasses>
+                                <param>io.configd.edge.EdgeClientCore*</param>
+                                <param>io.configd.edge.StalenessTracker*</param>
+                                <param>io.configd.edge.EdgeConfigClient*</param>
+                                <param>io.configd.edge.PrefixStorageFilter*</param>
+                                <param>io.configd.edge.StrongReadKeyClass*</param>
+                                <param>io.configd.edge.DeltaApplier*</param>
+                            </targetClasses>
+                            <targetTests>
+                                <param>io.configd.edge.EdgeClientCoreTest</param>
+                                <param>io.configd.edge.StalenessTrackerTest</param>
+                                <param>io.configd.edge.StalenessSkewTripwireTest</param>
+                                <param>io.configd.edge.EdgeConfigClientTest</param>
+                                <param>io.configd.edge.EdgePrefixStorageFilterTest</param>
+                                <param>io.configd.edge.StrongReadKeyClassTest</param>
+                                <param>io.configd.edge.DeltaApplierTest</param>
+                                <param>io.configd.edge.LocalConfigStoreTest</param>
+                            </targetTests>
+                            <mutationThreshold>65</mutationThreshold>
+                            <failWhenNoMutations>true</failWhenNoMutations>
+                        </configuration>
+                    </plugin>
+                </plugins>
+            </build>
+        </profile>
+    </profiles>
 </project>

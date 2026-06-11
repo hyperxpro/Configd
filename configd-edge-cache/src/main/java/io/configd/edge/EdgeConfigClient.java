@@ -1,6 +1,8 @@
 package io.configd.edge;
 
 import io.configd.common.Clock;
+import io.configd.observability.InvariantMonitor;
+import io.configd.observability.MetricsRegistry;
 import io.configd.store.ConfigDelta;
 import io.configd.store.ConfigSnapshot;
 import io.configd.store.ReadResult;
@@ -25,6 +27,15 @@ import java.util.Set;
  * is thread-safe via the underlying {@link PrefixSubscription}'s copy-on-write
  * semantics.
  *
+ * <h2>ADR-0038 storage filter / ADR-0039 frontier staleness</h2>
+ * The full signed chain reaches every edge, but only the subscribed slice (plus
+ * strong-read keys, always) is stored — see {@link #applyDelta(ConfigDelta, long)} and
+ * {@link #filterForStorage(ConfigDelta)}. Staleness is measured against the covered
+ * frontier (ADR-0039): {@link #applyDelta(ConfigDelta, long)} feeds the leader commit
+ * timestamp and {@link #recordHeartbeatFrontier(long, long, long)} feeds the heartbeat
+ * frontier. The legacy {@link #applyDelta(ConfigDelta)} (no commit timestamp) records the
+ * frontier from the local clock — retained for direct callers and pre-C2 tests.
+ *
  * @see LocalConfigStore
  * @see StalenessTracker
  * @see DeltaApplier
@@ -35,19 +46,38 @@ public final class EdgeConfigClient {
     private final LocalConfigStore store;
     private final StalenessTracker stalenessTracker;
     private final PrefixSubscription subscriptions;
+    private final PrefixStorageFilter storageFilter;
 
     /**
      * Creates a new edge config client using the given clock for staleness
-     * tracking and timestamp generation.
+     * tracking and timestamp generation. No invariant monitor or implausibility
+     * counter is wired (the V1 sim / direct-test path).
      *
      * @param clock the clock to use for staleness measurement and timestamps (non-null)
      */
     public EdgeConfigClient(Clock clock) {
+        this(clock, null, null, StrongReadKeyClass.DEFAULT);
+    }
+
+    /**
+     * Full constructor wiring the ADR-0039 frontier staleness instrumentation and the
+     * ADR-0038 strong-read key class.
+     *
+     * @param clock              the wall clock (non-null)
+     * @param invariantMonitor   optional INV-S1 staleness-bound monitor (may be null)
+     * @param implausibleCounter optional CT-08 implausible-frontier counter (may be null)
+     * @param strongReadKeyClass the strong-read key class (always-store keys; non-null)
+     */
+    public EdgeConfigClient(Clock clock, InvariantMonitor invariantMonitor,
+                            MetricsRegistry.Counter implausibleCounter,
+                            StrongReadKeyClass strongReadKeyClass) {
         Objects.requireNonNull(clock, "clock must not be null");
+        Objects.requireNonNull(strongReadKeyClass, "strongReadKeyClass must not be null");
         this.clock = clock;
         this.store = new LocalConfigStore(clock);
-        this.stalenessTracker = new StalenessTracker(clock);
+        this.stalenessTracker = new StalenessTracker(clock, invariantMonitor, implausibleCounter);
         this.subscriptions = new PrefixSubscription();
+        this.storageFilter = new PrefixStorageFilter(subscriptions, strongReadKeyClass);
     }
 
     // -----------------------------------------------------------------------
@@ -95,7 +125,7 @@ public final class EdgeConfigClient {
 
     /**
      * Returns the current staleness state of this edge node relative to
-     * the control plane.
+     * the control plane (ADR-0039 frontier measure).
      *
      * @return the discrete staleness state
      */
@@ -104,8 +134,8 @@ public final class EdgeConfigClient {
     }
 
     /**
-     * Returns the number of milliseconds since the last successful update
-     * from the control plane.
+     * Returns the current frontier staleness in milliseconds (ADR-0039:
+     * {@code wall_now − frontier}).
      *
      * @return staleness in milliseconds
      */
@@ -113,29 +143,92 @@ public final class EdgeConfigClient {
         return stalenessTracker.stalenessMs();
     }
 
+    /**
+     * Records a HEARTBEAT-carried frontier (ADR-0039 §Decision 2). The frontier advances
+     * to {@code serverNowMillis} only when {@code heartbeatLatestSeq == cursor}; otherwise
+     * the heartbeat is a cursor-lag signal and the frontier is unchanged.
+     *
+     * @param heartbeatLatestSeq the heartbeat's {@code latestSeq}
+     * @param cursor             the edge's current applied cursor
+     * @param serverNowMillis    the heartbeat's {@code serverNowMillis}
+     * @return {@code true} if the frontier advanced (cursor matched)
+     */
+    public boolean recordHeartbeatFrontier(long heartbeatLatestSeq, long cursor,
+                                           long serverNowMillis) {
+        return stalenessTracker.recordFrontier(heartbeatLatestSeq, cursor, serverNowMillis);
+    }
+
+    /** The underlying staleness tracker (frontier, implausibility counter, INV-S1 seam). */
+    StalenessTracker stalenessTracker() {
+        return stalenessTracker;
+    }
+
     // -----------------------------------------------------------------------
     // Write path — single DeltaApplier thread only
     // -----------------------------------------------------------------------
 
     /**
-     * Applies a delta to the local config store and records the update
-     * in the staleness tracker.
+     * Applies a delta to the local config store and records the update in the staleness
+     * tracker, using the <b>local clock</b> as the commit timestamp (ADR-0039 frontier
+     * from the local wall clock). The delta is filtered for storage (ADR-0038) before
+     * apply.
      * <p>
-     * The delta's {@code fromVersion} must match the store's current version.
-     * If it does not, the store throws {@link IllegalArgumentException}.
+     * Retained for direct callers and pre-C2 tests that do not carry a leader commit
+     * timestamp; the production C2 path uses {@link #applyDelta(ConfigDelta, long)} with
+     * the notification's commit timestamp.
      *
-     * @param delta the delta to apply (non-null)
+     * @param delta the delta to apply (non-null), already signature-verified upstream
      * @throws IllegalArgumentException if delta.fromVersion != currentVersion
      */
     public void applyDelta(ConfigDelta delta) {
-        Objects.requireNonNull(delta, "delta must not be null");
-        store.applyDelta(delta);
-        stalenessTracker.recordUpdate(delta.toVersion(), clock.currentTimeMillis());
+        applyDelta(delta, clock.currentTimeMillis());
     }
 
     /**
-     * Replaces the entire local store with a full snapshot. Used for initial
-     * sync or recovery after gap detection.
+     * Applies a delta to the local config store and advances the ADR-0039 frontier to
+     * {@code commitTimestampMillis} (the leader's commit clock, the §2 staleness instrument).
+     * <p>
+     * ADR-0038 storage filter: the delta is filtered to the subscribed slice (plus
+     * strong-read keys) before apply via {@link #filterForStorage(ConfigDelta)}; the
+     * chain version still advances for filtered-out mutations (same from/to versions).
+     * Signature verification has already happened over the ORIGINAL delta upstream
+     * ({@link DeltaApplier}); the filtered delta is never re-verified or re-serialized.
+     *
+     * @param delta                 the original (verified) delta (non-null)
+     * @param commitTimestampMillis the leader commit timestamp (the §2 staleness clock)
+     * @throws IllegalArgumentException if delta.fromVersion != currentVersion
+     */
+    public void applyDelta(ConfigDelta delta, long commitTimestampMillis) {
+        Objects.requireNonNull(delta, "delta must not be null");
+        store.applyDelta(filterForStorage(delta));
+        stalenessTracker.recordUpdate(delta.toVersion(), commitTimestampMillis);
+    }
+
+    /**
+     * Returns the ADR-0038-filtered view of {@code delta} this edge stores: only mutations
+     * whose key matches a subscribed prefix (empty subscription = full store) or is a
+     * strong-read key, with {@code fromVersion}/{@code toVersion} preserved so the chain
+     * version advances regardless. Exposed so a caller maintaining a mirror store (the
+     * {@link EdgeClientCore} monitor-wired read store) applies the byte-identical filtered
+     * delta and stays in lockstep.
+     *
+     * @param delta the original (verified) delta (non-null)
+     * @return the filtered delta to apply to the store
+     */
+    public ConfigDelta filterForStorage(ConfigDelta delta) {
+        return storageFilter.filter(delta);
+    }
+
+    /**
+     * Replaces the entire local store with a full snapshot and advances the ADR-0039
+     * frontier to the snapshot's timestamp. Used for initial sync or recovery after gap
+     * detection.
+     * <p>
+     * A snapshot is the cumulative committed state, so it is NOT prefix-filtered for
+     * storage here — the snapshot already reflects the slice the server chose to send (in
+     * the V1/C1 sim the snapshot is full-store; the C2 server half scopes the snapshot to
+     * the subscription). Storing the snapshot wholesale keeps the V1 snapshot–delta
+     * equivalence invariant a plain full-store compare.
      *
      * @param snapshot the snapshot to load (non-null)
      */
@@ -150,8 +243,8 @@ public final class EdgeConfigClient {
     // -----------------------------------------------------------------------
 
     /**
-     * Subscribes to a key prefix. The distribution service will send
-     * deltas for keys matching this prefix to this edge node.
+     * Subscribes to a key prefix. The distribution service streams the full signed chain
+     * regardless (ADR-0038); this prefix scopes the edge-side <b>storage</b> filter.
      *
      * @param prefix the key prefix to subscribe to (non-null, non-blank)
      */

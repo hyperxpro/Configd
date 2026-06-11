@@ -122,10 +122,13 @@ class EdgeInvariantsTestTheTesterTest {
         edge.tick();
         inv.checkAll(List.of(edge), now.get(), e -> true);
 
-        // Store version RISES to 11 (so invariant (a) passes) but key 'k' regresses
-        // to version 5 — a per-key stale overwrite, which invariant (b) must catch.
-        edge.deliver(new EdgeStream.Snapshot(snapshotWith(11, "k", "v5", 5), 11));
-        edge.tick();
+        // Store version RISES to 11 (so invariant (a) passes) but key 'k' regresses to
+        // version 5 — a per-key stale overwrite, which invariant (b) must catch. We inject
+        // this via the UNSAFE force-load hook (BYPASSING the codec): the production snapshot
+        // path serializes through EdgeSnapshotCodec, which RESTAMPS every key to the snapshot
+        // seq (ADR-0028) — so a per-key regression cannot survive the real path and a bug must
+        // be injected directly to prove the checker's non-vacuity. (Same discipline as (a).)
+        edge.forceLoadSnapshotUnsafeForTest(snapshotWith(11, "k", "v5", 5), 11);
 
         SimInvariants.SafetyViolation ex = assertThrows(SimInvariants.SafetyViolation.class,
                 () -> inv.checkAll(List.of(edge), now.get(), e -> true),

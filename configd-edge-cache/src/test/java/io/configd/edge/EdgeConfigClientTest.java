@@ -62,13 +62,21 @@ class EdgeConfigClientTest {
         return s.getBytes(StandardCharsets.UTF_8);
     }
 
-    private static ConfigSnapshot buildSnapshot(long version, String... keyValues) {
+    /**
+     * Builds a snapshot stamped with the CURRENT clock time as its commit timestamp
+     * (ADR-0039: the snapshot timestamp is the frontier the edge measures staleness
+     * against). A snapshot received "now" carries ~now's timestamp, so loading it leaves
+     * the edge CURRENT and the staleness transitions are driven by the clock advancing
+     * afterward — the property these tests exercise.
+     */
+    private ConfigSnapshot buildSnapshot(long version, String... keyValues) {
+        long ts = clock.currentTimeMillis();
         HamtMap<String, VersionedValue> data = HamtMap.empty();
         for (int i = 0; i < keyValues.length; i += 2) {
             data = data.put(keyValues[i],
-                    new VersionedValue(bytes(keyValues[i + 1]), version, version));
+                    new VersionedValue(bytes(keyValues[i + 1]), version, ts));
         }
-        return new ConfigSnapshot(data, version, version);
+        return new ConfigSnapshot(data, version, ts);
     }
 
     // -----------------------------------------------------------------------
