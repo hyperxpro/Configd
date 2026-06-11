@@ -257,8 +257,8 @@ improvement over S1's 58%, and the gap to 70/80 is itemized here as follow-up.
 
 | Run | Scope | Enforced floor (was charter target) | S1 | S2 measured | Pass? |
 |-----|-------|------|----|----|----|
-| consensus-core module-wide | `io.configd.raft.*` | 60 (charter aspiration 70 — RESIDUAL) | 58% | 61% | yes (floor) |
-| consensus-core SAFETY KERNEL | kernel class list | 60 (charter aspiration 80 — RESIDUAL) | — | 64% | yes (floor) |
+| consensus-core module-wide | `io.configd.raft.*` | 60 (charter aspiration 70 — RESIDUAL) | 58% | **61%** (489/806) | **yes** (BUILD FAILURE only because pom temporarily had 70; re-confirmed >=60) |
+| consensus-core SAFETY KERNEL | kernel class list | 60 (charter aspiration 80 — RESIDUAL) | — | **64%** (471/731, line cov 88%) | **yes — BUILD SUCCESS** at 60 floor (gate-2 enforcement validated on a real run) |
 | distribution-service control-plane | commit-notification + watch (shelfware excluded) | 65 | 55%(module) | _PENDING run 3_ | _PENDING_ |
 
 ### Named-survivor fate (headline)
