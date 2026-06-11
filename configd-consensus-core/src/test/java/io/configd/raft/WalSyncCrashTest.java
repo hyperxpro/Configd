@@ -1,0 +1,95 @@
+package io.configd.raft;
+
+import org.junit.jupiter.api.Test;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+
+/**
+ * RR-086 — consensus-path {@code Storage::sync} removal on the WAL-rewrite path.
+ * <p>
+ * {@code RaftLog.compact} (and {@code truncateFrom}) rewrites the WAL via
+ * {@code rewriteWal()} and then calls {@code storage.sync()} (the directory
+ * fsync) precisely to make the rename-style WAL deletion/replacement durable.
+ * The Session-1 PIT survivors were "removed call to Storage::sync" at those
+ * sites: a wrapper over {@code FileStorage} or a plain in-memory map cannot see
+ * the removal — an atomic rename is visible to a same-directory reopen whether
+ * or not the directory was fsynced (RR-086's exact blind spot, which
+ * {@code RaftLogWalTest.truncateFromPersistsDurablyAcrossRestart} suffered from
+ * by reopening the same in-process directory; and which the existing
+ * {@code SnapshotCrashRecoveryTest} cells do NOT exercise — verified: removing
+ * the {@code compact} sync leaves all 6 of them green).
+ * <p>
+ * {@link CrashStorage} models the hazard faithfully: rename-style mutations
+ * ({@code truncateLog}/{@code renameLog}) are durable ONLY after the following
+ * {@code sync()}; a {@link CrashStorage#crash()} reverts any rename still
+ * awaiting that {@code sync()}. So deleting the {@code sync()} after a WAL
+ * rewrite leaves the rewrite non-durable and lost on crash — recovery then sees
+ * the STALE pre-compaction WAL, dropping the snapshot boundary and re-exposing
+ * already-compacted entries.
+ * <p>
+ * We exercise the FULL-COMPACTION shape (snapshot covers the whole WAL →
+ * {@code rewriteWal} deletes the WAL via a rename-style {@code truncateLog} with
+ * NO trailing append). This isolates the trailing {@code sync()} cleanly. (The
+ * conflict-{@code truncateFrom} shape is NOT used here: it does
+ * {@code truncateLog(tmp)} → {@code appendToLog(tmp)} → {@code renameLog} and a
+ * self-durable append following a deferred truncate of the same log is a
+ * modelling corner CrashStorage does not capture for that path — the compaction
+ * path is the faithful and sufficient pinning of the surviving sync mutants.)
+ */
+class WalSyncCrashTest {
+
+    private static byte[] cmd(String s) {
+        return s.getBytes();
+    }
+
+    /**
+     * Full-compaction WAL deletion durability: after a snapshot folds in the
+     * whole WAL and {@code compact} deletes the WAL prefix, that deletion MUST
+     * survive a crash. With the {@code compact} {@code storage.sync()} removed,
+     * the WAL-deletion rename is not durable; on crash it reverts and recovery
+     * sees the STALE WAL — dropping the snapshot boundary
+     * ({@code snapshotIndex} reverts to 0) and re-exposing the compacted-away
+     * entries. This is the durable-prefix / log-matching regression the sync
+     * guards against.
+     */
+    @Test
+    void compactionWalDeletionSurvivesCrashRestart() {
+        CrashStorage storage = new CrashStorage();
+        RaftLog log = new RaftLog(storage);
+
+        // Seed a 3-entry WAL (self-durable appendToLog writes).
+        log.append(new LogEntry(1, 1, cmd("a")));
+        log.append(new LogEntry(2, 1, cmd("b")));
+        log.append(new LogEntry(3, 1, cmd("c")));
+        assertEquals(3, log.lastIndex());
+
+        // Snapshot covering the WHOLE log, then compact. persistSnapshot's put is
+        // self-durable; compact() rewrites the (now empty) WAL — a rename-style
+        // truncateLog of WAL_NAME — and storage.sync() makes that deletion durable.
+        log.persistSnapshot(new SnapshotState(new byte[]{42}, 3, 1, null));
+        log.compact(3, 1);
+        assertEquals(3, log.snapshotIndex(), "snapshot boundary advanced to 3");
+        assertEquals(0, storage.recoveredView().readLog("raft-log").size(),
+                "with sync the WAL deletion is durable: zero WAL frames on the platter");
+
+        // Power loss, then restart over the bytes that actually reached the platter.
+        storage.crash();
+        RaftLog recovered = new RaftLog(storage.recoveredView());
+
+        // The compaction must be durable: the snapshot boundary must be 3 and the
+        // compacted-away entries must NOT reappear. If the compact() sync was
+        // removed (the RR-086 mutant), the WAL-deletion rename reverted on crash,
+        // recovery reads the stale [1,2,3] WAL, snapshotIndex resolves back to 0,
+        // and entryAt(1)/entryAt(2) reappear — these assertions then fail.
+        assertEquals(3, recovered.snapshotIndex(),
+                "RR-086: the snapshot boundary must survive the crash — a removed compact() "
+                        + "sync reverts the WAL deletion and recovery falls back to snapshotIndex 0");
+        assertNull(recovered.entryAt(1),
+                "RR-086: the compacted-away entry at index 1 must not reappear after recovery");
+        assertNull(recovered.entryAt(2),
+                "RR-086: the compacted-away entry at index 2 must not reappear after recovery");
+        assertTrue(recovered.lastIndex() >= 3, "lastIndex must be at least the snapshot boundary");
+    }
+}
