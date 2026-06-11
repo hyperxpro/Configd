@@ -192,4 +192,35 @@ RESIDUAL (documented, still surviving).
 ---
 
 ## Official PIT scores (final per-module run)
-- (pending — run after tlc2 vanishes; see SCORES section)
+
+PIT 1.25.4 DEFAULTS, JDK 25, threads=2, via `-Pmutation` (recipe:
+`docs/audit-session-1/test-forensics.md` §5). Re-run:
+`./mvnw -Pmutation -pl configd-consensus-core org.pitest:pitest-maven:mutationCoverage`
+(add `,mutation-kernel` for the safety-kernel bar; swap the module for
+distribution-service). Reports: `<module>/target/pit-reports/{index.html,mutations.xml}`.
+
+| Run | Scope | Threshold | Baseline (S1) | Final (S2) | Pass? |
+|-----|-------|-----------|---------------|------------|-------|
+| consensus-core module-wide | `io.configd.raft.*` | >= 70 | 58% (381/658) | _PENDING_ | _PENDING_ |
+| consensus-core SAFETY KERNEL | RaftNode/RaftLog/DurableRaftState/ReadIndexState/ClusterConfig | >= 80 | (subset of 58%) | _PENDING_ | _PENDING_ |
+| distribution-service control-plane | commit-notification + watch path (shelfware excluded) | >= 65 | 55% (168/307, whole module) | _PENDING_ | _PENDING_ |
+
+(The S2 baseline is already far above the S1 58%/55% because this session added
+AckEqualsCommitTest, CommitOutcomeSeamTest, SnapshotCrashRecoveryTest +
+CrashStorage, AssertionTwinFiringTest, StrongReadFailClosedTest, the de-vacuated
+ReconfigurationTest, the adversarial sim, and the kills in THIS document — the
+"final" column reflects all of it.)
+
+### Named-survivor fate (headline)
+| Survivor | Killing test | Fate |
+|----------|--------------|------|
+| maybeAdvanceCommitIndex §5.4.2 guard | CertificationTest Figure-8 (de-vacuated) | KILLED |
+| handleRequestVote vote-persist | VotePersistenceCrashTest | KILLED |
+| RaftLog.compact WAL-rewrite sync | WalSyncCrashTest | KILLED |
+| RaftLog.truncateFrom sync | (CrashStorage modelling corner) | PIT-disposition |
+| DurableRaftState.persistValues sync | (put self-durable) | EQUIVALENT |
+| becomeFollower readIndexState.clear | ReadIndexStepDownClearTest | KILLED |
+| nextIndex walk-back (ni-1) | NextIndexWalkBackTest | KILLED (Math.max floor: PIT-disposition) |
+| VersionedConfigStore delete/applyBatch guard | SequenceMonotonicityGuard | KILLED (both) |
+| decodeTrailer load-bearing boundaries | SnapshotTrailerCompatibility | KILLED (2 boundary mutants EQUIVALENT) |
+| InvariantChecker::check call removals | (RR-089) | PIT-baseline-gated |
