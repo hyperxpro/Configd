@@ -340,28 +340,93 @@ class ConfigdServerTest {
     // ========================================================================
 
     /**
-     * Regression test for FIND-0005: the tick loop must continue running
-     * after an exception. Before the fix, ScheduledExecutorService silently
-     * cancelled future executions on uncaught exception, turning the node
-     * into a zombie that stops elections/heartbeats.
+     * Regression test for FIND-0005 (RR-091 F-C4): the tick loop must continue
+     * running after a routed-message task throws. The OLD body of this test only
+     * slept twice and asserted {@code assertNotNull(server.driver())} — it never
+     * injected an exception, so it could not see the zombie-tick regression and
+     * gave RR-008's swallow path zero observation.
+     * <p>
+     * This rewrite injects a throwable through the REAL inbound seam
+     * ({@link ConfigdServer#raftInboundHandler}) — a routed message whose
+     * {@code routeMessage -> node.handleMessage -> transport.send} throws — on the
+     * SAME single-thread Raft/tick executor that also runs a fixed-rate tick task,
+     * and asserts:
+     * <ol>
+     *   <li><b>RR-008 (first observation of the swallow):</b> the throwable does
+     *       NOT propagate to the caller — the inbound handler has no try/catch, so
+     *       the {@code routeMessage} exception is captured into the
+     *       {@code ScheduledThreadPoolExecutor}'s discarded Future (the disk-failing
+     *       follower goes mute, no ack/log/metric). We assert the inbound
+     *       {@code accept} returns normally.</li>
+     *   <li><b>FIND-0005 (the named property):</b> the separately-scheduled
+     *       fixed-rate tick task KEEPS RUNNING after the routed task threw — its
+     *       counter advances past where it stood at injection time. (An STPE
+     *       cancels a task that throws in ITS OWN run; a one-shot {@code execute}
+     *       throwing must not cancel the independent {@code scheduleAtFixedRate}
+     *       tick task — the zombie-tick property.)</li>
+     * </ol>
      */
     @Test
     void tickLoopContinuesAfterDriverException() throws Exception {
-        Path dataDir = tempDir.resolve("tick-test");
-        ServerConfig config = minimalConfig(dataDir);
-        ConfigdServer server = ConfigdServer.start(config);
+        final int GROUP = 1;
+        var raftExecutor = java.util.concurrent.Executors.newSingleThreadScheduledExecutor(r -> {
+            Thread t = new Thread(r, "tick-test-raft");
+            t.setDaemon(true);
+            return t;
+        });
+        try {
+            // A single-node leader whose transport THROWS on send. Routing a
+            // stale-term AppendEntries to a leader makes it reply via transport.send
+            // -> the send throws -> routeMessage -> handleMessage throws.
+            var sendException = new RuntimeException("simulated disk/transport failure on the route path");
+            io.configd.raft.RaftTransport throwingTransport = (target, message) -> { throw sendException; };
+            io.configd.raft.StateMachine sm = new io.configd.raft.StateMachine() {
+                @Override public long apply(long i, long t, byte[] c) { return io.configd.raft.StateMachine.NON_MUTATING; }
+                @Override public byte[] snapshot() { return new byte[0]; }
+                @Override public void restoreSnapshot(byte[] s) { }
+            };
+            RaftConfig raftConfig = RaftConfig.of(NodeId.of(1), Set.of()); // single-node self-elects
+            RaftNode node = new RaftNode(raftConfig, new RaftLog(), throwingTransport, sm, new java.util.Random(1));
+            // Self-elect on the raft thread (single-thread confinement).
+            raftExecutor.submit(() -> { for (int i = 0; i < 400; i++) node.tick(); }).get(5, java.util.concurrent.TimeUnit.SECONDS);
 
-        // Let ticks run for a bit to verify the loop is alive
-        Thread.sleep(100);
+            var driver = new io.configd.replication.MultiRaftDriver(NodeId.of(1), io.configd.common.Clock.system());
+            driver.addGroup(GROUP, node);
 
-        // The server should still be running with a functional driver
-        assertNotNull(server.driver());
+            // The REAL production inbound seam (no try/catch around routeMessage).
+            var inbound = ConfigdServer.raftInboundHandler(driver, GROUP, raftExecutor);
 
-        // Let more ticks run — if the loop had died from an exception,
-        // the server would be in a zombie state by now
-        Thread.sleep(100);
+            // A fixed-rate tick task on the SAME executor — the thing FIND-0005 is about.
+            AtomicInteger tickCount = new AtomicInteger();
+            var ticker = raftExecutor.scheduleAtFixedRate(tickCount::incrementAndGet,
+                    0, 2, java.util.concurrent.TimeUnit.MILLISECONDS);
+            try {
+                // Let the tick task run, then capture its progress at injection time.
+                Thread.sleep(40);
+                int beforeInjection = tickCount.get();
+                assertTrue(beforeInjection > 0, "the tick task must be running before injection");
 
-        server.shutdown();
+                // RR-008: inject through routeMessage. A stale-term (0) AppendEntries
+                // to a leader triggers a reply via the throwing transport, so
+                // routeMessage throws — the inbound handler must NOT propagate it.
+                var poison = new io.configd.raft.AppendEntriesRequest(0L, NodeId.of(2), 0L, 0L, List.of(), 0L);
+                assertDoesNotThrow(() -> inbound.accept(NodeId.of(2), poison),
+                        "RR-008: the inbound handler swallows the routeMessage throwable (no propagation "
+                                + "to the caller) — the bug is exactly this silent swallow; here we OBSERVE it");
+
+                // FIND-0005: the tick task must keep advancing AFTER the routed task threw.
+                Thread.sleep(60);
+                int afterInjection = tickCount.get();
+                assertTrue(afterInjection > beforeInjection,
+                        "FIND-0005: the fixed-rate tick task must keep running after a routed-message task "
+                                + "threw (before=" + beforeInjection + ", after=" + afterInjection
+                                + ") — a dead tick loop is the zombie-tick regression");
+            } finally {
+                ticker.cancel(false);
+            }
+        } finally {
+            raftExecutor.shutdownNow();
+        }
     }
 
     // ========================================================================

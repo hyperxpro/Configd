@@ -111,6 +111,19 @@ RESIDUAL (documented, still surviving).
   `VotePersistenceCrashTest` (RR-085 #2). Mutant diff: delete line 133
   `storage.sync();`. Behaviorally invisible because `put` already dir-fsynced.
 
+## RR-091 — vacuous named tests
+- **F-C1** `CertificationTest.leaderCannotCommitPriorTermEntryByReplicationCountAlone` —
+  de-tautologised (see RR-085 #1 above). **FIXED + mutant-killing.**
+- **F-C4** `ConfigdServerTest.tickLoopContinuesAfterDriverException` — used to only
+  sleep twice + assertNotNull(driver()). Rewritten to inject a throwable through the
+  REAL `ConfigdServer.raftInboundHandler` route seam (routeMessage ->
+  node.handleMessage -> throwing transport.send) on the same single-thread tick
+  executor, asserting (a) the inbound handler SWALLOWS the throwable (RR-008's first
+  observation — no propagation to the caller) and (b) the fixed-rate tick task keeps
+  advancing afterward (FIND-0005 zombie-tick property). **FIXED.** (F-C2/F-C3 were
+  de-vacuated under RR-018 in an earlier S2 commit; F-C6 is the RR-086 RaftLogWalTest
+  blind spot, addressed by the CrashStorage WalSyncCrashTest above.)
+
 ## RR-089 — `InvariantChecker::check` VoidMethodCall removals
 - (pending PIT confirmation of which AssertionTwinFiringTest kills land)
 
