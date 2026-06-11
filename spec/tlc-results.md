@@ -16,17 +16,39 @@
 
 ---
 
+> **Session 2 (RR-004/RR-003/RR-026) update.** ConsensusSpec gained the `acked` variable +
+> `ClientAck` action + `AckImpliesCommitted` invariant (ADR-0033); SnapshotInstallSpec gained a
+> durability model (`durIndex`/`walBase`/`walTip`, persist/truncate/crash-restart actions) +
+> `DurablePrefix`/`RecoveredCoversCommitted` invariants (RR-003); ReadIndexSpec gained a fair
+> `LiveSpec` + the `ReadEventuallyServed` liveness property (RR-026). Two **spec-level
+> test-the-tester** counterexample cfgs prove the new invariants are non-vacuous (below).
+
 ## ConsensusSpec
-- **Config:** `ConsensusSpec.cfg` · Nodes={n1,n2,n3}, MaxTerm=3, MaxLogLen=3, Values={v1,v2}
+- **Config:** `ConsensusSpec.cfg` · Nodes={n1,n2,n3}, MaxTerm=3, MaxLogLen=3, Values={v1,v2},
+  `ACK_ON_APPEND=FALSE`
 - **Invariants (live):** TypeOK, ElectionSafety, StateMachineSafety, LeaderCompleteness, LogMatching,
-  VersionMonotonicity, ReconfigSafety, SingleServerInvariant, NoOpBeforeReconfig — **all PASS**.
-- **Result:** 13,775,323 states / 3,299,086 distinct / depth 25 / No error.
+  VersionMonotonicity, ReconfigSafety, SingleServerInvariant, NoOpBeforeReconfig, **AckImpliesCommitted**
+  (new, RR-004) — **all PASS**.
+- **Smoke (`gates/spec-smoke/`, MaxLogLen=2):** 122,184 distinct / No error / 43s (the `acked` variable
+  enlarges the space; MaxLogLen cut 3→2 for the smoke bound — see the cfg header).
+- **AckImpliesCommitted non-vacuity (test-the-tester):** `spec/ConsensusSpec-ackonappend.cfg`
+  (`ACK_ON_APPEND=TRUE`) makes TLC report **`AckImpliesCommitted is violated`** in ~1s — a write acked on
+  local append (pre-commit) is truncated on a leader change and lost (the RR-004 defect). Capture:
+  `docs/session-2/captures/spec-ack-on-append-counterexample.txt`.
+- **Full result:** _see Summary table (Session-2 re-run)._
 
 ## ReadIndexSpec
 - **Config:** `ReadIndexSpec.cfg` · Nodes={n1,n2,n3}, MaxTerm=2, MaxIndex=2
 - **Invariants (live):** TypeOK, ElectionSafety, ReadIndexBoundedByMaxIndex, ReadFreshness,
   NoStaleLeaderServe — **all PASS**.
-- **Result:** 12,403,444 states / 2,276,125 distinct / depth 38 / No error.
+- **Result:** _see Summary table (Session-2 re-run)._
+- **Liveness (RR-026, NEW):** `LiveSpec == Init /\ [][Next]_vars /\ FairNext` (weak fairness on
+  CompleteReadIndex / ApplyEntry / ReadHeartbeatAck) checks **`ReadEventuallyServed`** (a serveable read
+  never starves) **GREEN** at smoke bounds (`gates/spec-smoke/ReadIndexSpec-liveness.cfg`, 24s).
+  **Wrong-fairness vacuity proven:** the same property under the UNFAIR base `Spec`
+  (`ReadIndexSpec-livenessvacuity.cfg`) is **VIOLATED** — the green result is earned by the fairness, not
+  vacuous. Capture: `docs/session-2/captures/spec-readindex-liveness-vacuity.txt`. This is the first
+  liveness property ever model-checked in this repo (closes RR-026 on this spec).
 - **R-05c (Session A2):** `ReadFreshness` and `NoStaleLeaderServe` were **de-vacuumed** — they
   previously had a literal `TRUE` consequent (could never fail). They now constrain real state:
   `ReadFreshness` asserts every served read's `readIdx <= appliedIndex[server]` (a read never
@@ -35,10 +57,20 @@
   counterexample) and still model-check green.
 
 ## SnapshotInstallSpec
-- **Config:** `SnapshotInstallSpec.cfg` · Nodes={n1,n2,n3}, MaxTerm=3, MaxIndex=4
+- **Config:** `SnapshotInstallSpec.cfg` · Nodes={n1,n2,n3}, MaxTerm=3, MaxIndex=3 (was 4; reduced for the
+  durability model), `PERSIST_BEFORE_TRUNCATE=TRUE`
 - **Invariants (live):** TypeOK, SnapshotBoundedByCommitted, SnapshotMatching, NoCommitRevert,
-  InflightTermMonotonic — **all PASS**.
-- **Result:** 5,995,717 states / 847,124 distinct / depth 14 / No error.
+  InflightTermMonotonic, **DurablePrefix** (new, RR-003), **RecoveredCoversCommitted** (new, RR-003) —
+  **all PASS**.
+- **Smoke (`gates/spec-smoke/`, MaxIndex=1):** 6,915 distinct / No error / 4s (durability model + always-
+  enabled crash-restart enlarge the space; MaxIndex cut to 1 for the smoke bound — the full
+  commit→WAL→snapshot→persist→truncate→crash cycle is still exercised).
+- **DurablePrefix non-vacuity (test-the-tester):** `spec/SnapshotInstallSpec-truncatebeforepersist.cfg`
+  (`PERSIST_BEFORE_TRUNCATE=FALSE`) makes TLC report **`DurablePrefix is violated`** in ~1s — the WAL
+  prefix is truncated while the snapshot is RAM-only, so a crash/restart leaves a committed index in
+  neither the durable snapshot nor the durable WAL (the RR-003 silent-data-loss defect). Capture:
+  `docs/session-2/captures/spec-truncate-before-persist-counterexample.txt`.
+- **Full result:** _see Summary table (Session-2 re-run)._
 - **R-05c (Session A2):** `NoCommitRevert` was **de-vacuumed** — it was `P ∨ ¬P` (a tautology). It
   now asserts that an in-flight InstallSnapshot which would install (`lastIncludedIndex >
   snapshot[to].index`) must carry `lastIncludedTerm >= snapshot[to].term` (a higher-index snapshot

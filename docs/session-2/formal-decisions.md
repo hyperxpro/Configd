@@ -1,8 +1,23 @@
 # Session 2 — Recorded Formal-Methods Decisions
 
 Three decisions: (a) TLC liveness scope (RR-026), (b) Apalache descope (RR-063), (c) evidence-hygiene
-cleanup plan (RR-061/RR-062, with RR-060 cross-check). Decisions are recorded here; the actions in (c)
-**execute later** with the spec re-run task — nothing in `spec/` is modified by this document.
+cleanup plan (RR-061/RR-062, with RR-060 cross-check).
+
+> **B7 EXECUTION OUTCOME (2026-06-11).** The decisions below were executed:
+> - **(a) Liveness:** ReadIndexSpec now has a fair `LiveSpec` + the `ReadEventuallyServed` property,
+>   checked **GREEN** at smoke bounds (`gates/spec-smoke/ReadIndexSpec-liveness.cfg`, 24s), with the
+>   **wrong-fairness vacuity proven** (same property under the unfair `Spec` → VIOLATED:
+>   `ReadIndexSpec-livenessvacuity.cfg`, capture saved). This is the first model-checked liveness property
+>   in the repo. ConsensusSpec `EdgePropagationLiveness` stays the documented bounded-model artifact (the
+>   spec header F-V2-02 already records the expected stutter-at-bound) and SnapshotInstall liveness is
+>   deferred (its always-enabled `CrashRestart` makes unconditional progress unprovable without a
+>   crash-fairness modeling choice — out of scope; safety + the durability invariants are the deliverable).
+>   Full-bound liveness runs remain deferred-and-documented (est. >1h for ConsensusSpec).
+> - **(b) Apalache:** descoped; the CM-003 disposition text is in this file (unchanged).
+> - **(c) Hygiene:** EXECUTED — `spec/tlc-output.txt` regenerated from this tree (no foreign-tree cite),
+>   `spec/states/` (454 files) + 11 ignored-yet-tracked `.bin` removed from git, `spec/states/` gitignored,
+>   and the reproducible counterexamples are now the committed seeded-bug cfgs (ConsensusSpec-ackonappend,
+>   SnapshotInstallSpec-truncatebeforepersist) rather than opaque `.bin` dumps.
 
 ---
 
