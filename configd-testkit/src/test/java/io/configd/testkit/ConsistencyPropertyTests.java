@@ -50,6 +50,19 @@ class ConsistencyPropertyTests {
         private final int nodeCount;
 
         ClusterHarness(long seed, int nodeCount) {
+            this(seed, nodeCount, RaftNode.InvariantChecker.NOOP);
+        }
+
+        /**
+         * Builds a cluster whose nodes report in-node invariant breaches to the
+         * supplied {@link RaftNode.InvariantChecker} (B4 adversarial sim, §3 seam A).
+         * The default 2-arg form passes {@link RaftNode.InvariantChecker#NOOP} to
+         * preserve the historical behaviour of {@code ConsistencyPropertyTests} and
+         * {@code SeedSweepTest}; the adversarial harness passes a throwing checker so
+         * the 8 named in-node checks (plus {@code durable_prefix_no_gap}) fire at
+         * their mutation sites.
+         */
+        ClusterHarness(long seed, int nodeCount, RaftNode.InvariantChecker invariantChecker) {
             this.sim = new RaftSimulation(seed, nodeCount);
             this.nodeCount = nodeCount;
             this.nodes = new ArrayList<>();
@@ -75,8 +88,11 @@ class ConsistencyPropertyTests {
                 // RR-010: derive the per-node election RNG from the master
                 // simulation seed (not entropy) so the same seed reproduces the
                 // same execution schedule and a failing seed is replayable.
+                // The 7-arg ctor threads the InvariantChecker (NOOP by default);
+                // in-memory Storage keeps the non-crash scenarios allocation-light.
                 RaftNode node = new RaftNode(config, log, transport, sm,
-                        sim.electionRandom(nodeId));
+                        sim.electionRandom(nodeId),
+                        io.configd.common.Storage.inMemory(), invariantChecker);
 
                 nodes.add(node);
                 logs.add(log);
