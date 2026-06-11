@@ -331,3 +331,45 @@ LINEARIZABLE (RR-004 flip proof) → gate-(iv) `--schedule-only` diff → nightl
 5. **RR-002 coupling:** B5's live faulted runs must use iptables **REJECT** (not DROP) until RR-002
    lands — DROP stalls the leader via the timeout-less connect (that is the RR-002 bug). If RR-002
    lands first, re-test that a DROP partition no longer stalls (a free regression for RR-002).
+
+---
+
+## Gate-2 step spec (execution-round addendum — consumed verbatim by the gate-2 assembler)
+
+Produced by the B5 execution round (commit `3ac8cef`). All commands assume repo root and a
+built checker at `configd-linz/bin/porcupine-check` (or `PORCUPINE_BIN` set). The shaded server
+jar MUST be freshly `clean package`d and javap-verified to carry RR-004/ADR-0033 (`Committed: seq=`,
+`propose()->ProposeOutcome`, `whenCommitOutcome`) before any live run — stale-jar trap.
+
+**gate-2 (a) — self-tests (ALWAYS, every CI run; already inherited from gate-1 step b):**
+```bash
+GOTOOLCHAIN=local "$GO" -C configd-linz/src/main/go/porcupine-check build -o configd-linz/bin/porcupine-check .
+export PORCUPINE_BIN="$PWD/configd-linz/bin/porcupine-check"
+./mvnw -B -pl configd-linz -am test -Dtest=CheckerSelfTest,HistoryWriterUnitTest \
+  -Dsurefire.failIfNoSpecifiedTests=false
+# PASS: CheckerSelfTest 7/7, HistoryWriterUnitTest 5/5, 0 skips. ~15s.
+```
+
+**gate-2 (b) — sim-history check (ALWAYS; cheap, no cluster, no sudo):**
+```bash
+./mvnw -q -pl configd-testkit test -Dtest=OpHistoryTest -Dsurefire.failIfNoSpecifiedTests=false
+java --enable-preview -cp configd-linz/target/classes io.configd.linz.runner.SimHistoryCheck \
+  configd-testkit/target/sim-histories/history-4242.jsonl
+# PASS: exit 0 / VERDICT: LINEARIZABLE. ~10s. (Replayable by seed; deterministic.)
+```
+
+**gate-2 (c) — N-seed live faulted run (NIGHTLY / self-hosted only — needs sudo iptables + kill-9,
+NOT a hard ubuntu-latest gate; gate it behind a `GATE2_SKIP_FAULTED` knob reported loudly):**
+```bash
+./mvnw -q -pl configd-server -am clean package -DskipTests          # fresh shaded jar
+# javap guard: unzip -p .../configd-server-*.jar | strings | grep -q 'Committed: seq=' || exit 1
+bash configd-linz/scripts/run-gate.sh "2001 2002 2003 2004"          # 3- AND 5-node + gate-iv repro
+bash configd-linz/scripts/run-discrimination.sh both                 # both seeded bugs RED, controls GREEN
+# PASS: every seed LINEARIZABLE (faults>0); DISCRIMINATION PASS; iptables INPUT drill rules 0 after.
+# Budget ~15-30s per faulted seed-run (measured: seed-4242 ~20s, matrix 8 runs ~6 min);
+# discrimination ~2-3 min (control + mutated rebuild per bug). Per-PR gate: ONE fixed seed only.
+```
+
+**CI knobs:** Go availability is handled by `actions/setup-go@v5` keyed off the module `go.mod`/`go.sum`
+(already in `ci.yml`); gate-1 step (b)'s Go-absent path fails loudly. For gate-2 (c), the runner must
+have passwordless sudo (self-hosted) or the step skips-loudly on ubuntu-latest.
