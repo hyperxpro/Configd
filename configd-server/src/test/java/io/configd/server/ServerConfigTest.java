@@ -361,4 +361,90 @@ class ServerConfigTest {
         assertEquals(a, b);
         assertEquals(a.hashCode(), b.hashCode());
     }
+
+    // ========================================================================
+    // RR-087: ServerConfig.parsePeerAddresses was 0/15 lines. Exercise the
+    // "id=host:port,..." parser through the public parse() entry point: valid
+    // single/multi entries, surrounding whitespace, the empty case, and each
+    // malformed-input rejection branch.
+    // ========================================================================
+
+    @Nested
+    class PeerAddressParsing {
+
+        private String[] withPeerAddresses(String value) {
+            return new String[]{
+                "--node-id", "1",
+                "--data-dir", tempDir.toString(),
+                "--peers", "2,3",
+                "--peer-addresses", value
+            };
+        }
+
+        @Test
+        void parsesSinglePeerAddress() {
+            ServerConfig config = ServerConfig.parse(withPeerAddresses("2=192.168.1.10:9091"));
+            var addrs = config.peerAddresses();
+            assertNotNull(addrs);
+            assertEquals(1, addrs.size());
+            var a = addrs.get(NodeId.of(2));
+            assertNotNull(a, "peer 2 must be present");
+            assertEquals(9091, a.getPort());
+        }
+
+        @Test
+        void parsesMultiplePeerAddresses() {
+            ServerConfig config = ServerConfig.parse(
+                    withPeerAddresses("2=10.0.0.2:9092,3=10.0.0.3:9093"));
+            var addrs = config.peerAddresses();
+            assertEquals(2, addrs.size());
+            assertEquals(9092, addrs.get(NodeId.of(2)).getPort());
+            assertEquals(9093, addrs.get(NodeId.of(3)).getPort());
+        }
+
+        @Test
+        void trimsSurroundingWhitespaceAndSkipsEmptyEntries() {
+            ServerConfig config = ServerConfig.parse(
+                    withPeerAddresses(" 2 = 10.0.0.2:9092 , , 3 = 10.0.0.3:9093 "));
+            var addrs = config.peerAddresses();
+            assertEquals(2, addrs.size(), "empty entries between commas are skipped");
+            assertEquals(9092, addrs.get(NodeId.of(2)).getPort());
+            assertEquals(9093, addrs.get(NodeId.of(3)).getPort());
+        }
+
+        @Test
+        void blankValueProducesEmptyMap() {
+            ServerConfig config = ServerConfig.parse(withPeerAddresses("   "));
+            assertTrue(config.peerAddresses().isEmpty(),
+                    "a blank --peer-addresses value yields an empty map, not null");
+        }
+
+        @Test
+        void rejectsEntryMissingEquals() {
+            assertThrows(IllegalArgumentException.class,
+                    () -> ServerConfig.parse(withPeerAddresses("2:10.0.0.2:9092")),
+                    "an entry without '=' (id=host:port) must be rejected");
+        }
+
+        @Test
+        void rejectsAddressMissingPort() {
+            assertThrows(IllegalArgumentException.class,
+                    () -> ServerConfig.parse(withPeerAddresses("2=10.0.0.2")),
+                    "an address without a ':port' must be rejected");
+        }
+
+        @Test
+        void rejectsNonNumericNodeId() {
+            assertThrows(NumberFormatException.class,
+                    () -> ServerConfig.parse(withPeerAddresses("two=10.0.0.2:9092")),
+                    "a non-numeric node id must fail to parse");
+        }
+
+        @Test
+        void rejectsNonNumericPort() {
+            assertThrows(NumberFormatException.class,
+                    () -> ServerConfig.parse(withPeerAddresses("2=10.0.0.2:notaport")),
+                    "a non-numeric port must fail to parse");
+        }
+    }
 }
