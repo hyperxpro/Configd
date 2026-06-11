@@ -442,6 +442,29 @@ class RaftLogUnitTest {
             log.setLastApplied(3); // equal -> no change (boundary)
             assertEquals(3, log.lastApplied());
         }
+
+        @Test
+        void setCommitIndexAtEqualValueReClampsAfterTruncateShrinksLog() {
+            // Discriminates setCommitIndex L419 ConditionalsBoundary (`>` -> `>=`).
+            // At commitIndex == lastIndex the `>` guard skips. But if the log is then
+            // TRUNCATED below commitIndex, a re-set at the (now stale-high) commitIndex
+            // value differs: `>=` re-enters and clamps commitIndex DOWN to the new
+            // lastIndex via Math.min, whereas `>` leaves it stale-high. We assert the
+            // current correct behavior (the `>` guard leaves commitIndex untouched on
+            // an equal call); under the `>=` mutant this same call would lower it,
+            // so the assertion fails -> mutant killed.
+            RaftLog log = logWith(1, 1, 1, 1, 1); // lastIndex=5
+            log.setCommitIndex(5);
+            assertEquals(5, log.commitIndex());
+            log.truncateFrom(4); // lastIndex now 3, commitIndex stays 5 (no clamp on truncate)
+            assertEquals(3, log.lastIndex());
+            assertEquals(5, log.commitIndex(), "truncate does not move commitIndex");
+            // Re-set at the same (stale) value: the `>` guard must skip -> commitIndex
+            // stays 5. The `>=` mutant would re-clamp to min(5, lastIndex=3) = 3.
+            log.setCommitIndex(5);
+            assertEquals(5, log.commitIndex(),
+                    "equal-value setCommitIndex must be a no-op (the `>` guard, not `>=`)");
+        }
     }
 
     // ====================================================================
@@ -680,6 +703,94 @@ class RaftLogUnitTest {
 
             RaftLog recovered = new RaftLog(storage);
             assertNull(recovered.recoveredSnapshot(), "an ahead-of-WAL blob must be ignored");
+        }
+
+        /**
+         * Writes a snapshot blob with the given dataLen/cfgLen fields and a matching
+         * snapshot-meta boundary at index 2, then reopens. Returns the recovered
+         * blob (or null). Used to pin readSnapshotBlob's bounds checks.
+         */
+        private SnapshotState reopenWithBlob(byte[] blob) {
+            Storage storage = Storage.inMemory();
+            RaftLog log = new RaftLog(storage);
+            for (int i = 1; i <= 4; i++) log.append(entry(i, 1));
+            log.compact(2, 1); // snapshotIndex=2, meta written
+            storage.put("raft-log.snapshot", blob);
+            return new RaftLog(storage).recoveredSnapshot();
+        }
+
+        @Test
+        void blobShorterThanHeaderIsRejectedAtBoundary() {
+            // Header is 8+8+4 = 20 bytes. Kills readSnapshotBlob L600
+            // ConditionalsBoundary (raw.length < 20): 19 bytes -> null; a full
+            // 20-byte header with dataLen 0 + a 4-byte cfgLen(-1) is a valid empty
+            // snapshot.
+            assertNull(reopenWithBlob(new byte[19]), "a sub-header blob must be rejected");
+
+            java.nio.ByteBuffer ok = java.nio.ByteBuffer.allocate(8 + 8 + 4 + 4);
+            ok.putLong(2);  // index == snapshotIndex
+            ok.putLong(1);  // term
+            ok.putInt(0);   // dataLen 0
+            ok.putInt(-1);  // cfgLen -1 (null cfg)
+            SnapshotState s = reopenWithBlob(ok.array());
+            assertNotNull(s, "a minimal valid blob (empty data, null cfg) must be accepted");
+            assertEquals(2, s.lastIncludedIndex());
+            assertEquals(0, s.data().length);
+        }
+
+        @Test
+        void blobWithDataLenExceedingRemainingIsRejected() {
+            // dataLen claims more bytes than present. Kills readSnapshotBlob L608
+            // (`buf.remaining() < dataLen + 4`) and the `dataLen + 4` MathMutator.
+            java.nio.ByteBuffer torn = java.nio.ByteBuffer.allocate(8 + 8 + 4 + 2);
+            torn.putLong(2);
+            torn.putLong(1);
+            torn.putInt(10); // claims 10 data bytes; only 2 follow
+            torn.putShort((short) 0);
+            assertNull(reopenWithBlob(torn.array()), "dataLen beyond remaining must be torn-rejected");
+        }
+
+        @Test
+        void blobWithNegativeDataLenIsRejected() {
+            // Kills readSnapshotBlob L608 `dataLen < 0` arm.
+            java.nio.ByteBuffer torn = java.nio.ByteBuffer.allocate(8 + 8 + 4 + 4);
+            torn.putLong(2);
+            torn.putLong(1);
+            torn.putInt(-5); // negative dataLen
+            torn.putInt(-1);
+            assertNull(reopenWithBlob(torn.array()), "negative dataLen must be rejected");
+        }
+
+        @Test
+        void blobWithCfgLenExceedingRemainingIsRejected() {
+            // cfgLen >= 0 but claims more cfg bytes than present. Kills
+            // readSnapshotBlob L615 (`cfgLen >= 0`) and L616 (`remaining < cfgLen`).
+            java.nio.ByteBuffer torn = java.nio.ByteBuffer.allocate(8 + 8 + 4 + 1 + 4 + 1);
+            torn.putLong(2);
+            torn.putLong(1);
+            torn.putInt(1);          // dataLen 1
+            torn.put((byte) 7);      // the 1 data byte
+            torn.putInt(10);         // cfgLen 10 (>= 0) but only 1 byte follows
+            torn.put((byte) 9);
+            assertNull(reopenWithBlob(torn.array()), "cfgLen beyond remaining must be torn-rejected");
+        }
+
+        @Test
+        void blobWithExactCfgIsAccepted() {
+            // A blob whose cfgLen exactly matches the remaining bytes is valid and
+            // carries the cfg. Pins the accept side of L615/L616.
+            java.nio.ByteBuffer ok = java.nio.ByteBuffer.allocate(8 + 8 + 4 + 1 + 4 + 2);
+            ok.putLong(2);
+            ok.putLong(1);
+            ok.putInt(1);       // dataLen 1
+            ok.put((byte) 7);
+            ok.putInt(2);       // cfgLen 2, exactly 2 bytes follow
+            ok.put((byte) 3);
+            ok.put((byte) 4);
+            SnapshotState s = reopenWithBlob(ok.array());
+            assertNotNull(s);
+            assertArrayEquals(new byte[]{7}, s.data());
+            assertArrayEquals(new byte[]{3, 4}, s.clusterConfigData());
         }
 
         @Test

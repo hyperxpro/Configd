@@ -391,5 +391,138 @@ class RaftNodeReplicationUnitTest {
             assertTrue(t.of(RequestVoteRequest.class).isEmpty(),
                     "stale TimeoutNow must not trigger an election");
         }
+
+        @Test
+        void timeoutNowStartsElectionIncrementingTermByOne() {
+            RecordingTransport t = new RecordingTransport();
+            RaftConfig config = RaftConfig.of(N1, Set.of(N2, N3));
+            RaftNode follower = new RaftNode(config, new RaftLog(), t, new CountingStateMachine(),
+                    new java.util.Random(1));
+            follower.handleMessage(new RequestVoteResponse(4, false, N2, false)); // term -> 4
+            t.clear();
+            // A TimeoutNow at the current term bypasses PreVote and starts an election
+            // that increments the term to 5 and votes for self. Kills startElection
+            // L1527 MathMutator (currentTerm + 1) and the setTermAndVote removal: the
+            // emitted RequestVote must carry term 5 (old+1), not 3 (old-1).
+            follower.handleMessage(new TimeoutNowRequest(4, N2));
+            assertEquals(RaftRole.CANDIDATE, follower.role());
+            assertEquals(5, follower.currentTerm(), "election must increment term by exactly one");
+            assertEquals(N1, follower.votedFor(), "candidate must vote for itself");
+            List<RequestVoteRequest> reqs = t.of(RequestVoteRequest.class);
+            assertFalse(reqs.isEmpty());
+            assertEquals(5, reqs.getFirst().term(), "RequestVote must carry the new term (old+1)");
+            assertFalse(reqs.getFirst().preVote(), "TimeoutNow election bypasses PreVote");
+        }
+    }
+
+    // ====================================================================
+    // becomeFollower — term-adoption boundary
+    // ====================================================================
+
+    @Nested
+    class BecomeFollowerBoundary {
+
+        @Test
+        void adoptsStrictlyHigherTermButNotEqualOrLower() {
+            RecordingTransport t = new RecordingTransport();
+            RaftNode node = plainFollower(t);
+            node.handleMessage(new RequestVoteResponse(5, false, N2, false)); // term -> 5
+            assertEquals(5, node.currentTerm());
+            assertNull(node.votedFor());
+            // Grant a vote at term 5.
+            node.handleMessage(new RequestVoteRequest(5, N2, 0, 0, false));
+            assertEquals(N2, node.votedFor());
+            // An AppendEntries at the SAME term 5 must NOT clear the vote (becomeFollower
+            // L1437 boundary `newTerm > currentTerm` — only a strict increase adopts a
+            // new term and clears the vote).
+            node.handleMessage(new AppendEntriesRequest(5, N3, 0, 0, List.of(), 0));
+            assertEquals(5, node.currentTerm());
+            assertEquals(N2, node.votedFor(), "same-term step-down must preserve the vote");
+        }
+    }
+
+    // ====================================================================
+    // handleInstallSnapshot / handleInstallSnapshotResponse boundaries
+    // ====================================================================
+
+    @Nested
+    class SnapshotInstall {
+
+        @Test
+        void followerInstallsNewerSnapshotAndAdvancesApplied() {
+            RecordingTransport t = new RecordingTransport();
+            RaftNode follower = plainFollower(t);
+            // A snapshot at index 5 (> our snapshotIndex 0) must install: lastApplied,
+            // commitIndex and snapshotIndex all advance to 5. Kills handleInstallSnapshot
+            // L1981 boundary, L2008 persist, L2012 compact, L2015 commit boundary,
+            // L2018 setLastApplied.
+            follower.handleMessage(new InstallSnapshotRequest(1, N2, 5, 1, 0,
+                    new byte[]{9}, true, null));
+            assertEquals(5, follower.log().snapshotIndex());
+            assertEquals(5, follower.log().lastApplied());
+            assertTrue(follower.log().commitIndex() >= 5);
+            List<InstallSnapshotResponse> resps = t.of(InstallSnapshotResponse.class);
+            assertTrue(resps.getLast().success());
+            assertEquals(5, resps.getLast().lastIncludedIndex());
+        }
+
+        @Test
+        void followerIgnoresSnapshotAtOrBelowItsSnapshotPoint() {
+            RecordingTransport t = new RecordingTransport();
+            RaftNode follower = plainFollower(t);
+            // First install index 5.
+            follower.handleMessage(new InstallSnapshotRequest(1, N2, 5, 1, 0, new byte[]{9}, true, null));
+            t.clear();
+            // A second snapshot at index 5 (== our snapshotIndex) must be ignored — no
+            // re-install — but still acked success. Kills handleInstallSnapshot L1981
+            // boundary (lastIncludedIndex <= snapshotIndex).
+            follower.handleMessage(new InstallSnapshotRequest(1, N2, 5, 1, 0, new byte[]{8}, true, null));
+            assertEquals(5, follower.log().snapshotIndex(), "must not re-install at the same point");
+            List<InstallSnapshotResponse> resps = t.of(InstallSnapshotResponse.class);
+            assertEquals(1, resps.size());
+            assertTrue(resps.getFirst().success());
+        }
+
+        @Test
+        void staleTermSnapshotIsRejected() {
+            RecordingTransport t = new RecordingTransport();
+            RaftNode follower = plainFollower(t);
+            follower.handleMessage(new RequestVoteResponse(5, false, N2, false)); // term -> 5
+            t.clear();
+            // A snapshot from term 3 (< 5) must be rejected with success=false and no
+            // install. Kills handleInstallSnapshot L1957 stale guard.
+            follower.handleMessage(new InstallSnapshotRequest(3, N2, 9, 1, 0, new byte[]{9}, true, null));
+            assertEquals(0, follower.log().snapshotIndex());
+            List<InstallSnapshotResponse> resps = t.of(InstallSnapshotResponse.class);
+            assertEquals(1, resps.size());
+            assertFalse(resps.getFirst().success());
+        }
+
+        @Test
+        void leaderIgnoresSnapshotResponseWhenNotLeader() {
+            RecordingTransport t = new RecordingTransport();
+            RaftNode follower = plainFollower(t);
+            // A follower receiving an InstallSnapshotResponse must ignore it (role !=
+            // LEADER). Kills handleInstallSnapshotResponse L2114. Observable: no state
+            // change / no NPE on the leader-only maps.
+            assertDoesNotThrow(() ->
+                    follower.handleMessage(new InstallSnapshotResponse(0, true, N2, 5)));
+            assertEquals(RaftRole.FOLLOWER, follower.role());
+        }
+
+        @Test
+        void leaderIgnoresStaleTermSnapshotResponse() {
+            RecordingTransport t = new RecordingTransport();
+            RaftNode leader = electedLeader(t);
+            long term = leader.currentTerm();
+            long matchBefore = leader.log().commitIndex();
+            // A success response from a PRIOR term must be ignored (no matchIndex
+            // bump / commit advance). Kills handleInstallSnapshotResponse L2125 stale
+            // guard. (The leader has no latestSnapshot anyway, but the stale guard must
+            // short-circuit before the success block.)
+            leader.handleMessage(new InstallSnapshotResponse(term - 1 < 0 ? 0 : term - 1, true, N2, 99));
+            assertEquals(RaftRole.LEADER, leader.role());
+            assertEquals(matchBefore, leader.log().commitIndex());
+        }
     }
 }

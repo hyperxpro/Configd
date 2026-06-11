@@ -217,5 +217,31 @@ class ReconfigPathUnitTest {
             // A subsequent distinct change is accepted -> configChangePending cleared.
             assertTrue(leader.proposeConfigChange(Set.of(N1, N2, N3)));
         }
+
+        @Test
+        void leaderRemovingItselfStepsDownWhenFinalConfigCommits() {
+            // A leader that reconfigures the cluster to EXCLUDE itself must step down
+            // once the final (self-excluding) config commits. Kills
+            // handleCommittedConfigChange L1922/1933 EQUAL_ELSE (the
+            // `!clusterConfig.isVoter(config.nodeId())` step-down guards).
+            RoutingCluster cluster = new RoutingCluster(3);
+            cluster.electLeader(N1);
+            RaftNode leader = cluster.nodes.get(N1);
+            assertEquals(RaftRole.LEADER, leader.role());
+            cluster.deliverAll(20); // commit no-op
+            assertTrue(leader.log().commitIndex() >= 1);
+
+            // Reconfigure {1,2,3} -> {2,3}: node 1 (the leader) removes itself.
+            assertTrue(leader.proposeConfigChange(Set.of(N2, N3)));
+            assertTrue(leader.clusterConfig().isJoint());
+            cluster.deliverAll(60);
+            // Once the self-excluding C_new commits, the former leader is no longer a
+            // voter and must have stepped down to FOLLOWER.
+            assertFalse(leader.clusterConfig().isVoter(N1),
+                    "the removed node must no longer be a voter in the final config");
+            assertEquals(RaftRole.FOLLOWER, leader.role(),
+                    "a leader removed from the config must step down");
+        }
     }
+
 }

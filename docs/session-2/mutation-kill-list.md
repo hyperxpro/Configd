@@ -5,6 +5,21 @@ mutant -> test pair with the discrimination evidence. Equivalent-mutant claims
 carry the actual mutant diff + why it is behaviorally invisible. "Ran out of
 time" is NOT equivalence — honest documented-residuals are left as such.
 
+> **Gap-closing round (2026-06-11, this session's correctness branch).** Beyond
+> the named survivors, the charter §4.1 70/80 aspiration drove a second round that
+> attacks the *unnamed* killable-but-untested kernel mutants with eight new
+> discriminating test classes (~120 `@Test`): `RaftLogUnitTest`,
+> `KernelBoundaryUnitTest`, `ReconfigPathUnitTest`, `RaftNodeReplicationUnitTest`,
+> `RaftNodeApiUnitTest`, `RaftNodeVoteAndSnapshotUnitTest`, `InvariantCallSiteTest`
+> (the RR-089 call-site closure), and `MessageRecordCodecTest` (the record/DTO round).
+> Results + the itemized residual-equivalents are in the SCORES section. **CLEAN
+> measured scores (RUN_ERROR=0): safety kernel 64% -> 72.8% (532/731); module-wide
+> 61% -> 68% pre-record-round -> 73.1% (589/806) after the record-codec round, MEETING
+> the §4.1 70% target with margin. The kernel is short of 80% — the remaining gap is
+> dominated by provably-equivalent mutants itemized below.** An earlier "80%" module
+> figure was a CONTAMINATED run (RUN_ERRORs from concurrent test forks); always verify
+> `RUN_ERROR==0` before trusting a PIT score.
+
 PIT wiring: `-Pmutation` profile (parent pom + per-module thresholds), recipe
 in `docs/audit-session-1/test-forensics.md` §5. Re-run a single survivor fast
 with `-DtargetClasses=...` scoping; official numbers from one final per-module
@@ -231,7 +246,121 @@ PIT 1.25.4 DEFAULTS, JDK 25, threads=2, via `-Pmutation` (recipe:
 (add `,mutation-kernel` for the safety-kernel bar; swap the module for
 distribution-service). Reports: `<module>/target/pit-reports/{index.html,mutations.xml}`.
 
-### Official consensus-core module-wide run (2026-06-11, `target/pit-reports/mutations.xml`)
+### GAP-CLOSING ROUND — official consensus-core scores (2026-06-11, clean runs)
+
+Two clean per-module PIT runs (RUN_ERROR=0, no concurrent surefire forks — a
+contaminated run with concurrent test forks shows hundreds of RUN_ERRORs and must
+be discarded). Numbers from `/tmp/pit-s2/clean-{kernel,module}-mutations.xml`,
+reproducible via the §4.1 recipe.
+
+| Run | Scope | S1 | S2 named-round | **S2 gap-round (CLEAN)** | §4.1 target | Enforced floor |
+|-----|-------|----|----|----|----|----|
+| consensus-core module-wide | `io.configd.raft.*` | 58% | 61% | **73.1% (589/806)** | 70 | **70** |
+| consensus-core SAFETY KERNEL | RaftNode/RaftLog/DurableRaftState/ReadIndexState/ClusterConfig | — | 64% | **72.8% (532/731)** | 80 | **70** |
+
+> **MEASUREMENT INTEGRITY NOTE.** An earlier module-wide run reported "80%" but was
+> CONTAMINATED — concurrent surefire test forks made 346 mutants come back `RUN_ERROR`,
+> and PIT's stdout stat line printed a misleading inflated number. ALL numbers here are
+> from CLEAN runs (RUN_ERROR=0, nothing else forking a JVM): module-wide **73.1%
+> (589/806)**, kernel **72.8% (532/731)**. Always verify `RUN_ERROR==0` in the XML before
+> trusting a PIT score.
+
+**Module-wide MEETS the §4.1 70% target with margin (73.1%).** Per-class in the kernel
+run: **ClusterConfig 100% (51/51), ReadIndexState 96% (23/24), DurableRaftState 95%
+(18/19), RaftLog 77% (117/151), RaftNode 66% (319/484)**; kernel line coverage 1025/1115
+(92%), test strength 77%. The module-wide number was held back at 68% by pure record/DTO
+NO_COVERAGE boilerplate — `InstallSnapshotRequest` 0/27, `SnapshotState` 0/16, `LogEntry`
+1/12 (hand-written byte-aware equals/hashCode/toString, never called by any same-module
+test) — which `MessageRecordCodecTest` covers (a fair record-round per the charter
+carve-out, since these are real logic not generated boilerplate), lifting module-wide 68%
+→ 73.1% (NO_COVERAGE 94 → 40).
+
+**Seven new discriminating test classes (115 `@Test`)** drove the lift, each test
+failing iff its target mutant is applied (a flipped boundary, a removed conditional,
+a replaced return, a removed call):
+- `RaftLogUnitTest` — the previously-absent dedicated RaftLog test: termAt/lastTerm/
+  entriesFrom/entriesBatch/append/appendEntries/truncateFrom/setCommitIndex (incl.
+  the `>`-vs-`>=` re-clamp-after-truncate discriminator)/compact/isAtLeastAsUpToDate
+  boundaries + WAL/snapshot-blob (torn/ahead/exact-cfg)/legacy recovery.
+- `KernelBoundaryUnitTest` — ClusterConfig joint/equals/hashCode/toString,
+  ReadIndexState quorum boundaries + unknown-id NPE guard, DurableRaftState term
+  monotonicity + null-vote/short-blob reload.
+- `ReconfigPathUnitTest` — RCFG codec magic/voter-count bounds, proposeConfigChange
+  preconditions, joint→final lifecycle + leader-self-removal step-down (routing cluster).
+- `RaftNodeReplicationUnitTest` — handleAppendEntries follower path, AppendEntries/
+  InstallSnapshot/Vote response handlers, election term-increment, becomeFollower
+  term-adoption boundary, snapshot-install boundaries.
+- `RaftNodeApiUnitTest` — propose validation/outcomes + transferLeadership preconditions.
+- `RaftNodeVoteAndSnapshotUnitTest` — handleRequestVote grant/deny, triggerSnapshot
+  boundaries, joint-codec bound.
+- `InvariantCallSiteTest` — the RR-089 closure (see below).
+
+**RR-089 closed harder (call-site removals now KILLED, not merely argued equivalent).**
+`InvariantCallSiteTest` wires an `ObservingChecker` that records EVERY
+`invariantChecker.check(name,…)` call regardless of condition, drives the real
+production paths, and asserts the call fired. A `VoidMethodCall` removal of the
+production call then makes the recorded set miss the name and the test fails — killable
+even where the fail-on-false condition is unfalsifiable, because the observable is "the
+call happened". Clean kernel run: **25 `InvariantChecker::check` removals KILLED**
+(applyCommitted L1802/L1808, becomeLeader L1567/L1573, handleAppendEntries L1225,
+proposeConfigChange L924/L929/L937, the read/snapshot/ctor twins, and the
+`fireInNodeTwinForTest` seam). Only **1 remains** — `applyCommitted` L1782
+`durable_prefix_no_gap`, NO_COVERAGE (the in-apply gap-skip branch needs a committed
+index missing from the recoverable prefix mid-apply; the expression IS verified via the
+ctor L257 KILLED + `SnapshotCrashRecoveryTest`).
+
+**Honest kernel ceiling (72.8%, short of 80%) — the residual is provably equivalent
+or NO_COVERAGE machinery, itemized (NOT "ran out of time"):**
+- **`RaftLog.setLastApplied` `>`→`>=`** — EQUIVALENT. The guarded body is
+  `this.lastApplied = index`; at `index == lastApplied` both branches leave the same
+  value. (Contrast `setCommitIndex`, whose `>`→`>=` IS killed — it re-clamps via
+  `Math.min` after a truncate shrinks the log; that discriminator is in RaftLogUnitTest.)
+- **`ReadIndexState.confirmAllLeadership` lambda `leadershipConfirmed() ? pending :
+  pending.confirmed()`** — EQUIVALENT. `confirmed()` on an already-confirmed read returns
+  a record equal in every field; removing the guard is invisible.
+- **`RaftLog.appendEntries` `prevLogIndex > 0`→`>= 0`** — EQUIVALENT. At index 0,
+  `termAt(0)==0` and a valid prevLogTerm is 0, so `existingTerm != prevLogTerm` is false —
+  the guard and the mutant proceed identically.
+- **`RaftLog.termAt` L223 `index < snapshotIndex`→`<=`** — EQUIVALENT. The earlier L220
+  `if (index == snapshotIndex) return snapshotTerm` already returns for that boundary
+  value, so the `<`-vs-`<=` flip is unreachable.
+- **`RaftLog.<init>` legacy-fallback mutations (L138/L143/L144/L145)** — EQUIVALENT under
+  the present recovery path. The L155–158 cross-validation recomputes `snapshotIndex =
+  firstEntry.index() - 1` from the WAL (authoritative) AFTER the legacy fallback runs, so a
+  mutation to the legacy inference is overwritten and produces no observable difference
+  whenever WAL entries exist. (A no-WAL-entries case cannot reach these lines — the `else
+  if (!entries.isEmpty())` guards them.)
+- **`InvariantChecker::check` L1782 `durable_prefix_no_gap`** — NO_COVERAGE; the gap-skip
+  branch is a corrupt-recovery state (committed index missing from the recoverable prefix
+  mid-apply). Expression verified elsewhere (ctor L257 KILLED).
+- **Commit-outcome NO_COVERAGE machinery** (`fireReadyCallbacks`, `fireSnapshotIndeterminate`,
+  `decideCommitOutcome` snapshot-covered-index, `recordAppliedSeq` lambdas — ~25 mutants):
+  these require a snapshot-fold of a pending callback's index after step-down — an elaborate
+  multi-stage scenario; `CommitOutcomeSeamTest` covers the COMMITTED/LOST/fires-once core,
+  leaving the snapshot-INDETERMINATE corner as a documented RESIDUAL (killable but
+  high-cost, not equivalent — left honest).
+- The remaining RaftNode reconfig/snapshot/election `ConditionalsBoundary` survivors are a
+  mix of the same earlier-guard-masked pattern and genuinely-killable-but-expensive
+  boundaries; the named killable ones are pinned, the rest are a documented residual. **The
+  module-wide 73.1% (meets the §4.1 ≥70 target with margin) is the headline deliverable; the
+  kernel 72.8% is the honest ceiling with the gap dominated by the equivalents above.**
+
+### Record-codec round — `MessageRecordCodecTest` (lifts module-wide 68% → 73.1%)
+
+The clean module-wide run was held at 68% by 54 NO_COVERAGE mutants on three message
+records whose `equals`/`hashCode`/`toString` are **hand-written** (not generated) because
+they hold `byte[]` fields and must use `Arrays.equals`/`Arrays.hashCode` — a default record
+`equals` would compare those arrays by identity and be WRONG. No same-module test ever
+called those members. `MessageRecordCodecTest` (per the charter's record-round carve-out,
+since these carry real logic) pins them: per-field `equals` discrimination (kills the
+`RemoveConditional` field-comparison mutants), hashCode distinctness across distinct
+instances (kills the `MathMutator`/`PrimitiveReturns` combiner mutants), non-empty
+`toString` with field presence, and the compact-constructor validation (`SnapshotState`
+negative index/term, `LogEntry` index≥1, null-data→empty, null-leaderId→NPE). Result:
+`InstallSnapshotRequest` 0/27 → ~26/27, `SnapshotState` 0/16 → ~16/16, `LogEntry` 1/12 →
+~12/12; module NO_COVERAGE 94 → 40; module-wide 68% → **73.1%**.
+
+### (historical) Named-survivor round — consensus-core module-wide run (2026-06-11)
 **806 mutations: 485 KILLED + 4 TIMED_OUT (=489 detected) / 201 SURVIVED / 116 NO_COVERAGE = 61%.**
 Line coverage of mutated classes 1045/1220 (86%). Per-class: ClusterConfig 86%,
 ReadIndexState 87%, DurableRaftState 73%, RaftLog 62%, RaftNode 61%; the message
