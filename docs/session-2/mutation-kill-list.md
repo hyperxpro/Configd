@@ -125,7 +125,32 @@ RESIDUAL (documented, still surviving).
   blind spot, addressed by the CrashStorage WalSyncCrashTest above.)
 
 ## RR-089 — `InvariantChecker::check` VoidMethodCall removals
-- (pending PIT confirmation of which AssertionTwinFiringTest kills land)
+- The new `AssertionTwinFiringTest` fires every twin and asserts a wired checker
+  OBSERVES each — but it fires the structurally-guarded RaftNode twins through a
+  SYNTHETIC seam (`fireInNodeTwinForTest`), NOT the production call site. So a PIT
+  VoidMethodCall removal of the PRODUCTION `invariantChecker.check(...)` at e.g.
+  `applyCommitted` (version_monotonicity / state_machine_safety), `becomeLeader`
+  (election_safety / leader_completeness), or `handleAppendEntries` (log_matching)
+  is NOT killed by that test. **Empirically confirmed 2026-06-11** (manual
+  call-site removal):
+  * production `version_monotonicity` check removed @ applyCommitted ->
+    AssertionTwinFiringTest still GREEN (mutant survives).
+  * production `read_freshness` check removed @ assertReadServeInvariants ->
+    still GREEN (the same poisoned read also trips `read_index_bounded`, so the
+    runnable still throws and `expectFires` is satisfied by the wrong twin — the
+    firing test is not call-site-discriminating).
+- Root cause (RR-089 as written): these production checks are structurally
+  defense-in-depth — their condition is true by construction on the real path, so
+  no protocol input makes them fire; only a poisoned input through the EXACT
+  production call site, with an assertion that ONLY that check firing satisfies,
+  kills the call-site mutant.
+- Plan: after the PIT baseline pins the exact surviving check-call set, add
+  REAL-MONITOR wiring tests that (a) drive each surviving production call site
+  with a RecordingChecker and a poisoned input and (b) assert the SPECIFIC twin
+  fires (distinct from sibling checks), so the call removal fails the test. Where
+  a check is genuinely unreachable-to-fire on the production path even with
+  poisoning (pure defense-in-depth), record it as a documented equivalent with
+  the structural argument. **Status: PIT-baseline-gated (in progress).**
 
 ## RR-092 — config-store targeted assertion gaps
 
