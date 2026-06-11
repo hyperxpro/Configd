@@ -159,4 +159,28 @@ class CheckerSelfTest {
                 read(2, "k", "v1", Op.Status.OK, 7, 8));   // stale: committed v2 vanished -> RED
         assertEquals(Verdict.NON_LINEARIZABLE, verdict("7b committed-OK-write-vanished", stale));
     }
+
+    // 8. 5xx-other on the WRITE path: an unknown server failure cannot guarantee the
+    //    write did NOT commit, so the recorder must use INFO (indeterminate), never FAIL.
+    //    FAIL is the UNSAFE direction — it drops the write, so a read that observed it
+    //    would have no writer -> a FALSE RED that masks (or fabricates) an anomaly.
+    //    8a: a 5xx-other write recorded INFO, later observed by an OK read -> GREEN
+    //        (the write may have committed, and a read confirms it did).
+    //    8b: the SAME write wrongly recorded FAIL (the bug) -> the observing read has no
+    //        writer -> RED. The flip between 8a and 8b is the gate on the mapping fix.
+    @Test
+    void test8_fiveXxOtherWriteInfoNeverFail() throws Exception {
+        // 8a: INFO write (5xx-other) observed by a read -> linearizable.
+        List<Op> asInfo = List.of(
+                put(0, "k", "U", Op.Status.INFO, 1),       // 5xx-other: may have committed
+                read(1, "k", "U", Op.Status.OK, 2, 3));    // a read observes it -> it did commit
+        assertEquals(Verdict.LINEARIZABLE, verdict("8a 5xx-other-as-INFO", asInfo));
+
+        // 8b: the SAME write flipped to FAIL (the pre-fix bug) -> dropped -> read of U
+        //     has no writer -> false RED.
+        List<Op> asFail = List.of(
+                put(0, "k", "U", Op.Status.FAIL, 1),
+                read(1, "k", "U", Op.Status.OK, 2, 3));
+        assertEquals(Verdict.NON_LINEARIZABLE, verdict("8b 5xx-other-flipped-to-FAIL", asFail));
+    }
 }

@@ -12,7 +12,7 @@
 #                  BUILD SUCCESS, 0 failures, 0 errors, >= 21,000 tests run
 #                  (count tripwire; 8 known accounted skips are OK).
 #   (b) linz       the R-04 linearizability harness self-tests: the Porcupine
-#                  checker builds from the repo's Go sources and all 7
+#                  checker builds from the repo's Go sources and all 8
 #                  PORCUPINE_BIN-gated CheckerSelfTest tests run green, 0 skips.
 #   (c) jmh        all 9 JMH benchmark classes EXECUTE (exit 0, "Run complete")
 #                  at minimal params — executability only, numbers are NOT
@@ -137,9 +137,9 @@ step_linz() {
   line="$(grep -E "Tests run:.*-- in io.configd.linz.CheckerSelfTest" "$LOGDIR/linz.log" | tail -1)" \
     || { echo "GATE-1 linz: CheckerSelfTest did not run at all"; return 1; }
   echo "GATE-1 linz: $line"
-  echo "$line" | grep -q "Tests run: 7, Failures: 0, Errors: 0, Skipped: 0" \
-    || { echo "GATE-1 linz: expected 7 run / 0 fail / 0 err / 0 skipped — got: $line"; return 1; }
-  echo "GATE-1 linz: OK (7/7 gated self-tests ran, 0 skips)"
+  echo "$line" | grep -q "Tests run: 8, Failures: 0, Errors: 0, Skipped: 0" \
+    || { echo "GATE-1 linz: expected 8 run / 0 fail / 0 err / 0 skipped — got: $line"; return 1; }
+  echo "GATE-1 linz: OK (8/8 gated self-tests ran, 0 skips)"
 }
 
 step_jmh() {

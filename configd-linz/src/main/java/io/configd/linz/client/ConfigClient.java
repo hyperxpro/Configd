@@ -112,8 +112,16 @@ public final class ConfigClient {
                     }
                     return new OpResult(Op.Status.FAIL, value, call, System.nanoTime()); // definite Lost/NotLeader
                 }
-                // 400 / 403 / 429 and other definite rejections
-                return new OpResult(Op.Status.FAIL, value, call, System.nanoTime());
+                if (code == 400 || code == 403 || code == 429) {
+                    // Definite rejections the server contract guarantees never committed
+                    // (validation 400, auth 403, backpressure-before-propose 429).
+                    return new OpResult(Op.Status.FAIL, value, call, System.nanoTime());
+                }
+                // Any other 5xx (or unrecognized status) is INDETERMINATE on the write
+                // path: an unknown server-side failure cannot guarantee the write did NOT
+                // commit, so recording FAIL (a definite no-occurrence) is the UNSAFE
+                // direction — it could mask a real lost-write anomaly. Record INFO.
+                return new OpResult(Op.Status.INFO, value, call, System.nanoTime());
             } catch (Exception e) {
                 // timeout / connection refused (node killed) / reset: may have committed
                 return new OpResult(Op.Status.INFO, value, call, System.nanoTime());

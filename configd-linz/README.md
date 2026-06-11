@@ -20,7 +20,7 @@ src/main/java/io/configd/linz/
              LostWriteScenario           gate (ii) lost-acked-write discrimination
              StaleReadScenario           gate (ii) stale-read discrimination
 src/main/go/porcupine-check/  main.go    ~150-line trusted checker (per-key linearizable register)
-src/test/java/.../CheckerSelfTest        gate (i): 7 synthetic histories, pinned verdicts (needs PORCUPINE_BIN)
+src/test/java/.../CheckerSelfTest        gate (i): 8 synthetic histories, pinned verdicts (needs PORCUPINE_BIN)
                  HistoryWriterUnitTest    pure-Java encoding coverage (runs in ./mvnw test)
 scripts/   build-porcupine.sh  run-discrimination.sh  run-gate.sh
 discrimination/  lost-acked-write.patch  stale-read.patch
@@ -72,7 +72,7 @@ per-node **source-IP** partitions are impossible without network namespaces. We 
 bash configd-linz/scripts/build-porcupine.sh
 export PORCUPINE_BIN="$PWD/configd-linz/bin/porcupine-check"
 
-# GATE (i): checker self-test (7 synthetic histories through the real recorder->checker)
+# GATE (i): checker self-test (8 synthetic histories through the real recorder->checker)
 ./mvnw -pl configd-linz test -Dtest=CheckerSelfTest      # needs PORCUPINE_BIN; else skipped
 
 # GATE (ii): discrimination — both seeded bugs must turn the checker RED, controls GREEN

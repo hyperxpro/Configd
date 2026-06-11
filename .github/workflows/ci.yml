@@ -68,7 +68,7 @@ jobs:
 
   gate-1:
     # Session-1 cumulative gate (audit-session-1 Phase E): clean `./mvnw clean
-    # verify` + count tripwire, Porcupine-gated linz self-tests (7/7, 0 skips),
+    # verify` + count tripwire, Porcupine-gated linz self-tests (8/8, 0 skips),
     # JMH executability smoke (9 classes), TLC smoke bounds (gates/spec-smoke/),
     # 3-node failover smoke. See gates/gate-1.sh header for what a green run
     # does and does NOT prove (docs/readiness-register.md "Gate-1 blockers").
