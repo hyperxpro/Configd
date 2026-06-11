@@ -75,12 +75,22 @@ public final class FanOutServer {
     /** Named config: per-connection outbound transport queue depth (frames). Design §4. */
     public static final int DEFAULT_TRANSPORT_QUEUE_FRAMES = 64;
 
+    /**
+     * Named config {@code edge.fanout.transport.maxSessions} (hard rule 4: no unbounded
+     * designs): maximum concurrently accepted edge connections, INCLUDING connections
+     * still mid-handshake (the bound is applied BEFORE the handshake, so half-open
+     * slowloris connections cannot exhaust file descriptors / virtual threads).
+     * Refusals are counted on {@code edge_fanout_sessions_refused_total}.
+     */
+    public static final int DEFAULT_MAX_SESSIONS = 1_024;
+
     private final InetSocketAddress bindAddress;
     private final TlsManager tlsManager;
     private final CommitNotificationSource source;
     private final ReplaySource replaySource;
     private final FanOutConfig config;
     private final int transportQueueFrames;
+    private final int maxSessions;
     private final RegistryFanOutSessionMetrics metrics;
     private final Clock clock;
 
@@ -97,6 +107,19 @@ public final class FanOutServer {
                         int transportQueueFrames,
                         RegistryFanOutSessionMetrics metrics,
                         Clock clock) {
+        this(bindAddress, tlsManager, source, replaySource, config, transportQueueFrames,
+                DEFAULT_MAX_SESSIONS, metrics, clock);
+    }
+
+    public FanOutServer(InetSocketAddress bindAddress,
+                        TlsManager tlsManager,
+                        CommitNotificationSource source,
+                        ReplaySource replaySource,
+                        FanOutConfig config,
+                        int transportQueueFrames,
+                        int maxSessions,
+                        RegistryFanOutSessionMetrics metrics,
+                        Clock clock) {
         this.bindAddress = java.util.Objects.requireNonNull(bindAddress, "bindAddress");
         this.tlsManager = tlsManager; // null = plaintext (test/single-node)
         this.source = java.util.Objects.requireNonNull(source, "source");
@@ -106,6 +129,10 @@ public final class FanOutServer {
             throw new IllegalArgumentException("transportQueueFrames must be positive: " + transportQueueFrames);
         }
         this.transportQueueFrames = transportQueueFrames;
+        if (maxSessions <= 0) {
+            throw new IllegalArgumentException("maxSessions must be positive: " + maxSessions);
+        }
+        this.maxSessions = maxSessions;
         this.metrics = java.util.Objects.requireNonNull(metrics, "metrics");
         this.clock = java.util.Objects.requireNonNull(clock, "clock");
     }
@@ -151,6 +178,14 @@ public final class FanOutServer {
         while (running.get()) {
             try {
                 Socket socket = serverSocket.accept();
+                // Admission bound BEFORE the handshake (hard rule 4): beyond
+                // maxSessions the socket is closed immediately — half-open
+                // handshakes count, so they cannot exhaust fds/threads.
+                if (liveSockets.size() >= maxSessions) {
+                    metrics.onSessionRefused();
+                    closeQuietly(socket);
+                    continue;
+                }
                 liveSockets.add(socket);
                 executor.submit(() -> {
                     try {

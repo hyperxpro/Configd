@@ -3,6 +3,11 @@
 Companion to `contract-test-map.md`. Everything below was verified against the working tree on
 branch `session-3-data-plane` (HEAD `65a5212`), by reading files — not from memory or prior docs.
 
+> **Post-C1 audit pass (2026-06-11, HEAD `6c72a29`):** the C1 rows were re-audited test-body-by-test-body
+> after commits `ca22214`/`a74bcbf`; findings, flips, and the two REQUIRED gaps are in
+> `docs/session-3/reviews/c1-contract-qa-audit.md`. Sections below are annotated where C1 or the
+> design-review ratifications (ADR-0037/0038 Accepted, ADR-0039 Accepted) changed their content.
+
 ## Normalization pass (charter landed)
 
 The Session-3 charter is now committed verbatim at `docs/session-3/charter.md`; the map's component
@@ -69,17 +74,19 @@ Not mapped (control-plane scope, S2-owned artifacts): INV-L1 (configd-linz/Porcu
    "implement or explicitly descope by ADR (do not leave it ambiguous)". `PoisonPillDetector` and
    `BloomFilter` are unit-tested orphans — zero src/main consumers; the §8 circuit-breaker (serve
    previous known-good) and `configd.edge.poison_pill` metric exist nowhere.
-3. **Arch §7 vs ADR-0034 reconciliation (CT-26/CT-31).** Two backpressure/catch-up vocabularies
-   coexist: arch §7's credit-based model (100 credits, 1000-entry buffer, 80%/100%) and WAL-delta +
-   1 MB-CRC-chunked snapshot, vs ADR-0034's ring-10,000 + GAP + snapshot-equivalent `ReplaySource`.
-   C1/C3 design notes must say which numbers/mechanisms govern (likely: ring+GAP+ReplaySource, with
-   chunking retained for the snapshot transfer — cf. RR-019's 4 MiB cliff).
+3. **Arch §7 vs ADR-0034 reconciliation (CT-26/CT-31).** ~~Two backpressure/catch-up vocabularies
+   coexist~~ **C1-half RESOLVED (audit 2026-06-11):** the C1 as-built note + ADR-0038 (Accepted) put
+   the backpressure math on frames/bytes over the ADR-0034 ring (`FanOutConfig` names every threshold;
+   CT-26 now PASSING), and chunking is retained for the snapshot transfer (1 MiB + CRC32C/frame — the
+   RR-019 lesson, CT-31 part-covered). **Still open for the C3 design note:** the §7 WAL-delta wording,
+   chunk-level resume-on-failure (C1 re-sends whole on loss — implement or renegotiate), and the
+   replay-horizon boundary.
 4. **Smaller, recordable in design notes (not necessarily ADRs):** the §2 DEGRADED "unhealthy to
    load balancer" surface is undefined (CT-05); §2 DISCONNECTED "regional relay" is superseded
    ADR-0030 vocabulary (CT-06); whether `secure/` keys are excluded from edge *storage* by the
    ADR-0038 filter (the *delivery* half is answered — see below) (CT-37).
 
-### Pending ratification — ADR-0038 (Proposed; ratified at the C1 design review)
+### RATIFIED — ADR-0038 (Accepted 2026-06-11, c1-design-review §A2; flips applied in the post-C1 audit)
 
 `docs/decisions/adr-0038-signed-chain-streaming-no-coalescing.md` resolves what was this section's
 former item "coalescing/filtering vs gap detection (CT-17)" — drafted after the map's first edition:
@@ -93,12 +100,26 @@ former item "coalescing/filtering vs gap detection (CT-17)" — drafted after th
 - **Prefix subscription becomes an edge-side storage/serving filter, not a transport filter** —
   full signed chain to every edge; non-matching mutations advance the version chain without storing;
   a relay cannot suppress a delta (including `secure/` keys) without a detectable chain break.
-- Map effect (applied now, statuses NOT flipped until ratification): CT-17's planned test renamed
-  `CoalescingGapInteractionTest` → `FrameBatchingChainIntegrityTest`; CT-25's owed tests re-pointed
-  to `FullChainDeliveryTest` (C1) + `EdgePrefixStorageFilterTest` (C2); CT-16/CT-26/CT-32/CT-37/CT-41
-  notes reference ADR-0038. On ratification: CT-17 flips to ADR-RENEGOTIATED(adr-0038) with the
-  frame-batching tests as evidence (per the ADR's own §Consequences), and CT-25's clause text is
-  re-anchored to the storage-filter semantics.
+- **Map effect, as applied on ratification (audit 2026-06-11):** CT-17 → **ADR-RENEGOTIATED(adr-0038)**
+  with `FrameBatchingChainIntegrityTest` (GREEN, body-verified) as executable evidence. CT-25's clause
+  re-anchored to the storage-filter semantics with the C1 half (`FullChainDeliveryTest`) proven — but
+  the row **stays PARTIAL(unit)**, deliberately diverging from the review's "flip both" wording: the
+  legend's ADR-RENEGOTIATED closes a row by reference, and CT-25's renegotiated clause still owes the
+  unbuilt C2 half (`EdgePrefixStorageFilterTest`). Closing it would be silent under-delivery.
+  Rationale recorded in `c1-contract-qa-audit.md`.
+
+### ADR-0039 — frontier-based staleness (Accepted 2026-06-11, c1-design-review §B-1)
+
+`docs/decisions/adr-0039-frontier-staleness.md` (written at the C1 review, before C2 per the review
+condition) amends contract §2's measurement definition: staleness = `wall_now − frontier`, where the
+frontier advances on applied notifications (commit-ts, ADR-0035) **and** on C1
+`HEARTBEAT(latestSeq, serverNowMillis)` frames *iff* `latestSeq == local cursor` — fixing the
+idle-staleness defect (a quiet system no longer marches healthy edges to DISCONNECTED). Map rows
+**CT-01/CT-02/CT-07/CT-08 now cite it** (notes updated in the map; statuses unchanged — nothing new
+is tested): thresholds/state machine unchanged (CT-07), the skew tripwire survives "unchanged in
+spirit" (CT-08, ADR-0039 §5), and it is **prod-blocking at the C2 gate** — C2 may not wire the
+idle-time `StalenessTracker` as the production staleness signal (CT-01). The heartbeat carrier
+already exists and is wire-tested (`FanOutServerIntegrationTest`).
 
 The former caveat about the charter not being in-repo is resolved: the charter is committed at
 `docs/session-3/charter.md` and the map's component column now cites its §4 directly.
@@ -153,6 +174,7 @@ The former caveat about the charter not being in-repo is resolved: the charter i
 - §2 DISCONNECTED "snapshot catch-up from regional relay" (CT-06) — "regional relay" is superseded
   (ADR-0030) topology vocabulary; the implementable form is the fan-out service's `ReplaySource`.
 - §4/arch §7 seq+1 gap rule under coalescing/prefix filtering (CT-17) — rule was undefined;
-  ADR-0038 (Proposed) defines it (verbatim chain, no collapse/skip) — testable once ratified.
+  ADR-0038 (now Accepted) defines it (verbatim chain, no collapse/skip) — RESOLVED: tested by
+  `FrameBatchingChainIntegrityTest`, row closed ADR-RENEGOTIATED(adr-0038).
 - INV-S2 p9999 (CT-02) — statistically meaningful only with ≥10^4–10^5 samples; feasible in sim,
   live measurement is S5's; this session delivers the mechanism + sim distribution only.

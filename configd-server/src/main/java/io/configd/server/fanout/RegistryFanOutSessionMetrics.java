@@ -50,6 +50,7 @@ public final class RegistryFanOutSessionMetrics implements FanOutSessionMetrics 
     private final Map<String, MetricsRegistry.Counter> closedByReason;
     private final MetricsRegistry.Counter demotionsOther;
     private final MetricsRegistry.Counter closedOther;
+    private final MetricsRegistry.Counter sessionsRefused;
 
     // --- Gauge backing state (process-level aggregates) ---
     private final AtomicLong queueDepth = new AtomicLong(0);
@@ -88,6 +89,9 @@ public final class RegistryFanOutSessionMetrics implements FanOutSessionMetrics 
                 "transport_gone", registry.counter("edge.fanout.sessions_closed.transport_gone"));
         this.closedOther = registry.counter("edge.fanout.sessions_closed.other");
 
+        // Admission-bound refusals (hard rule 4: edge.fanout.transport.maxSessions).
+        this.sessionsRefused = registry.counter("edge.fanout.sessions_refused");
+
         // Gauges (process-level aggregates; eagerly registered so the series exists at scrape 0).
         registry.gauge("edge.fanout.queue_depth", queueDepth::get);
         registry.gauge("edge.fanout.connected_subscribers", connectedSubscribers::get);
@@ -98,6 +102,11 @@ public final class RegistryFanOutSessionMetrics implements FanOutSessionMetrics 
     /** A subscriber connected (FanOutServer drives this on accept+subscribe). */
     public void onSubscriberConnected() {
         connectedSubscribers.incrementAndGet();
+    }
+
+    /** A connection refused at the admission bound ({@code maxSessions}), pre-handshake. */
+    public void onSessionRefused() {
+        sessionsRefused.increment();
     }
 
     /** A subscriber disconnected (FanOutServer drives this on teardown). */

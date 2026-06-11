@@ -70,6 +70,27 @@ session-core unit tests.
 - The ADR-0037 contingency held: zero socket/TLS types in `wire`/`fanout` packages
   (verified by the engineer; reviewer re-verifies at sign-off).
 
+## 5b. Post-sign-off hardening (CI-triggered, same component window)
+
+The first CI run with C1 failed: the RR-002 static guard (`NoBlockingConnectOnConsensusPathTest`)
+flagged `FanOutServer`'s `startHandshake()` — a false positive in substance (the handshake
+was already correctly bounded via `setSoTimeout(2000)`), caused by the guard's known
+file-scoped exemption gap (named in the RR-002 second-agent review). Resolution
+strengthened the guard instead of widening the exemption: it now verifies the
+**bounded-handshake pattern** (`setSoTimeout` within the 5 preceding code lines) uniformly
+in ALL scanned files — TcpRaftTransport included — closing the noted evasion gap;
+detection re-proven by tripwire (a bare `startHandshake` planted in configd-server is
+caught, then removed). Two adjacent gaps fixed in the same pass:
+- **Admission bound** (hard rule 4): the accept loop had no session-count bound — a public
+  endpoint accepting unbounded connections (half-open handshakes included) is an
+  fd/virtual-thread exhaustion vector. Added `edge.fanout.transport.maxSessions`
+  (default 1024, applied BEFORE the handshake) + `edge_fanout_sessions_refused_total`;
+  pinned by `FanOutServerAdmissionBoundTest` (2 tests: slowloris-style refusal observed +
+  counted; non-positive bound rejected).
+- **CT-22 guard scope** (contract-qa audit REQUIRED gap): `NoDeltasSinceOnConsumerPathTest`
+  now also scans `configd-server/src/main` (where the production drain lives) and
+  `configd-edge-cache/src/main`.
+
 ## 6. Mutation & suite evidence
 
 New packages 70.6% (threshold 65, committed profile: `wire.*` + `fanout.*` in

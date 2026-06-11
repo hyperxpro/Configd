@@ -30,7 +30,10 @@ import static org.junit.jupiter.api.Assertions.fail;
  * It pins that as C1/C2 code lands, no production/sim consumer reintroduces the
  * non-atomic read.
  *
- * <p><b>Scope:</b> {@code configd-distribution-service/src/main} (production) and
+ * <p><b>Scope:</b> {@code configd-distribution-service/src/main} (the boundary),
+ * {@code configd-server/src/main} (the production drain — FanOutServer lives there;
+ * added per the C1 contract-qa audit which found the original scope could not catch a
+ * server-module regression), {@code configd-edge-cache/src/main} (the edge library) and
  * {@code configd-testkit/src/test} (the sim drivers). Exempt: {@code FanOutBuffer.java}
  * itself (it defines and retains the legacy method) and the legacy
  * {@code FanOutBufferTest.java} (the only sanctioned caller).
@@ -40,6 +43,8 @@ class NoDeltasSinceOnConsumerPathTest {
     /** Roots that must be free of any {@code deltasSince} consumer. */
     private static final List<Path> SCAN_ROOTS = List.of(
             moduleSrc("configd-distribution-service", "src/main/java"),
+            moduleSrc("configd-server", "src/main/java"),
+            moduleSrc("configd-edge-cache", "src/main/java"),
             moduleSrc("configd-testkit", "src/test/java"));
 
     /** Files allowed to mention {@code deltasSince} (the definition + its sanctioned test). */

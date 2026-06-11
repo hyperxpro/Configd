@@ -62,12 +62,28 @@ class NoBlockingConnectOnConsensusPathTest {
             Pattern.compile("createSocket\\s*\\(\\s*[^)\\s]");
 
     /**
-     * Any {@code startHandshake()} call. Permitted ONLY in
-     * {@code TcpRaftTransport.createClientSocket}, which runs on the dedicated
-     * connector thread and wraps it in {@code setSoTimeout(HANDSHAKE_TIMEOUT_MS)}.
+     * Any {@code startHandshake()} call. Permitted ONLY when the bounded-handshake
+     * pattern is present: a {@code setSoTimeout(...)} call within the preceding
+     * {@link #HANDSHAKE_LOOKBACK_LINES} non-blank code lines of the same file, so a
+     * peer that connects but stalls mid-handshake cannot park the calling thread
+     * forever. This is pattern-scoped, not file-scoped (the original file-scoped
+     * exemption for {@code TcpRaftTransport.java} was a known evasion gap — see the
+     * RR-002 second-agent review notes; it would also have silently exempted any
+     * future UNBOUNDED handshake added to that file). Both legitimate sites —
+     * {@code TcpRaftTransport.createClientSocket} (connector thread) and
+     * {@code FanOutServer.handleConnection} (accept-side virtual thread, S3/C1) —
+     * satisfy the pattern; both also keep establishment off the tick thread, which
+     * the behavioural tests pin.
      */
     private static final Pattern START_HANDSHAKE =
             Pattern.compile("\\.startHandshake\\s*\\(");
+
+    /** A {@code setSoTimeout(} call — the bounding half of the handshake pattern. */
+    private static final Pattern SET_SO_TIMEOUT =
+            Pattern.compile("\\.setSoTimeout\\s*\\(");
+
+    /** How many preceding non-blank code lines may separate the bound from the handshake. */
+    private static final int HANDSHAKE_LOOKBACK_LINES = 5;
 
     @Test
     void noTimeoutLessBlockingConnectOnConsensusOrRequestPath() throws IOException {
@@ -94,9 +110,10 @@ class NoBlockingConnectOnConsensusPathTest {
     }
 
     private static void scanFile(Path file, List<String> violations) throws IOException {
-        String name = file.getFileName().toString();
-        boolean isTransportConnector = name.equals("TcpRaftTransport.java");
         List<String> lines = Files.readAllLines(file, StandardCharsets.UTF_8);
+
+        // Stripped, non-blank code lines seen so far (for the handshake look-back).
+        List<String> codeLines = new ArrayList<>();
 
         for (int i = 0; i < lines.size(); i++) {
             String raw = lines.get(i);
@@ -117,11 +134,28 @@ class NoBlockingConnectOnConsensusPathTest {
                 violations.add(rel(file) + ":" + lineNo
                         + "  timeout-less connecting `factory.createSocket(host, port)`  -> " + raw.trim());
             }
-            if (matches(START_HANDSHAKE, line) && !isTransportConnector) {
+            if (matches(START_HANDSHAKE, line) && !boundedHandshake(codeLines)) {
                 violations.add(rel(file) + ":" + lineNo
-                        + "  `startHandshake()` outside TcpRaftTransport's connector  -> " + raw.trim());
+                        + "  UNBOUNDED `startHandshake()` (no setSoTimeout within the preceding "
+                        + HANDSHAKE_LOOKBACK_LINES + " code lines)  -> " + raw.trim());
+            }
+
+            codeLines.add(line);
+        }
+    }
+
+    /**
+     * True when one of the last {@link #HANDSHAKE_LOOKBACK_LINES} non-blank code
+     * lines contains a {@code setSoTimeout(} call — the bounded-handshake pattern.
+     */
+    private static boolean boundedHandshake(List<String> precedingCodeLines) {
+        int from = Math.max(0, precedingCodeLines.size() - HANDSHAKE_LOOKBACK_LINES);
+        for (int i = precedingCodeLines.size() - 1; i >= from; i--) {
+            if (matches(SET_SO_TIMEOUT, precedingCodeLines.get(i))) {
+                return true;
             }
         }
+        return false;
     }
 
     private static boolean matches(Pattern p, String line) {
