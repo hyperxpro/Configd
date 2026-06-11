@@ -247,4 +247,111 @@ final class StrongReadFailClosedTest {
         assertFalse(policy.isStrongReadKey("secure/killswitch")); // not in this set
         assertFalse(policy.isStrongReadKey("app/feature"));
     }
+
+    // ------------------------------------------------------------------
+    // RR-020 (a5-batch-review §RR-020 hardening) — encoded-key bypass resistance.
+    //
+    // The strong-read classification keys off the SAME percent-decoded path
+    // (getRequestURI().getPath()) that resolves the value, so the classification
+    // key is structurally identical to the store-resolution key — a strong key's
+    // value cannot be read under a non-strong classification by encoding tricks.
+    // These tests LOCK that decode-before-check property against a future change
+    // (e.g. switching to getRawPath()/normalize/toLowerCase) by pinning the
+    // classification for each evasion vector. We assert via the OBSERVABLE
+    // behavior (fail-closed on a follower), not internals, so the test survives
+    // refactors but still catches a real bypass.
+    // ------------------------------------------------------------------
+
+    /** Sends a GET with the path-and-query used VERBATIM (no client-side re-encoding). */
+    private HttpResponse<String> getRaw(int port, String rawPathAndQuery) throws Exception {
+        return client.send(HttpRequest.newBuilder()
+                        .uri(URI.create("http://127.0.0.1:" + port + rawPathAndQuery))
+                        .GET().build(),
+                HttpResponse.BodyHandlers.ofString());
+    }
+
+    @Test
+    void percentEncodedPrefixIsClassifiedStrongAndFailsClosed() throws Exception {
+        // %73 == 's': "/v1/config/%73ecure/killswitch" decodes to "secure/killswitch".
+        // The decode happens BEFORE the strong-read check, so this is still a strong
+        // key and a follower must fail closed — NOT serve the stale local DENY.
+        VersionedConfigStore store = seededStore();
+        AtomicBoolean isLeader = new AtomicBoolean(false);
+        int port = start(store, readService(store, isLeader),
+                StrongReadPolicy.defaultPolicy(), () -> NodeId.of(3));
+
+        HttpResponse<String> resp = getRaw(port, "/v1/config/%73ecure/killswitch");
+        assertEquals(503, resp.statusCode(),
+                "RR-020: a percent-encoded 's' (%73ecure/) must still classify as strong and fail closed");
+        assertEquals("strong-read", resp.headers().firstValue("X-Fail-Closed").orElse(""));
+        assertNotEquals("DENY", resp.body(), "the stale local value must never leak via %73-encoding");
+    }
+
+    @Test
+    void encodedSlashInPrefixIsClassifiedStrongAndFailsClosed() throws Exception {
+        // %2F == '/': "/v1/config/secure%2Fkillswitch" decodes to "secure/killswitch",
+        // which startsWith("secure/") -> strong. A follower must fail closed.
+        VersionedConfigStore store = seededStore();
+        AtomicBoolean isLeader = new AtomicBoolean(false);
+        int port = start(store, readService(store, isLeader),
+                StrongReadPolicy.defaultPolicy(), () -> NodeId.of(3));
+
+        HttpResponse<String> resp = getRaw(port, "/v1/config/secure%2Fkillswitch");
+        assertEquals(503, resp.statusCode(),
+                "RR-020: an encoded slash (secure%2F) must still classify as strong and fail closed");
+        assertEquals("strong-read", resp.headers().firstValue("X-Fail-Closed").orElse(""));
+        assertNotEquals("DENY", resp.body());
+    }
+
+    @Test
+    void dotDotInsideStrongPrefixStaysStrong() throws Exception {
+        // "secure/../killswitch" still startsWith("secure/") (no path normalization
+        // in the server), so it is strong and fails closed on a follower. A bypass
+        // would require the classification to normalize the key away from the prefix.
+        VersionedConfigStore store = seededStore();
+        AtomicBoolean isLeader = new AtomicBoolean(false);
+        int port = start(store, readService(store, isLeader),
+                StrongReadPolicy.defaultPolicy(), () -> NodeId.of(3));
+
+        HttpResponse<String> resp = getRaw(port, "/v1/config/secure/../killswitch");
+        assertEquals(503, resp.statusCode(),
+                "RR-020: 'secure/../' must NOT be normalized away from the strong prefix");
+        assertEquals("strong-read", resp.headers().firstValue("X-Fail-Closed").orElse(""));
+        assertNotEquals("DENY", resp.body());
+    }
+
+    @Test
+    void leadingDoubleSlashIsADifferentKeyNotAStrongLeak() throws Exception {
+        // "//secure/killswitch" -> key "/secure/killswitch" (leading slash), which
+        // does NOT startWith("secure/"). It is therefore NOT a strong key — but
+        // crucially it is also a DIFFERENT store key, so it cannot leak the strong
+        // key's value: the seeded "secure/killswitch" is not stored under this key,
+        // so an ordinary stale read returns 404 (no value), never the DENY.
+        VersionedConfigStore store = seededStore();
+        AtomicBoolean isLeader = new AtomicBoolean(false);
+        int port = start(store, readService(store, isLeader),
+                StrongReadPolicy.defaultPolicy(), () -> NodeId.of(3));
+
+        HttpResponse<String> resp = getRaw(port, "/v1/config//secure/killswitch");
+        assertNotEquals("DENY", resp.body(),
+                "RR-020: a different (//-prefixed) key must not surface the strong key's stored value — "
+                        + "the classification key and the store-resolution key are the same decoded path, "
+                        + "so this resolves to a DIFFERENT (absent) key, never a stale leak of secure/killswitch");
+    }
+
+    @Test
+    void queryStringCannotSupplyTheStrongKey() throws Exception {
+        // The key is taken from the PATH only; a query param cannot inject a strong
+        // key under an ordinary path. An ordinary path stays ordinary (200 stale),
+        // and the strong "secure/killswitch" value is not reachable this way.
+        VersionedConfigStore store = seededStore();
+        AtomicBoolean isLeader = new AtomicBoolean(false);
+        int port = start(store, readService(store, isLeader),
+                StrongReadPolicy.defaultPolicy(), () -> NodeId.of(3));
+
+        HttpResponse<String> resp = getRaw(port, "/v1/config/app/feature?key=secure/killswitch");
+        assertEquals(200, resp.statusCode(),
+                "an ordinary path must remain ordinary regardless of query params");
+        assertEquals("on", resp.body(), "the query string must not redirect to the strong key's value");
+    }
 }
