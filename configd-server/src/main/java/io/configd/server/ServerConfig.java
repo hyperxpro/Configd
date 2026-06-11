@@ -29,6 +29,11 @@ import java.util.stream.Collectors;
  * @param strongReadPrefixes key prefixes whose GETs MUST be served fail-closed
  *                        linearizable (ADR-0030 INV-1 / RR-020); defaults to
  *                        {@code secure/}. Empty disables strong-read enforcement.
+ * @param edgePort        the C1 fan-out endpoint port (ADR-0037), or {@code null} to
+ *                        disable the edge data-plane endpoint (the default — current
+ *                        behavior is unchanged when {@code --edge-port} is absent). When
+ *                        present, the endpoint reuses the same {@link io.configd.transport.TlsManager}
+ *                        as Raft (REQUIRED mTLS when TLS is configured; plaintext otherwise).
  */
 public record ServerConfig(
         NodeId nodeId,
@@ -43,7 +48,8 @@ public record ServerConfig(
         String authToken,
         Map<NodeId, InetSocketAddress> peerAddresses,
         Path signingKeyFile,
-        Set<String> strongReadPrefixes
+        Set<String> strongReadPrefixes,
+        Integer edgePort
 ) {
 
     /**
@@ -63,6 +69,8 @@ public record ServerConfig(
      *   --auth-token      bearer token for API auth (optional)
      *   --strong-read-prefixes comma-separated key prefixes served fail-closed
      *                     linearizable (ADR-0030 INV-1 / RR-020); default "secure/"
+     *   --edge-port       C1 fan-out edge endpoint port (ADR-0037); absent = endpoint
+     *                     disabled (default). Reuses the Raft TlsManager (mTLS) when configured.
      * </pre>
      *
      * @param args command-line arguments
@@ -86,6 +94,7 @@ public record ServerConfig(
         // not configure prefixes, "secure/" is still protected so security keys
         // are never silently served stale just because the flag was omitted.
         String strongReadPrefixesStr = null;
+        Integer edgePort = null; // C1 fan-out endpoint; absent = disabled (default)
 
         for (int i = 0; i < args.length; i++) {
             switch (args[i]) {
@@ -141,6 +150,10 @@ public record ServerConfig(
                     requireNextArg(args, i, "--strong-read-prefixes");
                     strongReadPrefixesStr = args[++i];
                 }
+                case "--edge-port" -> {
+                    requireNextArg(args, i, "--edge-port");
+                    edgePort = Integer.parseInt(args[++i]);
+                }
                 default -> throw new IllegalArgumentException("Unknown argument: " + args[i]);
             }
         }
@@ -173,8 +186,14 @@ public record ServerConfig(
                 authToken,
                 peerAddresses,
                 signingKeyFile != null ? Path.of(signingKeyFile) : null,
-                strongReadPrefixes
+                strongReadPrefixes,
+                edgePort
         );
+    }
+
+    /** True if the C1 fan-out edge endpoint is configured ({@code --edge-port} present). */
+    public boolean edgeEnabled() {
+        return edgePort != null;
     }
 
     /**

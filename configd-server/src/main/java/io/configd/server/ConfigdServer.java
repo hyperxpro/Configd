@@ -112,6 +112,8 @@ public final class ConfigdServer {
     private final ConfigStateMachine stateMachine;
     private final HttpApiServer httpApiServer;
     private final TcpRaftTransport tcpTransport; // nullable when peer addresses not configured
+    /** C1 fan-out edge endpoint (ADR-0037); null when {@code --edge-port} is absent. */
+    private final io.configd.server.fanout.FanOutServer fanOutServer;
 
     // Distribution layer
     private final WatchService watchService;
@@ -130,6 +132,7 @@ public final class ConfigdServer {
                           ScheduledExecutorService tlsReloadExecutor,
                           HttpApiServer httpApiServer,
                           TcpRaftTransport tcpTransport,
+                          io.configd.server.fanout.FanOutServer fanOutServer,
                           WatchService watchService,
                           FanOutBuffer fanOutBuffer,
                           Compactor compactor,
@@ -146,6 +149,7 @@ public final class ConfigdServer {
         this.tlsReloadExecutor = tlsReloadExecutor;
         this.httpApiServer = httpApiServer;
         this.tcpTransport = tcpTransport;
+        this.fanOutServer = fanOutServer;
         this.watchService = watchService;
         this.fanOutBuffer = fanOutBuffer;
         this.compactor = compactor;
@@ -582,12 +586,48 @@ public final class ConfigdServer {
         }
 
         // ---------------------------------------------------------------
+        // C1 fan-out edge endpoint (ADR-0037), optional (--edge-port). It
+        // drives the SAME FanOutSessionCore the simulator drives, pulling via
+        // the ADR-0034 readSince/ReplaySource seams ONLY — no work on the apply
+        // path. Reuses the Raft TlsManager (REQUIRED mTLS when TLS is on;
+        // plaintext for single-node/test, matching the Raft transport policy).
+        // ---------------------------------------------------------------
+        io.configd.server.fanout.FanOutServer fanOutServer = null;
+        if (config.edgeEnabled()) {
+            io.configd.server.fanout.RegistryFanOutSessionMetrics fanOutMetrics =
+                    new io.configd.server.fanout.RegistryFanOutSessionMetrics(metricsRegistry);
+            io.configd.distribution.ReplaySource edgeReplaySource =
+                    new io.configd.distribution.SnapshotReplaySource(stateMachine.store()::snapshot);
+            fanOutServer = new io.configd.server.fanout.FanOutServer(
+                    new InetSocketAddress(config.bindAddress(), config.edgePort()),
+                    tlsManager, fanOutBuffer, edgeReplaySource,
+                    io.configd.distribution.fanout.FanOutConfig.defaults(),
+                    io.configd.server.fanout.FanOutServer.DEFAULT_TRANSPORT_QUEUE_FRAMES,
+                    fanOutMetrics, clock);
+            // F-0050-style fail-closed: if TLS is enabled on the CLI but the
+            // edge endpoint did not receive a TlsManager, refuse to start
+            // (no plaintext edge traffic in a TLS deployment).
+            if (config.tlsEnabled() && tlsManager == null) {
+                throw new IllegalStateException(
+                        "TLS is enabled but FanOutServer has no TlsManager — refusing to start "
+                                + "to avoid plaintext edge traffic");
+            }
+            try {
+                fanOutServer.start();
+                System.out.println("  Edge port    : " + fanOutServer.localPort()
+                        + (tlsManager != null ? " (mTLS)" : " (PLAINTEXT)") + " [C1 fan-out, ADR-0037]");
+            } catch (java.io.IOException e) {
+                throw new RuntimeException("Failed to start FanOutServer on port " + config.edgePort(), e);
+            }
+        }
+
+        // ---------------------------------------------------------------
         // Start tick loop on the dedicated tickExecutor (F-0023).
         // ---------------------------------------------------------------
         ConfigdServer server = new ConfigdServer(
                 config, driver, stateMachine,
                 tickExecutor, readDispatchExecutor, tlsReloadExecutor,
-                httpApiServer, tcpTransport,
+                httpApiServer, tcpTransport, fanOutServer,
                 watchService, fanOutBuffer, compactor, plumtreeNode, hyParViewOverlay,
                 subscriptionManager, slowConsumerPolicy, rolloutController);
 
@@ -651,6 +691,15 @@ public final class ConfigdServer {
      * slowest to drain and is stopped last.
      */
     public void shutdown() {
+        // C1 edge endpoint FIRST: it is a pure consumer of the ADR-0034 readSince/replay
+        // seams, so closing it before the HTTP API / tick loop / Raft teardown lets edge
+        // subscribers receive a clean SERVER_SHUTDOWN and stops any new readSince/replay
+        // pulls against a store/consensus engine that is about to be torn down. (Order is
+        // safe either way — the fan-out never touches the apply path — but closing it first
+        // gives the cleanest edge-visible teardown.)
+        if (fanOutServer != null) {
+            fanOutServer.close();
+        }
         if (httpApiServer != null) {
             httpApiServer.stop(2);
         }
@@ -890,6 +939,19 @@ public final class ConfigdServer {
      */
     public FanOutBuffer fanOutBuffer() {
         return fanOutBuffer;
+    }
+
+    /**
+     * The C1 fan-out edge endpoint (ADR-0037), or {@code null} when {@code --edge-port} is
+     * absent. Exposed for tests and operational checks.
+     */
+    public io.configd.server.fanout.FanOutServer fanOutServer() {
+        return fanOutServer;
+    }
+
+    /** The actual bound HTTP API port (resolves an ephemeral {@code --api-port 0}). */
+    public int apiPort() {
+        return httpApiServer.port();
     }
 
     /**

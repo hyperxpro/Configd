@@ -447,4 +447,43 @@ class ServerConfigTest {
                     "a non-numeric port must fail to parse");
         }
     }
+
+    // ========================================================================
+    // --edge-port (C1 fan-out endpoint, ADR-0037)
+    // ========================================================================
+
+    @Nested
+    class EdgePort {
+
+        @Test
+        void edgePortAbsentByDefaultDisablesTheEndpoint() {
+            ServerConfig c = ServerConfig.parse(new String[]{
+                    "--node-id", "0", "--data-dir", tempDir.toString(), "--peers", "1,2"});
+            assertNull(c.edgePort(), "edge port must default to null (endpoint disabled)");
+            assertFalse(c.edgeEnabled());
+        }
+
+        @Test
+        void edgePortIsParsedWhenPresent() {
+            ServerConfig c = ServerConfig.parse(new String[]{
+                    "--node-id", "0", "--data-dir", tempDir.toString(), "--peers", "1,2",
+                    "--edge-port", "9443"});
+            assertEquals(9443, c.edgePort());
+            assertTrue(c.edgeEnabled());
+        }
+
+        @Test
+        void edgePortRequiresAValue() {
+            assertThrows(IllegalArgumentException.class, () -> ServerConfig.parse(new String[]{
+                    "--node-id", "0", "--data-dir", tempDir.toString(), "--peers", "1,2",
+                    "--edge-port"}));
+        }
+
+        @Test
+        void nonNumericEdgePortFails() {
+            assertThrows(NumberFormatException.class, () -> ServerConfig.parse(new String[]{
+                    "--node-id", "0", "--data-dir", tempDir.toString(), "--peers", "1,2",
+                    "--edge-port", "nope"}));
+        }
+    }
 }

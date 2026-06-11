@@ -103,6 +103,14 @@ public final class HttpApiServer {
     }
 
     /**
+     * The actual bound port. After {@link #start()} with a {@code 0} (ephemeral) port this
+     * returns the OS-assigned port, so tests can target the server without a fixed port.
+     */
+    public int port() {
+        return server.getAddress().getPort();
+    }
+
+    /**
      * Stops the HTTP server.
      *
      * @param delaySeconds seconds to wait for in-flight requests

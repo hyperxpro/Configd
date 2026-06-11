@@ -328,7 +328,8 @@ public final class LivePropagationProbeMain {
                 null,                      // no auth token
                 Map.<NodeId, InetSocketAddress>of(), // no peer addresses → no-op transport
                 null,                      // signing key kept under data dir
-                Set.of("secure/"));        // default strong-read prefix
+                Set.of("secure/"),         // default strong-read prefix
+                null);                     // no C1 edge endpoint in the boundary probe
     }
 
     private static void printHeader(Options opts) {
