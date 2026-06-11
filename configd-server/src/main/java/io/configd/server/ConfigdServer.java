@@ -10,7 +10,11 @@ import io.configd.common.Clock;
 import io.configd.common.ConfigScope;
 import io.configd.common.NodeId;
 import io.configd.common.Storage;
+import io.configd.distribution.CommitNotification;
+import io.configd.distribution.CommitNotificationSource;
 import io.configd.distribution.FanOutBuffer;
+import io.configd.distribution.ReplaySource;
+import io.configd.distribution.SnapshotReplaySource;
 import io.configd.distribution.HyParViewOverlay;
 import io.configd.distribution.PlumtreeNode;
 import io.configd.distribution.RolloutController;
@@ -332,7 +336,15 @@ public final class ConfigdServer {
         // ---------------------------------------------------------------
         // Wire distribution layer
         // ---------------------------------------------------------------
-        FanOutBuffer fanOutBuffer = new FanOutBuffer(FANOUT_BUFFER_CAPACITY);
+        // §4.6 / ADR-0034: the fan-out buffer is the bounded hot-path cache
+        // implementing CommitNotificationSource. Drop-oldest overflow increments
+        // fanout_buffer_dropped_total so a lagging Session-3 consumer's GAP is
+        // observable; the log+snapshot (via SnapshotReplaySource) is the source
+        // of truth it replays from.
+        MetricsRegistry.Counter fanOutDroppedCounter =
+                metricsRegistry.counter("fanout.buffer.dropped");
+        FanOutBuffer fanOutBuffer =
+                new FanOutBuffer(FANOUT_BUFFER_CAPACITY, fanOutDroppedCounter::increment);
         Compactor compactor = new Compactor();
         WatchService watchService = new WatchService(clock);
         SubscriptionManager subscriptionManager = new SubscriptionManager();
@@ -365,7 +377,16 @@ public final class ConfigdServer {
             } else {
                 delta = new ConfigDelta(fromVersion, version, mutations, signature);
             }
-            fanOutBuffer.append(delta);
+            // §4.6 / ADR-0034 + ADR-0035: publish the full commit notification.
+            // `version` is the ADR-0033 applied-mutation seq S (the listener fires
+            // only on mutating applies). The commit timestamp is the leader's wall
+            // clock captured here on the apply thread — the single authoritative
+            // §2 staleness clock ADR-0035 redefined (NOT a per-entry HLC). This
+            // runs on the leader's apply path, so `clock.currentTimeMillis()` is
+            // the leader-assigned commit timestamp the edge measures staleness
+            // against.
+            long commitTimestampMillis = clock.currentTimeMillis();
+            fanOutBuffer.publish(new CommitNotification(version, commitTimestampMillis, delta));
             compactor.addSnapshot(configStore.snapshot());
         });
 
@@ -869,6 +890,24 @@ public final class ConfigdServer {
      */
     public FanOutBuffer fanOutBuffer() {
         return fanOutBuffer;
+    }
+
+    /**
+     * §4.6 / ADR-0034: the commit-notification boundary Session 3's data plane
+     * consumes. Backed by {@link #fanOutBuffer()} (the bounded hot-path cache);
+     * cursor-based, replayable, with the drop-oldest overflow contract.
+     */
+    public CommitNotificationSource commitNotificationSource() {
+        return fanOutBuffer;
+    }
+
+    /**
+     * §4.6 / ADR-0034: the authoritative recovery seam a consumer replays from
+     * on a {@link CommitNotificationSource#readSince(long)} GAP. A
+     * snapshot-equivalent replay over the live config store.
+     */
+    public ReplaySource replaySource() {
+        return new SnapshotReplaySource(stateMachine.store()::snapshot);
     }
 
     /**
