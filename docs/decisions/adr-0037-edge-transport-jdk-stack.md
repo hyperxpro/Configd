@@ -1,6 +1,6 @@
 # ADR-0037: Edge data-plane transport reuses the JDK-socket/TlsManager/FrameCodec stack (no Netty)
 
-- **Status:** Proposed (Session 3; review-architect sign-off recorded at the C1 design review — this ADR gates C1/C2 implementation)
+- **Status:** Accepted (review-architect RATIFY-WITH-CHANGES 2026-06-11, `docs/session-3/reviews/c1-design-review.md` §A1 — the required scale-envelope wording fix is applied below; the TransportSink-seam contingency is confirmed at C1 design-note closeout)
 - **Date:** 2026-06-11
 - **Session:** 3 (Edge Data Plane)
 - **Interacts with:** ADR-0010 (named "Netty gRPC transport" — documented FICTION since the Session-1 audit: no `io.netty` dependency exists in any pom; the real control-plane transport is JDK sockets), ADR-0034 (the boundary the fan-out service drains), hard rule 5 (no new external runtime dependencies without an ADR), the Session-3 charter §4 C2 ("Netty transport to the fan-out service, mTLS consistent with the control plane's")
@@ -38,11 +38,14 @@ model).
    with its own threading model, buffer lifecycle (refcounted pools), and security-review
    surface. The rule exists to prevent exactly this; an ADR importing it needs a positive
    case, and there is none at the actual scale:
-2. **Scale honesty.** Per-fan-out-node subscriber counts are bounded by the architecture's
-   own tree shape (§12: k=16/k=64 per tier) — tens to low hundreds of long-lived
-   connections per node, each a slow streaming consumer. Virtual-thread-per-connection
-   with blocking JDK sockets handles this with headroom; Netty's advantage (10k+
-   ephemeral connections, syscall amortization) is not this workload.
+2. **Scale honesty.** The SYSTEM edge count is 10k baseline / 1M ceiling (§0.1) — but no
+   single fan-out node ever serves that population. Architecture §12's tree fan-out
+   amortizes it: with k=16 at tier 1 and k=64 at tier 2, each fan-out node serves at most
+   its own branching factor of direct subscribers — **tens to low hundreds of long-lived
+   connections per node**, each a slow streaming consumer. That per-node bound, not the
+   system edge count, is what the transport must handle. Virtual-thread-per-connection
+   with blocking JDK sockets handles it with headroom; Netty's advantage (10k+
+   ephemeral connections per process, syscall amortization) is not this workload.
 3. **Consistency and review economy.** The RR-002 review already adversarially verified
    the bounded-connect/bounded-handshake/mTLS discipline of this stack; reusing it
    inherits that verification. A second, Netty-based TLS configuration would have to

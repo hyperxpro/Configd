@@ -1,6 +1,6 @@
 # ADR-0038: Fan-out streams the verbatim signed delta chain — no server-side coalescing; prefix subscription is an edge-side storage filter
 
-- **Status:** Proposed (Session 3; ratified at the C1 design review by review-architect + contract-qa)
+- **Status:** Accepted (review-architect RATIFY 2026-06-11, `docs/session-3/reviews/c1-design-review.md` §A2 — security argument verified airtight against rewrite/coalesce/single-delta-suppression; the burst-bandwidth honesty widening is applied below; contract-map rows CT-17/CT-25 flip to ADR-RENEGOTIATED on this ratification)
 - **Date:** 2026-06-11
 - **Session:** 3 (Edge Data Plane) — C1 design decision, drafted before C1 implementation per §1 (design may precede code; code may not precede sign-off)
 - **Interacts with:** ADR-0034 (boundary semantics: contiguous signed deltas or GAP), F-0052 (per-delta Ed25519 signature + epoch/nonce replay protection, verified at the edge by `DeltaApplier`), ADR-0020 (prefix subscription model), ADR-0030 (Quicksilver-shaped topology: centralized write, async full fan-out), architecture §7 (subscription model + coalescing), the Session-3 charter §4 C1 ("coalescing ... may collapse to the latest, but version cursors must never skip in a way that breaks gap detection — define and test the exact rule")
@@ -63,11 +63,15 @@ unmodified, in seq order.** Specifically:
    - Architecture §7's "per-key: supported but discouraged" is N/A-by-construction at the
      transport (it is a storage filter choice), and "full-store" is the universal
      transport behavior.
-3. **Bandwidth honesty.** At the §0.1 baseline (10k writes/s, small config payloads) the
-   full chain is the same stream the control plane already replicates; per-edge egress
-   equals the write stream. If a future deployment needs transport-level prefix filtering,
-   it requires a leader-signed skip-evidence design (e.g., signed per-range Merkle
-   summaries) — out of scope, priced here, and recorded as the explicit upgrade path.
+3. **Bandwidth honesty.** At the §0.1 baseline (10k writes/s × ~1 KB typical payload) the
+   full chain is ≈ 80 Mbit/s per subscriber — the same stream the control plane already
+   replicates; per-edge egress equals the write stream. At the §0.1 **burst** envelope
+   (100k writes/s) that is ≈ 800 Mbit/s per subscriber: sustainable on datacenter links
+   for burst durations, but it makes the bound explicit — a deployment that runs sustained
+   burst-rate writes to large edge fleets is outside this design's envelope. If a future
+   deployment needs transport-level prefix filtering to cut that, it requires a
+   leader-signed skip-evidence design (e.g., signed per-range Merkle summaries) — out of
+   scope, priced here, and recorded as the explicit upgrade path.
 
 ## Consequences
 
