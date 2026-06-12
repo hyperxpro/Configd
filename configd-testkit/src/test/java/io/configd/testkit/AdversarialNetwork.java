@@ -132,8 +132,19 @@ final class AdversarialNetwork {
         if (rng.nextDouble() < dupRate) {
             int dupDelay = 1 + rng.nextInt(maxLatencyMs);
             enqueue(from, to, message, nowMs + latency + dupDelay);
+            dupCount++;
         }
     }
+
+    /**
+     * Lifetime count of duplicated sends (diagnostic; the C5 dup-channel non-vacuity
+     * witness). Counting only — never consumes an RNG draw, so digests are untouched.
+     */
+    long dupCount() {
+        return dupCount;
+    }
+
+    private long dupCount;
 
     private void enqueue(NodeId from, NodeId to, Object message, long deliverAt) {
         queue.add(new Pending(deliverAt, seqCounter++, from, to, message));

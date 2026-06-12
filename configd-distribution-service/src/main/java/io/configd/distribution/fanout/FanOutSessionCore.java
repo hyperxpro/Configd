@@ -95,6 +95,32 @@ public final class FanOutSessionCore {
 
     private int demotionCount;
 
+    /**
+     * The in-progress (possibly transport-paused) snapshot transfer; null when none.
+     * See {@link #performSnapshotTransfer} — the C5 backpressure finding.
+     */
+    private PendingSnapshotTransfer pendingTransfer;
+
+    /**
+     * A snapshot transfer paced against transport backpressure: the immutable frame plan
+     * (seq, chunks, declared size) plus the emission high-water mark, so a transfer that
+     * would overrun the bounded transport queue pauses at the refused frame and resumes
+     * there on the next {@link #tick(long)} — the SAME envelope, never a restart.
+     */
+    private static final class PendingSnapshotTransfer {
+        final long seq;
+        final List<EdgeFrame.SnapshotChunk> chunks;
+        final long totalBytes;
+        boolean beginEmitted;
+        int nextChunk;
+
+        PendingSnapshotTransfer(long seq, List<EdgeFrame.SnapshotChunk> chunks, long totalBytes) {
+            this.seq = seq;
+            this.chunks = chunks;
+            this.totalBytes = totalBytes;
+        }
+    }
+
     public FanOutSessionCore(CommitNotificationSource source, ReplaySource replaySource,
                              TransportSink sink, FanOutConfig config,
                              FanOutSessionMetrics metrics, Clock clock) {
@@ -299,28 +325,68 @@ public final class FanOutSessionCore {
         return emitted;
     }
 
-    /** The DEMOTED→snapshot→resume-tail flow (design §4). Returns true if a frame was emitted. */
+    /**
+     * The DEMOTED→snapshot→resume-tail flow (design §4), paced against transport
+     * backpressure. Returns true if a frame was emitted.
+     *
+     * <h4>Backpressure pacing (C5 finding, RR-102-class)</h4>
+     * The transport queue is BOUNDED and non-blocking ({@code FanOutServer.Connection},
+     * default 64 frames), so a transfer whose chunk count exceeds the queue's free space
+     * cannot be emitted in one burst: the original code routed every snapshot frame
+     * through {@link #emit}, whose refusal semantics ("a refused control frame means the
+     * transport is gone") closed the session at the first full-queue chunk, then the
+     * unconditional cutover tail resurrected it to STREAMING — delivering a TORN envelope
+     * the edge cannot reassemble (which lands in the ADR-0040 poison ladder). Net effect:
+     * a zero-state edge whose store exceeds {@code transportQueueFrames ×
+     * snapshotChunkBytes} could never bootstrap.
+     *
+     * <p>A refused snapshot-frame offer here is therefore treated as WOULD-BLOCK, not
+     * transport death: the transfer pauses at the refused frame and resumes on the next
+     * tick once the writer has drained queue space (the session stays CATCHUP with the
+     * transfer owed). A genuinely dead transport is the shell's lifecycle concern — it
+     * tears the connection down and the session with it (the sim/process shells both do).
+     * The cutover bookkeeping (cursor = S, resume STREAMING) runs ONLY when SNAPSHOT_END
+     * was actually accepted, so a paused transfer never declares a cutover it did not
+     * deliver. Pinned by {@code BootstrapSnapshotBackpressureTest}.
+     */
     private boolean performSnapshotTransfer() {
-        catchupSnapshotOwed = false;
-        ReplaySource.Replay replay;
-        try {
-            replay = replaySource.replayFromSnapshot();
-        } catch (RuntimeException e) {
-            // Replay source unavailable for the needed range — fatal for this session.
-            closeWith(ErrorCode.GAP_UNRECOVERABLE, "replay unavailable: " + e.getMessage());
-            return true;
+        if (pendingTransfer == null) {
+            ReplaySource.Replay replay;
+            try {
+                replay = replaySource.replayFromSnapshot();
+            } catch (RuntimeException e) {
+                // Replay source unavailable for the needed range — fatal for this session.
+                catchupSnapshotOwed = false;
+                closeWith(ErrorCode.GAP_UNRECOVERABLE, "replay unavailable: " + e.getMessage());
+                return true;
+            }
+            byte[] body = EdgeSnapshotCodec.serialize(replay.snapshot());
+            pendingTransfer = new PendingSnapshotTransfer(replay.seq(),
+                    EdgeSnapshotCodec.chunk(body, snapshotChunkBytes()), body.length);
         }
-        byte[] body = EdgeSnapshotCodec.serialize(replay.snapshot());
-        List<EdgeFrame.SnapshotChunk> chunks = EdgeSnapshotCodec.chunk(body, snapshotChunkBytes());
 
-        emit(new EdgeFrame.SnapshotBegin(replay.seq(), chunks.size(), body.length));
-        for (EdgeFrame.SnapshotChunk chunk : chunks) {
-            emit(chunk);
+        PendingSnapshotTransfer t = pendingTransfer;
+        boolean emitted = false;
+        if (!t.beginEmitted) {
+            if (!sink.offer(new EdgeFrame.SnapshotBegin(t.seq, t.chunks.size(), t.totalBytes))) {
+                return emitted; // would-block: resume here next tick
+            }
+            t.beginEmitted = true;
+            emitted = true;
         }
-        emit(new EdgeFrame.SnapshotEnd(replay.seq()));
-        metrics.onSnapshotTransfer();
+        while (t.nextChunk < t.chunks.size()) {
+            if (!sink.offer(t.chunks.get(t.nextChunk))) {
+                return emitted; // would-block: resume at this chunk next tick
+            }
+            t.nextChunk++;
+            emitted = true;
+        }
+        if (!sink.offer(new EdgeFrame.SnapshotEnd(t.seq))) {
+            return emitted; // would-block: only END is still owed
+        }
 
-        // Cursor jumps to the snapshot seq so tailing resumes from there; clear stale
+        // Transfer fully accepted by the transport — NOW the cutover bookkeeping runs:
+        // cursor jumps to the snapshot seq so tailing resumes from there; clear stale
         // in-flight accounting and resume TAIL.
         //
         // CRITICAL: the snapshot transfer is unacknowledged on the wire — do NOT advance
@@ -331,7 +397,10 @@ public final class FanOutSessionCore {
         // re-demotes + re-snapshots until the edge's CURSOR_ACK confirms application — the
         // robust, self-healing behavior. (Witnessed on the lossy edge-network sim: without
         // this, ~75% of would-converge seeds stranded an edge at an intermediate version.)
-        cursor = replay.seq();
+        pendingTransfer = null;
+        catchupSnapshotOwed = false;
+        metrics.onSnapshotTransfer();
+        cursor = t.seq;
         inFlightFrameMaxSeq.clear();
         slowConsumerWarned = false;
         state = SessionState.STREAMING;

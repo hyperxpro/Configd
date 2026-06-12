@@ -303,6 +303,44 @@ final class EdgeFanOutSim {
         edgeNetwork.removePartition(NodeId.of(edge.subscribedCpNode()), NodeId.of(edge.edgeId()));
     }
 
+    /**
+     * TEST SEAM (C5, CT-24): a ZERO-STATE edge joins the running sim, subscribed to
+     * {@code subscribedCpNode}. The {@link C1StreamDriver} subscribes it lazily on the
+     * next {@link #tick()} with resume cursor 0 — against a populated ring the server's
+     * {@code decideMode} answers SNAPSHOT_FIRST, so the join runs the REAL production
+     * bootstrap (snapshot transfer + exact-cutover tail) under whatever writes are
+     * flowing. OPT-IN and additive: never invoked on the gate path and consumes no RNG,
+     * so existing seeds are byte-identical (the EdgeSeedCompatTest discipline). The
+     * joiner participates in every per-tick invariant and in {@link #finalCheck()} like
+     * any roster edge; the scheduled {@link EdgeFaultSchedule} never targets it (its
+     * indices were drawn against the construction-time roster), which is exactly the
+     * C5 "faults on the OTHER edges" shape.
+     *
+     * @param subscribedCpNode the CP node the joiner subscribes to
+     * @return the joiner's roster index (for {@link #edges()}/{@link #partitionEdge})
+     */
+    int joinEdge(int subscribedCpNode) {
+        int index = edges.size();
+        edges.add(new EdgeActor(EdgeActor.EDGE_ID_BASE + index, subscribedCpNode,
+                () -> currentTimeMs));
+        return index;
+    }
+
+    /**
+     * TEST SEAM (C5): sets the CP→edge duplication rate (e.g. {@code 1.0} so every frame
+     * across the bootstrap cutover is duplicated — the dup-channel non-vacuity demand,
+     * screen NOTE C5-2). RNG-stream-safe: the dup draw happens on every send regardless
+     * of the rate, so changing the rate changes no draw sequence.
+     */
+    void setEdgeDupRateForTest(double rate) {
+        edgeNetwork.setDupRate(rate);
+    }
+
+    /** Duplicated CP→edge sends so far (the C5 dup-channel non-vacuity witness). */
+    long edgeDupCount() {
+        return edgeNetwork.dupCount();
+    }
+
     // -----------------------------------------------------------------------
     // Run / tick
     // -----------------------------------------------------------------------
