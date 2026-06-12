@@ -122,6 +122,19 @@ final class EdgeFanOutSim {
     EdgeFanOutSim(long seed, int cpNodeCount, int edgeCount, int totalTicks,
             boolean edgeFaults, StreamDriver streamDriver,
             AdversarialSchedule.Intensity intensity, long boundMs) {
+        this(seed, cpNodeCount, edgeCount, totalTicks, edgeFaults, streamDriver, intensity,
+                boundMs, FanOutBuffer_CAPACITY);
+    }
+
+    /**
+     * Full constructor with an explicit per-CP-node fan-out ring capacity (C3 tests shrink
+     * it so the replay horizon is crossable at sim scale — production and the gate path
+     * stay at {@link #FanOutBuffer_CAPACITY}; the delegating constructors are unchanged,
+     * so existing seeds are byte-identical).
+     */
+    EdgeFanOutSim(long seed, int cpNodeCount, int edgeCount, int totalTicks,
+            boolean edgeFaults, StreamDriver streamDriver,
+            AdversarialSchedule.Intensity intensity, long boundMs, int fanOutBufferCapacity) {
         this.seed = seed;
         this.totalTicks = totalTicks;
         this.streamDriver = streamDriver;
@@ -134,7 +147,7 @@ final class EdgeFanOutSim {
         // listener seam exactly as ConfigdServer does it.
         for (int i = 0; i < cpNodeCount; i++) {
             final int cpNode = i;
-            FanOutBuffer buffer = new FanOutBuffer(FanOutBuffer_CAPACITY);
+            FanOutBuffer buffer = new FanOutBuffer(fanOutBufferCapacity);
             ReplaySource replay = new SnapshotReplaySource(() -> cpSim.store(cpNode).snapshot());
             fanOutBuffers.add(buffer);
             replaySources.add(replay);
@@ -251,6 +264,37 @@ final class EdgeFanOutSim {
         partitionedEdges.add(edge.edgeId());
         edgeNetwork.addPartition(NodeId.of(edge.subscribedCpNode()), NodeId.of(edge.edgeId()));
     }
+
+    /**
+     * TEST SEAM (C3): enables the REAL recovery loop for edge {@code edgeIndex} — the
+     * core's {@link io.configd.edge.EdgeClientCore.ConnectionDirective}s (gap resubscribe,
+     * DISCONNECTED re-bootstrap, heartbeat silence, poison retries) are acted on by a real
+     * {@link C1StreamDriver#resubscribe} instead of being drained-and-ignored. OPT-IN and
+     * additive: never invoked on the gate path, so existing seeds are byte-identical
+     * (the EdgeSeedCompatTest discipline). Requires the sim to run a {@link C1StreamDriver}.
+     */
+    void enableEdgeRecovery(int edgeIndex) {
+        if (!(streamDriver instanceof C1StreamDriver c1)) {
+            throw new IllegalStateException("edge recovery requires a C1StreamDriver");
+        }
+        EdgeActor edge = edges.get(edgeIndex);
+        edge.setDirectiveSink(directive -> {
+            if (directive instanceof
+                    io.configd.edge.EdgeClientCore.ConnectionDirective.ReconnectNextEndpoint r) {
+                c1.resubscribe(driverContext(), edge, r.resumeCursor());
+            } else if (directive instanceof
+                    io.configd.edge.EdgeClientCore.ConnectionDirective.TerminalFailure t) {
+                terminalFailures.add("edge " + edge.edgeId() + ": " + t.reason());
+            }
+        });
+    }
+
+    /** ADR-0040 terminal directives observed via {@link #enableEdgeRecovery} (assertions). */
+    List<String> terminalFailures() {
+        return List.copyOf(terminalFailures);
+    }
+
+    private final List<String> terminalFailures = new ArrayList<>();
 
     /** TEST SEAM: heals a partition created by {@link #partitionEdge(int)}. */
     void healEdge(int edgeIndex) {

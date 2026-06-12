@@ -203,7 +203,7 @@ class EdgeTransportMtlsTest {
                 List.of(InetSocketAddress.createUnresolved("127.0.0.1", port)),
                 0, tempDir.resolve("edge-" + port), null /* unsigned notifications */,
                 List.of(), null, null, null,
-                50L, EdgeNodeConfig.DEFAULT_HEARTBEAT_SILENCE_FACTOR);
+                50L, EdgeNodeConfig.DEFAULT_HEARTBEAT_SILENCE_FACTOR, EdgeNodeConfig.DEFAULT_POISON_MAX_RETRIES);
         return EdgeNodeMain.start(cfg, tls);
     }
 

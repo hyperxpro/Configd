@@ -21,6 +21,11 @@ import java.util.List;
  *       heartbeat intervals ({@code silenceFactor × heartbeatMs}, heartbeat cadence is the
  *       C1 server's {@code edge.fanout.heartbeatMs} = 250 ms). Metric:
  *       {@code edge_reconnects_total} (reason visible in the structured log).</li>
+ *   <li>{@code edge.poisonpill.maxRetries} ({@code --poison-max-retries}, default
+ *       {@value #DEFAULT_POISON_MAX_RETRIES}): ADR-0040 bounded apply-failure retries per
+ *       seq before quarantine → forced snapshot re-bootstrap → terminal fail-loud.
+ *       Metrics: {@code edge_poison_retries_total}, {@code configd_edge_poison_pill_total},
+ *       {@code configd_edge_poison_pill_terminal_total}.</li>
  * </ul>
  *
  * @param edgeId             the edge identity carried in SUBSCRIBE. Over mTLS the server
@@ -47,6 +52,8 @@ import java.util.List;
  * @param reconnectBackoffMs base reconnect backoff in ms ({@code edge.reconnect.backoffMs})
  * @param heartbeatSilenceFactor missed-heartbeat reconnect factor
  *                           ({@code edge.heartbeat.silenceFactor})
+ * @param poisonMaxRetries   ADR-0040 bounded apply-failure retries before quarantine
+ *                           ({@code edge.poisonpill.maxRetries})
  */
 public record EdgeNodeConfig(
         String edgeId,
@@ -59,7 +66,8 @@ public record EdgeNodeConfig(
         Path tlsKeyPath,
         Path tlsTrustStorePath,
         long reconnectBackoffMs,
-        int heartbeatSilenceFactor
+        int heartbeatSilenceFactor,
+        int poisonMaxRetries
 ) {
 
     /** Default read-serving API port (the control plane's API default is 8080). */
@@ -70,6 +78,9 @@ public record EdgeNodeConfig(
 
     /** Default silence factor (named config {@code edge.heartbeat.silenceFactor}). */
     public static final int DEFAULT_HEARTBEAT_SILENCE_FACTOR = 8;
+
+    /** Default ADR-0040 poison-pill retry bound (named config {@code edge.poisonpill.maxRetries}). */
+    public static final int DEFAULT_POISON_MAX_RETRIES = 3;
 
     public EdgeNodeConfig {
         if (edgeId == null || edgeId.isBlank()) {
@@ -108,6 +119,10 @@ public record EdgeNodeConfig(
             throw new IllegalArgumentException(
                     "edge.heartbeat.silenceFactor must be > 0: " + heartbeatSilenceFactor);
         }
+        if (poisonMaxRetries <= 0) {
+            throw new IllegalArgumentException(
+                    "edge.poisonpill.maxRetries must be > 0: " + poisonMaxRetries);
+        }
     }
 
     /** True if the mTLS triple is configured (all three paths). */
@@ -127,6 +142,7 @@ public record EdgeNodeConfig(
      *   --tls-cert/--tls-key/--tls-trust-store  the server's TLS triple (all or none)
      *   --reconnect-backoff-ms     edge.reconnect.backoffMs base (default 100)
      *   --heartbeat-silence-factor edge.heartbeat.silenceFactor (default 8)
+     *   --poison-max-retries       edge.poisonpill.maxRetries (default 3; ADR-0040)
      * </pre>
      *
      * @throws IllegalArgumentException on missing/invalid arguments
@@ -143,6 +159,7 @@ public record EdgeNodeConfig(
         String tlsTrustStore = null;
         long reconnectBackoffMs = DEFAULT_RECONNECT_BACKOFF_MS;
         int silenceFactor = DEFAULT_HEARTBEAT_SILENCE_FACTOR;
+        int poisonMaxRetries = DEFAULT_POISON_MAX_RETRIES;
 
         for (int i = 0; i < args.length; i++) {
             switch (args[i]) {
@@ -190,6 +207,10 @@ public record EdgeNodeConfig(
                     requireNextArg(args, i, "--heartbeat-silence-factor");
                     silenceFactor = Integer.parseInt(args[++i]);
                 }
+                case "--poison-max-retries" -> {
+                    requireNextArg(args, i, "--poison-max-retries");
+                    poisonMaxRetries = Integer.parseInt(args[++i]);
+                }
                 default -> throw new IllegalArgumentException("Unknown argument: " + args[i]);
             }
         }
@@ -215,7 +236,8 @@ public record EdgeNodeConfig(
                 tlsKey != null ? Path.of(tlsKey) : null,
                 tlsTrustStore != null ? Path.of(tlsTrustStore) : null,
                 reconnectBackoffMs,
-                silenceFactor);
+                silenceFactor,
+                poisonMaxRetries);
     }
 
     /** Parses {@code h:p[,h:p]} into ordered unresolved endpoints. */

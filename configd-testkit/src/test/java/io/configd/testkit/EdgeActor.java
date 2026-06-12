@@ -17,6 +17,7 @@ import java.util.ArrayDeque;
 import java.util.Deque;
 import java.util.List;
 import java.util.Objects;
+import java.util.function.Consumer;
 import java.util.function.LongConsumer;
 import java.util.function.LongSupplier;
 
@@ -103,6 +104,14 @@ final class EdgeActor {
 
     private static final LongConsumer NONE_ACK = seq -> { };
 
+    /**
+     * OPT-IN C3 recovery seam: when non-null, drained {@link EdgeClientCore.ConnectionDirective}s
+     * are forwarded here (the sim wires {@link EdgeFanOutSim#enableEdgeRecovery} to a real
+     * {@link C1StreamDriver} resubscribe). Null (the default) preserves the historical
+     * drain-and-ignore behavior — the 507-seed gate path is byte-identical.
+     */
+    private Consumer<EdgeClientCore.ConnectionDirective> directiveSink;
+
     EdgeActor(int edgeId, int subscribedCpNode, LongSupplier timeSource) {
         if (edgeId < EDGE_ID_BASE) {
             throw new IllegalArgumentException(
@@ -144,6 +153,20 @@ final class EdgeActor {
      */
     void setCursorAckSink(LongConsumer sink) {
         this.cursorAckSink = (sink == null) ? NONE_ACK : sink;
+    }
+
+    /**
+     * OPT-IN (C3): forwards drained connection directives to {@code sink} instead of
+     * discarding them. Never set on the gate path (the default null keeps the historical
+     * drain-and-ignore, so existing seeds are byte-identical).
+     */
+    void setDirectiveSink(Consumer<EdgeClientCore.ConnectionDirective> sink) {
+        this.directiveSink = sink;
+    }
+
+    /** C3 recovery: the sim driver re-subscribed this edge — complete the reconnect cycle. */
+    void onResubscribed() {
+        core.onReconnected();
     }
 
     /**
@@ -206,13 +229,17 @@ final class EdgeActor {
                         core.onFrame(new EdgeFrame.Heartbeat(hb.latestSeq(), hb.serverNowMillis()));
             }
         }
-        // Run the real periodic tick (re-ack on advance; heartbeat-silence reconnect policy).
+        // Run the real periodic tick (re-ack on advance; heartbeat-silence reconnect policy;
+        // the C3 DISCONNECTED-entry re-bootstrap detector).
         core.tick(timeSource.getAsLong());
-        // The V1/C1 sim has no second fan-out endpoint to fail over to — drain any reconnect
-        // directive the core queued on heartbeat silence (the sim heals via the server's
-        // ack-lag → snapshot path, not an edge reconnect). Documented in the class javadoc.
-        while (core.pollDirective() != null) {
-            // intentionally discarded — see class javadoc (multi-endpoint failover is part b)
+        // Directives: with no sink wired (the gate path), drain-and-ignore as ever (the sim
+        // heals via the server's ack-lag → snapshot path). With the OPT-IN C3 recovery sink
+        // wired, forward them — the sink performs a REAL resubscribe through the driver.
+        EdgeClientCore.ConnectionDirective directive;
+        while ((directive = core.pollDirective()) != null) {
+            if (directiveSink != null) {
+                directiveSink.accept(directive);
+            }
         }
     }
 
@@ -341,6 +368,9 @@ final class EdgeActor {
     }
 
     int gapsDetected() { return alive ? core.gapsDetected() : 0; }
+
+    /** C3 / CT-06: DISCONNECTED-entry re-bootstrap directives the core queued. */
+    int disconnectedRebootstraps() { return alive ? core.disconnectedRebootstraps() : 0; }
 
     int snapshotsApplied() { return alive ? core.snapshotsApplied() : 0; }
 

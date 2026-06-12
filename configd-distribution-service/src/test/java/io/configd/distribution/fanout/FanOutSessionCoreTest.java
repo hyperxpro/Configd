@@ -117,12 +117,15 @@ class FanOutSessionCoreTest {
 
     @Test
     void tickDrainsNotificationsInVerbatimAscendingOrder() {
+        // Subscribe on the EMPTY buffer (TAIL), then publish: C3's decideMode snapshots
+        // any cursor-0 subscriber once data exists, so streaming-mechanics fixtures
+        // subscribe first (the live-tail shape this test pins is unchanged).
         FanOutBuffer buffer = new FanOutBuffer(64);
+        FanOutSessionCore s = session(buffer, snapshotAt(5), FanOutConfig.defaults());
+        s.onSubscribe(subscribe(0));
         for (long i = 1; i <= 5; i++) {
             buffer.publish(put(i, "k" + i, "v" + i));
         }
-        FanOutSessionCore s = session(buffer, snapshotAt(5), FanOutConfig.defaults());
-        s.onSubscribe(subscribe(0));
         sink.clear();
         s.tick(clock.now());
 
@@ -139,12 +142,12 @@ class FanOutSessionCoreTest {
     @Test
     void batchMaxNotificationsSplitsIntoMultipleFrames() {
         FanOutBuffer buffer = new FanOutBuffer(64);
+        FanOutConfig cfg = new FanOutConfig(64, 80, 3 /* batchMax=3 */, 262_144, 8_192L, 250L, 5L, 1_048_576);
+        FanOutSessionCore s = session(buffer, snapshotAt(10), cfg);
+        s.onSubscribe(subscribe(0)); // on the empty buffer: TAIL (C3 decideMode)
         for (long i = 1; i <= 10; i++) {
             buffer.publish(put(i, "k" + i, "v"));
         }
-        FanOutConfig cfg = new FanOutConfig(64, 80, 3 /* batchMax=3 */, 262_144, 8_192L, 250L, 5L, 1_048_576);
-        FanOutSessionCore s = session(buffer, snapshotAt(10), cfg);
-        s.onSubscribe(subscribe(0));
         sink.clear();
         s.tick(clock.now());
 
@@ -249,12 +252,12 @@ class FanOutSessionCoreTest {
     @Test
     void cursorAckReleasesInFlightFramesBelowThreshold() {
         FanOutBuffer buffer = new FanOutBuffer(256);
+        FanOutConfig cfg = new FanOutConfig(8, 80, 1, 262_144, 8_192L, 250L, 5L, 1_048_576);
+        FanOutSessionCore s = session(buffer, snapshotAt(3), cfg);
+        s.onSubscribe(subscribe(0)); // on the empty buffer: TAIL (C3 decideMode)
         for (long i = 1; i <= 3; i++) {
             buffer.publish(put(i, "k" + i, "v"));
         }
-        FanOutConfig cfg = new FanOutConfig(8, 80, 1, 262_144, 8_192L, 250L, 5L, 1_048_576);
-        FanOutSessionCore s = session(buffer, snapshotAt(3), cfg);
-        s.onSubscribe(subscribe(0));
         s.tick(clock.now());
         assertEquals(3, s.inFlightFrames());
         s.onCursorAck(2);

@@ -51,10 +51,13 @@ public final class RegistryFanOutSessionMetrics implements FanOutSessionMetrics 
     private final MetricsRegistry.Counter demotionsOther;
     private final MetricsRegistry.Counter closedOther;
     private final MetricsRegistry.Counter sessionsRefused;
+    private final MetricsRegistry.Counter subscribeTail;
+    private final MetricsRegistry.Counter subscribeSnapshotFirst;
 
     // --- Gauge backing state (process-level aggregates) ---
     private final AtomicLong queueDepth = new AtomicLong(0);
     private final AtomicInteger connectedSubscribers = new AtomicInteger(0);
+    private final AtomicLong subscribeHorizonDistance = new AtomicLong(0);
 
     public RegistryFanOutSessionMetrics(MetricsRegistry registry) {
         // Counters / histogram — registering them touches the registry so the series exists.
@@ -92,9 +95,15 @@ public final class RegistryFanOutSessionMetrics implements FanOutSessionMetrics 
         // Admission-bound refusals (hard rule 4: edge.fanout.transport.maxSessions).
         this.sessionsRefused = registry.counter("edge.fanout.sessions_refused");
 
+        // C3: the subscribe-time replay-vs-re-bootstrap decision (per-reason-suffix
+        // convention) + the horizon-distance input as a last-decision gauge.
+        this.subscribeTail = registry.counter("edge.fanout.subscribe.tail");
+        this.subscribeSnapshotFirst = registry.counter("edge.fanout.subscribe.snapshot_first");
+
         // Gauges (process-level aggregates; eagerly registered so the series exists at scrape 0).
         registry.gauge("edge.fanout.queue_depth", queueDepth::get);
         registry.gauge("edge.fanout.connected_subscribers", connectedSubscribers::get);
+        registry.gauge("edge.fanout.subscribe.horizon_distance", subscribeHorizonDistance::get);
     }
 
     // --- Session lifecycle hooks the FanOutServer drives directly (not via the session) ---
@@ -158,5 +167,11 @@ public final class RegistryFanOutSessionMetrics implements FanOutSessionMetrics 
     @Override
     public void onSessionClosed(String reason) {
         closedByReason.getOrDefault(reason, closedOther).increment();
+    }
+
+    @Override
+    public void onSubscribeMode(boolean snapshotFirst, long horizonDistance) {
+        (snapshotFirst ? subscribeSnapshotFirst : subscribeTail).increment();
+        subscribeHorizonDistance.set(horizonDistance);
     }
 }

@@ -116,10 +116,13 @@
           per-mutant-fork instability RR-085/RR-092 forbid):
             EdgeStreamClient — connect/mTLS/reconnect virtual-thread shell; its
                                logic is the EdgeClientCore directives (already
-                               mutation-tested at 82% in configd-edge-cache);
-                               the shell itself is exercised by the process-level
-                               EdgeNodeIntegrationTest/EdgeFailoverTest, which are
-                               too heavy (real server + Raft) for per-mutant runs;
+                               mutation-tested in configd-edge-cache — C3 added the
+                               PoisonPillPolicy ladder there too); the C3 additions here
+                               (requestRebootstrap teardown, terminal-action invoke,
+                               poison resume-cursor derivation) are pure IO orchestration
+                               pinned by the process-level EdgeReBootstrapOnDisconnectTest
+                               and PoisonPillRebootstrapTest, which are too heavy
+                               (real server + Raft) for per-mutant runs;
             EdgeNodeMain     — lifecycle orchestration (start/stop/wiring), no
                                branching policy beyond what EdgeNodeConfig owns.
         -->

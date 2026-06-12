@@ -168,25 +168,15 @@ public final class EdgeConfigClient {
     // -----------------------------------------------------------------------
 
     /**
-     * Applies a delta to the local config store and records the update in the staleness
-     * tracker, using the <b>local clock</b> as the commit timestamp (ADR-0039 frontier
-     * from the local wall clock). The delta is filtered for storage (ADR-0038) before
-     * apply.
-     * <p>
-     * Retained for direct callers and pre-C2 tests that do not carry a leader commit
-     * timestamp; the production C2 path uses {@link #applyDelta(ConfigDelta, long)} with
-     * the notification's commit timestamp.
-     *
-     * @param delta the delta to apply (non-null), already signature-verified upstream
-     * @throws IllegalArgumentException if delta.fromVersion != currentVersion
-     */
-    public void applyDelta(ConfigDelta delta) {
-        applyDelta(delta, clock.currentTimeMillis());
-    }
-
-    /**
      * Applies a delta to the local config store and advances the ADR-0039 frontier to
      * {@code commitTimestampMillis} (the leader's commit clock, the §2 staleness instrument).
+     * <p>
+     * <b>Finding 5 disposition (C3, c2-signoff-review):</b> the one-arg
+     * {@code applyDelta(ConfigDelta)} overload — which silently fell back to the LOCAL
+     * clock as the frontier, i.e. the deleted ADR-0039 idle-proxy in different clothes —
+     * is DELETED, not fenced. Every caller must state which clock stamps the frontier;
+     * tests that previously relied on the fallback pass their fixture clock's
+     * {@code currentTimeMillis()} explicitly (byte-identical behavior, one meaning).
      * <p>
      * ADR-0038 storage filter: the delta is filtered to the subscribed slice (plus
      * strong-read keys) before apply via {@link #filterForStorage(ConfigDelta)}; the
@@ -278,6 +268,20 @@ public final class EdgeConfigClient {
      */
     public Set<String> subscriptions() {
         return subscriptions.prefixes();
+    }
+
+    /**
+     * True iff this edge's store is authoritative for {@code key} (ADR-0040 §2): the
+     * subscription is full-store (empty prefix set) or the key matches a subscribed
+     * prefix. Within the slice a store miss IS authoritative non-existence (the
+     * negative-caching descope); outside it the serving surface refuses with a distinct
+     * reason instead of consulting the store. Lock-free (copy-on-write prefix set).
+     *
+     * @param key the key being read (non-null)
+     */
+    public boolean servesKey(String key) {
+        Objects.requireNonNull(key, "key must not be null");
+        return subscriptions.isEmpty() || subscriptions.matches(key);
     }
 
     // -----------------------------------------------------------------------

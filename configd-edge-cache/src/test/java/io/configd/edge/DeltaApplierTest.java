@@ -93,7 +93,7 @@ class DeltaApplierTest {
                     new ConfigMutation.Put("key", bytes("value"))
             ));
 
-            DeltaApplier.ApplyResult result = applier.offer(delta);
+            DeltaApplier.ApplyResult result = applier.offer(delta, clock.currentTimeMillis());
 
             assertEquals(DeltaApplier.ApplyResult.APPLIED, result);
             assertEquals(1, client.currentVersion());
@@ -107,7 +107,7 @@ class DeltaApplierTest {
                 ConfigDelta delta = new ConfigDelta(i - 1, i, List.of(
                         new ConfigMutation.Put("key-" + i, bytes("val-" + i))
                 ));
-                assertEquals(DeltaApplier.ApplyResult.APPLIED, applier.offer(delta));
+                assertEquals(DeltaApplier.ApplyResult.APPLIED, applier.offer(delta, clock.currentTimeMillis()));
             }
 
             assertEquals(5, client.currentVersion());
@@ -130,7 +130,7 @@ class DeltaApplierTest {
                     new ConfigMutation.Put("key", bytes("value"))
             ));
 
-            DeltaApplier.ApplyResult result = applier.offer(delta);
+            DeltaApplier.ApplyResult result = applier.offer(delta, clock.currentTimeMillis());
 
             assertEquals(DeltaApplier.ApplyResult.GAP_DETECTED, result);
             assertTrue(applier.pendingGap());
@@ -142,14 +142,14 @@ class DeltaApplierTest {
             // Apply one delta successfully
             applier.offer(new ConfigDelta(0, 1, List.of(
                     new ConfigMutation.Put("a", bytes("1"))
-            )));
+            )), clock.currentTimeMillis());
 
             // Skip version 2, jump to 3
             ConfigDelta delta = new ConfigDelta(2, 3, List.of(
                     new ConfigMutation.Put("b", bytes("2"))
             ));
 
-            assertEquals(DeltaApplier.ApplyResult.GAP_DETECTED, applier.offer(delta));
+            assertEquals(DeltaApplier.ApplyResult.GAP_DETECTED, applier.offer(delta, clock.currentTimeMillis()));
             assertTrue(applier.pendingGap());
             assertEquals(1, client.currentVersion());
         }
@@ -159,7 +159,7 @@ class DeltaApplierTest {
             // Trigger gap
             applier.offer(new ConfigDelta(5, 6, List.of(
                     new ConfigMutation.Put("key", bytes("value"))
-            )));
+            )), clock.currentTimeMillis());
             assertTrue(applier.pendingGap());
 
             // Load full snapshot to recover
@@ -175,7 +175,7 @@ class DeltaApplierTest {
             // Trigger gap
             applier.offer(new ConfigDelta(5, 6, List.of(
                     new ConfigMutation.Put("key", bytes("value"))
-            )));
+            )), clock.currentTimeMillis());
 
             // Recover with full sync
             client.loadSnapshot(buildSnapshot(10, "key", "v10"));
@@ -186,7 +186,7 @@ class DeltaApplierTest {
                     new ConfigMutation.Put("key", bytes("v11"))
             ));
 
-            assertEquals(DeltaApplier.ApplyResult.APPLIED, applier.offer(delta));
+            assertEquals(DeltaApplier.ApplyResult.APPLIED, applier.offer(delta, clock.currentTimeMillis()));
             assertEquals(11, client.currentVersion());
             assertFalse(applier.pendingGap());
         }
@@ -210,7 +210,7 @@ class DeltaApplierTest {
                     new ConfigMutation.Put("old", bytes("data"))
             ));
 
-            assertEquals(DeltaApplier.ApplyResult.STALE_DELTA, applier.offer(delta));
+            assertEquals(DeltaApplier.ApplyResult.STALE_DELTA, applier.offer(delta, clock.currentTimeMillis()));
             assertEquals(5, client.currentVersion()); // Unchanged
             assertFalse(applier.pendingGap());
         }
@@ -225,7 +225,7 @@ class DeltaApplierTest {
                     new ConfigMutation.Put("dup", bytes("data"))
             ));
 
-            assertEquals(DeltaApplier.ApplyResult.STALE_DELTA, applier.offer(delta));
+            assertEquals(DeltaApplier.ApplyResult.STALE_DELTA, applier.offer(delta, clock.currentTimeMillis()));
         }
     }
 
@@ -268,7 +268,7 @@ class DeltaApplierTest {
 
         @Test
         void nullDeltaThrows() {
-            assertThrows(NullPointerException.class, () -> applier.offer(null));
+            assertThrows(NullPointerException.class, () -> applier.offer(null, clock.currentTimeMillis()));
         }
     }
 
@@ -309,7 +309,7 @@ class DeltaApplierTest {
             byte[] sig = signDelta(unsignedDelta);
             ConfigDelta signedDelta = new ConfigDelta(0, 1, unsignedDelta.mutations(), sig);
 
-            DeltaApplier.ApplyResult result = verifyingApplier.offer(signedDelta);
+            DeltaApplier.ApplyResult result = verifyingApplier.offer(signedDelta, clock.currentTimeMillis());
 
             assertEquals(DeltaApplier.ApplyResult.APPLIED, result);
             assertEquals(1, client.currentVersion());
@@ -325,7 +325,7 @@ class DeltaApplierTest {
                     new ConfigMutation.Put("key", bytes("value"))
             ), badSignature);
 
-            DeltaApplier.ApplyResult result = verifyingApplier.offer(delta);
+            DeltaApplier.ApplyResult result = verifyingApplier.offer(delta, clock.currentTimeMillis());
 
             assertEquals(DeltaApplier.ApplyResult.SIGNATURE_INVALID, result);
             assertEquals(0, client.currentVersion()); // not applied
@@ -340,7 +340,7 @@ class DeltaApplierTest {
                     new ConfigMutation.Put("key", bytes("value"))
             )); // no signature
 
-            DeltaApplier.ApplyResult result = verifyingApplier.offer(delta);
+            DeltaApplier.ApplyResult result = verifyingApplier.offer(delta, clock.currentTimeMillis());
 
             assertEquals(DeltaApplier.ApplyResult.UNSIGNED_REJECTED, result);
             assertEquals(0, client.currentVersion());
@@ -364,7 +364,7 @@ class DeltaApplierTest {
             byte[] sig = wrongSigner.sign(payload);
             ConfigDelta delta = new ConfigDelta(0, 1, unsignedDelta.mutations(), sig);
 
-            DeltaApplier.ApplyResult result = verifyingApplier.offer(delta);
+            DeltaApplier.ApplyResult result = verifyingApplier.offer(delta, clock.currentTimeMillis());
 
             assertEquals(DeltaApplier.ApplyResult.SIGNATURE_INVALID, result);
             assertEquals(0, client.currentVersion());
@@ -377,7 +377,7 @@ class DeltaApplierTest {
                     new ConfigMutation.Put("key", bytes("value"))
             ));
 
-            DeltaApplier.ApplyResult result = applier.offer(delta);
+            DeltaApplier.ApplyResult result = applier.offer(delta, clock.currentTimeMillis());
 
             assertEquals(DeltaApplier.ApplyResult.APPLIED, result);
             assertEquals(1, client.currentVersion());
@@ -410,7 +410,7 @@ class DeltaApplierTest {
             ConfigSigner verifier = new ConfigSigner(keyPair.getPublic());
             DeltaApplier verifyingApplier = new DeltaApplier(client, verifier);
 
-            DeltaApplier.ApplyResult result = verifyingApplier.offer(delta);
+            DeltaApplier.ApplyResult result = verifyingApplier.offer(delta, clock.currentTimeMillis());
             assertEquals(DeltaApplier.ApplyResult.APPLIED, result,
                     "Single-mutation delta signed by leader must verify at edge");
         }
@@ -429,7 +429,7 @@ class DeltaApplierTest {
                         unsignedDelta.mutations(), sig);
 
                 assertEquals(DeltaApplier.ApplyResult.APPLIED,
-                        verifyingApplier.offer(signedDelta));
+                        verifyingApplier.offer(signedDelta, clock.currentTimeMillis()));
             }
 
             assertEquals(3, client.currentVersion());
@@ -483,7 +483,7 @@ class DeltaApplierTest {
                     new DeltaApplier(client, verifier, snapshotDir);
             assertEquals(0L, persistingApplier.highestSeenEpoch());
 
-            DeltaApplier.ApplyResult r = persistingApplier.offer(signedDelta(0, 1, 100L));
+            DeltaApplier.ApplyResult r = persistingApplier.offer(signedDelta(0, 1, 100L), clock.currentTimeMillis());
             assertEquals(DeltaApplier.ApplyResult.APPLIED, r);
             assertEquals(100L, persistingApplier.highestSeenEpoch());
 
@@ -505,7 +505,7 @@ class DeltaApplierTest {
             // Phase 1 — write epoch 100 and persist it.
             DeltaApplier first = new DeltaApplier(client, verifier, snapshotDir);
             assertEquals(DeltaApplier.ApplyResult.APPLIED,
-                    first.offer(signedDelta(0, 1, 100L)));
+                    first.offer(signedDelta(0, 1, 100L), clock.currentTimeMillis()));
             assertEquals(100L, first.highestSeenEpoch());
 
             // Phase 2 — simulate process restart: brand-new EdgeConfigClient
@@ -520,7 +520,7 @@ class DeltaApplierTest {
 
             // The replay attempt: an attacker re-signs an older delta at
             // epoch 42 and offers it. It must be rejected.
-            DeltaApplier.ApplyResult r = restarted.offer(signedDelta(0, 1, 42L));
+            DeltaApplier.ApplyResult r = restarted.offer(signedDelta(0, 1, 42L), clock.currentTimeMillis());
             assertEquals(DeltaApplier.ApplyResult.REPLAY_REJECTED, r,
                     "stale-epoch delta must be rejected after restart");
             assertEquals(0L, client2.currentVersion(),
@@ -542,7 +542,7 @@ class DeltaApplierTest {
 
             // The next applied delta overwrites the sidecar with valid bytes.
             assertEquals(DeltaApplier.ApplyResult.APPLIED,
-                    applier2.offer(signedDelta(0, 1, 7L)));
+                    applier2.offer(signedDelta(0, 1, 7L), clock.currentTimeMillis()));
             assertEquals(7L, applier2.highestSeenEpoch());
 
             byte[] data = Files.readAllBytes(lock);
@@ -560,7 +560,7 @@ class DeltaApplierTest {
             // Defensive: the legacy two-arg constructor must not touch disk.
             DeltaApplier inMem = new DeltaApplier(client, verifier, null);
             assertEquals(DeltaApplier.ApplyResult.APPLIED,
-                    inMem.offer(signedDelta(0, 1, 50L)));
+                    inMem.offer(signedDelta(0, 1, 50L), clock.currentTimeMillis()));
             assertEquals(50L, inMem.highestSeenEpoch());
             // No file in snapshotDir was created (no persistence configured).
             assertFalse(Files.exists(snapshotDir.resolve("epoch.lock")));

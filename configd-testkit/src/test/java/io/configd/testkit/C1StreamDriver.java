@@ -64,6 +64,9 @@ final class C1StreamDriver implements StreamDriver {
     /** Fatal close events observed (e.g. GAP_UNRECOVERABLE) — exposed for tests. */
     private final List<String> fatalCloses = new ArrayList<>();
 
+    /** C3 recovery resubscribes performed (per test assertions). */
+    private int resubscribes;
+
     /**
      * Sim-tuned config. The production {@link FanOutConfig#defaults()} ack-lag threshold is
      * 8192 seqs (tuned for 10k writes/s); the sim commits only tens of seqs per run, so a
@@ -142,6 +145,39 @@ final class C1StreamDriver implements StreamDriver {
         return List.copyOf(fatalCloses);
     }
 
+    /** C3 recovery resubscribes performed via {@link #resubscribe}. */
+    int resubscribes() {
+        return resubscribes;
+    }
+
+    /**
+     * C3 recovery seam: re-subscribes {@code edge} at {@code resumeCursor} — the sim
+     * analogue of the edge process tearing down its connection and re-SUBSCRIBE-ing. The
+     * OLD session is neutralized (its sink goes dead — frames from a torn-down connection
+     * never reach the edge) and a FRESH {@link FanOutSessionCore} runs the server's
+     * already-tested TAIL/SNAPSHOT_FIRST decision for the carried cursor (screen C3-1: the
+     * recovery path IS the subscription path; zero new wire surface). Deterministic:
+     * single sim thread, invoked from the edge's directive drain.
+     */
+    void resubscribe(Context ctx, EdgeActor edge, long resumeCursor) {
+        SimSink oldSink = sinks.get(edge.edgeId());
+        if (oldSink != null) {
+            oldSink.dead = true;
+        }
+        int cpNode = edge.subscribedCpNode();
+        SimSink sink = new SimSink(ctx, edge);
+        FanOutSessionCore session = new FanOutSessionCore(
+                ctx.source(cpNode), ctx.replaySource(cpNode), sink, config,
+                FanOutSessionMetrics.NOOP, clock);
+        edge.setCursorAckSink(session::onCursorAck);
+        session.onSubscribe(new EdgeFrame.Subscribe(
+                true, List.of(), resumeCursor, -1L, "edge-" + edge.edgeId()));
+        sessions.put(edge.edgeId(), session);
+        sinks.put(edge.edgeId(), sink);
+        resubscribes++;
+        edge.onResubscribed();
+    }
+
     /**
      * Maps a session's outbound {@link EdgeFrame}s onto {@link EdgeStream} messages over the
      * edge network. Snapshot chunks are buffered and reassembled into one
@@ -150,6 +186,9 @@ final class C1StreamDriver implements StreamDriver {
     private final class SimSink implements TransportSink {
         private final Context ctx;
         private final EdgeActor edge;
+
+        /** Set when the edge re-subscribed away from this session (old frames are dropped). */
+        boolean dead;
 
         // In-progress snapshot reassembly state.
         private final List<EdgeFrame.SnapshotChunk> pendingChunks = new ArrayList<>();
@@ -163,6 +202,12 @@ final class C1StreamDriver implements StreamDriver {
 
         @Override
         public boolean offer(EdgeFrame frame) {
+            if (dead) {
+                // The edge tore this connection down (C3 resubscribe); a dead transport
+                // swallows frames exactly like a closed socket. Returning true keeps the
+                // orphaned session silent rather than self-closing on every emit.
+                return true;
+            }
             switch (frame) {
                 case EdgeFrame.SubscribeOk ignored -> { /* server-internal handshake ack */ }
                 case EdgeFrame.Notify n -> {

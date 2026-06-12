@@ -69,7 +69,7 @@ class EdgePrefixStorageFilterTest {
         @Test
         void emptySubscriptionStoresEveryKey() {
             // No addSubscription() calls → empty prefix set → full store.
-            client.applyDelta(put(0, 1, "svc/a", "1", "other/b", "2", "misc/c", "3"));
+            client.applyDelta(put(0, 1, "svc/a", "1", "other/b", "2", "misc/c", "3"), clock.currentTimeMillis());
 
             assertEquals(1, client.currentVersion());
             assertTrue(client.get("svc/a").found());
@@ -92,14 +92,14 @@ class EdgePrefixStorageFilterTest {
 
         @Test
         void matchingKeyIsStored() {
-            client.applyDelta(put(0, 1, "svc/a", "1"));
+            client.applyDelta(put(0, 1, "svc/a", "1"), clock.currentTimeMillis());
             assertTrue(client.get("svc/a").found());
             assertArrayEquals(bytes("1"), client.get("svc/a").value());
         }
 
         @Test
         void nonMatchingKeyIsNotStoredButVersionAdvances() {
-            client.applyDelta(put(0, 1, "other/b", "2"));
+            client.applyDelta(put(0, 1, "other/b", "2"), clock.currentTimeMillis());
 
             // Not stored — outside the subscription, no payload kept.
             assertFalse(client.get("other/b").found());
@@ -109,7 +109,7 @@ class EdgePrefixStorageFilterTest {
 
         @Test
         void mixedBatchStoresOnlyMatchingButAdvancesVersionOnce() {
-            client.applyDelta(put(0, 1, "svc/a", "1", "other/b", "2", "svc/c", "3"));
+            client.applyDelta(put(0, 1, "svc/a", "1", "other/b", "2", "svc/c", "3"), clock.currentTimeMillis());
 
             assertTrue(client.get("svc/a").found());
             assertFalse(client.get("other/b").found());
@@ -120,7 +120,7 @@ class EdgePrefixStorageFilterTest {
         @Test
         void allNonMatchingBatchStillAdvancesVersion() {
             // Every mutation filtered out → an empty filtered delta — version still advances.
-            client.applyDelta(put(0, 1, "other/b", "2", "misc/c", "3"));
+            client.applyDelta(put(0, 1, "other/b", "2", "misc/c", "3"), clock.currentTimeMillis());
             assertEquals(1, client.currentVersion());
             assertFalse(client.get("other/b").found());
             assertFalse(client.get("misc/c").found());
@@ -137,7 +137,7 @@ class EdgePrefixStorageFilterTest {
         @Test
         void secureKeyStoredEvenWhenNotSubscribed() {
             client.addSubscription("svc/"); // does NOT cover secure/
-            client.applyDelta(put(0, 1, "secure/killswitch", "ON", "other/x", "y"));
+            client.applyDelta(put(0, 1, "secure/killswitch", "ON", "other/x", "y"), clock.currentTimeMillis());
 
             // secure/ is a strong-read key — ALWAYS stored regardless of subscription.
             assertTrue(client.get("secure/killswitch").found(),
@@ -150,7 +150,7 @@ class EdgePrefixStorageFilterTest {
         @Test
         void secureKeyStoredUnderUnrelatedSubscription() {
             client.addSubscription("app/");
-            client.applyDelta(put(0, 1, "secure/acl", "deny"));
+            client.applyDelta(put(0, 1, "secure/acl", "deny"), clock.currentTimeMillis());
             assertTrue(client.get("secure/acl").found());
         }
     }
@@ -165,9 +165,9 @@ class EdgePrefixStorageFilterTest {
         @Test
         void sequentialFilteredDeltasAdvanceTheChain() {
             client.addSubscription("svc/");
-            client.applyDelta(put(0, 1, "other/a", "1")); // filtered out, v→1
-            client.applyDelta(put(1, 2, "svc/b", "2"));   // stored, v→2
-            client.applyDelta(put(2, 3, "other/c", "3")); // filtered out, v→3
+            client.applyDelta(put(0, 1, "other/a", "1"), clock.currentTimeMillis()); // filtered out, v→1
+            client.applyDelta(put(1, 2, "svc/b", "2"), clock.currentTimeMillis());   // stored, v→2
+            client.applyDelta(put(2, 3, "other/c", "3"), clock.currentTimeMillis()); // filtered out, v→3
 
             assertEquals(3, client.currentVersion());
             assertTrue(client.get("svc/b").found());
@@ -178,11 +178,11 @@ class EdgePrefixStorageFilterTest {
         @Test
         void filteredDeltaWithWrongFromVersionStillThrowsGap() {
             client.addSubscription("svc/");
-            client.applyDelta(put(0, 1, "svc/a", "1"));
+            client.applyDelta(put(0, 1, "svc/a", "1"), clock.currentTimeMillis());
             // fromVersion 5 != current 1 — the store's gap guard fires even though the
             // mutation is in-subscription (filtering preserves from/to versions).
             assertThrows(IllegalArgumentException.class,
-                    () -> client.applyDelta(put(5, 6, "svc/b", "2")));
+                    () -> client.applyDelta(put(5, 6, "svc/b", "2"), clock.currentTimeMillis()));
         }
 
         @Test
@@ -192,7 +192,7 @@ class EdgePrefixStorageFilterTest {
             // advances exactly from 7→8 (here we bootstrap to 7 first via a full snapshot).
             client.loadSnapshot(new io.configd.store.ConfigSnapshot(
                     io.configd.store.HamtMap.empty(), 7, 7));
-            client.applyDelta(put(7, 8, "other/x", "y"));
+            client.applyDelta(put(7, 8, "other/x", "y"), clock.currentTimeMillis());
             assertEquals(8, client.currentVersion());
         }
     }

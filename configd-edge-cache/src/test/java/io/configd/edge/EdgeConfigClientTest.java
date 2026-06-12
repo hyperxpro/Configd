@@ -173,7 +173,7 @@ class EdgeConfigClientTest {
             ConfigDelta delta = new ConfigDelta(1, 2, List.of(
                     new ConfigMutation.Put("b", bytes("2"))
             ));
-            client.applyDelta(delta);
+            client.applyDelta(delta, clock.currentTimeMillis());
 
             assertEquals(2, client.currentVersion());
             assertTrue(client.get("b").found());
@@ -189,7 +189,7 @@ class EdgeConfigClientTest {
             ConfigDelta delta = new ConfigDelta(1, 2, List.of(
                     new ConfigMutation.Put("b", bytes("2"))
             ));
-            client.applyDelta(delta);
+            client.applyDelta(delta, clock.currentTimeMillis());
 
             assertEquals(StalenessTracker.State.CURRENT, client.staleness());
         }
@@ -202,7 +202,7 @@ class EdgeConfigClientTest {
                     new ConfigMutation.Put("b", bytes("2"))
             ));
             assertThrows(IllegalArgumentException.class,
-                    () -> client.applyDelta(delta));
+                    () -> client.applyDelta(delta, clock.currentTimeMillis()));
         }
 
         @Test
@@ -213,7 +213,7 @@ class EdgeConfigClientTest {
                 ConfigDelta delta = new ConfigDelta(i - 1, i, List.of(
                         new ConfigMutation.Put("key-" + i, bytes("val-" + i))
                 ));
-                client.applyDelta(delta);
+                client.applyDelta(delta, clock.currentTimeMillis());
             }
 
             assertEquals(10, client.currentVersion());
@@ -361,7 +361,7 @@ class EdgeConfigClientTest {
 
         @Test
         void nullDeltaThrows() {
-            assertThrows(NullPointerException.class, () -> client.applyDelta(null));
+            assertThrows(NullPointerException.class, () -> client.applyDelta(null, clock.currentTimeMillis()));
         }
 
         @Test

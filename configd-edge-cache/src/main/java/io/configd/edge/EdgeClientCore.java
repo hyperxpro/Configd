@@ -105,8 +105,12 @@ public final class EdgeClientCore {
          * Reconnect to the next configured fan-out endpoint and re-SUBSCRIBE carrying
          * {@code resumeCursor} as the failover resume cursor (contract §3 failover; the
          * edge keeps refusing cursor-behind reads during catch-up — consistent refusal).
+         * C3 (resubscribe-with-cursor recovery, design §1): {@code resumeCursor} is
+         * normally the current cursor; the ADR-0040 forced re-bootstrap is the ONE case
+         * that carries {@code 0} — the shell must subscribe at the directive's cursor,
+         * not the core's.
          *
-         * @param resumeCursor the applied-mutation seq to resume from (the current cursor)
+         * @param resumeCursor the applied-mutation seq to resume from
          * @param reason       why the reconnect was triggered (diagnostic)
          */
         record ReconnectNextEndpoint(long resumeCursor, String reason)
@@ -115,6 +119,22 @@ public final class EdgeClientCore {
                 if (resumeCursor < 0) {
                     throw new IllegalArgumentException("resumeCursor must be >= 0: " + resumeCursor);
                 }
+                Objects.requireNonNull(reason, "reason must not be null");
+            }
+        }
+
+        /**
+         * ADR-0040 terminal fail-loud: the edge can neither advance (poison seq) nor
+         * re-bootstrap (the forced snapshot failed or was never produced). The shell MUST
+         * exit the process non-zero — an edge serving a state it cannot advance behind a
+         * green health check is the lying-dashboard failure mode; an infinite reconnect
+         * loop is the hot-loop failure mode. {@code configd.edge.poison_pill_terminal}
+         * was already emitted by the policy before this directive was queued.
+         *
+         * @param reason the structured cause (diagnostic; the policy already logged SEVERE)
+         */
+        record TerminalFailure(String reason) implements ConnectionDirective {
+            public TerminalFailure {
                 Objects.requireNonNull(reason, "reason must not be null");
             }
         }
@@ -137,6 +157,7 @@ public final class EdgeClientCore {
     private final DeltaApplier applier;
     private final LocalConfigStore readStore;
     private final FrameSink sink;
+    private final PoisonPillPolicy poisonPolicy;
 
     // --- session state (single-writer) -----------------------------------------------
 
@@ -169,6 +190,53 @@ public final class EdgeClientCore {
     /** True once a fatal ERROR_CLOSE / reconnect was queued, so we do not spam directives. */
     private boolean reconnectPending;
 
+    /**
+     * True while the server has told us a snapshot flow is coming (SUBSCRIBE_OK
+     * SNAPSHOT_FIRST or a DEMOTED_TO_CATCHUP notice) or one is mid-transfer. Suppresses
+     * the C3 gap-resubscribe and DISCONNECTED-rebootstrap directives: the in-flight
+     * snapshot is the heal already in progress (C1's in-session recovery stays primary;
+     * resubscribe-with-cursor recovers the genuinely orphaned cases). Cleared on
+     * SNAPSHOT_END and on {@link #onReconnected()}.
+     */
+    private boolean snapshotExpected;
+
+    /**
+     * The staleness state observed by the previous {@link #tick(long)} on THIS connection
+     * (CT-06): a live-connection transition INTO DISCONNECTED queues the re-bootstrap
+     * resubscribe. Re-baselined in {@link #onReconnected()} so an entry that happened
+     * while disconnected does not bounce a fresh connection before it can heal.
+     */
+    private StalenessTracker.State lastTickStalenessState;
+
+    /** Latched once the poison policy decided TERMINAL: the core stops applying. */
+    private boolean terminal;
+
+    /**
+     * TEST-ONLY apply-fault injector (the ADR-0040 test-the-tester seam; the
+     * {@link #loadSnapshotForced} precedent). Configd stores opaque bytes, so a REAL
+     * deterministic apply-throw cannot be manufactured through the production codec/applier
+     * — which is exactly ADR-0040's point: the poison policy is a defensive net for
+     * defects that do not exist yet. Tests inject the throw here so the PRODUCTION
+     * catch/policy/directive path runs verbatim. Production never sets this.
+     */
+    public interface ApplyFaultInjector {
+        /** Called inside the apply try-block before each notification apply. */
+        default void beforeApply(long seq) { }
+
+        /** Called inside the snapshot try-block before the cutover loads. */
+        default void beforeSnapshotLoad(long snapshotSeq) { }
+    }
+
+    private ApplyFaultInjector applyFaultInjector;
+
+    /**
+     * TEST-ONLY: installs an {@link ApplyFaultInjector} ({@code null} = none). See the
+     * interface javadoc; production never calls this.
+     */
+    public void setApplyFaultInjectorForTest(ApplyFaultInjector injector) {
+        this.applyFaultInjector = injector;
+    }
+
     // --- diagnostic counters (read by tests / sim digest folding) --------------------
 
     private long appliedCount;
@@ -178,6 +246,7 @@ public final class EdgeClientCore {
     private int heartbeatsObserved;
     private int frontierAdvances;
     private int verifyRejections;
+    private int disconnectedRebootstraps;
 
     /**
      * Sim/test constructor: no signature verifier, no epoch persistence (signature rows
@@ -227,6 +296,24 @@ public final class EdgeClientCore {
                           StrongReadKeyClass strongReadKeyClass, FrameSink sink,
                           long heartbeatMs, int silenceFactor,
                           ConfigSigner verifier, Path epochLockDir) {
+        this(clock, invariantMonitor, implausibleCounter, strongReadKeyClass, sink,
+                heartbeatMs, silenceFactor, verifier, epochLockDir, new PoisonPillPolicy());
+    }
+
+    /**
+     * Full constructor with an explicit ADR-0040 {@link PoisonPillPolicy} (C3). The other
+     * constructors default to {@code new PoisonPillPolicy()} (bounded retries
+     * {@value PoisonPillPolicy#DEFAULT_MAX_RETRIES}, no registry counters).
+     *
+     * @param poisonPolicy the apply-failure policy (non-null; the process wires registry
+     *                     counters and the configured {@code edge.poisonpill.maxRetries})
+     */
+    public EdgeClientCore(Clock clock, InvariantMonitor invariantMonitor,
+                          MetricsRegistry.Counter implausibleCounter,
+                          StrongReadKeyClass strongReadKeyClass, FrameSink sink,
+                          long heartbeatMs, int silenceFactor,
+                          ConfigSigner verifier, Path epochLockDir,
+                          PoisonPillPolicy poisonPolicy) {
         this.clock = Objects.requireNonNull(clock, "clock must not be null");
         Objects.requireNonNull(strongReadKeyClass, "strongReadKeyClass must not be null");
         this.sink = Objects.requireNonNull(sink, "sink must not be null");
@@ -238,12 +325,17 @@ public final class EdgeClientCore {
         }
         this.heartbeatMs = heartbeatMs;
         this.silenceFactor = silenceFactor;
+        this.poisonPolicy = Objects.requireNonNull(poisonPolicy, "poisonPolicy must not be null");
         this.client = new EdgeConfigClient(clock, invariantMonitor, implausibleCounter,
                 strongReadKeyClass);
         this.applier = new DeltaApplier(client, verifier, epochLockDir);
         this.readStore = new LocalConfigStore(ConfigSnapshot.EMPTY, clock, invariantMonitor);
         this.cursor = 0L;
         this.lastAckedSeq = 0L;
+        // CT-06 baseline: the boot state IS DISCONNECTED (no frontier yet) — initializing
+        // the transition baseline here means process start never "enters" DISCONNECTED
+        // (bootstrap is C5's territory, not re-bootstrap).
+        this.lastTickStalenessState = client.staleness();
     }
 
     /**
@@ -278,6 +370,11 @@ public final class EdgeClientCore {
      */
     public void onFrame(EdgeFrame frame) {
         Objects.requireNonNull(frame, "frame must not be null");
+        if (terminal) {
+            // ADR-0040 terminal: the core is dead; the shell is about to exit the process.
+            // Applying anything further could mask the wedge the terminal directive reports.
+            return;
+        }
         switch (frame) {
             case EdgeFrame.SubscribeOk ok -> onSubscribeOk(ok);
             case EdgeFrame.Notify n -> onNotify(n);
@@ -297,6 +394,9 @@ public final class EdgeClientCore {
 
     private void onSubscribeOk(EdgeFrame.SubscribeOk ok) {
         this.mode = ok.mode();
+        // SNAPSHOT_FIRST: the server owes us a snapshot — the heal is already in flight,
+        // so the C3 gap/DISCONNECTED resubscribe directives stay suppressed until it lands.
+        this.snapshotExpected = (ok.mode() == EdgeFrame.Mode.SNAPSHOT_FIRST);
         // latestSeq from the handshake seeds the cursor-lag view until the first heartbeat.
         this.lastHeartbeatLatestSeq = ok.latestSeq();
         this.cursorLag = Math.max(0L, ok.latestSeq() - cursor);
@@ -304,7 +404,11 @@ public final class EdgeClientCore {
 
     private void onNotify(EdgeFrame.Notify n) {
         for (CommitNotification notification : n.notifications()) {
-            applyNotification(notification);
+            if (!applyNotification(notification)) {
+                // Apply failure (ADR-0040): the policy decided the recovery; the rest of
+                // the batch would only GAP against the unadvanced cursor — abort it.
+                break;
+            }
         }
         // One CURSOR_ACK per batch for the highest applied seq (the design's per-batch ack).
         // If nothing applied (all gap/stale) the cursor is unchanged and the ack is benign.
@@ -314,28 +418,59 @@ public final class EdgeClientCore {
     /**
      * Applies one verbatim notification through the real {@link DeltaApplier} (gap/stale
      * semantics), mirroring the ADR-0038-filtered delta into the monitor-wired read store.
-     * <p>
-     * The apply-exception surface is left clean for C3 (ADR-0040 poison-pill): a
-     * {@link DeltaApplier#offer} that throws on an apply-time decode defect propagates here
-     * (C3 wraps this site with bounded-retry + re-bootstrap). C2 does not catch it.
+     *
+     * <h4>C3 recovery orchestration (design §1 / C3-1)</h4>
+     * {@code GAP_DETECTED} queues a {@code RECONNECT_RESUBSCRIBE(cursor)} — the server's
+     * already-tested TAIL/SNAPSHOT_FIRST decision then resolves replay-from-the-boundary
+     * vs snapshot re-bootstrap; no new wire surface. Suppressed while a snapshot flow is
+     * already in flight (the C1 in-session heal stays primary).
+     *
+     * <h4>ADR-0040 poison pill (CT-33)</h4>
+     * An apply-time {@link RuntimeException} (the frame VERIFIED; the apply threw) is
+     * routed through the {@link PoisonPillPolicy}: bounded retries via
+     * resubscribe-at-cursor → forced snapshot re-bootstrap (resubscribe at cursor 0) →
+     * terminal fail-loud. An invalid-signature delta is NOT a poison pill — it is
+     * rejected fail-closed by the applier below and never throws.
+     *
+     * @return false if an apply failure occurred and the enclosing batch must be aborted
      */
-    private void applyNotification(CommitNotification notification) {
-        // The applier applies to the client's internal store (ADR-0038 filter + ADR-0039
-        // frontier from the leader commit timestamp) on APPLIED — a single atomic apply.
-        DeltaApplier.ApplyResult result =
-                applier.offer(notification.delta(), notification.commitTimestampMillis());
-        switch (result) {
-            case APPLIED -> {
+    private boolean applyNotification(CommitNotification notification) {
+        DeltaApplier.ApplyResult result;
+        try {
+            if (applyFaultInjector != null) {
+                applyFaultInjector.beforeApply(notification.seq()); // TEST-ONLY (may throw)
+            }
+            // The applier applies to the client's internal store (ADR-0038 filter + ADR-0039
+            // frontier from the leader commit timestamp) on APPLIED — a single atomic apply.
+            result = applier.offer(notification.delta(), notification.commitTimestampMillis());
+            if (result == DeltaApplier.ApplyResult.APPLIED) {
                 // Mirror the SAME ADR-0038-filtered delta into the monitor-wired read store
                 // so it stays byte-identical to the client's internal store and reads route
                 // through the real INV-M1 seam. (filterForStorage is the lockstep contract;
                 // a pure function of the current subscription, so both stores agree.)
                 readStore.applyDelta(client.filterForStorage(notification.delta()));
+            }
+        } catch (RuntimeException e) {
+            actOnPoison(poisonPolicy.onApplyFailure(notification.seq(), e),
+                    "seq=" + notification.seq());
+            return false;
+        }
+        switch (result) {
+            case APPLIED -> {
                 cursor = notification.seq();
                 appliedCount++;
                 refreshCursorLag();
+                poisonPolicy.onProgress(cursor);
             }
-            case GAP_DETECTED -> gapsDetected++;
+            case GAP_DETECTED -> {
+                gapsDetected++;
+                // C3: resubscribe-with-cursor recovery (one directive per wedge; the
+                // reconnectPending latch and an in-flight snapshot suppress spam).
+                if (!reconnectPending && !snapshotExpected && !inSnapshot) {
+                    queueReconnect(cursor,
+                            "gap-detected:cursor=" + cursor + ",seq=" + notification.seq());
+                }
+            }
             case STALE_DELTA -> {
                 // Re-delivered/older notification: recorded, not applied. Cursor unchanged
                 // — never a stale overwrite (contract §3 INV-M1 / §4 monotonicity).
@@ -344,8 +479,29 @@ public final class EdgeClientCore {
             // contiguous; the content failed verification). Counted on its own series so
             // edge_gaps_total stays an honest gap signal — the cursor does not advance, so
             // the server's ack-lag eventually demotes + re-snapshots a persistently
-            // rejecting edge.
+            // rejecting edge. Deliberately NOT a poison pill (ADR-0040: fail-closed halt
+            // + the ADR-0039 staleness ladder surface it).
             case UNSIGNED_REJECTED, SIGNATURE_INVALID, REPLAY_REJECTED -> verifyRejections++;
+        }
+        return true;
+    }
+
+    /** Translates a {@link PoisonPillPolicy.Action} into the shell-visible directive. */
+    private void actOnPoison(PoisonPillPolicy.Action action, String what) {
+        switch (action) {
+            // Bounded retry: re-subscribe at the CURRENT cursor; the server redelivers the
+            // failing seq (heals a transient apply failure).
+            case RESUBSCRIBE -> queueReconnect(cursor, "poison-retry:" + what);
+            // Quarantined: forced snapshot re-bootstrap — resubscribe at cursor 0 (the ONE
+            // use of cursor 0; ADR-0040). The server's decideMode sends SNAPSHOT_FIRST
+            // whenever the ring has evicted or the backlog exceeds the bounded queue; the
+            // snapshot's cumulative state covers the poison seq, so it is never re-applied.
+            case REBOOTSTRAP -> queueReconnect(0L, "poison-rebootstrap:" + what);
+            case TERMINAL -> {
+                terminal = true;
+                directives.add(new ConnectionDirective.TerminalFailure(
+                        "poison-pill-terminal:" + what));
+            }
         }
     }
 
@@ -369,29 +525,50 @@ public final class EdgeClientCore {
             throw new IllegalStateException("SNAPSHOT_END received outside a snapshot transfer");
         }
         long seq = e.snapshotSeq();
-        // Reassemble + deserialize the ADR-0028 body (bounds-checked by the codec).
-        byte[] body = EdgeSnapshotCodec.reassemble(pendingChunks);
-        ConfigSnapshot snapshot = EdgeSnapshotCodec.deserialize(body);
-        inSnapshot = false;
-        pendingChunks.clear();
-        pendingSnapshotSeq = -1L;
+        try {
+            // Reassemble + deserialize the ADR-0028 body (bounds-checked by the codec).
+            byte[] body = EdgeSnapshotCodec.reassemble(pendingChunks);
+            ConfigSnapshot snapshot = EdgeSnapshotCodec.deserialize(body);
+            inSnapshot = false;
+            pendingChunks.clear();
+            pendingSnapshotSeq = -1L;
+            snapshotExpected = false;
 
-        // C1(a) fix: REFUSE a backward snapshot (seq < cursor) — the edge never regresses.
-        // Re-ack the real (higher) cursor so the server's ack-lag clears and it stops
-        // re-sending the stale snapshot.
-        if (seq < cursor) {
-            backwardSnapshotsRefused++;
-            ackCursor();
+            // C1(a) fix: REFUSE a backward snapshot (seq < cursor) — the edge never regresses.
+            // Re-ack the real (higher) cursor so the server's ack-lag clears and it stops
+            // re-sending the stale snapshot.
+            if (seq < cursor) {
+                backwardSnapshotsRefused++;
+                ackCursor();
+                return;
+            }
+
+            if (applyFaultInjector != null) {
+                applyFaultInjector.beforeSnapshotLoad(seq); // TEST-ONLY (may throw)
+            }
+            // Atomic cutover: loadSnapshot wholesale + resetGap; cursor = snapshot seq.
+            // (If the second load were ever to throw after the first succeeded, the two
+            // stores would diverge transiently — the catch below routes that through the
+            // ADR-0040 policy, whose recovery is a wholesale re-load of BOTH stores or a
+            // terminal exit; divergence cannot survive a successful recovery.)
+            snapshotsApplied++;
+            client.loadSnapshot(snapshot);
+            readStore.loadSnapshot(snapshot);
+            applier.resetGap();
+            cursor = seq;
+            refreshCursorLag();
+            poisonPolicy.onProgress(cursor);
+        } catch (RuntimeException ex) {
+            // ADR-0040: a snapshot that fails to reassemble/apply. During a forced
+            // re-bootstrap this is the terminal condition verbatim; otherwise it gets the
+            // bounded-retry ladder (the server re-sends — C1's self-healing transfer).
+            inSnapshot = false;
+            pendingChunks.clear();
+            pendingSnapshotSeq = -1L;
+            snapshotExpected = false;
+            actOnPoison(poisonPolicy.onSnapshotApplyFailure(seq, ex), "snapshotSeq=" + seq);
             return;
         }
-
-        // Atomic cutover: loadSnapshot wholesale + resetGap; cursor = snapshot seq.
-        snapshotsApplied++;
-        client.loadSnapshot(snapshot);
-        readStore.loadSnapshot(snapshot);
-        applier.resetGap();
-        cursor = seq;
-        refreshCursorLag();
         ackCursor();
     }
 
@@ -411,11 +588,12 @@ public final class EdgeClientCore {
 
     private void onErrorClose(EdgeFrame.ErrorClose err) {
         switch (err.code()) {
-            case DEMOTED_TO_CATCHUP -> {
+            case DEMOTED_TO_CATCHUP ->
                 // Informational: a snapshot flow follows (the server demoted us to catch-up).
-                // No reconnect — the session continues; the snapshot heals the cursor.
-            }
-            default -> queueReconnect("error-close:" + err.code());
+                // No reconnect — the session continues; the snapshot heals the cursor. The
+                // owed snapshot suppresses the C3 gap/DISCONNECTED resubscribe directives.
+                snapshotExpected = true;
+            default -> queueReconnect(cursor, "error-close:" + err.code());
         }
     }
 
@@ -435,6 +613,9 @@ public final class EdgeClientCore {
      *                  pure function of the argument and deterministic in the sim)
      */
     public void tick(long nowMillis) {
+        if (terminal) {
+            return; // ADR-0040 terminal: the shell is about to exit the process.
+        }
         // Re-ack on advance (idempotent; covers an earlier would-block ack).
         if (cursor > lastAckedSeq) {
             ackCursor();
@@ -445,9 +626,26 @@ public final class EdgeClientCore {
         if (!reconnectPending && lastHeartbeatAtMillis >= 0) {
             long silentFor = nowMillis - lastHeartbeatAtMillis;
             if (silentFor > silenceFactor * heartbeatMs) {
-                queueReconnect("heartbeat-silence:" + silentFor + "ms");
+                queueReconnect(cursor, "heartbeat-silence:" + silentFor + "ms");
             }
         }
+
+        // CT-06 (C3): a live-connection transition INTO DISCONNECTED queues the
+        // re-bootstrap resubscribe at the CURRENT cursor (NOT 0 — the server's
+        // TAIL/SNAPSHOT_FIRST decision picks replay vs re-bootstrap; cursor 0 is reserved
+        // for the poison terminal path, design §1.3). Entry-edge-triggered so a wedged
+        // session fires once per entry, not per tick; suppressed while a snapshot flow is
+        // already healing us. The boot state is DISCONNECTED and the baseline is seeded at
+        // construction/reconnect, so a fresh bootstrap never fires this (that is C5's
+        // bootstrap, not a re-bootstrap).
+        StalenessTracker.State state = client.staleness();
+        if (state == StalenessTracker.State.DISCONNECTED
+                && lastTickStalenessState != StalenessTracker.State.DISCONNECTED
+                && !reconnectPending && !snapshotExpected && !inSnapshot) {
+            disconnectedRebootstraps++;
+            queueReconnect(cursor, "disconnected-rebootstrap:stalenessMs=" + stalenessMs());
+        }
+        lastTickStalenessState = state;
     }
 
     private void ackCursor() {
@@ -462,8 +660,8 @@ public final class EdgeClientCore {
         cursorLag = Math.max(0L, lastHeartbeatLatestSeq - cursor);
     }
 
-    private void queueReconnect(String reason) {
-        directives.add(new ConnectionDirective.ReconnectNextEndpoint(cursor, reason));
+    private void queueReconnect(long resumeCursor, String reason) {
+        directives.add(new ConnectionDirective.ReconnectNextEndpoint(resumeCursor, reason));
         reconnectPending = true;
     }
 
@@ -491,6 +689,12 @@ public final class EdgeClientCore {
     public void onReconnected() {
         reconnectPending = false;
         lastHeartbeatAtMillis = -1L; // fresh connection: silence window restarts after first hb
+        // A snapshot owed by the PREVIOUS session died with it; the new session decides anew.
+        snapshotExpected = false;
+        // CT-06: re-baseline the DISCONNECTED entry detector to the state at reconnect, so
+        // an entry that happened while disconnected does not bounce the fresh connection
+        // before it can heal — only a transition OBSERVED LIVE on this connection fires.
+        lastTickStalenessState = client.staleness();
     }
 
     /**
@@ -607,5 +811,36 @@ public final class EdgeClientCore {
     /** True if a snapshot transfer is in progress (between BEGIN and END). */
     public boolean inSnapshot() {
         return inSnapshot;
+    }
+
+    /**
+     * Number of CT-06 DISCONNECTED-entry re-bootstrap resubscribes this core has queued
+     * (the live-connection trigger; the process-level trigger is the metrics pump's).
+     */
+    public int disconnectedRebootstraps() {
+        return disconnectedRebootstraps;
+    }
+
+    /** The ADR-0040 poison-pill policy (counter reads for the metrics pump / tests). */
+    public PoisonPillPolicy poisonPolicy() {
+        return poisonPolicy;
+    }
+
+    /** True once the ADR-0040 policy decided TERMINAL (the core stops applying). */
+    public boolean isTerminal() {
+        return terminal;
+    }
+
+    /**
+     * True iff this edge's store is authoritative for {@code key} (ADR-0040 §2 / ADR-0038):
+     * the subscription is full-store, or the key matches a subscribed prefix. Within the
+     * subscription a store miss IS authoritative non-existence (the negative-caching
+     * descope's premise); outside it the read surface must refuse with
+     * {@code X-Configd-Refused: not-subscribed} instead of consulting the store.
+     * (Strong-read keys are always stored but never served — the serving surface checks
+     * that FIRST; this predicate is the subscription slice only.)
+     */
+    public boolean servesKey(String key) {
+        return client.servesKey(key);
     }
 }

@@ -1,6 +1,7 @@
 package io.configd.edge.node;
 
 import io.configd.edge.EdgeClientCore;
+import io.configd.edge.PoisonPillPolicy;
 import io.configd.edge.StalenessTracker;
 import io.configd.observability.MetricsRegistry;
 
@@ -54,6 +55,8 @@ final class EdgeNodeMetrics {
     static final String REASON_CURSOR_BEHIND = "cursor_behind";
     /** Refusal reason: strong-read fail-close (CT-37). */
     static final String REASON_STRONG_READ = "strong_read";
+    /** Refusal reason: key outside the subscribed slice (ADR-0040 §2 / ADR-0038). */
+    static final String REASON_NOT_SUBSCRIBED = "not_subscribed";
 
     private final MetricsRegistry registry;
 
@@ -64,6 +67,10 @@ final class EdgeNodeMetrics {
     private final MetricsRegistry.Counter reads;
     private final MetricsRegistry.Counter refusalsCursorBehind;
     private final MetricsRegistry.Counter refusalsStrongRead;
+    private final MetricsRegistry.Counter refusalsNotSubscribed;
+    private final MetricsRegistry.Counter poisonRetries;
+    private final MetricsRegistry.Counter poisonPill;
+    private final MetricsRegistry.Counter poisonTerminal;
     private final MetricsRegistry.Counter reconnects;
     private final MetricsRegistry.Counter stalenessViolations;
     private final MetricsRegistry.Counter rebootstrapTriggered;
@@ -88,6 +95,13 @@ final class EdgeNodeMetrics {
         this.reads = registry.counter("edge.reads");
         this.refusalsCursorBehind = registry.counter("edge.read_refusals." + REASON_CURSOR_BEHIND);
         this.refusalsStrongRead = registry.counter("edge.read_refusals." + REASON_STRONG_READ);
+        this.refusalsNotSubscribed =
+                registry.counter("edge.read_refusals." + REASON_NOT_SUBSCRIBED);
+        // ADR-0040 (C3): handed to the PoisonPillPolicy, which increments them directly
+        // on its single-writer path (no pump needed); eager so the series exist at scrape 0.
+        this.poisonRetries = registry.counter(PoisonPillPolicy.RETRIES_METRIC);
+        this.poisonPill = registry.counter(PoisonPillPolicy.POISON_PILL_METRIC);
+        this.poisonTerminal = registry.counter(PoisonPillPolicy.TERMINAL_METRIC);
         this.reconnects = registry.counter("edge.reconnects");
         // CT-04: the contract names this series with the configd. prefix verbatim.
         this.stalenessViolations = registry.counter("configd.edge.staleness_violation");
@@ -100,6 +114,21 @@ final class EdgeNodeMetrics {
     /** The CT-08 implausible-frontier counter to hand to {@link EdgeClientCore}'s constructor. */
     MetricsRegistry.Counter implausibleCounter() {
         return implausible;
+    }
+
+    /** The ADR-0040 retry counter ({@code edge_poison_retries_total}) for the policy. */
+    MetricsRegistry.Counter poisonRetriesCounter() {
+        return poisonRetries;
+    }
+
+    /** The ADR-0040 quarantine counter ({@code configd_edge_poison_pill_total}). */
+    MetricsRegistry.Counter poisonPillCounter() {
+        return poisonPill;
+    }
+
+    /** The ADR-0040 terminal counter ({@code configd_edge_poison_pill_terminal_total}). */
+    MetricsRegistry.Counter poisonTerminalCounter() {
+        return poisonTerminal;
     }
 
     /**
@@ -169,6 +198,7 @@ final class EdgeNodeMetrics {
         switch (reason) {
             case REASON_CURSOR_BEHIND -> refusalsCursorBehind.increment();
             case REASON_STRONG_READ -> refusalsStrongRead.increment();
+            case REASON_NOT_SUBSCRIBED -> refusalsNotSubscribed.increment();
             default -> throw new IllegalArgumentException("unknown refusal reason: " + reason);
         }
     }

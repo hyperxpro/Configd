@@ -409,6 +409,135 @@ class EdgeClientCoreTest {
     }
 
     // -----------------------------------------------------------------------
+    // C3: gap → resubscribe-with-cursor (design §1 / screen C3-1; CT-16 orchestration)
+    // -----------------------------------------------------------------------
+
+    @Nested
+    class GapResubscribeDirective {
+
+        @Test
+        void gapQueuesResubscribeAtCurrentCursorOnce() {
+            core.onFrame(new EdgeFrame.Notify(List.of(notif(1, 0, 1, clock.timeMs, "a", "1"))));
+            // Seqs 2..4 were lost: the next notification gaps (fromVersion 4 != 1).
+            core.onFrame(new EdgeFrame.Notify(List.of(notif(5, 4, 5, clock.timeMs, "a", "5"))));
+
+            assertEquals(1, core.gapsDetected());
+            var r = (EdgeClientCore.ConnectionDirective.ReconnectNextEndpoint) core.pollDirective();
+            assertNotNull(r, "a detected gap must queue the resubscribe recovery");
+            assertEquals(1, r.resumeCursor(),
+                    "resubscribe carries the CURRENT cursor — the server's TAIL/SNAPSHOT_FIRST "
+                            + "decision resolves replay vs re-bootstrap (no new wire surface)");
+            assertTrue(r.reason().startsWith("gap-detected:"), r.reason());
+
+            // A second gapped notification does not spam a second directive (latch).
+            core.onFrame(new EdgeFrame.Notify(List.of(notif(6, 5, 6, clock.timeMs, "a", "6"))));
+            assertEquals(2, core.gapsDetected());
+            assertFalse(core.hasDirective(), "one directive per wedge (reconnectPending latch)");
+        }
+
+        @Test
+        void gapIsSuppressedWhileAServerSnapshotIsAlreadyHealingUs() {
+            core.onFrame(new EdgeFrame.Notify(List.of(notif(1, 0, 1, clock.timeMs, "a", "1"))));
+            // The server demoted us: a snapshot flow is owed — the in-session C1 heal is
+            // already in progress, so a racing gap must NOT bounce the connection.
+            core.onFrame(new EdgeFrame.ErrorClose(ErrorCode.DEMOTED_TO_CATCHUP, "ack-lag"));
+            core.onFrame(new EdgeFrame.Notify(List.of(notif(5, 4, 5, clock.timeMs, "a", "5"))));
+
+            assertEquals(1, core.gapsDetected());
+            assertFalse(core.hasDirective(), "gap suppressed while a snapshot is in flight");
+
+            // The owed snapshot lands; a LATER gap (new wedge) queues the recovery again.
+            for (EdgeFrame f : snapshotFrames(snapshot(5, "a", "5"), 5)) {
+                core.onFrame(f);
+            }
+            core.onFrame(new EdgeFrame.Notify(List.of(notif(9, 8, 9, clock.timeMs, "a", "9"))));
+            assertTrue(core.hasDirective(), "after the snapshot lands the recovery re-arms");
+            var r = (EdgeClientCore.ConnectionDirective.ReconnectNextEndpoint) core.pollDirective();
+            assertEquals(5, r.resumeCursor());
+        }
+
+        @Test
+        void snapshotFirstModeSuppressesTheGapDirectiveUntilTheSnapshotLands() {
+            core.onFrame(new EdgeFrame.SubscribeOk(10, EdgeFrame.Mode.SNAPSHOT_FIRST));
+            core.onFrame(new EdgeFrame.Notify(List.of(notif(9, 8, 9, clock.timeMs, "a", "9"))));
+            assertFalse(core.hasDirective(),
+                    "SNAPSHOT_FIRST handshake promises a snapshot — no resubscribe churn");
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // C3 / CT-06: DISCONNECTED entry → re-bootstrap resubscribe at the current cursor
+    // -----------------------------------------------------------------------
+
+    @Nested
+    class DisconnectedRebootstrapDirective {
+
+        @Test
+        void liveTransitionIntoDisconnectedQueuesResubscribeAtCurrentCursor() {
+            // Frontier established (CURRENT) and observed by a tick.
+            core.onFrame(new EdgeFrame.Notify(List.of(notif(1, 0, 1, clock.timeMs, "a", "1"))));
+            core.tick(clock.currentTimeMillis());
+            assertEquals(StalenessTracker.State.CURRENT, core.stalenessState());
+            assertFalse(core.hasDirective());
+
+            // The frontier stalls past the DISCONNECTED threshold (30s) with NO heartbeat
+            // ever seen (so this is not the silence detector firing).
+            clock.advance(31_000);
+            core.tick(clock.currentTimeMillis());
+
+            assertEquals(StalenessTracker.State.DISCONNECTED, core.stalenessState());
+            assertEquals(1, core.disconnectedRebootstraps());
+            var r = (EdgeClientCore.ConnectionDirective.ReconnectNextEndpoint) core.pollDirective();
+            assertNotNull(r);
+            assertEquals(1, r.resumeCursor(),
+                    "CT-06: re-bootstrap resubscribes at the CURRENT cursor, NOT 0 — the "
+                            + "server decides; cursor 0 is reserved for the poison terminal path");
+            assertTrue(r.reason().startsWith("disconnected-rebootstrap:"), r.reason());
+
+            // Staying DISCONNECTED does not re-fire (entry-edge semantics).
+            core.onReconnected();
+            clock.advance(1_000);
+            core.tick(clock.currentTimeMillis());
+            assertFalse(core.hasDirective(),
+                    "re-baselined at reconnect: an entry observed while disconnected must "
+                            + "not bounce the fresh connection");
+            assertEquals(1, core.disconnectedRebootstraps());
+        }
+
+        @Test
+        void bootStateNeverFiresTheRebootstrap() {
+            // The boot state IS DISCONNECTED (no frontier yet): process start is C5's
+            // bootstrap, not a re-bootstrap — ticking an idle fresh core fires nothing.
+            assertEquals(StalenessTracker.State.DISCONNECTED, core.stalenessState());
+            for (int i = 0; i < 5; i++) {
+                clock.advance(10_000);
+                core.tick(clock.currentTimeMillis());
+            }
+            assertFalse(core.hasDirective());
+            assertEquals(0, core.disconnectedRebootstraps());
+        }
+
+        @Test
+        void recoveryReArmsAfterTheEdgeHealsToCurrent() {
+            core.onFrame(new EdgeFrame.Notify(List.of(notif(1, 0, 1, clock.timeMs, "a", "1"))));
+            core.tick(clock.currentTimeMillis());
+            clock.advance(31_000);
+            core.tick(clock.currentTimeMillis());
+            assertEquals(1, core.disconnectedRebootstraps());
+            core.pollDirective();
+            core.onReconnected();
+
+            // Heals (fresh apply advances the frontier), then stalls again → re-fires.
+            core.onFrame(new EdgeFrame.Notify(List.of(notif(2, 1, 2, clock.timeMs, "a", "2"))));
+            core.tick(clock.currentTimeMillis());
+            assertEquals(StalenessTracker.State.CURRENT, core.stalenessState());
+            clock.advance(31_000);
+            core.tick(clock.currentTimeMillis());
+            assertEquals(2, core.disconnectedRebootstraps(), "one firing per DISCONNECTED entry");
+        }
+    }
+
+    // -----------------------------------------------------------------------
     // ERROR_CLOSE
     // -----------------------------------------------------------------------
 

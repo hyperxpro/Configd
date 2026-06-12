@@ -101,7 +101,7 @@ class EdgeNodeIntegrationTest {
                 .toList();
         EdgeNodeConfig cfg = new EdgeNodeConfig(id, endpoints, 0,
                 tempDir.resolve(id + "-data"), verifyKey, List.of(),
-                null, null, null, 50L, EdgeNodeConfig.DEFAULT_HEARTBEAT_SILENCE_FACTOR);
+                null, null, null, 50L, EdgeNodeConfig.DEFAULT_HEARTBEAT_SILENCE_FACTOR, EdgeNodeConfig.DEFAULT_POISON_MAX_RETRIES);
         return EdgeNodeMain.start(cfg);
     }
 

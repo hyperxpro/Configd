@@ -49,7 +49,12 @@ import java.util.concurrent.Executors;
  *   <li><b>strong-read keys (CT-37, store-and-never-serve)</b>: 503 +
  *       {@code X-Fail-Closed: strong-read} before the store is consulted — the value is
  *       stored (ADR-0038 suppression detectability) but never served from bounded-stale
- *       edge state; clients go to the control plane's linearizable path (RR-020).</li>
+ *       edge state; clients go to the control plane's linearizable path (RR-020);</li>
+ *   <li><b>not-subscribed keys (ADR-0040 §2, C3)</b>: 404 +
+ *       {@code X-Configd-Refused: not-subscribed} before the store is consulted — within
+ *       the subscribed slice a miss IS authoritative non-existence (the negative-caching
+ *       descope), outside it this edge has no authoritative answer and says so
+ *       distinctly.</li>
  * </ul>
  *
  * <h2>Hot-path honesty (CT-34)</h2>
@@ -162,6 +167,20 @@ public final class EdgeHttpServer {
                         "Fail-closed: strong-read key '" + key + "' is never served from "
                                 + "bounded-stale edge state (RR-020 / ADR-0038); use the "
                                 + "control plane's linearizable read path");
+                return;
+            }
+
+            // ADR-0040 §2 (the negative-caching descope's premise): WITHIN the subscribed
+            // slice a store miss IS authoritative non-existence; OUTSIDE it the read is
+            // refused with a DISTINCT reason before the store is consulted — never an
+            // ambiguous 404 a client could mistake for non-existence.
+            if (!core.servesKey(key)) {
+                metrics.onReadRefused(EdgeNodeMetrics.REASON_NOT_SUBSCRIBED);
+                exchange.getResponseHeaders().set(HDR_REFUSED, "not-subscribed");
+                sendText(exchange, 404,
+                        "Refused: key '" + key + "' is outside this edge's subscribed "
+                                + "prefixes (ADR-0038 storage filter); this edge holds no "
+                                + "authoritative answer for it");
                 return;
             }
 

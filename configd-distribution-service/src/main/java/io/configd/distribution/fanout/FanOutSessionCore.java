@@ -130,11 +130,11 @@ public final class FanOutSessionCore {
      * SNAPSHOT_FIRST decision:
      * <ul>
      *   <li><b>SNAPSHOT_FIRST</b> if {@code readSince(cursor)} would GAP (the cursor is
-     *       behind the cache tail), OR a fresh subscriber ({@code cursor == 0}) whose
-     *       backlog ({@code latestSeq - oldestSeq + 1}) exceeds {@code queueFrames} (the
-     *       snapshot is cheaper than streaming the whole backlog within the bounded
-     *       queue — design §4: "cursor==0 &amp;&amp; snapshot smaller than backlog").</li>
-     *   <li><b>TAIL</b> otherwise (the cursor is recoverable from the tail).</li>
+     *       behind the cache tail — beyond the replay horizon), OR the subscriber is
+     *       fresh/cache-less ({@code cursor == 0}) and any data exists (C3: tail-replaying
+     *       history to a cache-less subscriber is unsafe — see {@code decideMode}; this
+     *       supersedes C1's backlog-vs-queueFrames refinement).</li>
+     *   <li><b>TAIL</b> otherwise (the cursor is recoverable from the retained tail).</li>
      * </ul>
      * On SNAPSHOT_FIRST the snapshot transfer is performed on the next {@link #tick(long)}
      * (the session enters {@link SessionState#CATCHUP}).
@@ -158,6 +158,14 @@ public final class FanOutSessionCore {
         long latest = source.latestSeq();
         EdgeFrame.Mode mode = decideMode(cursor, latest);
 
+        // C3 observability (charter §6 rule 8): the replay-vs-re-bootstrap decision and
+        // its input. horizonDistance = cursor − (oldest − 1): ≥ 0 ⇒ the cursor is at or
+        // above the replay-horizon edge (tail-recoverable); < 0 ⇒ beyond it. Empty ring
+        // (oldest < 0) ⇒ nothing evicted yet — report cursor + 1 (trivially recoverable).
+        long oldest = source.oldestSeq();
+        long horizonDistance = (oldest < 0) ? cursor + 1 : cursor - (oldest - 1);
+        metrics.onSubscribeMode(mode == EdgeFrame.Mode.SNAPSHOT_FIRST, horizonDistance);
+
         emit(new EdgeFrame.SubscribeOk(latest, mode));
         if (mode == EdgeFrame.Mode.SNAPSHOT_FIRST) {
             state = SessionState.CATCHUP;
@@ -177,11 +185,21 @@ public final class FanOutSessionCore {
             return EdgeFrame.Mode.SNAPSHOT_FIRST;
         }
         if (cursor == 0) {
-            long oldest = source.oldestSeq();
-            long backlog = (oldest < 0) ? 0 : (latest - oldest + 1);
-            if (backlog > config.queueFrames()) {
-                return EdgeFrame.Mode.SNAPSHOT_FIRST;
-            }
+            // C3 (supersedes C1's backlog>queueFrames refinement): a cursor-0 subscriber
+            // ALWAYS gets a snapshot when any data exists. Two recovery wedges proved
+            // tail-replaying history to a cache-less subscriber unsafe:
+            //  1. SEC-017 epoch floor (CT-13, found by MonotonicReadAcrossEdgeRestartTest):
+            //     a RESTARTED edge persists its highest-seen signing epoch (epoch.lock) and
+            //     — correctly, by design — REJECTS every redelivered old-epoch delta as a
+            //     replay. A TAIL decision therefore wedges it at version 0 behind the
+            //     production ack-lag threshold (8192 seqs). The server cannot observe the
+            //     subscriber's epoch floor; the snapshot (unsigned cumulative state,
+            //     monotonic-version-guarded) is always epoch-safe.
+            //  2. Ring genesis: after a server restart the ring retains only seqs > the
+            //     restored version V, so readSince(0) returns a run that does NOT start at
+            //     genesis — a TAIL would gap at the edge immediately.
+            // A fresh bootstrap via snapshot+cutover is also exactly C5's mechanism.
+            return EdgeFrame.Mode.SNAPSHOT_FIRST;
         }
         return EdgeFrame.Mode.TAIL;
     }

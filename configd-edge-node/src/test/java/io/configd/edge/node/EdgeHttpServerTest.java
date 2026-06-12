@@ -241,6 +241,31 @@ class EdgeHttpServerTest {
     }
 
     @Test
+    void notSubscribedKeyRefusesDistinctlyWhileInSliceMissIsAuthoritative() throws Exception {
+        // ADR-0040 §2 (C3): prefix-subscribed edge — out-of-slice reads refuse with a
+        // distinct reason BEFORE the store is consulted; in-slice misses are authoritative.
+        core.addSubscription("svc/");
+        apply(1, "svc/a", "v1");
+
+        HttpResponse<String> refused = get("/v1/config/other/x");
+        assertEquals(404, refused.statusCode());
+        assertEquals("not-subscribed",
+                refused.headers().firstValue(EdgeHttpServer.HDR_REFUSED).orElse("missing"));
+        assertEquals(1, registry.counter("edge.read_refusals.not_subscribed").get());
+
+        HttpResponse<String> miss = get("/v1/config/svc/absent");
+        assertEquals(404, miss.statusCode());
+        assertTrue(miss.headers().firstValue(EdgeHttpServer.HDR_REFUSED).isEmpty(),
+                "an in-slice miss is authoritative non-existence, not a refusal");
+
+        // Strong-read keys take precedence over the subscription check (503, never 404).
+        HttpResponse<String> strong = get("/v1/config/secure/x");
+        assertEquals(503, strong.statusCode());
+        assertEquals(1, registry.counter("edge.read_refusals.not_subscribed").get(),
+                "the strong-read refusal is its own series, not not_subscribed");
+    }
+
+    @Test
     void metricsEndpointExportsTheContractualSeries() throws Exception {
         apply(1, "svc/a", "v1");
         get("/v1/config/svc/a");
@@ -251,6 +276,9 @@ class EdgeHttpServerTest {
                 "edge_cursor_lag", "edge_applied_total", "edge_gaps_total",
                 "edge_snapshots_applied_total", "edge_reads_total",
                 "edge_read_refusals_cursor_behind_total", "edge_read_refusals_strong_read_total",
+                "edge_read_refusals_not_subscribed_total",
+                "edge_poison_retries_total", "configd_edge_poison_pill_total",
+                "configd_edge_poison_pill_terminal_total",
                 "edge_reconnects_total", "edge_rebootstrap_triggered_total",
                 "edge_verify_rejections_total")) {
             assertTrue(text.lines().anyMatch(l -> l.startsWith(series + " ")),

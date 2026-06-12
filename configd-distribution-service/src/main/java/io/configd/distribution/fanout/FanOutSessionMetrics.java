@@ -66,6 +66,26 @@ public interface FanOutSessionMetrics {
      */
     void onSessionClosed(String reason);
 
+    /**
+     * The subscribe-time replay-vs-re-bootstrap decision (C3; charter §6 rule 8 — the
+     * decision AND its input are observable). Series
+     * {@code edge_fanout_subscribe_tail_total} /
+     * {@code edge_fanout_subscribe_snapshot_first_total} (per-reason-suffix convention; the
+     * registry has no label support) and {@code edge_fanout_subscribe_horizon_distance}
+     * (gauge: the last decision's distance).
+     * <p>
+     * {@code horizonDistance = cursor − (oldestRetainedSeq − 1)}: how far ABOVE the replay
+     * horizon's edge the subscriber's cursor sits. {@code >= 0} ⇒ tail-recoverable (replay
+     * from the boundary ring); {@code < 0} ⇒ beyond the horizon (snapshot re-bootstrap).
+     * An empty ring reports {@code cursor + 1} (nothing evicted — trivially recoverable).
+     * <p>
+     * A {@code default} no-op so existing sinks ({@link #NOOP}, the sim) are unaffected.
+     *
+     * @param snapshotFirst   true ⇒ SNAPSHOT_FIRST was chosen, false ⇒ TAIL
+     * @param horizonDistance the cursor's distance above the replay-horizon edge
+     */
+    default void onSubscribeMode(boolean snapshotFirst, long horizonDistance) { }
+
     /** No-op sink — the default for tests and any wiring that does not export metrics. */
     FanOutSessionMetrics NOOP = new FanOutSessionMetrics() {
         @Override public void onNotifyBatch(int n, int bytes) { }

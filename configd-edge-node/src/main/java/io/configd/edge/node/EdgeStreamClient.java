@@ -67,13 +67,25 @@ import java.util.logging.Logger;
  * jittered ({@code edge.reconnect.backoffMs} base, doubling to {@value #MAX_BACKOFF_MS} ms
  * cap, ±50% jitter).
  *
- * <h2>Apply-path exceptions (C3 seam)</h2>
- * A throwing {@code core.onFrame} (protocol-state violation, snapshot decode defect,
- * apply-time defect) is treated as connection-fatal: logged, counted as a reconnect, and the
- * session re-subscribes at the current cursor. A delta that deterministically throws on
- * apply will therefore loop (visible: {@code edge_reconnects_total} climbing,
- * {@code edge_cursor_lag} growing) — the bounded-retry → forced-snapshot → terminal
- * fail-loud poison-pill policy is C3's (ADR-0040), wired at exactly this catch site.
+ * <h2>ADR-0040 poison pill (C3 — replaces the old connection-fatal catch)</h2>
+ * Apply/snapshot failures no longer escape {@code core.onFrame}: the core's
+ * {@link io.configd.edge.PoisonPillPolicy} converts them into directives — bounded
+ * retries (resubscribe-at-cursor), then a forced snapshot re-bootstrap (resubscribe at
+ * cursor 0), then {@link EdgeClientCore.ConnectionDirective.TerminalFailure}: this shell
+ * logs the structured SEVERE event, stops, and runs the injected {@code terminalAction}
+ * ({@code EdgeNodeMain} wires {@code System.exit} non-zero — never an infinite hot loop,
+ * never a lying green health check). The resume cursor is derived from core state at
+ * SUBSCRIBE time ({@code quarantined ⇒ 0, else core.cursor()}) so a connect failure
+ * mid-recovery cannot lose the forced re-bootstrap. The {@code RuntimeException} catch in
+ * the session loop remains only as a backstop for non-apply protocol-state defects.
+ *
+ * <h2>DISCONNECTED re-bootstrap (CT-06, C3)</h2>
+ * {@link #requestRebootstrap(String)} is the real orchestration behind the C2 trigger
+ * seam: on each transition INTO DISCONNECTED (detected by
+ * {@link EdgeNodeMetrics#syncFromCore} — also while no connection exists), the live
+ * connection (if any) is torn down and any backoff in progress is cut short, so the
+ * client re-SUBSCRIBEs immediately at its current cursor and the server's
+ * TAIL/SNAPSHOT_FIRST decision resolves replay vs re-bootstrap.
  */
 public final class EdgeStreamClient implements AutoCloseable {
 
@@ -106,8 +118,11 @@ public final class EdgeStreamClient implements AutoCloseable {
     private final Clock clock;
     private final EdgeNodeMetrics metrics;
     private final Runnable rebootstrapHook;
+    private final Runnable terminalAction;
 
     private final AtomicBoolean running = new AtomicBoolean(false);
+    /** Set by {@link #requestRebootstrap}; cuts a backoff short (cleared when honored). */
+    private volatile boolean rebootstrapRequested;
     private volatile Connection current;
     private volatile Thread sessionThread;
     private EdgeClientCore core; // set in start(); touched only by the session thread after
@@ -123,13 +138,19 @@ public final class EdgeStreamClient implements AutoCloseable {
      *                        transport-silence guard (no frame at all since subscribe)
      * @param clock           the wall clock (the core's tick clock)
      * @param metrics         the process metric series
-     * @param rebootstrapHook the DISCONNECTED re-bootstrap trigger seam (C3 orchestrates;
-     *                        may be a no-op)
+     * @param rebootstrapHook an ADDITIONAL observer invoked on each DISCONNECTED entry
+     *                        (tests inject recorders; may be null). The C3 orchestration
+     *                        ({@link #requestRebootstrap}) ALWAYS runs first — the hook
+     *                        composes, it does not replace.
+     * @param terminalAction  the ADR-0040 terminal fail-loud action (non-null;
+     *                        {@code EdgeNodeMain} wires a non-zero {@code System.exit},
+     *                        tests inject recorders)
      */
     public EdgeStreamClient(List<InetSocketAddress> endpoints, String edgeId,
                             List<String> prefixes, TlsManager tlsManager,
                             long backoffBaseMs, int silenceFactor,
-                            Clock clock, EdgeNodeMetrics metrics, Runnable rebootstrapHook) {
+                            Clock clock, EdgeNodeMetrics metrics, Runnable rebootstrapHook,
+                            Runnable terminalAction) {
         this.endpoints = List.copyOf(Objects.requireNonNull(endpoints, "endpoints"));
         if (this.endpoints.isEmpty()) {
             throw new IllegalArgumentException("at least one endpoint is required");
@@ -147,7 +168,44 @@ public final class EdgeStreamClient implements AutoCloseable {
         this.silenceWindowMs = silenceFactor * EdgeClientCore.DEFAULT_HEARTBEAT_MS;
         this.clock = Objects.requireNonNull(clock, "clock");
         this.metrics = Objects.requireNonNull(metrics, "metrics");
-        this.rebootstrapHook = rebootstrapHook != null ? rebootstrapHook : () -> { };
+        this.terminalAction = Objects.requireNonNull(terminalAction, "terminalAction");
+        // CT-06 (C3): the re-bootstrap orchestration always runs on a DISCONNECTED entry;
+        // an injected hook (test recorder) composes after it.
+        Runnable injected = rebootstrapHook != null ? rebootstrapHook : () -> { };
+        this.rebootstrapHook = () -> {
+            requestRebootstrap("disconnected-transition");
+            injected.run();
+        };
+    }
+
+    /**
+     * CT-06 (C3): forces a full re-subscribe NOW — tears down the live connection (if
+     * any) so the session loop cycles, and cuts any backoff in progress short. Invoked on
+     * each transition INTO DISCONNECTED (the {@code edge_rebootstrap_triggered_total}
+     * seam); idempotent and safe from the session thread. While no connection exists the
+     * reconnect machinery is already running — this only removes the remaining backoff
+     * delay. The re-SUBSCRIBE carries the CURRENT cursor (never 0 — the server decides
+     * TAIL vs SNAPSHOT_FIRST; cursor 0 is reserved for the ADR-0040 poison path).
+     *
+     * @param reason diagnostic (structured log)
+     */
+    void requestRebootstrap(String reason) {
+        rebootstrapRequested = true;
+        Connection conn = current;
+        if (conn != null) {
+            LOG.info(() -> "edge re-bootstrap requested (" + reason + ") — forcing re-subscribe");
+            conn.teardown("rebootstrap: " + reason);
+        }
+    }
+
+    /** TEST-ONLY: the composed CT-06 hook handed to the metrics pump. */
+    Runnable rebootstrapHookForTest() {
+        return rebootstrapHook;
+    }
+
+    /** TEST-ONLY: whether a re-bootstrap request is pending (cuts the next backoff). */
+    boolean rebootstrapRequestedForTest() {
+        return rebootstrapRequested;
     }
 
     /**
@@ -280,14 +338,20 @@ public final class EdgeStreamClient implements AutoCloseable {
             core.tick(now);
             metrics.syncFromCore(core, rebootstrapHook);
 
-            // The core's reconnect policy (heartbeat silence, fatal ERROR_CLOSE).
+            // The core's recovery policy: resubscribe directives (heartbeat silence,
+            // fatal ERROR_CLOSE, C3 gap / DISCONNECTED / poison retries) end the
+            // connection cycle; a TerminalFailure ends the PROCESS (ADR-0040).
             if (core.hasDirective()) {
                 EdgeClientCore.ConnectionDirective directive;
                 String reason = "directive";
                 while ((directive = core.pollDirective()) != null) {
-                    if (directive instanceof
-                            EdgeClientCore.ConnectionDirective.ReconnectNextEndpoint r) {
-                        reason = r.reason();
+                    switch (directive) {
+                        case EdgeClientCore.ConnectionDirective.ReconnectNextEndpoint r ->
+                                reason = r.reason();
+                        case EdgeClientCore.ConnectionDirective.TerminalFailure t -> {
+                            onTerminalFailure(t);
+                            return sawInbound;
+                        }
                     }
                 }
                 final String r = reason;
@@ -307,6 +371,22 @@ public final class EdgeStreamClient implements AutoCloseable {
     }
 
     /**
+     * ADR-0040 terminal fail-loud: the structured SEVERE event (the policy already logged
+     * the cause), a final metrics pump (so {@code configd_edge_poison_pill_terminal} is
+     * scrape-visible), then stop and run the injected terminal action — in production a
+     * non-zero {@code System.exit}; an edge that can neither advance nor re-bootstrap must
+     * die visibly, never idle behind a green health check and never hot-loop reconnects.
+     */
+    private void onTerminalFailure(EdgeClientCore.ConnectionDirective.TerminalFailure t) {
+        LOG.severe("EDGE TERMINAL (ADR-0040): " + t.reason()
+                + " — edgeId=" + edgeId + " cursor=" + core.cursor()
+                + "; exiting non-zero (poison pill: cannot advance, cannot re-bootstrap)");
+        metrics.syncFromCore(core, rebootstrapHook);
+        running.set(false);
+        terminalAction.run();
+    }
+
+    /**
      * Bounded + jittered backoff: base doubling per consecutive failure up to
      * {@value #MAX_BACKOFF_MS} ms, ±50% jitter. Slept in ≤1s slices with a staleness
      * pump per slice so a long backoff cannot delay DISCONNECTED detection by the
@@ -317,6 +397,10 @@ public final class EdgeStreamClient implements AutoCloseable {
         long delay = Math.max(1, (long) (raw * (0.5 + ThreadLocalRandom.current().nextDouble())));
         try {
             while (delay > 0 && running.get()) {
+                if (rebootstrapRequested) {
+                    rebootstrapRequested = false;
+                    return; // CT-06: a DISCONNECTED entry cuts the backoff short
+                }
                 long slice = Math.min(delay, 1_000);
                 Thread.sleep(slice);
                 delay -= slice;
@@ -340,7 +424,10 @@ public final class EdgeStreamClient implements AutoCloseable {
             // writer thread exists, so frame order is deterministic. Resume cursor = the
             // core's applied cursor; the failover-resume reserved field carries the same
             // cursor once a PREVIOUS endpoint had been reached (§3 failover clause).
-            long cursor = core.cursor();
+            // ADR-0040: while a poison quarantine is in flight the resume cursor is 0
+            // (the forced snapshot re-bootstrap) — derived from core state, not from a
+            // one-shot directive memory, so a failed connect attempt cannot lose it.
+            long cursor = core.poisonPolicy().quarantinedSeq() >= 0 ? 0L : core.cursor();
             EdgeFrame.Subscribe subscribe = new EdgeFrame.Subscribe(
                     prefixes.isEmpty(), prefixes, cursor,
                     failedOver ? cursor : -1L, edgeId);

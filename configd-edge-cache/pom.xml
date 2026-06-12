@@ -57,11 +57,18 @@
 
           targetClasses (held to 65):
             EdgeClientCore        — the C2 transport-agnostic client session engine (NEW);
+                                    C3 added the gap/DISCONNECTED resubscribe directives +
+                                    the ADR-0040 poison wiring;
             StalenessTracker      — the ADR-0039 frontier rework;
             EdgeConfigClient      — the ADR-0038 storage filter + ADR-0039 frontier wiring;
+                                    C3 deleted the one-arg applyDelta (Finding 5) + servesKey;
             PrefixStorageFilter   — the ADR-0038 storage-filter helper (NEW);
             StrongReadKeyClass    — the shared strong-read predicate (NEW);
-            DeltaApplier          — the commit-timestamp offer overload added for ADR-0039.
+            DeltaApplier          — ADR-0039 commit-timestamp offer; C3 deleted the
+                                    NO_COMMIT_TIMESTAMP local-clock fallback (Finding 5);
+            PoisonPillPolicy      — the ADR-0040 ladder (NEW, C3). PoisonPillDetector is
+                                    re-POINTED by it but its code is unchanged (its own
+                                    pre-existing tests keep covering it; not re-targeted).
 
           Pre-existing edge classes NOT raised here (LocalConfigStore, PrefixSubscription,
           VersionCursor, EdgeMetrics) are out of this session's scope; their bars stay where
@@ -83,6 +90,7 @@
                                 <param>io.configd.edge.PrefixStorageFilter*</param>
                                 <param>io.configd.edge.StrongReadKeyClass*</param>
                                 <param>io.configd.edge.DeltaApplier*</param>
+                                <param>io.configd.edge.PoisonPillPolicy*</param>
                             </targetClasses>
                             <targetTests>
                                 <param>io.configd.edge.EdgeClientCoreTest</param>
@@ -93,6 +101,7 @@
                                 <param>io.configd.edge.StrongReadKeyClassTest</param>
                                 <param>io.configd.edge.DeltaApplierTest</param>
                                 <param>io.configd.edge.LocalConfigStoreTest</param>
+                                <param>io.configd.edge.PoisonPillRebootstrapTest</param>
                             </targetTests>
                             <mutationThreshold>65</mutationThreshold>
                             <failWhenNoMutations>true</failWhenNoMutations>

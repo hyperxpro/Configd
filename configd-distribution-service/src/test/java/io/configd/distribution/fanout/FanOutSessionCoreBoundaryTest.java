@@ -49,19 +49,34 @@ class FanOutSessionCoreBoundaryTest {
         return new EdgeFrame.Subscribe(true, List.of(), resume, -1L, "e");
     }
 
-    /** Backlog == queueFrames stays TAIL; backlog == queueFrames+1 flips to SNAPSHOT_FIRST. */
+    /**
+     * The C3 fresh-subscriber rule (supersedes C1's backlog-vs-queueFrames boundary): a
+     * cursor-0 subscriber gets SNAPSHOT_FIRST whenever ANY data exists, and TAIL only on
+     * a truly empty ring. Rationale (decideMode comment / CT-13): tail-replaying history
+     * to a cache-less subscriber is rejected as a replay by any restarted edge's SEC-017
+     * epoch floor (wedging recovery behind the prod ack-lag threshold), and a post-restart
+     * ring does not retain genesis. The old backlog boundary (TAIL at backlog ==
+     * queueFrames) is gone BY DESIGN — this pin is the regression tripwire for it.
+     */
     @Test
     void freshBacklogBoundaryAtQueueFramesDecidesMode() {
-        // queueFrames = 4. Backlog (latest-oldest+1) of exactly 4 -> TAIL; 5 -> SNAPSHOT_FIRST.
         FanOutConfig cfg = new FanOutConfig(4, 80, 64, 262_144, 8_192L, 250L, 5L, 1_048_576);
 
-        FanOutBuffer buf4 = new FanOutBuffer(64);
-        for (long i = 1; i <= 4; i++) buf4.publish(put(i, 1));
-        FanOutSessionCore s4 = session(buf4, replayAt(4), cfg);
-        s4.onSubscribe(sub(0));
+        FanOutBuffer empty = new FanOutBuffer(64);
+        FanOutSessionCore s0 = session(empty, replayAt(0), cfg);
+        s0.onSubscribe(sub(0));
         assertEquals(EdgeFrame.Mode.TAIL,
                 sink.sentOfType(EdgeFrame.SubscribeOk.class).get(0).mode(),
-                "backlog == queueFrames must stay TAIL");
+                "an empty ring has nothing to snapshot: TAIL");
+
+        sink.clear();
+        FanOutBuffer buf1 = new FanOutBuffer(64);
+        buf1.publish(put(1, 1));
+        FanOutSessionCore s1 = session(buf1, replayAt(1), cfg);
+        s1.onSubscribe(sub(0));
+        assertEquals(EdgeFrame.Mode.SNAPSHOT_FIRST,
+                sink.sentOfType(EdgeFrame.SubscribeOk.class).get(0).mode(),
+                "ANY existing data ⇒ a cursor-0 subscriber bootstraps via snapshot (C3)");
 
         sink.clear();
         FanOutBuffer buf5 = new FanOutBuffer(64);
@@ -69,8 +84,7 @@ class FanOutSessionCoreBoundaryTest {
         FanOutSessionCore s5 = session(buf5, replayAt(5), cfg);
         s5.onSubscribe(sub(0));
         assertEquals(EdgeFrame.Mode.SNAPSHOT_FIRST,
-                sink.sentOfType(EdgeFrame.SubscribeOk.class).get(0).mode(),
-                "backlog == queueFrames+1 must flip to SNAPSHOT_FIRST");
+                sink.sentOfType(EdgeFrame.SubscribeOk.class).get(0).mode());
     }
 
     /** A NOTIFY batch is split when the next notification would EXCEED batchMaxBytes. */
@@ -78,13 +92,13 @@ class FanOutSessionCoreBoundaryTest {
     void batchByteCapSplitsAtTheExactByteBoundary() {
         // Each put has a ~1000-byte value; with batchMaxBytes small, batches split by bytes.
         FanOutBuffer buf = new FanOutBuffer(64);
-        for (long i = 1; i <= 4; i++) {
-            buf.publish(put(i, 1000));
-        }
         // batchMaxBytes chosen so ~2 notifications fit per frame.
         FanOutConfig cfg = new FanOutConfig(64, 80, 64, 2200, 8_192L, 250L, 5L, 1_048_576);
         FanOutSessionCore s = session(buf, replayAt(4), cfg);
-        s.onSubscribe(sub(0));
+        s.onSubscribe(sub(0)); // on the empty buffer: TAIL (C3 decideMode)
+        for (long i = 1; i <= 4; i++) {
+            buf.publish(put(i, 1000));
+        }
         sink.clear();
         s.tick(clock.now());
         List<EdgeFrame.Notify> notifies = sink.sentOfType(EdgeFrame.Notify.class);
@@ -110,10 +124,10 @@ class FanOutSessionCoreBoundaryTest {
     @Test
     void cursorAckReleaseIsInclusiveAtTheBoundary() {
         FanOutBuffer buf = new FanOutBuffer(64);
-        for (long i = 1; i <= 3; i++) buf.publish(put(i, 1));
         FanOutConfig cfg = new FanOutConfig(16, 80, 1, 262_144, 8_192L, 250L, 5L, 1_048_576);
         FanOutSessionCore s = session(buf, replayAt(3), cfg);
-        s.onSubscribe(sub(0));
+        s.onSubscribe(sub(0)); // on the empty buffer: TAIL (C3 decideMode)
+        for (long i = 1; i <= 3; i++) buf.publish(put(i, 1));
         s.tick(clock.now());
         assertEquals(3, s.inFlightFrames());
         // Ack exactly seq 2: frames with maxSeq 1 and 2 release; frame 3 stays.
@@ -128,12 +142,12 @@ class FanOutSessionCoreBoundaryTest {
     @Test
     void slowConsumerWarnFiresAtThresholdExactlyOnce() {
         FanOutBuffer buf = new FanOutBuffer(64);
-        for (long i = 1; i <= 4; i++) buf.publish(put(i, 1));
         // queueFrames 5, warn 80% -> threshold 4 frames; batchMax 1.
         FanOutConfig cfg = new FanOutConfig(5, 80, 1, 262_144, 8_192L, 250L, 5L, 1_048_576);
         CountingMetrics metrics = new CountingMetrics();
         FanOutSessionCore s = new FanOutSessionCore(buf, replayAt(4), sink, cfg, metrics, clock);
-        s.onSubscribe(sub(0));
+        s.onSubscribe(sub(0)); // on the empty buffer: TAIL (C3 decideMode)
+        for (long i = 1; i <= 4; i++) buf.publish(put(i, 1));
         s.tick(clock.now()); // streams 4 frames -> hits threshold 4 -> one warning
         assertEquals(1, metrics.warnings, "warn fires once at the threshold");
         // Ack down then back up: warning re-arms and fires again.

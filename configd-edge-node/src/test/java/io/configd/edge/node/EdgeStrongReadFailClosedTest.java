@@ -83,7 +83,7 @@ class EdgeStrongReadFailClosedTest {
                 List.of(InetSocketAddress.createUnresolved(
                         "127.0.0.1", server.fanOutServer().localPort())),
                 0, edgeDataDir, verifyKey, List.of(), null, null, null,
-                50L, EdgeNodeConfig.DEFAULT_HEARTBEAT_SILENCE_FACTOR));
+                50L, EdgeNodeConfig.DEFAULT_HEARTBEAT_SILENCE_FACTOR, EdgeNodeConfig.DEFAULT_POISON_MAX_RETRIES));
 
         String serverBase = "http://127.0.0.1:" + server.apiPort();
         String edgeBase = "http://127.0.0.1:" + edge.apiPort();

@@ -73,6 +73,14 @@ public final class PrefixSubscription {
     }
 
     /**
+     * Returns {@code true} if no prefixes are subscribed (a full-store subscription).
+     * Lock-free and allocation-free, unlike {@link #prefixes()} (which snapshots).
+     */
+    public boolean isEmpty() {
+        return prefixes.isEmpty();
+    }
+
+    /**
      * Returns an unmodifiable snapshot of the currently subscribed prefixes.
      * <p>
      * The returned set is a point-in-time snapshot — subsequent subscribe or

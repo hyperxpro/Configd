@@ -2,6 +2,7 @@ package io.configd.edge.node;
 
 import io.configd.common.Clock;
 import io.configd.edge.EdgeClientCore;
+import io.configd.edge.PoisonPillPolicy;
 import io.configd.edge.StrongReadKeyClass;
 import io.configd.observability.InvariantMonitor;
 import io.configd.observability.MetricsRegistry;
@@ -36,13 +37,24 @@ import java.security.spec.X509EncodedKeySpec;
  *   <li>{@code --data-dir} holds ONLY the SEC-017 {@code epoch.lock} sidecar. Values —
  *       including {@code secure/} — are never written to disk by the edge (RR-098: the
  *       store-everything topology's exfiltration residual is bounded to process memory);</li>
- *   <li>the DISCONNECTED re-bootstrap trigger is a NAMED STUB seam
- *       ({@link #rebootstrapHook}): C2 detects the transition, counts
- *       {@code edge_rebootstrap_triggered_total}, and invokes the hook; C3 (ADR-0040)
- *       supplies the real re-bootstrap orchestration.</li>
+ *   <li>the DISCONNECTED re-bootstrap trigger (CT-06) is REAL as of C3: each transition
+ *       INTO DISCONNECTED counts {@code edge_rebootstrap_triggered_total} and invokes
+ *       {@link EdgeStreamClient#requestRebootstrap} — tear down the live connection (if
+ *       any), cut the backoff short, re-SUBSCRIBE at the current cursor (the server's
+ *       TAIL/SNAPSHOT_FIRST decision resolves replay vs re-bootstrap);</li>
+ *   <li>ADR-0040 poison pill: bounded apply-failure retries
+ *       ({@code --poison-max-retries}) → forced snapshot re-bootstrap → terminal
+ *       fail-loud ({@code System.exit}({@value #EXIT_POISON_TERMINAL})).</li>
  * </ul>
  */
 public final class EdgeNodeMain {
+
+    /**
+     * ADR-0040 terminal fail-loud exit code: the poison-pill policy decided the edge can
+     * neither advance nor re-bootstrap. Distinct from the usage/config exit (1) so an
+     * operator can tell a poison death from a misconfiguration at a glance.
+     */
+    static final int EXIT_POISON_TERMINAL = 3;
 
     private final EdgeNodeConfig config;
     private final MetricsRegistry metricsRegistry;
@@ -87,6 +99,18 @@ public final class EdgeNodeMain {
      * cannot produce the empty-password stores {@link TlsConfig#mtls} expects).
      */
     public static EdgeNodeMain start(EdgeNodeConfig config, TlsManager tlsManager) {
+        return start(config, tlsManager, null);
+    }
+
+    /**
+     * Builds and starts an edge node with an explicit (possibly null) {@link TlsManager}
+     * and an injectable ADR-0040 terminal action ({@code null} = the production
+     * {@code System.exit}({@value #EXIT_POISON_TERMINAL})). The terminal-action seam
+     * mirrors the injectable-TlsManager seam: process tests pin the terminal fail-loud
+     * path with a recorder instead of killing the test JVM.
+     */
+    public static EdgeNodeMain start(EdgeNodeConfig config, TlsManager tlsManager,
+                                     Runnable terminalAction) {
         try {
             Files.createDirectories(config.dataDir());
         } catch (IOException e) {
@@ -105,15 +129,23 @@ public final class EdgeNodeMain {
         InvariantMonitor invariantMonitor = new InvariantMonitor(registry, false);
         EdgeNodeMetrics metrics = new EdgeNodeMetrics(registry);
 
+        // CT-06 (C3): the DISCONNECTED re-bootstrap orchestration is EdgeStreamClient's
+        // requestRebootstrap, composed internally (null = no additional observer hook).
+        // ADR-0040: TERMINAL exits the process non-zero — fail loud, never a hot loop.
+        Runnable terminal = terminalAction != null ? terminalAction
+                : () -> System.exit(EXIT_POISON_TERMINAL);
         EdgeStreamClient streamClient = new EdgeStreamClient(
                 config.fanOutEndpoints(), config.edgeId(), config.subscribePrefixes(),
                 tlsManager, config.reconnectBackoffMs(), config.heartbeatSilenceFactor(),
-                clock, metrics, rebootstrapHook());
+                clock, metrics, null, terminal);
 
+        PoisonPillPolicy poisonPolicy = new PoisonPillPolicy(config.poisonMaxRetries(),
+                metrics.poisonRetriesCounter(), metrics.poisonPillCounter(),
+                metrics.poisonTerminalCounter());
         EdgeClientCore core = new EdgeClientCore(clock, invariantMonitor,
                 metrics.implausibleCounter(), StrongReadKeyClass.DEFAULT, streamClient.sink(),
                 EdgeClientCore.DEFAULT_HEARTBEAT_MS, config.heartbeatSilenceFactor(),
-                verifier, config.dataDir());
+                verifier, config.dataDir(), poisonPolicy);
         for (String prefix : config.subscribePrefixes()) {
             core.addSubscription(prefix);
         }
@@ -131,16 +163,6 @@ public final class EdgeNodeMain {
         streamClient.start(core);
 
         return new EdgeNodeMain(config, registry, metrics, core, streamClient, httpServer);
-    }
-
-    /**
-     * The DISCONNECTED re-bootstrap trigger seam (CT-06 trigger half). C2 ships a stub —
-     * the transition is already counted on {@code edge_rebootstrap_triggered_total} by
-     * {@link EdgeNodeMetrics#syncFromCore} before this hook runs; C3 (ADR-0040) replaces
-     * the body with the full re-subscribe-from-snapshot orchestration.
-     */
-    private static Runnable rebootstrapHook() {
-        return () -> { /* C3 (ADR-0040): re-bootstrap orchestration plugs in here. */ };
     }
 
     /**
@@ -171,6 +193,11 @@ public final class EdgeNodeMain {
     /** The edge client core (tests / diagnostics; reads are thread-safe). */
     public EdgeClientCore core() {
         return core;
+    }
+
+    /** The stream client (tests / diagnostics — the CT-06 re-bootstrap orchestration seam). */
+    EdgeStreamClient streamClient() {
+        return streamClient;
     }
 
     /** The process metrics registry (tests / diagnostics). */

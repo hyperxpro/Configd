@@ -168,43 +168,38 @@ public final class DeltaApplier {
     }
 
     /**
-     * Offers a delta for application. The delta is evaluated against the
-     * client's current version:
+     * Offers a delta for application, threading the leader commit timestamp (ADR-0035 §2 /
+     * ADR-0039) into the staleness frontier on a successful apply. The delta is evaluated
+     * against the client's current version:
      * <ul>
      *   <li>If verifier is configured and delta is unsigned: rejected.</li>
      *   <li>If verifier is configured and signature is invalid: rejected.</li>
      *   <li>If {@code delta.toVersion() <= currentVersion}: stale delta, ignored.</li>
      *   <li>If {@code delta.fromVersion() != currentVersion}: gap detected.</li>
-     *   <li>Otherwise: delta is applied successfully.</li>
+     *   <li>Otherwise: delta is applied and the ADR-0039 frontier advances to
+     *       {@code commitTimestampMillis}.</li>
      * </ul>
-     *
-     * @param delta the delta to apply (non-null)
-     * @return the result of the apply attempt
-     */
-    public ApplyResult offer(ConfigDelta delta) {
-        return offer(delta, NO_COMMIT_TIMESTAMP);
-    }
-
-    /**
-     * Sentinel for {@link #offer(ConfigDelta, long)} meaning "no leader commit timestamp
-     * supplied — record the ADR-0039 frontier from the local clock". Distinct from a real
-     * timestamp (which is a non-negative wall-clock millis).
-     */
-    public static final long NO_COMMIT_TIMESTAMP = -1L;
-
-    /**
-     * Offers a delta for application, threading the leader commit timestamp (ADR-0035 §2 /
-     * ADR-0039) into the staleness frontier on a successful apply. Identical gap/stale/
-     * signature evaluation to {@link #offer(ConfigDelta)}; the only difference is that the
-     * APPLIED branch records the frontier from {@code commitTimestampMillis} rather than the
-     * local clock. Use {@link #NO_COMMIT_TIMESTAMP} to fall back to the local clock.
+     * <p>
+     * <b>Finding 5 disposition (C3, c2-signoff-review):</b> the one-arg
+     * {@code offer(ConfigDelta)} overload and its {@code NO_COMMIT_TIMESTAMP} local-clock
+     * fallback are DELETED — they re-created the ADR-0039 idle-proxy ("staleness ≡
+     * time-since-last-apply") for any caller that took the convenient path. The commit
+     * timestamp is mandatory and validated; a caller without a leader timestamp passes
+     * its own clock's now EXPLICITLY, stating the meaning at the call site.
      *
      * @param delta                 the delta to apply (non-null)
-     * @param commitTimestampMillis the leader commit timestamp, or {@link #NO_COMMIT_TIMESTAMP}
+     * @param commitTimestampMillis the leader commit timestamp (the §2 staleness clock;
+     *                              must be {@code >= 0} — {@code CommitNotification}
+     *                              guarantees this on the wire path)
      * @return the result of the apply attempt
      */
     public ApplyResult offer(ConfigDelta delta, long commitTimestampMillis) {
         Objects.requireNonNull(delta, "delta must not be null");
+        if (commitTimestampMillis < 0) {
+            throw new IllegalArgumentException(
+                    "commitTimestampMillis must be >= 0 (the local-clock fallback sentinel "
+                            + "was deleted — Finding 5): " + commitTimestampMillis);
+        }
 
         byte[] signature = delta.signature();
 
@@ -264,12 +259,8 @@ public final class DeltaApplier {
         }
 
         // Apply the delta (ADR-0038 storage filter inside the client; ADR-0039 frontier
-        // from the leader commit timestamp when supplied, else the local clock).
-        if (commitTimestampMillis == NO_COMMIT_TIMESTAMP) {
-            client.applyDelta(delta);
-        } else {
-            client.applyDelta(delta, commitTimestampMillis);
-        }
+        // from the leader commit timestamp — always explicit, Finding 5).
+        client.applyDelta(delta, commitTimestampMillis);
         lastAppliedVersion = delta.toVersion();
         if (delta.epoch() > highestSeenEpoch) {
             highestSeenEpoch = delta.epoch();
