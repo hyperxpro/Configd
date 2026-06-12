@@ -33,8 +33,10 @@ import java.util.Set;
  * {@link #filterForStorage(ConfigDelta)}. Staleness is measured against the covered
  * frontier (ADR-0039): {@link #applyDelta(ConfigDelta, long)} feeds the leader commit
  * timestamp and {@link #recordHeartbeatFrontier(long, long, long)} feeds the heartbeat
- * frontier. The legacy {@link #applyDelta(ConfigDelta)} (no commit timestamp) records the
- * frontier from the local clock — retained for direct callers and pre-C2 tests.
+ * frontier. There is deliberately NO local-clock fallback: the legacy one-arg
+ * {@code applyDelta(ConfigDelta)} was DELETED at C3 (c2-signoff-review Finding 5 — it was
+ * the ADR-0039 idle-proxy in different clothes); every caller states which clock stamps
+ * the frontier, and a negative commit timestamp is rejected loudly.
  *
  * @see LocalConfigStore
  * @see StalenessTracker
