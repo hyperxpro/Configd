@@ -289,11 +289,14 @@ for i in 0 1 2; do
 done
 pass "propagation: every edge serves the committed value at >= seq=$MARKER1_SEQ (bounded read)"
 
-# secure/ strong-read class: stored at edges but NEVER served (CT-37 fail-closed).
+# secure/ strong-read class: stored at edges but NEVER served (CT-37 fail-closed) —
+# checked at EVERY edge (c6-signoff F1/C6-A: the note claims every edge; the check must too).
 put_committed "secure/e2e-secret" "must-never-leave" >/dev/null || fail "secure/ write failed"
-SC=$(curl -s -o /dev/null -w "%{http_code}" --max-time 3 "http://$(edge_api "${EDGE_PORTS[0]}")/v1/config/secure/e2e-secret")
-[ "$SC" = "503" ] || fail "secure/ read at an edge returned $SC (expected 503 fail-closed)"
-pass "secure/ key fail-closed at the edge (503, never served from edge state)"
+for i in "${!EDGE_PORTS[@]}"; do
+    SC=$(curl -s -o /dev/null -w "%{http_code}" --max-time 3 "http://$(edge_api "${EDGE_PORTS[$i]}")/v1/config/secure/e2e-secret")
+    [ "$SC" = "503" ] || fail "secure/ read at edge$((i+1)) returned $SC (expected 503 fail-closed)"
+done
+pass "secure/ key fail-closed at EVERY edge (503, never served from edge state)"
 
 # =============================================================================
 # Phase 2 — kill the leader mid-stream
@@ -441,11 +444,17 @@ L=$(resolve_leader) || fail "no leader for the linearizable audit"
 AUDIT_KEYS=(e2e/marker-p1 e2e/marker-p2 e2e/marker-p3 e2e/marker-p4 e2e/fence)
 for i in $(seq 0 $((KEYSPACE - 1))); do AUDIT_KEYS+=("e2e/k$i"); done
 MISMATCH=0
+AUDITED=0
 for key in "${AUDIT_KEYS[@]}"; do
-    truth=$(curl -s --max-time 5 --cacert "$CACERT" "$(api "$L")/v1/config/$key?consistency=linearizable")
+    # ONE request for body + code (c6-signoff F2: two separate curls could silently
+    # key-skip on a transient non-200 between them; combined fetch closes the race).
+    resp=$(curl -s --max-time 5 --cacert "$CACERT" -w $'\n%{http_code}' \
+        "$(api "$L")/v1/config/$key?consistency=linearizable") || continue
+    code=${resp##*$'\n'}
+    truth=${resp%$'\n'*}
     # a key the cycling writer never reached is absent everywhere — skip 404 bodies
-    code=$(curl -s -o /dev/null -w "%{http_code}" --max-time 5 --cacert "$CACERT" "$(api "$L")/v1/config/$key?consistency=linearizable")
     [ "$code" = "200" ] || continue
+    AUDITED=$((AUDITED + 1))
     for p in "${ALL_EDGE_PORTS[@]}"; do
         got=$(curl -s --max-time 3 -H "X-Configd-Cursor: $FENCE_SEQ" "http://$(edge_api "$p")/v1/config/$key")
         if [ "$got" != "$truth" ]; then
@@ -455,7 +464,10 @@ for key in "${AUDIT_KEYS[@]}"; do
     done
 done
 [ "$MISMATCH" -eq 0 ] || fail "$MISMATCH byte mismatches between edges and the linearizable leader state"
-pass "byte-equal audit: every written key identical on all 4 edges vs the leader (linearizable)"
+# Non-vacuity floor (c6-signoff F2): the markers + fence alone are 5 keys; an audit
+# that compared fewer keys than that silently audited nothing.
+[ "$AUDITED" -ge 5 ] || fail "byte-equal audit compared only $AUDITED keys (>= 5 required — vacuous audit)"
+pass "byte-equal audit: $AUDITED keys identical on all 4 edges vs the leader (linearizable)"
 
 echo
 echo "E2E PASS: $PASS_COUNT/$PASS_COUNT assertions — propagation, leader-kill monotonicity +"

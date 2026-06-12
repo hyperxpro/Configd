@@ -52,6 +52,17 @@
             <version>${project.version}</version>
         </dependency>
         <!--
+          C6/gate-3: LivePropagationProbeMain's edge mode starts a real in-process
+          EdgeNodeMain (the commit->edge-visibility leg of the V2 probe — the charter's
+          "both modes" requirement). Acyclic: configd-edge-node does not depend on
+          configd-testkit.
+        -->
+        <dependency>
+            <groupId>io.configd</groupId>
+            <artifactId>configd-edge-node</artifactId>
+            <version>${project.version}</version>
+        </dependency>
+        <!--
           S3 Phase V2 (charter §3 V2): LivePropagationProbeMain starts an in-process
           single-node ConfigdServer and tails its ADR-0034 commit-notification boundary
           to measure live commit->boundary propagation. This is an internal reactor

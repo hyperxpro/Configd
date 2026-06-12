@@ -4,8 +4,12 @@ import io.configd.common.NodeId;
 import io.configd.distribution.CommitNotification;
 import io.configd.distribution.CommitNotificationSource;
 import io.configd.distribution.ReplaySource;
+import io.configd.edge.node.EdgeNodeConfig;
+import io.configd.edge.node.EdgeNodeMain;
 import io.configd.server.ConfigdServer;
 import io.configd.server.ServerConfig;
+import io.configd.store.SigningKeyStore;
+import io.configd.store.VerifyKeyExporter;
 
 import java.io.IOException;
 import java.net.InetSocketAddress;
@@ -42,8 +46,18 @@ import java.util.regex.Pattern;
  *       {@link System#currentTimeMillis()} at consumption. This measures
  *       <b>commit→boundary-visibility</b> wall time — the only propagation that exists
  *       today (RR-001).</li>
- *   <li><b>{@code --mode edge}</b> (stub): exits with code {@value #EXIT_EDGE_NOT_BUILT}
- *       because the C2/C6 edge processes do not yet exist.</li>
+ *   <li><b>{@code --mode edge}</b> (implemented at C6 — the edge data plane now exists):
+ *       starts the same in-process single-node {@link ConfigdServer} WITH its C1 fan-out
+ *       edge endpoint, plus a real in-process {@link EdgeNodeMain} (plaintext transport,
+ *       real Ed25519 verify key via the {@link VerifyKeyExporter} path) subscribed to it.
+ *       Drives {@code --writes} HTTP PUTs; one watcher loop tails the ADR-0034 boundary
+ *       (recording publish ts = leader commit timestamp per seq) and samples the edge's
+ *       applied cursor, recording visible ts = {@link System#currentTimeMillis()} for
+ *       each seq the edge newly covers. This measures <b>commit→edge-visibility</b> wall
+ *       time through the REAL wire path (server fan-out → socket → verify → apply).
+ *       Honest caveats in the header: single box, loopback, cursor sampled by polling
+ *       (recorded latency ≥ true latency by up to the poll granularity), throttled
+ *       2-vCPU hardware — mechanism check, not a perf target (Session 5 owns p99).</li>
  * </ul>
  *
  * <h2>How to run</h2>
@@ -64,11 +78,18 @@ import java.util.regex.Pattern;
  */
 public final class LivePropagationProbeMain {
 
-    /** Exit code for {@code --mode edge}: the edge data plane is not yet built. */
+    /**
+     * Historical exit code for the pre-C6 {@code --mode edge} stub ("the edge data plane
+     * is not yet built"). The mode is implemented now; the constant remains so older
+     * scripts referencing it keep compiling, but it is no longer returned.
+     */
     public static final int EXIT_EDGE_NOT_BUILT = 2;
 
     /** The single boundary observer id (one in-process consumer of the boundary). */
     private static final int BOUNDARY_OBSERVER_ID = 0;
+
+    /** The edge-process observer id ({@code --mode edge}). */
+    private static final int EDGE_OBSERVER_ID = 1;
 
     /** {@code Committed: seq=<S>} — the ADR-0033 200 body the consumer parses. */
     private static final Pattern COMMITTED_SEQ = Pattern.compile("Committed: seq=(\\d+)");
@@ -80,17 +101,179 @@ public final class LivePropagationProbeMain {
         Options opts = Options.parse(args);
         switch (opts.mode) {
             case "boundary" -> System.exit(runBoundary(opts));
-            case "edge" -> {
-                System.err.println(
-                        "edge mode requires the C2/C6 edge processes — not yet built");
-                System.exit(EXIT_EDGE_NOT_BUILT);
-            }
+            case "edge" -> System.exit(runEdge(opts));
             default -> {
                 System.err.println("unknown --mode: " + opts.mode
                         + " (expected 'boundary' or 'edge')");
                 System.exit(64); // EX_USAGE
             }
         }
+    }
+
+    // -----------------------------------------------------------------------
+    // edge mode (C6): commit -> edge-visibility through the real wire path
+    // -----------------------------------------------------------------------
+
+    private static int runEdge(Options opts) throws Exception {
+        printEdgeHeader(opts);
+
+        Path dataDir = Files.createTempDirectory("configd-probe-edge-");
+        // Real signing/verify key pair via the production path (the EdgeFailoverTest
+        // pattern): the server signs its fan-out stream; the edge verifies (F-0052).
+        Path signingKey = dataDir.resolve("signing-key.bin");
+        SigningKeyStore.loadOrCreate(signingKey);
+        Path verifyKey = dataDir.resolve("verify-key.der");
+        VerifyKeyExporter.export(signingKey, verifyKey);
+
+        ConfigdServer server = ConfigdServer.start(new ServerConfig(
+                NodeId.of(opts.nodeId),
+                dataDir.resolve("server-data"),
+                Set.of(),                  // single-node, self-elects
+                "127.0.0.1",
+                opts.bindPort,
+                opts.apiPort,
+                null, null, null,          // TLS off (plaintext loopback probe)
+                null,
+                Map.<NodeId, InetSocketAddress>of(),
+                signingKey,
+                Set.of("secure/"),
+                0));                       // C1 edge fan-out endpoint, ephemeral port
+        int edgeFanOutPort = server.fanOutServer().localPort();
+
+        EdgeNodeMain edge = EdgeNodeMain.start(new EdgeNodeConfig(
+                "probe-edge",
+                List.of(InetSocketAddress.createUnresolved("127.0.0.1", edgeFanOutPort)),
+                0,                          // ephemeral read-API port (unused by the probe)
+                dataDir.resolve("edge-data"),
+                verifyKey,
+                List.of(),                  // full-store subscription
+                null, null, null,           // plaintext
+                EdgeNodeConfig.DEFAULT_RECONNECT_BACKOFF_MS,
+                EdgeNodeConfig.DEFAULT_HEARTBEAT_SILENCE_FACTOR,
+                EdgeNodeConfig.DEFAULT_POISON_MAX_RETRIES));
+
+        PropagationProbe probe = new PropagationProbe();
+        HttpClient http = HttpClient.newBuilder()
+                .connectTimeout(Duration.ofSeconds(5))
+                .build();
+        String base = "http://127.0.0.1:" + opts.apiPort;
+
+        try {
+            awaitLeader(http, base, opts);
+
+            long lastSeq = driveWrites(http, base, opts);
+
+            // ONE watcher loop (single thread, so publish-before-visible ordering is
+            // structural): drain the boundary recording publish ts per seq, then sample
+            // the edge's applied cursor and record visible ts for every seq the edge
+            // newly covers AND whose publish ts is already recorded. A snapshot cutover
+            // jumping the cursor records all covered seqs at the cutover moment — which
+            // is exactly when they became readable at the edge (correct visibility
+            // semantics, noted in the header).
+            EdgeWatcher watcher = new EdgeWatcher(
+                    server.commitNotificationSource(), server.replaySource(), edge, probe);
+            long deadline = System.nanoTime() + opts.drainDeadline.toNanos();
+            while (System.nanoTime() < deadline
+                    && probe.count(EDGE_OBSERVER_ID) < opts.writes) {
+                if (!watcher.pumpOnce()) {
+                    Thread.onSpinWait();
+                }
+            }
+            if (probe.count(EDGE_OBSERVER_ID) < opts.writes) {
+                System.out.println("WARNING: drain deadline hit with "
+                        + probe.count(EDGE_OBSERVER_ID) + "/" + opts.writes
+                        + " edge-visible — the report below shows the partial count honestly");
+            }
+            // lastSeq is informational here; the loop condition is the per-write count.
+            System.out.println("edge applied cursor at finish: " + edge.core().cursor()
+                    + " (highest committed seq " + lastSeq + ")");
+        } finally {
+            edge.shutdown();
+            server.shutdown();
+            deleteRecursive(dataDir);
+        }
+
+        System.out.println();
+        System.out.println(probe.report());
+        System.out.flush();
+        return 0;
+    }
+
+    /**
+     * The single-threaded edge-mode watcher: tails the ADR-0034 boundary (publish ts =
+     * leader commit timestamp per seq) and samples the edge node's applied cursor,
+     * recording visible ts for each newly covered, already-published seq. Single thread
+     * ⇒ recordPublished always precedes recordVisible for any seq.
+     */
+    private static final class EdgeWatcher {
+        private final CommitNotificationSource source;
+        private final ReplaySource replaySource;
+        private final EdgeNodeMain edge;
+        private final PropagationProbe probe;
+        private long boundaryCursor;
+        private long edgeRecordedUpTo;
+
+        EdgeWatcher(CommitNotificationSource source, ReplaySource replaySource,
+                    EdgeNodeMain edge, PropagationProbe probe) {
+            this.source = source;
+            this.replaySource = replaySource;
+            this.edge = edge;
+            this.probe = probe;
+        }
+
+        /** One pump pass; returns true if anything was recorded (publish or visible). */
+        boolean pumpOnce() {
+            boolean progressed = false;
+            // 1. Drain the boundary: record publish ts per seq.
+            CommitNotificationSource.Result result = source.readSince(boundaryCursor);
+            switch (result) {
+                case CommitNotificationSource.Result.Ok ok -> {
+                    for (CommitNotification n : ok.notifications()) {
+                        probe.recordPublished(n.seq(), n.commitTimestampMillis());
+                        boundaryCursor = n.seq();
+                        progressed = true;
+                    }
+                }
+                case CommitNotificationSource.Result.Gap gap -> {
+                    // The boundary lapped this slow probe consumer: resume from the
+                    // replay floor. Seqs skipped here simply carry no publish ts and are
+                    // never recorded as samples (undercount, never a fabricated number).
+                    ReplaySource.Replay replay = replaySource.replayFromSnapshot();
+                    boundaryCursor = replay.seq();
+                    progressed = true;
+                }
+            }
+            // 2. Sample the edge cursor; record visible for newly covered published seqs.
+            long edgeCursor = edge.core().cursor();
+            long recordable = Math.min(edgeCursor, boundaryCursor);
+            if (recordable > edgeRecordedUpTo) {
+                long now = System.currentTimeMillis();
+                for (long seq = edgeRecordedUpTo + 1; seq <= recordable; seq++) {
+                    probe.recordVisible(EDGE_OBSERVER_ID, seq, now);
+                }
+                edgeRecordedUpTo = recordable;
+                progressed = true;
+            }
+            return progressed;
+        }
+    }
+
+    private static void printEdgeHeader(Options opts) {
+        System.out.println("=== Configd propagation probe — LIVE EDGE MODE (C6) ===");
+        System.out.println("Measures commit->EDGE-visibility wall time through the REAL wire "
+                + "path: server fan-out endpoint -> socket -> Ed25519 verify -> apply -> "
+                + "edge applied cursor.");
+        System.out.println("HARDWARE CAVEAT: 2-vCPU throttled box, single host, loopback — "
+                + "honest numbers, NOT a performance target (Session 5 owns p99 < 500 ms).");
+        System.out.println("SAMPLING CAVEAT: edge visibility is sampled by polling the applied "
+                + "cursor; recorded latency >= true latency by up to the poll granularity. "
+                + "Snapshot-cutover-covered seqs record at the cutover moment (when they "
+                + "became readable).");
+        System.out.println("staleness sample = visible_ts(cursor covers seq) - "
+                + "publish_ts(CommitNotification.commitTimestampMillis, ADR-0035 §2)");
+        System.out.println("writes=" + opts.writes + " key-prefix=" + opts.keyPrefix
+                + " api-port=" + opts.apiPort + " node-id=" + opts.nodeId);
+        System.out.println();
     }
 
     // -----------------------------------------------------------------------

@@ -173,6 +173,50 @@ jobs:
           path: ${{ runner.temp }}/gate2-logs
           retention-days: 7
 
+  gate-3:
+    # Session-3 cumulative gate (gates/gate-3.sh) — the edge data plane.
+    # REQUIRES gate-2 green (runs as its own job here, so the gate-3 run sets
+    # GATE3_SKIP_GATE2=1 — cumulative coverage comes from the job dependency,
+    # not a redundant re-run). Steps: contract-map end-state pin, the 507-seed
+    # edge gate sweep + digest byte-identity, the propagation probe in BOTH
+    # modes (sim + live boundary + live edge), the slow-consumer state-machine
+    # walk, the four-phase Compose E2E scenario (docker available on
+    # ubuntu-latest), the CT-34 JMH gc-profile check, and (nightly) the
+    # new-module PIT floors (edge-cache + edge-node >= 65).
+    needs: gate-2
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 25
+        uses: actions/setup-java@v4
+        with:
+          java-version: '25'
+          distribution: 'corretto'
+          cache: maven
+
+      - name: Run gate-3 (push/PR — mutation skipped for speed)
+        if: github.event_name != 'schedule'
+        run: GATE3_SKIP_GATE2=1 GATE3_SKIP_MUTATION=1 bash gates/gate-3.sh
+        env:
+          GATE3_LOG_DIR: ${{ runner.temp }}/gate3-logs
+        timeout-minutes: 120
+
+      - name: Run gate-3 FULL (nightly — incl. new-module PIT floors)
+        if: github.event_name == 'schedule'
+        run: GATE3_SKIP_GATE2=1 bash gates/gate-3.sh
+        env:
+          GATE3_LOG_DIR: ${{ runner.temp }}/gate3-logs
+        timeout-minutes: 180
+
+      - name: Upload gate-3 step logs
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: gate-3-logs
+          path: ${{ runner.temp }}/gate3-logs
+          retention-days: 7
+
   wire-compat:
     # ADR-0029 §8.10 fixture-bump guardrail.
     # Fails the build if GoldenFixtures.java changed without a matching bump

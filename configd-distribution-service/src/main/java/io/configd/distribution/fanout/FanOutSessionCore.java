@@ -290,7 +290,7 @@ public final class FanOutSessionCore {
         // new data keeps it under the frame cap — design §4 ack-lag signal).
         if (cursor - lastAckedSeq > config.ackLagDemoteSeqs()) {
             demote(DemotionEvent.REASON_ACK_LAG);
-            return true; // the DEMOTED_TO_CATCHUP frame was emitted
+            return true; // demoted (the notice is emitted, or parked per RR-104 would-block)
         }
 
         Result r = source.readSince(cursor);
