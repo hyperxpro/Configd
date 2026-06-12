@@ -251,7 +251,9 @@ class ConfigdServerTest {
         assertNotNull(server.plumtreeNode(), "PlumtreeNode must be wired");
         assertNotNull(server.hyParViewOverlay(), "HyParViewOverlay must be wired");
         assertNotNull(server.subscriptionManager(), "SubscriptionManager must be wired");
-        assertNotNull(server.slowConsumerPolicy(), "SlowConsumerPolicy must be wired");
+        // C4: SlowConsumerPolicy (the pre-session orphan this assert used to "cover") is
+        // DELETED — superseded by SlowConsumerGovernor, which is wired inside the
+        // --edge-port FanOutServer branch and exercised by the FanOutServer policy tests.
         assertNotNull(server.rolloutController(), "RolloutController must be wired");
 
         server.shutdown();

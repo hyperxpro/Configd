@@ -68,8 +68,10 @@
           exists yet; tracked, not held to a bar here):
             HyParViewOverlay   — gossip membership overlay; failure-repair
                                  machinery untested, pending the edge data plane.
-            CatchUpService     — untouched; part of the unbuilt fan-out drain.
-            SlowConsumerPolicy — no consumer; pending the wire path.
+          (C4 closed the other two RR-088 rows by DELETION: CatchUpService —
+           superseded by FanOutSessionCore + ReplaySource, zero consumers (C3
+           note §8); SlowConsumerPolicy — superseded by SlowConsumerGovernor,
+           the fanout.* implement-half, held to the 65 bar above.)
         -->
         <profile>
             <id>mutation</id>
@@ -95,8 +97,6 @@
                             </targetClasses>
                             <excludedClasses>
                                 <param>io.configd.distribution.HyParViewOverlay*</param>
-                                <param>io.configd.distribution.CatchUpService*</param>
-                                <param>io.configd.distribution.SlowConsumerPolicy*</param>
                             </excludedClasses>
                             <targetTests>
                                 <param>io.configd.distribution.*</param>

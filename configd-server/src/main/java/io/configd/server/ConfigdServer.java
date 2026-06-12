@@ -18,7 +18,6 @@ import io.configd.distribution.SnapshotReplaySource;
 import io.configd.distribution.HyParViewOverlay;
 import io.configd.distribution.PlumtreeNode;
 import io.configd.distribution.RolloutController;
-import io.configd.distribution.SlowConsumerPolicy;
 import io.configd.distribution.SubscriptionManager;
 import io.configd.distribution.WatchService;
 import io.configd.observability.BurnRateAlertEvaluator;
@@ -122,7 +121,6 @@ public final class ConfigdServer {
     private final PlumtreeNode plumtreeNode;
     private final HyParViewOverlay hyParViewOverlay;
     private final SubscriptionManager subscriptionManager;
-    private final SlowConsumerPolicy slowConsumerPolicy;
     private final RolloutController rolloutController;
 
     private ConfigdServer(ServerConfig config, MultiRaftDriver driver,
@@ -139,7 +137,6 @@ public final class ConfigdServer {
                           PlumtreeNode plumtreeNode,
                           HyParViewOverlay hyParViewOverlay,
                           SubscriptionManager subscriptionManager,
-                          SlowConsumerPolicy slowConsumerPolicy,
                           RolloutController rolloutController) {
         this.config = config;
         this.driver = driver;
@@ -156,7 +153,6 @@ public final class ConfigdServer {
         this.plumtreeNode = plumtreeNode;
         this.hyParViewOverlay = hyParViewOverlay;
         this.subscriptionManager = subscriptionManager;
-        this.slowConsumerPolicy = slowConsumerPolicy;
         this.rolloutController = rolloutController;
     }
 
@@ -353,7 +349,6 @@ public final class ConfigdServer {
         WatchService watchService = new WatchService(clock);
         SubscriptionManager subscriptionManager = new SubscriptionManager();
         RolloutController rolloutController = new RolloutController(clock);
-        SlowConsumerPolicy slowConsumerPolicy = new SlowConsumerPolicy(clock);
         PlumtreeNode plumtreeNode = new PlumtreeNode(config.nodeId(), 10_000, 100);
         HyParViewOverlay hyParViewOverlay = new HyParViewOverlay(
                 config.nodeId(), 6, 30, 8, 4, random);
@@ -598,12 +593,20 @@ public final class ConfigdServer {
                     new io.configd.server.fanout.RegistryFanOutSessionMetrics(metricsRegistry);
             io.configd.distribution.ReplaySource edgeReplaySource =
                     new io.configd.distribution.SnapshotReplaySource(stateMachine.store()::snapshot);
+            // C4: the slow-consumer governor (per-cert-identity quarantine / unhealthy
+            // policy, architecture §7 ladder) — consulted by the FanOutServer at
+            // SUBSCRIBE and fed by the per-session demotion/ack/queue signals.
+            io.configd.distribution.fanout.SlowConsumerGovernor slowConsumerGovernor =
+                    new io.configd.distribution.fanout.SlowConsumerGovernor(
+                            io.configd.distribution.fanout.SlowConsumerPolicyConfig.defaults(),
+                            fanOutMetrics);
             fanOutServer = new io.configd.server.fanout.FanOutServer(
                     new InetSocketAddress(config.bindAddress(), config.edgePort()),
                     tlsManager, fanOutBuffer, edgeReplaySource,
                     io.configd.distribution.fanout.FanOutConfig.defaults(),
                     io.configd.server.fanout.FanOutServer.DEFAULT_TRANSPORT_QUEUE_FRAMES,
-                    fanOutMetrics, clock);
+                    io.configd.server.fanout.FanOutServer.DEFAULT_MAX_SESSIONS,
+                    slowConsumerGovernor, fanOutMetrics, clock);
             // F-0050-style fail-closed: if TLS is enabled on the CLI but the
             // edge endpoint did not receive a TlsManager, refuse to start
             // (no plaintext edge traffic in a TLS deployment).
@@ -629,7 +632,7 @@ public final class ConfigdServer {
                 tickExecutor, readDispatchExecutor, tlsReloadExecutor,
                 httpApiServer, tcpTransport, fanOutServer,
                 watchService, fanOutBuffer, compactor, plumtreeNode, hyParViewOverlay,
-                subscriptionManager, slowConsumerPolicy, rolloutController);
+                subscriptionManager, rolloutController);
 
         final int[] tickCount = {0};
         tickExecutor.scheduleAtFixedRate(() -> {
@@ -998,13 +1001,6 @@ public final class ConfigdServer {
      */
     public SubscriptionManager subscriptionManager() {
         return subscriptionManager;
-    }
-
-    /**
-     * Returns the slow consumer policy.
-     */
-    public SlowConsumerPolicy slowConsumerPolicy() {
-        return slowConsumerPolicy;
     }
 
     /**

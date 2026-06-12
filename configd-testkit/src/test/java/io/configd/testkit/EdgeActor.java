@@ -227,6 +227,11 @@ final class EdgeActor {
                 }
                 case EdgeStream.Heartbeat hb ->
                         core.onFrame(new EdgeFrame.Heartbeat(hb.latestSeq(), hb.serverNowMillis()));
+                case EdgeStream.ErrorClose err ->
+                        // C4: the policy disconnect rides the REAL core reaction —
+                        // onErrorClose queues the reconnect directive (cursor-resume),
+                        // exactly as the production edge process reacts to ERROR_CLOSE.
+                        core.onFrame(new EdgeFrame.ErrorClose(err.code(), err.message()));
             }
         }
         // Run the real periodic tick (re-ack on advance; heartbeat-silence reconnect policy;

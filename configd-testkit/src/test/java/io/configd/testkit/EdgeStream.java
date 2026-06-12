@@ -27,7 +27,7 @@ import java.util.Objects;
  * </ul>
  */
 sealed interface EdgeStream permits EdgeStream.Notify, EdgeStream.NotifyBatch,
-        EdgeStream.Snapshot, EdgeStream.Heartbeat {
+        EdgeStream.Snapshot, EdgeStream.Heartbeat, EdgeStream.ErrorClose {
 
     /**
      * A single committed-mutation notification pushed over the edge channel
@@ -96,6 +96,26 @@ sealed interface EdgeStream permits EdgeStream.Notify, EdgeStream.NotifyBatch,
             if (serverNowMillis < 0) {
                 throw new IllegalArgumentException("serverNowMillis must be non-negative: " + serverNowMillis);
             }
+        }
+    }
+
+    /**
+     * A server-initiated {@code ERROR_CLOSE} (C4): what the wire shows when the
+     * slow-consumer policy disconnects a subscriber
+     * ({@link io.configd.distribution.wire.ErrorCode#QUARANTINED}, code 8). The
+     * {@link EdgeActor} maps it onto the real core's
+     * {@code onFrame(EdgeFrame.ErrorClose)} so the edge-side reaction (the existing
+     * reconnect directive) is the PRODUCTION code path, not a sim re-implementation.
+     * Only the opt-in C4 governor wiring in {@link C1StreamDriver} ever sends this —
+     * the gate path never does, so existing seeds are byte-identical.
+     *
+     * @param code    the wire error code
+     * @param message diagnostic close message
+     */
+    record ErrorClose(io.configd.distribution.wire.ErrorCode code, String message)
+            implements EdgeStream {
+        public ErrorClose {
+            Objects.requireNonNull(code, "code must not be null");
         }
     }
 }

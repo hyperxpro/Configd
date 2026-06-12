@@ -38,6 +38,48 @@ class RegistryFanOutSessionMetricsTest {
         assertTrue(out.contains("edge_fanout_demotions_" + DemotionEvent.REASON_TRANSPORT_BLOCK + "_total"), out);
         // Per-reason session-closed counters.
         assertTrue(out.contains("edge_fanout_sessions_closed_server_shutdown_total"), out);
+        assertTrue(out.contains("edge_fanout_sessions_closed_quarantined_total"), out); // C4
+        // C4 slow-consumer policy series (design §2 names, verbatim).
+        assertTrue(out.contains("edge_fanout_slow_transitions_total"), out);
+        assertTrue(out.contains("edge_fanout_quarantines_total"), out);
+        assertTrue(out.contains("edge_fanout_unhealthy_total"), out);
+        assertTrue(out.contains("edge_fanout_reconnects_refused_total"), out);
+        assertTrue(out.contains("edge_fanout_readmissions_total"), out);
+        // The consumer_state{state} gauge, per-suffix encoded (one gauge per state).
+        assertTrue(out.contains("edge_fanout_consumer_state_healthy"), out);
+        assertTrue(out.contains("edge_fanout_consumer_state_slow"), out);
+        assertTrue(out.contains("edge_fanout_consumer_state_catchup"), out);
+        assertTrue(out.contains("edge_fanout_consumer_state_quarantined"), out);
+        assertTrue(out.contains("edge_fanout_consumer_state_unhealthy"), out);
+    }
+
+    @Test
+    void slowConsumerPolicyCallbacksMoveTheRightSeries() {
+        MetricsRegistry registry = new MetricsRegistry();
+        RegistryFanOutSessionMetrics m = new RegistryFanOutSessionMetrics(registry);
+
+        m.onSlowTransition();
+        m.onQuarantine();
+        m.onQuarantine();
+        m.onUnhealthy();
+        m.onReconnectRefused();
+        m.onReconnectRefused();
+        m.onReconnectRefused();
+        m.onReadmission();
+        m.onConsumerStates(4, 3, 2, 1, 5);
+
+        assertEquals(1, registry.counter("edge.fanout.slow_transitions").get());
+        assertEquals(2, registry.counter("edge.fanout.quarantines").get());
+        assertEquals(1, registry.counter("edge.fanout.unhealthy").get());
+        assertEquals(3, registry.counter("edge.fanout.reconnects_refused").get());
+        assertEquals(1, registry.counter("edge.fanout.readmissions").get());
+
+        String out = new PrometheusExporter(registry).export();
+        assertTrue(out.contains("edge_fanout_consumer_state_healthy 4"), out);
+        assertTrue(out.contains("edge_fanout_consumer_state_slow 3"), out);
+        assertTrue(out.contains("edge_fanout_consumer_state_catchup 2"), out);
+        assertTrue(out.contains("edge_fanout_consumer_state_quarantined 1"), out);
+        assertTrue(out.contains("edge_fanout_consumer_state_unhealthy 5"), out);
     }
 
     @Test

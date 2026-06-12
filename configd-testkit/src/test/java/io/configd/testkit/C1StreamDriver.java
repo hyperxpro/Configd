@@ -3,9 +3,11 @@ package io.configd.testkit;
 import io.configd.common.Clock;
 import io.configd.distribution.CommitNotificationSource;
 import io.configd.distribution.ReplaySource;
+import io.configd.distribution.fanout.DemotionEvent;
 import io.configd.distribution.fanout.FanOutConfig;
 import io.configd.distribution.fanout.FanOutSessionCore;
 import io.configd.distribution.fanout.FanOutSessionMetrics;
+import io.configd.distribution.fanout.SlowConsumerGovernor;
 import io.configd.distribution.fanout.TransportSink;
 import io.configd.distribution.wire.EdgeFrame;
 import io.configd.distribution.wire.EdgeSnapshotCodec;
@@ -13,9 +15,12 @@ import io.configd.distribution.wire.ErrorCode;
 import io.configd.store.ConfigSnapshot;
 
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
+import java.util.function.LongConsumer;
 
 /**
  * The REAL C1 {@link StreamDriver}: drives the production
@@ -57,6 +62,17 @@ final class C1StreamDriver implements StreamDriver {
     private final FanOutConfig config;
     private final Clock clock;
 
+    /**
+     * OPT-IN C4 slow-consumer governor. Null (the default and the gate path) preserves the
+     * historical behavior byte-for-byte: no admission, no demotion feed, no policy
+     * disconnects. With a governor: each session's demotions feed it, queue-pressure edges
+     * and ack progress are reported per tick, a QUARANTINED/UNHEALTHY verdict kicks the
+     * connection (dead sink + on-wire {@link EdgeStream.ErrorClose} code 8 — the real edge
+     * core reaction runs), and every (re)subscribe routes through {@code admit} — refusals
+     * are retried each tick, modelling the production edge's bounded reconnect loop.
+     */
+    private final SlowConsumerGovernor governor;
+
     /** One session per edge id, created lazily on first drive (deterministic order). */
     private final Map<Integer, FanOutSessionCore> sessions = new LinkedHashMap<>();
     private final Map<Integer, SimSink> sinks = new LinkedHashMap<>();
@@ -66,6 +82,17 @@ final class C1StreamDriver implements StreamDriver {
 
     /** C3 recovery resubscribes performed (per test assertions). */
     private int resubscribes;
+
+    /** C4: (re)subscribes refused by admission, retried each tick (deterministic order). */
+    private final Map<Integer, PendingResubscribe> pendingResubscribes = new LinkedHashMap<>();
+
+    /** C4: edges whose queue is currently at/above the warn threshold (edge detection). */
+    private final Set<Integer> aboveWarnEdges = new HashSet<>();
+
+    /** The nowMs of the current/most recent drive tick (the governor's time source). */
+    private long lastDriveNowMs;
+
+    private record PendingResubscribe(EdgeActor edge, long cursor) { }
 
     /**
      * Sim-tuned config. The production {@link FanOutConfig#defaults()} ack-lag threshold is
@@ -100,7 +127,13 @@ final class C1StreamDriver implements StreamDriver {
     }
 
     C1StreamDriver(FanOutConfig config) {
+        this(config, null);
+    }
+
+    /** C4: a driver with the slow-consumer governor live (opt-in; null = historical). */
+    C1StreamDriver(FanOutConfig config, SlowConsumerGovernor governor) {
         this.config = config;
+        this.governor = governor;
         // The session core only reads the clock via tick(now); a trivial clock suffices.
         this.clock = new Clock() {
             @Override public long currentTimeMillis() { return 0L; }
@@ -111,34 +144,104 @@ final class C1StreamDriver implements StreamDriver {
     @Override
     public void drive(Context ctx) {
         long now = ctx.nowMs();
+        lastDriveNowMs = now;
+        if (governor != null) {
+            retryRefusedResubscribes(ctx);
+        }
         for (EdgeActor edge : ctx.edges()) {
             FanOutSessionCore session = sessions.get(edge.edgeId());
             if (session == null) {
+                if (governor != null && pendingResubscribes.containsKey(edge.edgeId())) {
+                    continue; // refused by admission; the per-tick retry loop owns it
+                }
                 session = subscribe(ctx, edge);
+                if (session == null) {
+                    continue; // admission refused the initial subscribe (now pending)
+                }
             }
             session.tick(now);
+            // C4: queue-pressure edges + the time-driven SLOW evaluation (skipped if the
+            // demotion listener kicked this session during the tick).
+            if (governor != null && sessions.get(edge.edgeId()) == session) {
+                feedQueuePressure(edge, session, now);
+            }
         }
     }
 
-    /** Lazily creates + subscribes a session for {@code edge} on first sight. */
+    /**
+     * Lazily creates + subscribes a session for {@code edge} on first sight. With the C4
+     * governor live the subscribe routes through admission (a refusal goes to the per-tick
+     * retry loop and this returns null) — the sim analogue of the production server
+     * refusing the SUBSCRIBE and the edge's connect loop retrying.
+     */
     private FanOutSessionCore subscribe(Context ctx, EdgeActor edge) {
+        // SUBSCRIBE: full-store, fresh resume cursor 0 (a fresh edge cache bootstraps from 0).
+        return subscribeWithAdmission(ctx, edge, 0L, false);
+    }
+
+    /**
+     * The single (re)subscribe path: admission (when the governor is live), session + sink
+     * creation, ack-sink wiring, SUBSCRIBE. Returns null when admission refused (the
+     * attempt is parked in {@link #pendingResubscribes} and retried each tick).
+     */
+    private FanOutSessionCore subscribeWithAdmission(Context ctx, EdgeActor edge,
+                                                     long resumeCursor, boolean reconnect) {
+        long cursor = resumeCursor;
+        if (governor != null) {
+            SlowConsumerGovernor.Admission admission =
+                    governor.admit(identity(edge), lastDriveNowMs);
+            switch (admission.decision()) {
+                case REFUSE -> {
+                    pendingResubscribes.put(edge.edgeId(), new PendingResubscribe(edge, cursor));
+                    return null;
+                }
+                // Forced re-bootstrap: cursor rebound to 0 so the C3 decideMode cursor-0
+                // rule yields SNAPSHOT_FIRST — exactly the FanOutServer admission rewrite.
+                case ALLOW_FORCE_SNAPSHOT -> cursor = 0L;
+                case ALLOW -> { /* admit as requested */ }
+            }
+        }
         int cpNode = edge.subscribedCpNode();
         CommitNotificationSource source = ctx.source(cpNode);
         ReplaySource replay = ctx.replaySource(cpNode);
         SimSink sink = new SimSink(ctx, edge);
         FanOutSessionCore session = new FanOutSessionCore(
-                source, replay, sink, config, FanOutSessionMetrics.NOOP, clock);
+                source, replay, sink, config, FanOutSessionMetrics.NOOP, clock,
+                governor == null ? null : event -> onDemotion(ctx, edge, event));
 
         // Wire the edge's CURSOR_ACK back to this session (synchronous ack channel).
-        edge.setCursorAckSink(session::onCursorAck);
+        edge.setCursorAckSink(ackSink(edge, session));
 
-        // SUBSCRIBE: full-store, fresh resume cursor 0 (a fresh edge cache bootstraps from 0).
         session.onSubscribe(new EdgeFrame.Subscribe(
-                true, List.of(), 0L, -1L, "edge-" + edge.edgeId()));
+                true, List.of(), cursor, -1L, identity(edge)));
 
         sessions.put(edge.edgeId(), session);
         sinks.put(edge.edgeId(), sink);
+        if (reconnect) {
+            resubscribes++;
+            edge.onResubscribed();
+        }
         return session;
+    }
+
+    private static String identity(EdgeActor edge) {
+        return "edge-" + edge.edgeId();
+    }
+
+    /** The ack channel; with the governor live, an advancing ack also reports progress. */
+    private LongConsumer ackSink(EdgeActor edge, FanOutSessionCore session) {
+        if (governor == null) {
+            return session::onCursorAck;
+        }
+        String identity = identity(edge);
+        return seq -> {
+            long before = session.lastAckedSeq();
+            session.onCursorAck(seq);
+            if (session.lastAckedSeq() > before) {
+                governor.onAckProgress(identity, session.cursor(), session.lastAckedSeq(),
+                        lastDriveNowMs);
+            }
+        };
     }
 
     List<String> fatalCloses() {
@@ -164,18 +267,82 @@ final class C1StreamDriver implements StreamDriver {
         if (oldSink != null) {
             oldSink.dead = true;
         }
-        int cpNode = edge.subscribedCpNode();
-        SimSink sink = new SimSink(ctx, edge);
-        FanOutSessionCore session = new FanOutSessionCore(
-                ctx.source(cpNode), ctx.replaySource(cpNode), sink, config,
-                FanOutSessionMetrics.NOOP, clock);
-        edge.setCursorAckSink(session::onCursorAck);
-        session.onSubscribe(new EdgeFrame.Subscribe(
-                true, List.of(), resumeCursor, -1L, "edge-" + edge.edgeId()));
-        sessions.put(edge.edgeId(), session);
-        sinks.put(edge.edgeId(), sink);
-        resubscribes++;
-        edge.onResubscribed();
+        sessions.remove(edge.edgeId());
+        subscribeWithAdmission(ctx, edge, resumeCursor, true);
+    }
+
+    // -----------------------------------------------------------------------
+    // C4 governor plumbing (all of it conditional on a non-null governor)
+    // -----------------------------------------------------------------------
+
+    /**
+     * Demotion-listener seam (mirrors the FanOutServer connection): every demotion feeds
+     * the governor; a QUARANTINED/UNHEALTHY verdict disconnects the subscriber — the dead
+     * sink models the closed socket, and the on-wire {@link EdgeStream.ErrorClose}
+     * ({@code ErrorCode.QUARANTINED}, code 8) reaches the edge so the REAL core reaction
+     * (the reconnect directive) runs.
+     */
+    private void onDemotion(Context ctx, EdgeActor edge, DemotionEvent event) {
+        SlowConsumerGovernor.ConsumerState state =
+                governor.onDemotion(identity(edge), event, lastDriveNowMs);
+        if (state == SlowConsumerGovernor.ConsumerState.QUARANTINED
+                || state == SlowConsumerGovernor.ConsumerState.UNHEALTHY) {
+            policyKick(ctx, edge, state, event);
+        }
+    }
+
+    private void policyKick(Context ctx, EdgeActor edge, SlowConsumerGovernor.ConsumerState state,
+                            DemotionEvent event) {
+        SimSink sink = sinks.remove(edge.edgeId());
+        if (sink != null) {
+            sink.dead = true; // the closed socket: orphaned session frames go nowhere
+        }
+        sessions.remove(edge.edgeId());
+        edge.setCursorAckSink(null); // a closed socket carries no acks
+        aboveWarnEdges.remove(edge.edgeId());
+        ctx.send(edge, new EdgeStream.ErrorClose(ErrorCode.QUARANTINED,
+                "slow-consumer policy: " + state + " (" + event.reason() + ")"));
+    }
+
+    /** Per-tick queue-pressure edge detection + the time-driven SLOW evaluation. */
+    private void feedQueuePressure(EdgeActor edge, FanOutSessionCore session, long now) {
+        int warnThreshold = config.queueWarnThresholdFrames();
+        boolean above = warnThreshold > 0 && session.inFlightFrames() >= warnThreshold;
+        boolean wasAbove = aboveWarnEdges.contains(edge.edgeId());
+        if (above != wasAbove) {
+            if (above) {
+                aboveWarnEdges.add(edge.edgeId());
+            } else {
+                aboveWarnEdges.remove(edge.edgeId());
+            }
+            governor.onQueuePressure(identity(edge), above,
+                    session.cursor(), session.lastAckedSeq(), now);
+        }
+        if (above) {
+            governor.evaluate(identity(edge), now); // sim: per-tick is fine
+        }
+    }
+
+    /**
+     * Retries admission-refused (re)subscribes once per tick — the sim analogue of the
+     * production edge's bounded reconnect loop hitting the SUBSCRIBE refusal until the
+     * cooldown readmits (each refusal is counted on
+     * {@code edge_fanout_reconnects_refused_total}).
+     */
+    private void retryRefusedResubscribes(Context ctx) {
+        if (pendingResubscribes.isEmpty()) {
+            return;
+        }
+        // Snapshot-then-clear: a still-refused attempt re-parks itself into the map via
+        // subscribeWithAdmission, which would otherwise be a concurrent modification.
+        List<PendingResubscribe> retries = new ArrayList<>(pendingResubscribes.values());
+        pendingResubscribes.clear();
+        for (PendingResubscribe pending : retries) {
+            if (!pending.edge().alive()) {
+                continue; // a crashed edge re-enters via the auto-subscribe path on restart
+            }
+            subscribeWithAdmission(ctx, pending.edge(), pending.cursor(), true);
+        }
     }
 
     /**

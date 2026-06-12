@@ -86,6 +86,56 @@ public interface FanOutSessionMetrics {
      */
     default void onSubscribeMode(boolean snapshotFirst, long horizonDistance) { }
 
+    // ------------------------------------------------------------------
+    // C4 slow-consumer policy series (SlowConsumerGovernor; design §2). All
+    // default no-ops so existing sinks (NOOP, the sim) are unaffected — the
+    // same non-breaking pattern onSubscribeMode (C3) established.
+    // ------------------------------------------------------------------
+
+    /**
+     * HEALTHY→SLOW: the queue stayed at/above the warn threshold for
+     * {@code edge.fanout.policy.queueWarnWindowMs} (§7's "0 credits for &gt; 10 s").
+     * Series {@code edge_fanout_slow_transitions_total} (counter).
+     */
+    default void onSlowTransition() { }
+
+    /**
+     * An identity tripped a demotion-window limit and was quarantined
+     * ({@code edge.fanout.policy.demoteLimit} / {@code gapDemoteLimit}).
+     * Series {@code edge_fanout_quarantines_total} (counter).
+     */
+    default void onQuarantine() { }
+
+    /**
+     * An identity hit {@code edge.fanout.policy.quarantineLimit} quarantines within
+     * {@code unhealthyWindowMs} and was marked UNHEALTHY (alert-grade).
+     * Series {@code edge_fanout_unhealthy_total} (counter).
+     */
+    default void onUnhealthy() { }
+
+    /**
+     * A SUBSCRIBE from a QUARANTINED/UNHEALTHY identity was refused inside its cooldown
+     * (C4-3: a flapping edge in cooldown is observable, never silently dark).
+     * Series {@code edge_fanout_reconnects_refused_total} (counter).
+     */
+    default void onReconnectRefused() { }
+
+    /**
+     * A QUARANTINED/UNHEALTHY identity passed its cooldown and was readmitted with the
+     * snapshot-first re-bootstrap forced (the C4-3 automatic time-based exit).
+     * Series {@code edge_fanout_readmissions_total} (counter).
+     */
+    default void onReadmission() { }
+
+    /**
+     * The per-state tracked-identity tallies after a transition. The design's
+     * {@code edge_fanout_consumer_state{state}} gauge becomes one gauge per state
+     * ({@code edge_fanout_consumer_state_healthy} … {@code _unhealthy}) — the
+     * established per-suffix encoding for the label-free registry.
+     */
+    default void onConsumerStates(int healthy, int slow, int catchup,
+                                  int quarantined, int unhealthy) { }
+
     /** No-op sink — the default for tests and any wiring that does not export metrics. */
     FanOutSessionMetrics NOOP = new FanOutSessionMetrics() {
         @Override public void onNotifyBatch(int n, int bytes) { }

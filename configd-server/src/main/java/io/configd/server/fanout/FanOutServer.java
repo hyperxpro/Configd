@@ -5,6 +5,8 @@ import io.configd.distribution.CommitNotificationSource;
 import io.configd.distribution.ReplaySource;
 import io.configd.distribution.fanout.FanOutConfig;
 import io.configd.distribution.fanout.FanOutSessionCore;
+import io.configd.distribution.fanout.SlowConsumerGovernor;
+import io.configd.distribution.fanout.SlowConsumerPolicyConfig;
 import io.configd.distribution.fanout.TransportSink;
 import io.configd.distribution.wire.EdgeFrame;
 import io.configd.distribution.wire.EdgeFrameCodec;
@@ -91,8 +93,18 @@ public final class FanOutServer {
     private final FanOutConfig config;
     private final int transportQueueFrames;
     private final int maxSessions;
+    private final SlowConsumerGovernor governor;
     private final RegistryFanOutSessionMetrics metrics;
     private final Clock clock;
+
+    /**
+     * Cadence (ms) for the governor's time-driven HEALTHY→SLOW evaluation while a
+     * session's queue is at/above warn. Coarse on purpose: the policy windows are tens of
+     * seconds, and the busy drain loop must pay at most one {@code long} comparison per
+     * iteration for it (hot-path law). Capped below the warn window so a short test
+     * window is still promotable.
+     */
+    private final long governorEvalCadenceMs;
 
     private final ExecutorService executor = Executors.newVirtualThreadPerTaskExecutor();
     private final Set<Socket> liveSockets = ConcurrentHashMap.newKeySet();
@@ -120,6 +132,30 @@ public final class FanOutServer {
                         int maxSessions,
                         RegistryFanOutSessionMetrics metrics,
                         Clock clock) {
+        this(bindAddress, tlsManager, source, replaySource, config, transportQueueFrames,
+                maxSessions,
+                new SlowConsumerGovernor(SlowConsumerPolicyConfig.defaults(),
+                        java.util.Objects.requireNonNull(metrics, "metrics")),
+                metrics, clock);
+    }
+
+    /**
+     * Full constructor with an explicit {@link SlowConsumerGovernor} (C4): the
+     * per-identity slow-consumer policy consulted at SUBSCRIBE (quarantine/unhealthy
+     * refusal, forced snapshot-first readmission) and fed by the per-session demotion /
+     * ack-progress / queue-pressure signals. The delegating constructors build one with
+     * {@link SlowConsumerPolicyConfig#defaults()}.
+     */
+    public FanOutServer(InetSocketAddress bindAddress,
+                        TlsManager tlsManager,
+                        CommitNotificationSource source,
+                        ReplaySource replaySource,
+                        FanOutConfig config,
+                        int transportQueueFrames,
+                        int maxSessions,
+                        SlowConsumerGovernor governor,
+                        RegistryFanOutSessionMetrics metrics,
+                        Clock clock) {
         this.bindAddress = java.util.Objects.requireNonNull(bindAddress, "bindAddress");
         this.tlsManager = tlsManager; // null = plaintext (test/single-node)
         this.source = java.util.Objects.requireNonNull(source, "source");
@@ -133,8 +169,16 @@ public final class FanOutServer {
             throw new IllegalArgumentException("maxSessions must be positive: " + maxSessions);
         }
         this.maxSessions = maxSessions;
+        this.governor = java.util.Objects.requireNonNull(governor, "governor");
         this.metrics = java.util.Objects.requireNonNull(metrics, "metrics");
         this.clock = java.util.Objects.requireNonNull(clock, "clock");
+        this.governorEvalCadenceMs = Math.max(1L,
+                Math.min(1_000L, governor.config().queueWarnWindowMs() / 2));
+    }
+
+    /** The slow-consumer governor this endpoint enforces (C4; for tests/diagnostics). */
+    public SlowConsumerGovernor governor() {
+        return governor;
     }
 
     /** Binds the listen socket and starts the accept loop on a virtual thread. */
@@ -321,6 +365,14 @@ public final class FanOutServer {
 
         private volatile FanOutSessionCore session;
 
+        /**
+         * The governor identity this connection is bound to (the cert principal over mTLS;
+         * the wire edgeId over plaintext). Set by the reader at SUBSCRIBE, read by the
+         * session thread (demotion listener / loop feed) — null until subscribed, and a
+         * demotion is impossible before the subscribe command has run.
+         */
+        private volatile String governorIdentity;
+
         Connection(Socket socket, String edgeIdentity) {
             this.socket = socket;
             this.edgeIdentity = edgeIdentity;
@@ -330,7 +382,11 @@ public final class FanOutServer {
         void run() {
             // The session uses THIS connection as its TransportSink. Created before the reader
             // sees SUBSCRIBE so onSubscribe (drained on the session thread) can emit SUBSCRIBE_OK.
-            this.session = new FanOutSessionCore(source, replaySource, this, config, metrics, clock);
+            // The demotion listener feeds the C4 governor: when a demotion trips a window
+            // limit, the identity is QUARANTINED/UNHEALTHY and the connection is torn down
+            // with the on-wire ErrorCode.QUARANTINED (code 8) + socket close.
+            this.session = new FanOutSessionCore(source, replaySource, this, config, metrics,
+                    clock, this::onDemotionEvent);
             metrics.onSubscriberConnected();
 
             Thread writer = Thread.ofVirtual().name("edge-writer-" + edgeIdentity).unstarted(this::writerLoop);
@@ -365,7 +421,29 @@ public final class FanOutServer {
                         }
                         subscribed = true;
                         EdgeFrame.Subscribe bound = bindIdentity(sub);
-                        sessionCommands.add(s -> s.onSubscribe(bound));
+                        // C4 admission control (design §3): the governor rules on the
+                        // BOUND identity (the cert principal — a reconnect storm cannot
+                        // dodge it by re-dialing). REFUSE → ErrorCode.QUARANTINED + close;
+                        // post-cooldown readmission → resume cursor rebound to 0 so the C3
+                        // decideMode cursor-0 rule forces the snapshot re-bootstrap
+                        // (§7 "must re-bootstrap via catch-up protocol" — reused, not
+                        // duplicated).
+                        governorIdentity = bound.edgeId();
+                        SlowConsumerGovernor.Admission admission =
+                                governor.admit(bound.edgeId(), clock.currentTimeMillis());
+                        switch (admission.decision()) {
+                            case REFUSE -> {
+                                close(ErrorCode.QUARANTINED, "subscribe refused: identity is "
+                                        + admission.state() + "; cooldown remaining "
+                                        + admission.cooldownRemainingMs() + " ms");
+                                return;
+                            }
+                            case ALLOW_FORCE_SNAPSHOT -> bound = new EdgeFrame.Subscribe(
+                                    bound.fullStore(), bound.prefixes(), 0L, -1L, bound.edgeId());
+                            case ALLOW -> { /* admit as requested */ }
+                        }
+                        EdgeFrame.Subscribe admitted = bound;
+                        sessionCommands.add(s -> s.onSubscribe(admitted));
                     } else {
                         switch (frame) {
                             case EdgeFrame.CursorAck ack -> sessionCommands.add(s -> s.onCursorAck(ack.seq()));
@@ -453,10 +531,41 @@ public final class FanOutServer {
             }
         }
 
+        // ---- demotion listener (runs on the session thread, inside the core's demote) ----
+
+        /**
+         * Feeds every C1 {@code DemotionEvent} to the C4 governor. When the demotion trips
+         * a window limit the governor answers QUARANTINED/UNHEALTHY and this connection is
+         * torn down: the wire sees {@code ERROR_CLOSE} with {@link ErrorCode#QUARANTINED}
+         * (code 8) and the socket closes; the session loop exits before the owed snapshot
+         * transfer runs (no wasted transfer to a quarantined consumer). Subsequent
+         * SUBSCRIBEs from the identity hit the admission refusal until the cooldown.
+         */
+        private void onDemotionEvent(io.configd.distribution.fanout.DemotionEvent event) {
+            String id = governorIdentity;
+            if (id == null) {
+                return; // demotion before SUBSCRIBE cannot happen; defensive
+            }
+            SlowConsumerGovernor.ConsumerState state =
+                    governor.onDemotion(id, event, clock.currentTimeMillis());
+            if (state == SlowConsumerGovernor.ConsumerState.QUARANTINED
+                    || state == SlowConsumerGovernor.ConsumerState.UNHEALTHY) {
+                teardown(ErrorCode.QUARANTINED, "slow-consumer policy: " + state
+                        + " (" + event.reason() + ", cursor=" + event.cursor()
+                        + ", lastAckedSeq=" + event.lastAckedSeq() + ")");
+            }
+        }
+
         // ---- session thread ----
 
         private void sessionLoop() {
             long idleParkNanos = 0;
+            // C4 governor feed state (session-thread-local; one comparison per iteration
+            // on the busy path — hot-path law).
+            long lastAckSeen = session.lastAckedSeq();
+            boolean aboveWarn = false;
+            long lastGovernorEvalMillis = Long.MIN_VALUE;
+            final int warnThreshold = config.queueWarnThresholdFrames();
             try {
                 while (alive.get() && running.get()) {
                     // Drain inbound session commands (subscribe / cursor-ack) FIRST so every
@@ -471,10 +580,34 @@ public final class FanOutServer {
 
                     int beforeDepth = session.inFlightFrames();
                     long beforeCursor = session.cursor();
-                    session.tick(clock.currentTimeMillis());
+                    long nowMillis = clock.currentTimeMillis();
+                    session.tick(nowMillis);
                     if (session.state() == FanOutSessionCore.SessionState.CLOSED) {
                         return;
                     }
+
+                    // C4 governor feed: ack progress (resolves CATCHUP), queue-pressure
+                    // EDGES (warn-window arming), and the ≤1 Hz time-driven evaluation
+                    // while warned. All calls are edge/cadence-gated — never per-frame.
+                    String id = governorIdentity;
+                    if (id != null && alive.get()) {
+                        long acked = session.lastAckedSeq();
+                        if (acked > lastAckSeen) {
+                            lastAckSeen = acked;
+                            governor.onAckProgress(id, session.cursor(), acked, nowMillis);
+                        }
+                        boolean above = warnThreshold > 0
+                                && session.inFlightFrames() >= warnThreshold;
+                        if (above != aboveWarn) {
+                            aboveWarn = above;
+                            governor.onQueuePressure(id, above, session.cursor(), acked, nowMillis);
+                        }
+                        if (above && nowMillis - lastGovernorEvalMillis >= governorEvalCadenceMs) {
+                            lastGovernorEvalMillis = nowMillis;
+                            governor.evaluate(id, nowMillis);
+                        }
+                    }
+
                     boolean madeProgress = drainedCommand
                             || session.cursor() != beforeCursor
                             || session.inFlightFrames() != beforeDepth;

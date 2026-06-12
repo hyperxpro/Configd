@@ -54,10 +54,25 @@ public final class RegistryFanOutSessionMetrics implements FanOutSessionMetrics 
     private final MetricsRegistry.Counter subscribeTail;
     private final MetricsRegistry.Counter subscribeSnapshotFirst;
 
+    // --- C4 slow-consumer policy counters (SlowConsumerGovernor; design §2) ---
+    private final MetricsRegistry.Counter slowTransitions;
+    private final MetricsRegistry.Counter quarantines;
+    private final MetricsRegistry.Counter unhealthy;
+    private final MetricsRegistry.Counter reconnectsRefused;
+    private final MetricsRegistry.Counter readmissions;
+
     // --- Gauge backing state (process-level aggregates) ---
     private final AtomicLong queueDepth = new AtomicLong(0);
     private final AtomicInteger connectedSubscribers = new AtomicInteger(0);
     private final AtomicLong subscribeHorizonDistance = new AtomicLong(0);
+
+    // C4: per-state tracked-identity tallies (the design's consumer_state{state} gauge,
+    // per-suffix encoded for the label-free registry).
+    private final AtomicInteger consumersHealthy = new AtomicInteger(0);
+    private final AtomicInteger consumersSlow = new AtomicInteger(0);
+    private final AtomicInteger consumersCatchup = new AtomicInteger(0);
+    private final AtomicInteger consumersQuarantined = new AtomicInteger(0);
+    private final AtomicInteger consumersUnhealthy = new AtomicInteger(0);
 
     public RegistryFanOutSessionMetrics(MetricsRegistry registry) {
         // Counters / histogram — registering them touches the registry so the series exists.
@@ -89,8 +104,18 @@ public final class RegistryFanOutSessionMetrics implements FanOutSessionMetrics 
                 "BAD_WIRE_VERSION", registry.counter("edge.fanout.sessions_closed.bad_wire_version"),
                 "AUTH_FAIL", registry.counter("edge.fanout.sessions_closed.auth_fail"),
                 "GAP_UNRECOVERABLE", registry.counter("edge.fanout.sessions_closed.gap_unrecoverable"),
+                "QUARANTINED", registry.counter("edge.fanout.sessions_closed.quarantined"),
                 "transport_gone", registry.counter("edge.fanout.sessions_closed.transport_gone"));
         this.closedOther = registry.counter("edge.fanout.sessions_closed.other");
+
+        // C4 slow-consumer policy series (eager, RR-013). One counter per governor
+        // transition family: SLOW promotion, quarantine, unhealthy escalation, cooldown
+        // refusal, cooldown readmission.
+        this.slowTransitions = registry.counter("edge.fanout.slow_transitions");
+        this.quarantines = registry.counter("edge.fanout.quarantines");
+        this.unhealthy = registry.counter("edge.fanout.unhealthy");
+        this.reconnectsRefused = registry.counter("edge.fanout.reconnects_refused");
+        this.readmissions = registry.counter("edge.fanout.readmissions");
 
         // Admission-bound refusals (hard rule 4: edge.fanout.transport.maxSessions).
         this.sessionsRefused = registry.counter("edge.fanout.sessions_refused");
@@ -104,6 +129,13 @@ public final class RegistryFanOutSessionMetrics implements FanOutSessionMetrics 
         registry.gauge("edge.fanout.queue_depth", queueDepth::get);
         registry.gauge("edge.fanout.connected_subscribers", connectedSubscribers::get);
         registry.gauge("edge.fanout.subscribe.horizon_distance", subscribeHorizonDistance::get);
+
+        // C4: per-state consumer tallies (design §2 consumer_state gauge, per-suffix).
+        registry.gauge("edge.fanout.consumer_state.healthy", consumersHealthy::get);
+        registry.gauge("edge.fanout.consumer_state.slow", consumersSlow::get);
+        registry.gauge("edge.fanout.consumer_state.catchup", consumersCatchup::get);
+        registry.gauge("edge.fanout.consumer_state.quarantined", consumersQuarantined::get);
+        registry.gauge("edge.fanout.consumer_state.unhealthy", consumersUnhealthy::get);
     }
 
     // --- Session lifecycle hooks the FanOutServer drives directly (not via the session) ---
@@ -173,5 +205,42 @@ public final class RegistryFanOutSessionMetrics implements FanOutSessionMetrics 
     public void onSubscribeMode(boolean snapshotFirst, long horizonDistance) {
         (snapshotFirst ? subscribeSnapshotFirst : subscribeTail).increment();
         subscribeHorizonDistance.set(horizonDistance);
+    }
+
+    // --- C4 slow-consumer policy (SlowConsumerGovernor) ---
+
+    @Override
+    public void onSlowTransition() {
+        slowTransitions.increment();
+    }
+
+    @Override
+    public void onQuarantine() {
+        quarantines.increment();
+    }
+
+    @Override
+    public void onUnhealthy() {
+        unhealthy.increment();
+    }
+
+    @Override
+    public void onReconnectRefused() {
+        reconnectsRefused.increment();
+    }
+
+    @Override
+    public void onReadmission() {
+        readmissions.increment();
+    }
+
+    @Override
+    public void onConsumerStates(int healthy, int slow, int catchup,
+                                 int quarantined, int unhealthy) {
+        consumersHealthy.set(healthy);
+        consumersSlow.set(slow);
+        consumersCatchup.set(catchup);
+        consumersQuarantined.set(quarantined);
+        this.consumersUnhealthy.set(unhealthy);
     }
 }
