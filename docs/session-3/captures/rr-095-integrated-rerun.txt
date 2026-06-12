@@ -1,0 +1,60 @@
+RR-095 stall-seed re-run against the INTEGRATED simulator — C6 deliverable
+Date: 2026-06-12   Branch: session-3-data-plane (post-C5 sign-off, RR-104 fix applied)
+Box: t3a.large 2-vCPU (unthrottled at run time)
+
+CONFIG (exact)
+  Test: configd-testkit io.configd.testkit.Rr095StallSeedsIntegratedRerunTest
+        (property-gated; committed with this capture)
+  Command:
+    ./mvnw -o -pl configd-testkit test -Dtest=Rr095StallSeedsIntegratedRerunTest \
+        -Dconfigd.rr095.rerun=true -Dsurefire.failIfNoSpecifiedTests=false
+  Sim: EdgeFanOutSim(seed, cpNodes=5, edges=3, ticks=1500, edgeFaults=true,
+        new C1StreamDriver(), AdversarialSchedule.defaultIntensity(), EdgeInvariants.BOUND_MS)
+        + enableEdgeRecovery(0..2)  [the C3 production recovery loop live on every edge —
+        the EdgeBootstrapUnderSustainedWritesTest seam usage]
+  Baseline being compared against: Session 2 characterization on the bare CP sim,
+        new AdversarialSim(seed, 5, 1500).run() => leaderElected=false, faults=8,
+        crashes=0, safetyViolations=0 (docs/session-2/captures/sweep-10k-run.txt).
+  Note: the CP schedule is byte-identical with edges attached (EdgeSeedCompatTest pins
+        the CP digest with 0/3 edges), so a CP-side delta was structurally impossible;
+        the question this re-run answers is whether the integrated edge plane stays SAFE
+        and quiet under a leaderless control plane.
+
+PER-SEED RESULTS (raw test output)
+RR095-RERUN: seed=452  cpLeaderElected=false cpFaults=8 cpConvergedAfterHeal=false edgeDelivered=0 edgeDeliveryViolations=0 excusedAtDeadline=0 edgeConverged=true safetyViolations=0
+RR095-RERUN: seed=869  cpLeaderElected=false cpFaults=8 cpConvergedAfterHeal=false edgeDelivered=0 edgeDeliveryViolations=0 excusedAtDeadline=0 edgeConverged=true safetyViolations=0
+RR095-RERUN: seed=4740 cpLeaderElected=false cpFaults=8 cpConvergedAfterHeal=false edgeDelivered=0 edgeDeliveryViolations=0 excusedAtDeadline=0 edgeConverged=true safetyViolations=0
+RR095-RERUN: seed=5100 cpLeaderElected=false cpFaults=8 cpConvergedAfterHeal=false edgeDelivered=0 edgeDeliveryViolations=0 excusedAtDeadline=0 edgeConverged=true safetyViolations=0
+RR095-RERUN: seed=5159 cpLeaderElected=false cpFaults=8 cpConvergedAfterHeal=false edgeDelivered=0 edgeDeliveryViolations=0 excusedAtDeadline=0 edgeConverged=true safetyViolations=0
+RR095-RERUN: seed=5500 cpLeaderElected=false cpFaults=8 cpConvergedAfterHeal=false edgeDelivered=0 edgeDeliveryViolations=0 excusedAtDeadline=0 edgeConverged=true safetyViolations=0
+RR095-RERUN: seed=8319 cpLeaderElected=false cpFaults=8 cpConvergedAfterHeal=false edgeDelivered=0 edgeDeliveryViolations=0 excusedAtDeadline=0 edgeConverged=true safetyViolations=0
+
+PER-SEED DELTA TABLE (for the lead's register-row update — NOT placed by C6)
+  seed  | baseline (S2, CP-only)        | integrated (edges live)            | delta
+  ------+-------------------------------+------------------------------------+------------------
+  452   | stall (no leader), faults=8   | still-stalls, faults=8, edge quiet | NO CHANGE (safe)
+  869   | stall (no leader), faults=8   | still-stalls, faults=8, edge quiet | NO CHANGE (safe)
+  4740  | stall (no leader), faults=8   | still-stalls, faults=8, edge quiet | NO CHANGE (safe)
+  5100  | stall (no leader), faults=8   | still-stalls, faults=8, edge quiet | NO CHANGE (safe)
+  5159  | stall (no leader), faults=8   | still-stalls, faults=8, edge quiet | NO CHANGE (safe)
+  5500  | stall (no leader), faults=8   | still-stalls, faults=8, edge quiet | NO CHANGE (safe)
+  8319  | stall (no leader), faults=8   | still-stalls, faults=8, edge quiet | NO CHANGE (safe)
+
+HONESTY NOTES
+  1. edgeConverged=true on every seed is VACUOUS: no leader was ever elected, so every
+     CP store and every edge store sits at version 0 — finalCheck's byte-equal
+     comparison passes trivially (deliveredCount=0 makes this visible). The meaningful
+     columns are safetyViolations=0 and edgeDeliveryViolations=0: a leaderless control
+     plane starves the edge plane SAFELY (no phantom delivery, no monotonicity breach,
+     no invariant noise).
+  2. cpConvergedAfterHeal=false even after settleCp() heal+settle window: consistent
+     with the never-healed-schedule root cause (sim-work-review §6) and possibly
+     compounded by RR-103 (per-peer inflight window leak — owner S4, deterministic
+     repro seed 4242). No new stall class observed; nothing here is C6-introduced.
+  3. NEW STALLS INTRODUCED BY SESSION-3 CODE: none observed — the seven seeds behave
+     exactly as characterized; the edge plane adds zero safety findings on any of them.
+
+DISPOSITION SUGGESTION (lead's call): RR-095 row stays OPEN/ACCEPTED-RISK-candidate,
+owner Session 4 (with RR-103); this capture satisfies the charter §4-C6 "re-run and
+report deltas" obligation and the row's open question "cross-check it masks no
+edge-propagation liveness bug once the edge exists" — at sim level it masks none.

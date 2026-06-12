@@ -23,15 +23,21 @@ COPY configd-distribution-service/pom.xml configd-distribution-service/pom.xml
 COPY configd-control-plane-api/pom.xml configd-control-plane-api/pom.xml
 COPY configd-testkit/pom.xml        configd-testkit/pom.xml
 COPY configd-server/pom.xml         configd-server/pom.xml
+COPY configd-edge-node/pom.xml      configd-edge-node/pom.xml
+COPY configd-linz/pom.xml           configd-linz/pom.xml
+COPY configd-jcstress/pom.xml       configd-jcstress/pom.xml
 
 RUN mvn dependency:resolve -B -q || true
 
 COPY . .
 RUN mvn clean package -DskipTests -B
 
-# Collect all runtime JARs into a flat directory
+# Collect all runtime JARs into a flat directory. Exclude original-* (the
+# pre-shade artifacts maven-shade leaves behind): copying both the shaded jar
+# and its original would put duplicate classes on the classpath.
 RUN mkdir -p /staging/libs && \
     find . -path '*/target/*.jar' -not -name '*-test*' -not -name '*-sources*' \
+        -not -name 'original-*' \
         -exec cp {} /staging/libs/ \;
 
 # ========================== Stage 2: Runtime ================================
@@ -56,9 +62,19 @@ USER configd
 
 HEALTHCHECK --interval=10s --timeout=3s CMD curl -f http://localhost:8080/health/live || exit 1
 
+# Notes (C6 audit, session-3):
+#  - -XX:+ZGenerational was REMOVED in JDK 24 (generational ZGC is the only ZGC);
+#    passing it on JDK 25 only produces an "Ignoring option" warning — dropped.
+#  - The original -Xms512m/-Xmx2g default was unrealistic for multi-JVM test
+#    topologies (the gate box is 2-vCPU/7.7GB); heap is now a MaxRAMPercentage
+#    default so `docker run -m` sizes it, and remains overridable via JAVA_OPTS.
+#  - This image's default process is the CONTROL-PLANE server. The edge node
+#    (configd-edge-node shaded jar, main io.configd.edge.node.EdgeNodeMain) is
+#    also in /app/libs — override the entrypoint to run it. The C6 E2E topology
+#    uses the purpose-built slim images in deploy/compose/ instead.
 ENTRYPOINT ["java", "--enable-preview", \
-    "-XX:+UseZGC", "-XX:+ZGenerational", \
-    "-Xms512m", "-Xmx2g", \
+    "-XX:+UseZGC", \
+    "-XX:MaxRAMPercentage=50.0", \
     "-XX:+ExitOnOutOfMemoryError", \
     "-Djava.security.egd=file:/dev/urandom", \
     "-cp", "libs/*", \

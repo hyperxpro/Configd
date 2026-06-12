@@ -1,0 +1,29 @@
+# C6 E2E control-plane image: a slim JRE layer over the HOST-BUILT shaded jar.
+#
+# Deliberately NOT the full in-container Maven build (docker/Dockerfile.runtime):
+# the E2E gate runs on a 2-vCPU box where builds must be serialized on the host
+# (./mvnw, offline-capable) and Compose only runs AFTER they complete. The build
+# context is a staging dir the gate script populates with exactly one jar
+# (gates/e2e-compose-scenario.sh — which also verifies the expected classes are
+# inside the jar before building, the shaded-jar trap).
+#
+# No new runtime dependencies inside the JAR; curl is image-level only (healthcheck
+# + docker-exec observation during partitions, when published ports are unreachable).
+FROM eclipse-temurin:25-jre-noble
+
+RUN apt-get update && apt-get install -y --no-install-recommends curl \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY configd-server.jar /app/configd-server.jar
+
+# Small heap by design: 6 JVMs must fit the 7.7GB gate box. --enable-preview matches
+# the established launch pattern (classes are compiled with the flag; same JDK 25).
+ENTRYPOINT ["java", "--enable-preview", \
+    "-Xms64m", "-Xmx192m", \
+    "-XX:+ExitOnOutOfMemoryError", \
+    "-jar", "/app/configd-server.jar"]
+
+# The API serves HTTPS when the TLS triple is on (HttpApiServer wraps the same
+# SSLContext) — -k is fine for a container-local liveness probe.
+HEALTHCHECK --interval=5s --timeout=3s --start-period=20s --retries=24 \
+    CMD curl -fsSk https://localhost:8080/health/live || exit 1

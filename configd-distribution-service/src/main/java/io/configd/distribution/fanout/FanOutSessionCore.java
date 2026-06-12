@@ -102,6 +102,14 @@ public final class FanOutSessionCore {
     private PendingSnapshotTransfer pendingTransfer;
 
     /**
+     * RR-104: a DEMOTED_TO_CATCHUP notice the full transport queue refused at
+     * {@link #demote} time; null when none owed. Re-offered each {@link #tick(long)}
+     * ahead of the owed snapshot transfer (would-block pacing, the RR-102 doctrine —
+     * the notice is advisory and must never close-mark the session).
+     */
+    private EdgeFrame.ErrorClose pendingDemotionNotice;
+
+    /**
      * A snapshot transfer paced against transport backpressure: the immutable frame plan
      * (seq, chunks, declared size) plus the emission high-water mark, so a transfer that
      * would overrun the bounded transport queue pauses at the refused frame and resumes
@@ -247,6 +255,17 @@ public final class FanOutSessionCore {
             return;
         }
         boolean emittedThisTick = false;
+
+        // RR-104: a demotion notice refused at demote() time (full queue) is owed; it
+        // must precede the snapshot envelope on the wire. If the queue is STILL full,
+        // the snapshot cannot start either — would-block, retry next tick.
+        if (state == SessionState.CATCHUP && pendingDemotionNotice != null) {
+            if (!sink.offer(pendingDemotionNotice)) {
+                return;
+            }
+            pendingDemotionNotice = null;
+            emittedThisTick = true;
+        }
 
         if (state == SessionState.CATCHUP && catchupSnapshotOwed) {
             emittedThisTick |= performSnapshotTransfer();
@@ -461,8 +480,17 @@ public final class FanOutSessionCore {
         demotionCount++;
         DemotionEvent event = new DemotionEvent(cursor, lastAckedSeq, reason);
         lastDemotion = event;
-        // Non-fatal notice to the edge (the demotion code).
-        emit(new EdgeFrame.ErrorClose(ErrorCode.DEMOTED_TO_CATCHUP, reason));
+        // Non-fatal notice to the edge (the demotion code). RR-104: the notice is
+        // ADVISORY — the snapshot that follows is the load-bearing signal — and the
+        // outbound queue is full BY DEFINITION when the reason is TRANSPORT_BLOCK, so a
+        // refused offer here is WOULD-BLOCK (the RR-102 doctrine), not transport death.
+        // Never route it through emit(), whose refusal semantics close-mark the session
+        // (the close/resurrect inconsistency RR-104 names: a phantom
+        // onSessionClosed("transport_gone") followed by the CATCHUP tail below). A
+        // refused notice is retained and re-offered each tick AHEAD of the snapshot
+        // transfer (tick()), preserving wire order: notice, BEGIN..chunks..END.
+        EdgeFrame.ErrorClose notice = new EdgeFrame.ErrorClose(ErrorCode.DEMOTED_TO_CATCHUP, reason);
+        pendingDemotionNotice = sink.offer(notice) ? null : notice;
         // Drop pending outbound accounting — the snapshot supersedes everything in flight.
         inFlightFrameMaxSeq.clear();
         slowConsumerWarned = false;

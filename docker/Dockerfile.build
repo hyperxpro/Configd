@@ -35,6 +35,9 @@ COPY configd-distribution-service/pom.xml configd-distribution-service/pom.xml
 COPY configd-control-plane-api/pom.xml configd-control-plane-api/pom.xml
 COPY configd-testkit/pom.xml        configd-testkit/pom.xml
 COPY configd-server/pom.xml         configd-server/pom.xml
+COPY configd-edge-node/pom.xml      configd-edge-node/pom.xml
+COPY configd-linz/pom.xml           configd-linz/pom.xml
+COPY configd-jcstress/pom.xml       configd-jcstress/pom.xml
 
 # Download dependencies into a cached layer
 RUN mvn dependency:resolve -B -q || true
