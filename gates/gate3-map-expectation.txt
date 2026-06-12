@@ -1,0 +1,10 @@
+# gate-3 step (b) expectation pin — owned by contract-qa.
+# This file MUST be updated in the SAME change as any contract-test-map.md edit
+# that moves the summary line (drift in either direction fails the gate loudly).
+# Re-pinned by the contract-qa FINAL-FLIPS pass (2026-06-12, auditing the gate-3
+# landing 31a4225): CT-34 + CT-38 flipped PASSING (captured gate run + the
+# consolidated EdgeMetricsContractTest, deviations priced); CT-02 stays PARTIAL
+# as the SANCTIONED S5 deferral (charter §3 V2 text + handoff §3) — see
+# docs/session-3/reviews/c6-contract-qa-audit.md, final-flips addendum.
+# Map and this pin updated in the same pass, per the rule above.
+CONTRACT-MAP-SUMMARY: total=41 passing=36 partial=1 failing-captured=0 unimplemented=0 adr=3 na=1

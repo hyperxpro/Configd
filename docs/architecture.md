@@ -258,19 +258,38 @@ Health monitoring beyond Raft heartbeats:
 - Join TTL: log(N)+1
 
 ### Backpressure Model
-Credit-based flow control per child:
-- Initial credits: 100
-- Each message consumes 1 credit
-- ACK replenishes credits
-- At 0 credits: buffer (bounded, 1000 entries max)
-- Buffer full at 80%: slow consumer warning (`configd.distribution.slow_consumer` metric)
-- Buffer full at 100%: disconnect child
+> **Amended (S3 doc pass, 2026-06-12 — as-built supersession, recorded per the C1
+> design review's §7-credit-model-superseded statement):** the credit model below was
+> never built. The implemented backpressure is **bounded per-subscriber queues +
+> cursor-acknowledged demotion** (ADR-0038/C1): each fan-out session owns a bounded
+> outbound frame queue; sustained queue-warn pressure raises
+> `edge_fanout_slow_consumer_warnings_total`; queue overflow or cursor-ack lag past the
+> ack-lag threshold demotes the session to catch-up (snapshot + resume) — never an
+> unbounded buffer, never a silent drop (`FanOutSessionCore`; pinned by
+> `EdgePropagationBacklogTest` / `FanOutSessionCoreBoundaryTest`). Original text kept
+> for the audit trail:
+- ~~Credit-based flow control per child: initial 100, 1 per message, ACK replenishes;
+  at 0 credits bounded buffer (1000 max); 80% warning; 100% disconnect~~ (superseded —
+  see amendment note above).
 
 ### Catch-up Protocol
-1. Edge node compares `last_applied_seq` with parent's latest sequence.
-2. If gap < compaction window: parent streams deltas from WAL.
-3. If gap > compaction window: parent sends chunked snapshot, then streams deltas from snapshot point.
-4. Chunked snapshot: 1 MB chunks, CRC per chunk, resume on failure.
+1. Edge node compares `last_applied_seq` with parent's latest sequence (the SUBSCRIBE
+   resume cursor / HEARTBEAT `latestSeq`).
+2. If the cursor is within the replay horizon (the boundary still holds `cursor+1`):
+   parent streams deltas from the ADR-0034 commit-notification boundary (TAIL).
+   *(Amended S3: "from WAL" → the boundary, which the durable log backs, is the replay
+   source — `CatchUpProtocolTest`.)*
+3. If the gap exceeds the replay horizon: parent sends a chunked snapshot, then streams
+   deltas from exactly snapshot-seq + 1 (`ReplayHorizonBoundaryTest` — the full
+   horizon-boundary matrix incl. the lapped-after-TAIL race).
+4. Chunked snapshot: codec-bounded chunks (`EdgeSnapshotCodec`); integrity via the
+   length-prefixed bounds-checked codec + mTLS transport. **Recovery is transfer-level,
+   not chunk-level** *(amended S3 per the CT-31 renegotiation, c3-signoff-review
+   ruling)*: a lost transfer is never resumed mid-envelope — the unacknowledged
+   transfer re-triggers via ack-lag demotion and the WHOLE snapshot is idempotently
+   re-sent until cursor-acknowledged (`SnapshotChunkResumeTest`); under transport
+   backpressure the in-flight envelope pauses at the exact frame and resumes next tick,
+   never restarted (RR-102, `BootstrapSnapshotBackpressureTest`).
 
 ### Version Gap Detection
 ```
@@ -283,12 +302,19 @@ elif received_seq <= last_applied_seq:
 ```
 
 ### Slow Consumer Policy
-| Condition | Action |
+> **Amended (S3 doc pass, 2026-06-12 — re-based on the as-built C4 `SlowConsumerGovernor`
+> ladder; the credit conditions referenced the superseded model above):** thresholds are
+> NAMED CONFIGS (`edge.fanout.policy.*`), every transition has a metric + structured log
+> + test, and the ladder is per-IDENTITY (mTLS cert principal) so reconnect storms
+> cannot dodge it. GAP demotions count on their own ladder (a lossy WAN is not slowness
+> — screen C4-2). Cooldowns alone are sufficient exits (C4-3); operator reset is
+> additional, and UNHEALTHY is NOT permanent removal.
+| Condition (named config, default) | Action |
 |---|---|
-| 0 credits for > 10s | Warning log + metric |
-| 0 credits for > 30s | Disconnect from tree, mark as quarantined |
-| Quarantined | Must re-bootstrap via catch-up protocol |
-| 3 quarantines in 1 hour | Marked as unhealthy, removed from distribution tree |
+| queue ≥ warn sustained `queueWarnWindowMs` (10s) | SLOW: warning log + `edge_fanout_slow_transitions_total` (still streaming) |
+| C1 demotion (overflow / ack-lag / gap / transport) | CATCHUP: snapshot re-bootstrap in flight; clears on ack progress |
+| `demoteLimit` (3) distress demotions — or `gapDemoteLimit` (10) GAP demotions — within `demoteWindowMs` (60s) | QUARANTINED: `ERROR_CLOSE` code 8 + disconnect; SUBSCRIBEs refused for `quarantineCooldownMs` (60s); then readmitted FORCE-SNAPSHOT (cursor rebound to 0 → SNAPSHOT_FIRST) |
+| `quarantineLimit` (3) quarantines within `unhealthyWindowMs` (1h) | UNHEALTHY (alert-grade): refused until `unhealthyCooldownMs` (1h) elapses — then auto-readmitted with a clean ladder — or operator reset |
 
 ### Subscription Model
 - **Prefix-based (primary):** Edge nodes subscribe to key prefixes matching needed namespaces.

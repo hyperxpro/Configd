@@ -1,0 +1,63 @@
+=== GATE-3 (Session 3: edge data plane) — logs in /tmp/gate3-adFQIK ===
+mutation     PASS   0s
+jcstress     PASS   446s
+assertions   PASS   24s
+TOTAL        PASS  
+logs: /tmp/gate2-I0ynUR
+GATE-3 gate2: OK (cumulative — gates 1+2 green)
+GATE-3 map: OK (CONTRACT-MAP-SUMMARY: total=41 passing=34 partial=3 failing-captured=0 unimplemented=0 adr=3 na=1)
+WARNING: sun.misc.Unsafe::objectFieldOffset has been called by com.google.common.util.concurrent.AbstractFuture$UnsafeAtomicHelper (file:/home/ubuntu/.m2/wrapper/dists/apache-maven-3.9.9/3477a4f1/lib/guava-33.2.1-jre.jar)
+WARNING: Please consider reporting this to the maintainers of class com.google.common.util.concurrent.AbstractFuture$UnsafeAtomicHelper
+WARNING: sun.misc.Unsafe::objectFieldOffset will be removed in a future release
+EDGE-GATE-SUMMARY: seeds=507 safetyViolations=0 quietWindowSeeds=179 convergedGivenQuiet=172/179 (96.1%) rawConverged=315/507 (62.1%) seedsWithDelivery=498 deliveryViolations=6 excusedAtDeadline=3308
+[INFO] Tests run: 1, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 22.17 s -- in io.configd.testkit.EdgeAdversarialGateSeedSweepTest
+[INFO] Tests run: 1, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.971 s -- in io.configd.testkit.EdgeSeedCompatTest
+[INFO] Tests run: 2, Failures: 0, Errors: 0, Skipped: 0
+[INFO] BUILD SUCCESS
+GATE-3 edgeseeds: OK (507 seeds, 0 safety violations, digest byte-identical)
+[INFO] Tests run: 4, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 1.505 s -- in io.configd.testkit.ProbeMechanismTest
+[INFO] Tests run: 5, Failures: 0, Errors: 0, Skipped: 0
+[INFO] BUILD SUCCESS
+WARNING: sun.misc.Unsafe::objectFieldOffset has been called by com.google.common.util.concurrent.AbstractFuture$UnsafeAtomicHelper (file:/home/ubuntu/.m2/wrapper/dists/apache-maven-3.9.9/3477a4f1/lib/guava-33.2.1-jre.jar)
+WARNING: Please consider reporting this to the maintainers of class com.google.common.util.concurrent.AbstractFuture$UnsafeAtomicHelper
+WARNING: sun.misc.Unsafe::objectFieldOffset will be removed in a future release
+drove 100 committed writes; highest seq=100
+PROBE-HISTOGRAM: scope=observer-0 count=100 p50=0 p99=73 p999=76 max=76 unit=ms
+PROBE-HISTOGRAM: scope=global count=100 p50=0 p99=73 p999=76 max=76 unit=ms
+Measures commit->EDGE-visibility wall time through the REAL wire path: server fan-out endpoint -> socket -> Ed25519 verify -> apply -> edge applied cursor.
+drove 100 committed writes; highest seq=100
+edge applied cursor at finish: 100 (highest committed seq 100)
+PROBE-HISTOGRAM: scope=observer-1 count=100 p50=2235 p99=4871 p999=4971 max=4971 unit=ms
+PROBE-HISTOGRAM: scope=global count=100 p50=2235 p99=4871 p999=4971 max=4971 unit=ms
+GATE-3 probe: OK (sim mode green; live boundary + live edge histograms emitted)
+[INFO] Tests run: 4, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 7.032 s -- in io.configd.testkit.SlowConsumerStateMachineWalkTest
+[INFO] Tests run: 4, Failures: 0, Errors: 0, Skipped: 0
+[INFO] BUILD SUCCESS
+GATE-3 walk: OK (full machine in recorded order + replay determinism + flap scenario)
+  PASS[17]: edge4 bootstrapped mid-load via snapshot transfer (edge_snapshots_applied_total=1)
+  PASS[18]: edge4 cut over to the live stream (serves marker-p4@>=90)
+[e2e 10:55:21] quiesce: stop the writer, fence-write, then byte-compare every key on every edge
+  PASS[19]: byte-equal audit: 7 keys identical on all 4 edges vs the leader (linearizable)
+
+E2E PASS: 19/19 assertions — propagation, leader-kill monotonicity +
+          staleness recovery, partition ladder + re-bootstrap + convergence, and
+          mid-load bootstrap with byte-equal convergence, all over mTLS + signed chain.
+GATE-3 e2e: OK (four-phase Compose scenario green)
+JMH-GC-CHECK OK   [getMiss]: ≈ 0 B/op (JMH infrastructure noise only)
+JMH-GC-CHECK OK   [getIntoHit]: 0.002 B/op (< 1 B/op)
+JMH-GC-CHECK: artifact saved to docs/session-3/captures/ct34-jmh-gc-check.txt
+JMH-GC-CHECK: GREEN — zero steady-state allocation on the in-process edge read path (CT-34)
+GATE-3 gc: OK (CT-34: zero steady-state allocation on the edge read path, artifact saved)
+WARNING: sun.misc.Unsafe::objectFieldOffset has been called by com.google.common.util.concurrent.AbstractFuture$UnsafeAtomicHelper (file:/home/ubuntu/.m2/wrapper/dists/apache-maven-3.9.9/3477a4f1/lib/guava-33.2.1-jre.jar)
+WARNING: Please consider reporting this to the maintainers of class com.google.common.util.concurrent.AbstractFuture$UnsafeAtomicHelper
+WARNING: sun.misc.Unsafe::objectFieldOffset will be removed in a future release
+[INFO] ------------------------------------------------------------------------
+[INFO] Total time:  03:23 min
+[INFO] Finished at: 2026-06-12T11:08:46Z
+[INFO] ------------------------------------------------------------------------
+[INFO] ------------------------------------------------------------------------
+[INFO] Total time:  05:25 min
+[INFO] Finished at: 2026-06-12T11:14:20Z
+[INFO] ------------------------------------------------------------------------
+GATE-3 mutation3: OK (edge-cache + edge-node >= 65 floors hold)
+=== GATE-3: ALL STEPS GREEN ===

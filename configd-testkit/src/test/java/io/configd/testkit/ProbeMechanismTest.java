@@ -153,6 +153,38 @@ class ProbeMechanismTest {
     }
 
     // -----------------------------------------------------------------------
+    // (2b) the PROBE-HISTOGRAM report-format contract (CT-38 checklist item
+    //      "propagation probe histograms"). The staleness DISTRIBUTION is
+    //      deliberately not a registry series; this line format IS the contract
+    //      gate-3 step (d) and CI grep for in both live modes. Asserted here —
+    //      not in EdgeMetricsContractTest (configd-edge-node) — because
+    //      configd-testkit depends on configd-edge-node, so the probe cannot be
+    //      referenced from that module without a dependency cycle.
+    // -----------------------------------------------------------------------
+
+    @Test
+    void reportEmitsOneGreppableProbeHistogramLinePerScope() {
+        PropagationProbe probe = new PropagationProbe();
+        probe.recordPublished(1, 1_000);
+        probe.recordVisible(7, 1, 1_010);  // observer 7: exactly one 10ms sample
+        probe.recordVisible(9, 1, 1_250);  // observer 9: exactly one 250ms sample
+
+        String report = probe.report();
+        // Single-sample scopes make every percentile exact regardless of histogram impl.
+        assertTrue(report.contains(
+                        "PROBE-HISTOGRAM: scope=observer-7 count=1 p50=10 p99=10 p999=10 max=10 unit=ms"),
+                "per-observer summary line malformed or missing:\n" + report);
+        assertTrue(report.contains(
+                        "PROBE-HISTOGRAM: scope=observer-9 count=1 p50=250 p99=250 p999=250 max=250 unit=ms"),
+                "per-observer summary line malformed or missing:\n" + report);
+        // The global aggregate line — the exact form step (d)'s
+        // `grep "PROBE-HISTOGRAM: scope=global"` keys on.
+        assertTrue(report.contains("PROBE-HISTOGRAM: scope=global count=2 "),
+                "global summary line malformed or missing:\n" + report);
+        assertTrue(report.contains(" unit=ms"), "unit suffix missing:\n" + report);
+    }
+
+    // -----------------------------------------------------------------------
     // (3) observer-only: identical determinism digest with and without a probe
     // -----------------------------------------------------------------------
 
