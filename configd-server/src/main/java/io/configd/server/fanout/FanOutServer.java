@@ -564,7 +564,13 @@ public final class FanOutServer {
             // on the busy path — hot-path law).
             long lastAckSeen = session.lastAckedSeq();
             boolean aboveWarn = false;
-            long lastGovernorEvalMillis = Long.MIN_VALUE;
+            // The next clock time at which the time-driven evaluation may run. The
+            // MIN_VALUE sentinel is compared with `>=` directly — NEVER by subtraction:
+            // `nowMillis - Long.MIN_VALUE` overflows negative for any nowMillis >= 0,
+            // which silently disabled the evaluation forever (the C4 sign-off P1, C4-A:
+            // HEALTHY→SLOW was unreachable on this loop; the sustained-warn leg of
+            // FanOutServerQuarantineTest now pins it at the live server).
+            long nextGovernorEvalMillis = Long.MIN_VALUE;
             final int warnThreshold = config.queueWarnThresholdFrames();
             try {
                 while (alive.get() && running.get()) {
@@ -602,8 +608,8 @@ public final class FanOutServer {
                             aboveWarn = above;
                             governor.onQueuePressure(id, above, session.cursor(), acked, nowMillis);
                         }
-                        if (above && nowMillis - lastGovernorEvalMillis >= governorEvalCadenceMs) {
-                            lastGovernorEvalMillis = nowMillis;
+                        if (above && nowMillis >= nextGovernorEvalMillis) {
+                            nextGovernorEvalMillis = nowMillis + governorEvalCadenceMs;
                             governor.evaluate(id, nowMillis);
                         }
                     }

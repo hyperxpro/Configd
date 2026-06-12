@@ -39,7 +39,12 @@ public enum ErrorCode {
      */
     DEMOTED_TO_CATCHUP(7),
 
-    /** C4 policy: session quarantined, must re-bootstrap. */
+    /**
+     * C4 policy: subscriber quarantined — or UNHEALTHY, the escalated tier, which SHARES
+     * this wire code (the taxonomy is closed and golden-pinned; the escalation is
+     * distinguished by the diagnostic message and the governor state, not a new code).
+     * The subscriber must re-bootstrap after its cooldown.
+     */
     QUARANTINED(8),
 
     /** Orderly server-initiated close. */

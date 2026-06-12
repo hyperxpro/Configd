@@ -164,6 +164,83 @@ class SlowConsumerStateMachineWalkTest {
     }
 
     /**
+     * The CT-30 closing condition (C4 contract-qa audit): {@code quarantineLimit}
+     * lag/readmit cycles walk the machine to its LAST state — the 3rd quarantine within
+     * {@code unhealthyWindowMs} escalates to UNHEALTHY (alert-grade metric, the
+     * {@code repeat_quarantine} structured event with {@code quarantinesInWindow=3}),
+     * reconnects are refused through the unhealthy cooldown, and the cooldown ALONE
+     * auto-readmits with the forced snapshot-first re-bootstrap (C4-3) — ending converged
+     * and HEALTHY. This also exercises the driver-side UNHEALTHY kick arm (the verdict
+     * branch shared with the wire test's {@code FanOutServer.onDemotionEvent}).
+     */
+    @Test
+    void quarantineLimitCyclesEscalateToUnhealthyThenAutoReadmit() {
+        List<SlowConsumerGovernor.TransitionEvent> transitions = new ArrayList<>();
+        CountingPolicyMetrics metrics = new CountingPolicyMetrics();
+        // Walk thresholds with a sim-scaled UNHEALTHY ladder: all 3 quarantines land
+        // inside the 60 s window; the unhealthy cooldown (2 s) is tick-crossable.
+        SlowConsumerPolicyConfig policy = new SlowConsumerPolicyConfig(
+                20L, 3, 10, 60_000L, 300L, 3, 60_000L, 2_000L, 64);
+        SlowConsumerGovernor governor =
+                new SlowConsumerGovernor(policy, metrics, transitions::add);
+        C1StreamDriver driver = new C1StreamDriver(walkSessionConfig(), governor);
+        EdgeFanOutSim sim = new EdgeFanOutSim(SEED, CP_NODES, EDGES, 200,
+                false, driver, new AdversarialSchedule.Intensity(0, 0, 0.0),
+                EdgeInvariants.BOUND_MS);
+        sim.run();
+        EdgeActor victim = sim.edges().get(0);
+        String victimIdentity = "edge-" + victim.edgeId();
+        sim.enableEdgeRecovery(0);
+
+        // quarantineLimit (3) lag→quarantine→readmit cycles; the 3rd trip escalates.
+        for (int cycle = 1; cycle <= 3; cycle++) {
+            victim.lag();
+            for (int i = 1; i <= 60
+                    && governor.state(victimIdentity) != ConsumerState.QUARANTINED
+                    && governor.state(victimIdentity) != ConsumerState.UNHEALTHY; i++) {
+                commit(sim, victim.subscribedCpNode(), "uw/c" + cycle + "/k" + i, "v" + i);
+            }
+            victim.unlag();
+            if (cycle < 3) {
+                assertEquals(ConsumerState.QUARANTINED, governor.state(victimIdentity),
+                        "cycle " + cycle + " must end in QUARANTINED");
+                tickUntil(sim, () -> governor.state(victimIdentity) == ConsumerState.HEALTHY,
+                        "cycle " + cycle + " readmits after the quarantine cooldown");
+            }
+        }
+        assertEquals(ConsumerState.UNHEALTHY, governor.state(victimIdentity),
+                "the 3rd quarantine within the window must escalate");
+        assertEquals(3, metrics.quarantines, "the escalating trip still counts as a quarantine");
+        assertEquals(1, metrics.unhealthy,
+                "edge_fanout_unhealthy_total must move exactly once (alert-grade)");
+        SlowConsumerGovernor.TransitionEvent escalation = transitions.stream()
+                .filter(t -> t.to() == ConsumerState.UNHEALTHY)
+                .reduce((a, b) -> b).orElseThrow();
+        assertEquals(SlowConsumerGovernor.REASON_REPEAT_QUARANTINE, escalation.reason());
+        assertEquals(3, escalation.quarantinesInWindow());
+
+        // Refused — observably — through the unhealthy cooldown...
+        int refusalsAtEscalation = metrics.reconnectsRefused;
+        tickUntil(sim, () -> metrics.reconnectsRefused > refusalsAtEscalation,
+                "reconnects are refused during the unhealthy cooldown");
+        assertEquals(ConsumerState.UNHEALTHY, governor.state(victimIdentity));
+
+        // ...then the cooldown ALONE readmits (C4-3) and the edge resolves to HEALTHY.
+        tickUntil(sim, () -> governor.state(victimIdentity) == ConsumerState.HEALTHY,
+                "the unhealthy cooldown auto-readmits and the re-bootstrap resolves");
+        assertEquals(3, metrics.readmissions,
+                "two quarantine-cooldown readmissions plus the unhealthy-cooldown one");
+        assertTrue(transitions.stream().anyMatch(t ->
+                        t.from() == ConsumerState.UNHEALTHY && t.to() == ConsumerState.CATCHUP
+                        && SlowConsumerGovernor.REASON_READMITTED_UNHEALTHY.equals(t.reason())),
+                "the auto-readmission must ride the readmitted_after_unhealthy_cooldown leg");
+
+        commit(sim, victim.subscribedCpNode(), "uw/final", "converged");
+        tickUntil(sim, () -> hasValue(victim, "uw/final", "converged"),
+                "the readmitted edge converges after the UNHEALTHY episode");
+    }
+
+    /**
      * Screen condition C4-3 (couples to C4-2's reason weighting): a HEALTHY edge that
      * flaps purely from injected network loss — partition/heal cycles whose misses cross
      * the replay horizon (ring cap 8), i.e. GAP recoveries, not slowness — recovers every

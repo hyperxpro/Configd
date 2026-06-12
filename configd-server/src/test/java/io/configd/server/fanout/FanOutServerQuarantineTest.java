@@ -94,9 +94,13 @@ class FanOutServerQuarantineTest {
     }
 
     private int startServer() throws IOException {
+        return startServer(policyConfig());
+    }
+
+    private int startServer(SlowConsumerPolicyConfig policy) throws IOException {
         clock = new MutableClock(T0);
         governorMetrics = new RecordingGovernorMetrics();
-        governor = new SlowConsumerGovernor(policyConfig(), governorMetrics);
+        governor = new SlowConsumerGovernor(policy, governorMetrics);
         buffer = new FanOutBuffer(10_000);
         MetricsRegistry registry = new MetricsRegistry();
         server = new FanOutServer(
@@ -202,6 +206,128 @@ class FanOutServerQuarantineTest {
             edge.cursorAck(end.snapshotSeq());
             awaitGovernorState(ConsumerState.HEALTHY,
                     "ack progress past the snapshot resolves the catch-up");
+        }
+    }
+
+    /**
+     * The C4 sign-off P1 (C4-A) regression leg: the LIVE session loop's time-driven
+     * evaluation must actually fire. Before the fix, the eval-cadence sentinel
+     * ({@code Long.MIN_VALUE}) was compared by SUBTRACTION — which overflows negative for
+     * any real clock value — so {@code governor.evaluate()} never ran on this loop and
+     * HEALTHY→SLOW (the §7 warn tier, CT-27's transition) was unreachable at runtime.
+     * This test drives the promotion end-to-end at the server: a subscriber holds its
+     * queue at/above warn, the injected clock advances past
+     * {@code edge.fanout.policy.queueWarnWindowMs}, and the SESSION LOOP (no direct
+     * governor calls from the test) must promote the identity to SLOW and move
+     * {@code edge_fanout_slow_transitions_total}.
+     */
+    @Test
+    void sustainedQueueWarnPromotesToSlowOnTheLiveSessionLoop() throws Exception {
+        int port = startServer(); // queueWarnWindowMs=10_000; warn threshold = 1 frame
+
+        try (EdgeProtocolClient edge = EdgeProtocolClient.connectPlaintext(port, 10_000)) {
+            edge.subscribeFullStore(EDGE_ID, 0L);
+            readUntil(edge, EdgeFrame.SubscribeOk.class);
+
+            // One unacked frame puts the queue at/above warn (threshold 1 of 2) without
+            // ever reaching overflow — pure sustained pressure, no demotion.
+            publish("k/warn", "w");
+            readUntil(edge, EdgeFrame.Notify.class);
+            assertEquals(ConsumerState.HEALTHY, governor.state(EDGE_ID),
+                    "the warn window has not elapsed on the frozen clock — not yet SLOW");
+
+            // The window elapses by CLOCK ADVANCE only (no sleeps): the live session
+            // loop's next evaluation must promote.
+            clock.advance(10_000);
+            awaitGovernorState(ConsumerState.SLOW,
+                    "the live session loop must run the time-driven evaluation (C4-A)");
+            assertEquals(1, governorMetrics.slowTransitions.get(),
+                    "edge_fanout_slow_transitions_total must move exactly once");
+
+            // And the SLOW exit also rides the live loop: acking drains the queue below
+            // warn → the pressure edge resolves the identity back to HEALTHY.
+            edge.cursorAck(seq);
+            awaitGovernorState(ConsumerState.HEALTHY,
+                    "ack progress at the live server resolves SLOW");
+        }
+    }
+
+    /**
+     * The CT-30 closing condition at the wire: the {@code quarantineLimit}-th quarantine
+     * escalates to UNHEALTHY through a LIVE server — exercising the
+     * {@code FanOutServer.onDemotionEvent} UNHEALTHY teardown arm (previously only the
+     * QUARANTINED half was process-proven), the unhealthy-cooldown refusal at the wire,
+     * and the C4-3 automatic readmission after {@code unhealthyCooldownMs}.
+     */
+    @Test
+    void secondQuarantineWithinTheWindowEscalatesToUnhealthyAtTheWire() throws Exception {
+        // demoteLimit=1: each overflow demotion quarantines; quarantineLimit=2: the 2nd
+        // quarantine inside the hour escalates; unhealthy cooldown 120 s (clock-advanced).
+        int port = startServer(new SlowConsumerPolicyConfig(
+                10_000L, 1, 10, 60_000L, 60_000L, 2, 3_600_000L, 120_000L, 4_096));
+
+        // --- Quarantine #1: one overflow demotion suffices (demoteLimit=1).
+        try (EdgeProtocolClient edge = EdgeProtocolClient.connectPlaintext(port, 10_000)) {
+            edge.subscribeFullStore(EDGE_ID, 0L);
+            readUntil(edge, EdgeFrame.SubscribeOk.class);
+            publish("u/1", "a");
+            publish("u/2", "b");
+            publish("u/3", "c"); // 3rd unacked frame → overflow → quarantine #1
+            drainUntilQuarantinedOrClosed(edge);
+        }
+        awaitGovernorState(ConsumerState.QUARANTINED, "first quarantine");
+        assertEquals(1, governorMetrics.quarantines.get());
+
+        // --- Readmission, then quarantine #2 → UNHEALTHY through the live teardown arm.
+        clock.advance(60_001);
+        try (EdgeProtocolClient edge = EdgeProtocolClient.connectPlaintext(port, 10_000)) {
+            edge.subscribeFullStore(EDGE_ID, 0L);
+            EdgeFrame.SubscribeOk ok =
+                    (EdgeFrame.SubscribeOk) readUntil(edge, EdgeFrame.SubscribeOk.class);
+            assertEquals(EdgeFrame.Mode.SNAPSHOT_FIRST, ok.mode(), "forced re-bootstrap");
+            readUntil(edge, EdgeFrame.SnapshotEnd.class); // re-bootstrap completed (sync)
+
+            publish("u/4", "d");
+            publish("u/5", "e");
+            publish("u/6", "f"); // overflow → quarantine #2 → quarantineLimit(2) → UNHEALTHY
+            assertTrue(drainUntilQuarantinedOrClosed(edge),
+                    "the UNHEALTHY escalation must disconnect at the wire (code 8 + close)");
+        }
+        awaitGovernorState(ConsumerState.UNHEALTHY,
+                "the 2nd quarantine within the window escalates");
+        assertEquals(2, governorMetrics.quarantines.get(),
+                "the escalating trip still counts as a quarantine");
+        assertEquals(1, governorMetrics.unhealthy.get(),
+                "edge_fanout_unhealthy_total must move exactly once (alert-grade)");
+
+        // --- Refused throughout the unhealthy cooldown, with the state named.
+        try (EdgeProtocolClient edge = EdgeProtocolClient.connectPlaintext(port, 10_000)) {
+            edge.subscribeFullStore(EDGE_ID, 6L);
+            EdgeFrame.ErrorClose refusal =
+                    (EdgeFrame.ErrorClose) readUntil(edge, EdgeFrame.ErrorClose.class);
+            assertEquals(ErrorCode.QUARANTINED, refusal.code(),
+                    "UNHEALTHY shares wire code 8 (closed taxonomy — note deviation 5)");
+            assertTrue(refusal.message().contains("UNHEALTHY"),
+                    "the diagnostic names the escalated state: " + refusal.message());
+            assertTrue(drainUntilClosed(edge));
+        }
+        assertTrue(governorMetrics.reconnectsRefused.get() >= 1);
+        assertEquals(ConsumerState.UNHEALTHY, governor.state(EDGE_ID));
+
+        // --- The unhealthy cooldown ALONE readmits (C4-3), snapshot-first forced.
+        clock.advance(120_001);
+        try (EdgeProtocolClient edge = EdgeProtocolClient.connectPlaintext(port, 10_000)) {
+            edge.subscribeFullStore(EDGE_ID, 999_999L);
+            EdgeFrame.SubscribeOk ok =
+                    (EdgeFrame.SubscribeOk) readUntil(edge, EdgeFrame.SubscribeOk.class);
+            assertEquals(EdgeFrame.Mode.SNAPSHOT_FIRST, ok.mode(),
+                    "post-unhealthy readmission forces the re-bootstrap");
+            assertEquals(ConsumerState.CATCHUP, governor.state(EDGE_ID));
+            EdgeFrame.SnapshotEnd end =
+                    (EdgeFrame.SnapshotEnd) readUntil(edge, EdgeFrame.SnapshotEnd.class);
+            edge.cursorAck(end.snapshotSeq());
+            awaitGovernorState(ConsumerState.HEALTHY,
+                    "the re-bootstrapped edge resolves after the UNHEALTHY episode");
         }
     }
 
@@ -338,7 +464,9 @@ class FanOutServerQuarantineTest {
 
     /** Counts the governor's policy series (thread-safe: session threads write them). */
     private static final class RecordingGovernorMetrics implements FanOutSessionMetrics {
+        final AtomicInteger slowTransitions = new AtomicInteger();
         final AtomicInteger quarantines = new AtomicInteger();
+        final AtomicInteger unhealthy = new AtomicInteger();
         final AtomicInteger reconnectsRefused = new AtomicInteger();
         final AtomicInteger readmissions = new AtomicInteger();
 
@@ -349,8 +477,14 @@ class FanOutServerQuarantineTest {
         @Override public void onSnapshotTransfer() { }
         @Override public void onHeartbeat() { }
         @Override public void onSessionClosed(String reason) { }
+        @Override public void onSlowTransition() {
+            slowTransitions.incrementAndGet();
+        }
         @Override public void onQuarantine() {
             quarantines.incrementAndGet();
+        }
+        @Override public void onUnhealthy() {
+            unhealthy.incrementAndGet();
         }
         @Override public void onReconnectRefused() {
             reconnectsRefused.incrementAndGet();
