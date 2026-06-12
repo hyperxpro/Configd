@@ -305,8 +305,17 @@ class EdgeBootstrapUnderSustainedWritesProcessTest {
 
         assertEquals(io.configd.distribution.wire.EdgeFrame.Mode.SNAPSHOT_FIRST,
                 edge.core().mode());
-        assertEquals(1, edge.core().snapshotsApplied(),
-                "EXACTLY one paced transfer — never torn, never restarted");
+        // 1 on a fast box; 2 is legitimate on a loaded runner: the post-cutover CURSOR_ACK
+        // can lag one RTT behind a server whose test-scaled ack-lag threshold then fires a
+        // redundant (idempotent, forward) re-demote envelope — the deliberate C1(a)
+        // self-healing design, signed off as c5-signoff-review F3. First seen as a CI
+        // flake on 1c39615 (gate-1, expected <1> but was <2>). A TORN/RESTARTED transfer
+        // cannot hide here: it yields gaps/refusals/content divergence, all pinned to
+        // exact zeros below — snapshotsApplied is NOT the torn-transfer discriminator.
+        int paced = edge.core().snapshotsApplied();
+        assertTrue(paced >= 1 && paced <= 2,
+                "one paced transfer (+ at most one F3 redundant re-demote envelope), got "
+                        + paced);
         assertEquals(0, edge.core().gapsDetected(),
                 "the tail resumed at exactly S+1 after the paced transfer");
         assertEquals(0, edge.core().backwardSnapshotsRefused());
