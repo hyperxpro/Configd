@@ -466,6 +466,31 @@ public final class RaftNode {
     }
 
     /**
+     * Threshold-gated Raft-log compaction (RR-005). Triggers
+     * {@link #triggerSnapshot()} when the applied-but-not-yet-snapshotted span
+     * ({@code lastApplied - snapshotIndex}) exceeds
+     * {@code appliedSinceSnapshotThreshold}. This is the size/interval trigger the
+     * wired server lacked: before it, the only {@code triggerSnapshot()} caller was
+     * the circular {@code sendInstallSnapshot} (reachable only after a snapshot
+     * already exists), so the WAL grew for the life of the process and a ≥ 2 GiB WAL
+     * eventually crash-looped recovery (the {@code FileStorage} read cap). The
+     * server tick loop calls this every tick via {@link io.configd.replication.MultiRaftDriver},
+     * so compaction is now actually reachable; it preserves RR-003's
+     * persist-before-truncate + {@code durable_prefix_no_gap} (it just calls the same
+     * {@code triggerSnapshot()} path).
+     *
+     * @param appliedSinceSnapshotThreshold applied entries to retain past the snapshot
+     *                                       point before compacting; must be &gt;= 0
+     * @return true if a snapshot was taken
+     */
+    public boolean maybeCompact(long appliedSinceSnapshotThreshold) {
+        if (log.lastApplied() - log.snapshotIndex() > appliedSinceSnapshotThreshold) {
+            return triggerSnapshot();
+        }
+        return false;
+    }
+
+    /**
      * Derives the effective cluster configuration at a given log index.
      * Scans backwards from {@code index} to find the most recent config
      * entry at or before that index. Falls back to snapshot config or

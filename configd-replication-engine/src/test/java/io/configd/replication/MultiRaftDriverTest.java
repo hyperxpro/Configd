@@ -92,6 +92,41 @@ class MultiRaftDriverTest {
         driver = new MultiRaftDriver(LOCAL, clock);
     }
 
+    // RR-005 (1): driver.maybeCompact fans the threshold trigger out to each group, so
+    // Raft-log compaction is REACHABLE in the wired server (the ConfigdServer tick loop calls
+    // this). Without it the only triggerSnapshot() caller was the circular sendInstallSnapshot,
+    // so each group's WAL grew for the life of the process. In a @Nested class so it is never
+    // silently skipped by a bare -Dtest='MultiRaftDriverTest' class filter (surefire mixes
+    // outer-class @Test methods unreliably with @Nested groups).
+    @Nested
+    class RaftLogCompaction {
+        @Test
+        void maybeCompactFansOutAndCompactsGroupsOverThreshold() {
+            // A storage-backed single-node group so triggerSnapshot can persist (RR-003 path).
+            io.configd.common.Storage storage = io.configd.common.Storage.inMemory();
+            RaftConfig config = RaftConfig.of(LOCAL, Set.of());
+            RaftNode node = new RaftNode(config, new RaftLog(storage), new TestTransport(),
+                    new TestStateMachine(), new java.util.Random(42), storage);
+            for (int i = 0; i < 400; i++) {
+                node.tick(); // self-elect (no peers)
+            }
+            assertEquals(RaftRole.LEADER, node.role());
+            driver.addGroup(7, node);
+
+            for (int i = 0; i < 20; i++) {
+                assertEquals(ProposalResult.ACCEPTED, node.propose(("k" + i).getBytes()).result());
+            }
+            for (int i = 0; i < 5; i++) {
+                driver.tick();
+            }
+            assertEquals(0, node.log().snapshotIndex(), "no compaction before the trigger");
+
+            driver.maybeCompact(5); // over-threshold -> fans out to node.maybeCompact -> compacts
+            assertTrue(node.log().snapshotIndex() > 0,
+                    "driver.maybeCompact must fan out and compact the over-threshold group (RR-005)");
+        }
+    }
+
     // ========================================================================
     // Group management tests
     // ========================================================================

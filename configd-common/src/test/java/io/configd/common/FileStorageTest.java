@@ -273,4 +273,26 @@ final class FileStorageTest {
         assertArrayEquals(entry1, recovered.get(0),
                 "The first (complete) entry should be preserved intact");
     }
+
+    // RR-005 (2): the WAL recovery read must FAIL LOUD on a >= 2 GiB log rather than
+    // silently mis-size the buffer via the (int) fileSize cast (which truncates/wraps and
+    // reads garbage — silent committed-entry loss). Tested at the extracted size check so no
+    // 2 GiB file is needed.
+    @Test
+    void checkedLogReadSizePassesBelowLimitAndFailsLoudAtOrAboveJvmArrayCap() {
+        assertEquals(0, FileStorage.checkedLogReadSize("raft-log", 0L));
+        assertEquals(1024, FileStorage.checkedLogReadSize("raft-log", 1024L));
+        assertEquals((int) FileStorage.MAX_READABLE_LOG_BYTES,
+                FileStorage.checkedLogReadSize("raft-log", FileStorage.MAX_READABLE_LOG_BYTES),
+                "exactly at the limit still reads (no truncation)");
+
+        long twoGiB = 1L << 31; // 2_147_483_648 > MAX_READABLE_LOG_BYTES — wraps negative under (int)
+        IllegalStateException ex = assertThrows(IllegalStateException.class,
+                () -> FileStorage.checkedLogReadSize("raft-log", twoGiB),
+                "a >= 2 GiB WAL must refuse to load loudly, not silently truncate via the int cast");
+        assertTrue(ex.getMessage().contains("raft-log") && ex.getMessage().contains("RR-005"),
+                "the failure must name the log and the root cause: " + ex.getMessage());
+        // Sanity: (int) 2GiB wraps negative — the exact silent-corruption cast the guard replaces.
+        assertTrue((int) twoGiB < 0, "(int) 2GiB wraps negative");
+    }
 }

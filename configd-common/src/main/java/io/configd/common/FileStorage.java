@@ -125,7 +125,7 @@ public final class FileStorage implements Storage {
                 return Collections.emptyList();
             }
 
-            ByteBuffer buffer = ByteBuffer.allocate((int) fileSize);
+            ByteBuffer buffer = ByteBuffer.allocate(checkedLogReadSize(logName, fileSize));
             while (buffer.hasRemaining()) {
                 if (channel.read(buffer) == -1) {
                     break;
@@ -171,6 +171,27 @@ public final class FileStorage implements Storage {
         } catch (IOException e) {
             throw new UncheckedIOException("Failed to read log: " + logName, e);
         }
+    }
+
+    /**
+     * RR-005 (2): the WAL recovery read allocates a single {@link ByteBuffer} sized by the
+     * file length. A {@code long -> int} truncation on a ≥ 2 GiB WAL silently mis-sized the
+     * buffer (negative / wrapped) and read garbage. With Raft-log compaction now reachable
+     * (RR-005 (1) — {@code RaftNode.maybeCompact} wired into the server tick loop) the WAL is
+     * bounded in practice; this is the fail-loud backstop: a WAL at/beyond the JVM
+     * single-array limit refuses to load with a clear, actionable error rather than silently
+     * truncating committed entries.
+     */
+    static final long MAX_READABLE_LOG_BYTES = Integer.MAX_VALUE - 8L; // JVM max-array headroom
+
+    static int checkedLogReadSize(String logName, long fileSize) {
+        if (fileSize > MAX_READABLE_LOG_BYTES) {
+            throw new IllegalStateException("WAL " + logName + " is " + fileSize
+                    + " bytes, exceeding the single-read recovery limit " + MAX_READABLE_LOG_BYTES
+                    + " — Raft-log compaction (RR-005) must bound WAL growth; refusing to load to"
+                    + " avoid silent truncation by the int cast (fail loud, never lose committed entries)");
+        }
+        return (int) fileSize;
     }
 
     @Override

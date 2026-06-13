@@ -800,6 +800,30 @@ class ConfigdServerTest {
                         + "tlsManager; grep anchor missing.");
     }
 
+    // ========================================================================
+    // RR-005 regression: the tick loop must trigger Raft-LOG compaction, else
+    // compaction is unreachable in the wired server and the WAL grows forever.
+    // Source-level guard (the find0050 pattern): a future refactor that drops the
+    // driver.maybeCompact(...) call is caught at CI time without a multi-hour soak.
+    // ========================================================================
+
+    @Test
+    void rr005_raftLogCompactionTriggerIsWiredInTickLoop() throws Exception {
+        Path source = Path.of(System.getProperty("user.dir"),
+                "src/main/java/io/configd/server/ConfigdServer.java");
+        if (!Files.exists(source)) {
+            source = Path.of(System.getProperty("user.dir"),
+                    "configd-server/src/main/java/io/configd/server/ConfigdServer.java");
+        }
+        assertTrue(Files.exists(source), "ConfigdServer.java must exist at: " + source);
+        String src = Files.readString(source);
+        assertTrue(src.contains("driver.maybeCompact("),
+                "RR-005: the tick loop must trigger Raft-log compaction via driver.maybeCompact(...). "
+                        + "Without it the only triggerSnapshot() caller is the circular "
+                        + "sendInstallSnapshot, so compaction is unreachable in the wired server and "
+                        + "the WAL grows for the life of the process (then crash-loops at the 2 GiB read cap).");
+    }
+
     private static void runKeytool(String... command) throws Exception {
         int rc = new ProcessBuilder(command).redirectErrorStream(true)
                 .inheritIO().start().waitFor();

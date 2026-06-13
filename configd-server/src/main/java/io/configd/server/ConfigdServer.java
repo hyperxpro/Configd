@@ -86,6 +86,12 @@ public final class ConfigdServer {
     private static final int TICK_PERIOD_MS = 10;
     private static final int DEFAULT_RAFT_GROUP = 0;
     private static final int COMPACTION_INTERVAL_TICKS = 1000; // every ~10 seconds
+    // RR-005: applied entries a Raft group may retain past its snapshot point before the tick
+    // loop triggers Raft-LOG compaction (distinct from the snapshot-retention Compactor above).
+    // Bounds WAL growth — without this trigger compaction was unreachable in the wired server
+    // (the only triggerSnapshot caller is the circular sendInstallSnapshot) and the WAL grew for
+    // the life of the process, eventually crash-looping recovery at the FileStorage 2 GiB read cap.
+    private static final long RAFT_LOG_COMPACTION_THRESHOLD = 10_000;
     private static final int TLS_RELOAD_INTERVAL_MS = 60_000;  // every 60 seconds
     private static final int FANOUT_BUFFER_CAPACITY = 10_000;
     // RR-004 / ADR-0033: single end-to-end commit-confirmation deadline for a
@@ -646,6 +652,11 @@ public final class ConfigdServer {
         tickExecutor.scheduleAtFixedRate(() -> {
             try {
                 driver.tick();
+                // RR-005: trigger Raft-LOG compaction by applied-span threshold so the WAL is
+                // bounded (this was unreachable in the wired server). Cheap O(groups) check each
+                // tick; a group only snapshots when over the threshold, via the RR-003
+                // persist-before-truncate path (durable_prefix_no_gap preserved).
+                driver.maybeCompact(RAFT_LOG_COMPACTION_THRESHOLD);
                 propagationMonitor.checkAll();
                 watchService.tick();
                 plumtreeNode.tick();

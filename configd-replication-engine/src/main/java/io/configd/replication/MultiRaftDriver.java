@@ -104,6 +104,23 @@ public final class MultiRaftDriver {
     }
 
     /**
+     * Threshold-gated Raft-log compaction across all groups (RR-005). The server tick loop
+     * calls this so {@link RaftNode#maybeCompact(long)} is actually reachable in the wired
+     * server — without it the only {@code triggerSnapshot()} caller was the circular
+     * {@code sendInstallSnapshot}, so each group's WAL grew for the life of the process.
+     * O(groups); a group only snapshots when its applied-since-snapshot span exceeds the
+     * threshold (the snapshot work itself is therefore amortized and rare).
+     *
+     * @param appliedSinceSnapshotThreshold applied entries a group may retain past its
+     *                                       snapshot point before compacting
+     */
+    public void maybeCompact(long appliedSinceSnapshotThreshold) {
+        for (RaftNode node : groups.values()) {
+            node.maybeCompact(appliedSinceSnapshotThreshold);
+        }
+    }
+
+    /**
      * Routes an incoming message to the correct Raft group.
      * <p>
      * If no group with the given ID is registered, the message is
