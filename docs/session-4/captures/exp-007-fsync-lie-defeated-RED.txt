@@ -1,0 +1,16 @@
+-------------------------------------------------------------------------------
+Test set: io.configd.raft.SnapshotCrashRecoveryTest
+-------------------------------------------------------------------------------
+Tests run: 1, Failures: 1, Errors: 0, Skipped: 0, Time elapsed: 0.267 s <<< FAILURE! -- in io.configd.raft.SnapshotCrashRecoveryTest
+io.configd.raft.SnapshotCrashRecoveryTest.gapDetectionFiresWhenSnapshotFsyncLied -- Time elapsed: 0.171 s <<< FAILURE!
+org.opentest4j.AssertionFailedError: durable_prefix_no_gap must fire when a lied fsync drops the snapshot blob — a node must never silently serve state it only claimed to have synced ==> expected: not <null>
+	at org.junit.jupiter.api.AssertionFailureBuilder.build(AssertionFailureBuilder.java:152)
+	at org.junit.jupiter.api.AssertionFailureBuilder.buildAndThrow(AssertionFailureBuilder.java:132)
+	at org.junit.jupiter.api.AssertNotNull.failNull(AssertNotNull.java:49)
+	at org.junit.jupiter.api.AssertNotNull.assertNotNull(AssertNotNull.java:35)
+	at org.junit.jupiter.api.Assertions.assertNotNull(Assertions.java:312)
+	at io.configd.raft.SnapshotCrashRecoveryTest.gapDetectionFiresWhenSnapshotFsyncLied(SnapshotCrashRecoveryTest.java:306)
+	at java.base/java.lang.reflect.Method.invoke(Method.java:565)
+	at java.base/java.util.ArrayList.forEach(ArrayList.java:1604)
+	at java.base/java.util.ArrayList.forEach(ArrayList.java:1604)
+

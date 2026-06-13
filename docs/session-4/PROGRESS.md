@@ -9,34 +9,25 @@ fault cell declares its oracle (in `fault-matrix.md` / `kill-matrix.md`) before 
 
 ---
 
-## ⏭ RESUME HERE — next B-rest cell (RR-005 fix is DONE, `47b6022`, signed off)
+## ⏭ RESUME HERE — remaining B-rest crash cells (RR-005 + fsync-lie both DONE)
 
-The prior P0-grade item — **RR-005 — is RESOLVED** (compaction reachable + long-safe WAL read;
-EXP-006; 2nd-agent SOUND). Resume at the **fsync-lie durability cell** (kill-matrix), which has a
-precise spec ready:
+RR-005 RESOLVED (`47b6022`) and the fsync-lie cell DONE (`EXP-007`, `gapDetectionFiresWhenSnapshotFsyncLied`,
+M-lie RED). Resume at the remaining **B-rest crash cells** (kill-matrix), in order:
+1. **ENOSPC during WAL append / snapshot write** — `FaultInjectingStorage.enospcAfterBytes` is built
+   (B1). Oracle (design §2 / arch §11): leader sheds (503) / follower surfaces; defined degradation,
+   no crash-loop, no silent loss; snapshot ENOSPC → WAL prefix NOT truncated (no loss), retry next interval.
+2. **Short read on WAL recovery** — `FaultInjectingStorage.shortReadLog` built. Oracle: recovery detects
+   truncation (contiguity) and fails loud, never boots a short log. (NB the `(int)`-cast guard from RR-005
+   is the sibling fail-loud path; this is the contiguity check.)
+3. **Crash during snapshot-install on a FOLLOWER** + **crash during leadership transfer** — reuse the
+   `CrashStorage` kill matrix; persist-before-compact on the install path; no split-brain on transfer.
+   To reach the WAL append path, storage-back a follower's `RaftLog` (see kill-matrix note).
+Then RR-019/086/064 durability review, then **C** (partition/WAN matrix — heavy, Compose/netem) /
+**D-overload** (reconnect storm) / **E** (mini-Jepsen) / **gate-4 + CI** / **handoff-S5**.
 
-**fsync-lie cell** — extend `CrashStorage` (consensus-core test infra; **do NOT fork it**, per
-`storage-fault-layer-design.md §1/§4`) with a `lieOnSyncForKey(String key)` arming:
-- Model: a `put(key, …)` to the lied key writes to `working` ONLY, **not** `durable` (the device
-  ACKs the fsync — `put` returns normally — but the bytes never reach the platter). On
-  `crash()`/`recoveredView()` the lied write is gone. (Mirror the existing `crashBeforeKeyPut`
-  branch in `put()`; self-durable writes otherwise hit both `durable` + `working`.)
-- Test (model on `SnapshotCrashRecoveryTest.gapDetectionFiresWhenSnapshotBlobUnrecoverable` —
-  reuse its snapshot+restart setup): arm `lieOnSyncForKey("raft-log.snapshot")`, `triggerSnapshot()`
-  (persistSnapshot puts the blob → lied → working-only; compact truncates the WAL prefix + `sync()`
-  → durable), `crash()`, restart over `recoveredView()`.
-- **Oracle:** the recovered state is *no snapshot blob + truncated WAL* = a gap below the snapshot
-  boundary → `durable_prefix_no_gap` **fires / boot fails loud** (never silently serves missing
-  committed state). **Key insight (verified this run):** a faithful WAL-level fsync-lie recovers to
-  a state *indistinguishable* from "blob unrecoverable," so it is caught by the SAME oracle the
-  existing gap-detection test already proves — the fsync-lie cell adds the *injection-path-agnostic*
-  proof (lied fsync ≡ never-written, at the WAL level). The **real-firmware** lie (volatile write
-  cache + power cut) detection boundary stays **ENVIRONMENT-BLOCKED** (design §3 staging recipe:
-  `hdparm -W1`, no `fua`, power-cut). Low marginal safety value over the existing gap test, but it
-  closes the kill-matrix cell honestly; delicate harness work — do it with fresh context.
-
-Then the rest of B-rest (ENOSPC-under-load, short-read, snapshot-install/leadership-transfer crash
-cells; RR-019/086/064), then C / D-overload / E / gate-4 / handoff-S5.
+Pattern reminder (held all run): declare the cell oracle first → write the discriminating/RED test
+→ implement (if prod change) → revert any mutation → confirm GREEN → `git diff -- '*/src/main'` clean
+→ commit → second-agent replay for production/safety cells.
 
 ---
 
@@ -52,13 +43,14 @@ cells; RR-019/086/064), then C / D-overload / E / gate-4 / handoff-S5.
 | **B/RR-005** | ✅ RESOLVED — re-verified both halves OPEN (`d171bf1`) then FIXED: compaction reachable (`RaftNode.maybeCompact`→`MultiRaftDriver.maybeCompact`→tick-loop) + long-safe `FileStorage` recovery guard; M-compact RED, RR-003 6/6 green; 2nd-agent SOUND | `rr-005-reverification.md`, `EXP-006`, `47b6022` |
 | **D §1 status check** | ✅ joint consensus is REAL → no P0 | `reconfiguration-status-check.md` |
 | **D §2 reconfig-under-fault (in-sim)** | ✅ negative split-brain (M1-discriminated) + mid-joint crash recovery (M2-discriminated) + pre-joint/final restart; reconfig suite GREEN; 2nd-agent signed off | `EXP-004`, `captures/exp-004-m{1,2}-*` |
+| **B: fsync-lie cell** | ✅ `CrashStorage.lieOnSyncForKey` + `gapDetectionFiresWhenSnapshotFsyncLied` (recovers to the same gap as blob-unrecoverable → `durable_prefix_no_gap` fires; M-lie RED); real-firmware variant ENVIRONMENT-BLOCKED | `EXP-007`, `captures/exp-007-*`, kill-matrix |
 | **Fault-matrix spine** | ✅ created (`fault-matrix.md`, charter §8) — indexes A/A3/B2/D§2/C/E | `fault-matrix.md` |
 
 ## PENDING (resume at clean seams)
 
 | # | Item | Where / oracle | Note |
 |---|---|---|---|
-| 1 | **B: fsync-lie cell** | see RESUME-HERE (precise spec) — extend `CrashStorage.lieOnSyncForKey`; oracle in `storage-fault-layer-design.md §2` | **first**; recovers to the same `durable_prefix_no_gap` gap the existing `gapDetectionFires…` test proves (injection-path-agnostic); real-firmware variant ENVIRONMENT-BLOCKED |
+| 1 | **B: ENOSPC + short-read cells** | see RESUME-HERE — `FaultInjectingStorage.enospcAfterBytes`/`shortReadLog` (built, B1) | **first**; ENOSPC → defined degradation (503/surface, no crash-loop, no loss); short-read → contiguity fail-loud |
 | 3 | B: ENOSPC-under-load · short-read · snapshot-install-on-follower · leadership-transfer crash cells | `kill-matrix.md` (cells declared) | `FaultInjectingStorage` built (`enospcAfterBytes`/`shortReadLog`); storage-back a follower WAL to reach the append path |
 | 4 | B: RR-019 · RR-086 · RR-064 | durability review | |
 | 5 | **C — partition & WAN matrix** | Compose + netem/iptables (REJECT *and* DROP); clock skew vs the documented 500 ms bound | per cell: safety (linearizability over the failover/partition history) + liveness + client-experience + recovery-time. **Heaviest** — Compose cannot share the box with Maven; some cells may be ENVIRONMENT-BLOCKED |

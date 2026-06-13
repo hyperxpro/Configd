@@ -19,7 +19,7 @@ Status legend: ✅ done (test cited) · 🔬 partial (mechanism exists, cell not
 | Torn final WAL record | detect torn tail; discard if uncommitted; fail loud if it would drop committed | ✅ `SnapshotCrashRecoveryTest` torn-tail cell |
 | Unrecoverable snapshot blob (gap) | `durable_prefix_no_gap` FIRES; refuse to boot silently | ✅ `SnapshotCrashRecoveryTest.gapDetectionFires...` |
 | **Write failure during apply on a follower** | surface (metric + SEVERE log), not swallow → mute zombie | ✅ **RR-008 / EXP-003** (`InboundRoutingThrowableHandlerTest`) |
-| fsync-lie on WAL (firmware ACK then drop) | restart detects the gap; refuse to boot / fail loud | ⏳ pending — extend `CrashStorage` with `lieOnSync`; oracle in design §2 |
+| fsync-lie on WAL/snapshot (firmware ACK then drop) | restart detects the gap; refuse to boot / fail loud | ✅ **EXP-007** `SnapshotCrashRecoveryTest.gapDetectionFiresWhenSnapshotFsyncLied` (`CrashStorage.lieOnSyncForKey`; recovers to the same gap as blob-unrecoverable → `durable_prefix_no_gap` fires; M-lie RED). Real-firmware variant 🌍 ENVIRONMENT-BLOCKED (design §3) |
 | ENOSPC during WAL append | leader sheds (503), follower surfaces; defined degradation, no crash-loop, no silent loss | 🔬 `FaultInjectingStorage.enospcAfterBytes` built (B1); cell not yet run (B3) |
 | ENOSPC during snapshot write | snapshot fails cleanly; WAL prefix NOT truncated (no loss); retry next interval | ⏳ pending (B3) |
 | Crash during snapshot install on a FOLLOWER | persist-before-compact on the install path; recover; no gap | 🔬 RR-003 fix covers `handleInstallSnapshot` persist-then-compact; dedicated kill cell ⏳ |

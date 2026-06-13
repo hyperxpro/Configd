@@ -255,6 +255,61 @@ class SnapshotCrashRecoveryTest {
                 "wrong invariant fired: " + thrown.getMessage());
     }
 
+    /**
+     * fsync-LIE (S4/B-rest, charter §4 — "verify fsync is actually durable, not just called").
+     * A node that "fsynced" the snapshot blob (the device ACKed the write) then lost it on a
+     * power cut must, on restart, DETECT the resulting gap and FAIL LOUD
+     * ({@code durable_prefix_no_gap}) — never silently serve missing committed state.
+     * <p>
+     * This is the injection-path-agnostic twin of
+     * {@link #gapDetectionFiresWhenSnapshotBlobUnrecoverable}: there the blob file was deleted
+     * (disk corruption); here {@link CrashStorage#lieOnSyncForKey} models the firmware lie — the
+     * {@code put} returns success but the bytes never reach the platter — so the recovered durable
+     * image is IDENTICAL (no blob + truncated WAL = a gap below the snapshot boundary), and the
+     * same oracle catches it. Proving it via the lie path closes the kill-matrix fsync-lie cell.
+     * <p>
+     * The REAL-firmware detection boundary (a device with a volatile write cache under a true
+     * power cut) stays ENVIRONMENT-BLOCKED — staging recipe in
+     * {@code docs/session-4/storage-fault-layer-design.md §3} ({@code hdparm -W1}, no {@code fua}).
+     */
+    @Test
+    void gapDetectionFiresWhenSnapshotFsyncLied() {
+        CrashStorage storage = new CrashStorage();
+        Harness h = boot(storage);
+        h.electLeader();
+        h.commitPut("k0", "v0");
+        h.commitPut("k1", "v1");
+        assertTrue(h.log().lastApplied() > 0, "writes must have committed+applied");
+
+        // Arm the fsync-lie on the snapshot blob, then snapshot+compact: persistSnapshot puts the
+        // blob (LIED -> working only, returns success), compact truncates the WAL prefix + sync()
+        // (durable). The live node sees a consistent snapshot; the durable image has NO blob and a
+        // truncated WAL.
+        storage.lieOnSyncForKey(SNAPSHOT_KEY);
+        assertTrue(h.node().triggerSnapshot());
+        assertTrue(h.log().snapshotIndex() > 0, "snapshot boundary advanced in-memory");
+
+        // Power cut: the lied blob is gone; the WAL truncation (synced) stays. Recovered = a gap.
+        storage.crash();
+        CrashStorage recovered = storage.recoveredView();
+
+        // Restart: recovery walks the [1..snapshotIndex] hole with no bytes to fill it. The
+        // throwing checker MUST fire — a silent skip would advance lastApplied over the hole and
+        // boot with missing committed state.
+        AssertionError thrown = null;
+        try {
+            Harness h2 = boot(recovered);
+            h2.electLeader();
+        } catch (AssertionError e) {
+            thrown = e;
+        }
+        org.junit.jupiter.api.Assertions.assertNotNull(thrown,
+                "durable_prefix_no_gap must fire when a lied fsync drops the snapshot blob — "
+                        + "a node must never silently serve state it only claimed to have synced");
+        assertTrue(thrown.getMessage().contains("durable_prefix_no_gap"),
+                "wrong invariant fired: " + thrown.getMessage());
+    }
+
     enum CrashPoint { BEFORE_PERSIST, AFTER_PERSIST_BEFORE_TRUNCATE, AFTER_TRUNCATE, NONE }
 
     private void runMatrixSeed(int seed, CrashPoint cp) {

@@ -111,6 +111,8 @@ final class CrashStorage implements Storage {
     private String crashBeforeLogDelete;
     /** When set, crash just AFTER the named key's value is made durable. */
     private String crashAfterKeySynced;
+    /** When set, a {@code put} to this key is fsync-LIED: visible (working) but never durable. */
+    private String lieOnSyncKey;
 
     CrashStorage() {
         // Empty durable image — models a brand-new node with no prior state.
@@ -168,6 +170,19 @@ final class CrashStorage implements Storage {
         this.crashAfterKeySynced = key;
     }
 
+    /**
+     * Arms an fsync-LIE for the named key (RR-005-adjacent durability cell): a subsequent
+     * {@code put(key, …)} returns normally — the device ACKs the fsync — but the bytes are
+     * written to the live (working) image ONLY, never to the durable image. A {@link #crash()}
+     * / {@link #recoveredView()} therefore LOSES them, even though {@code put} reported success.
+     * Models disk firmware that acknowledges fsync then drops the write on power loss; the caller
+     * cannot tell the write was not durable until recovery (the detection boundary the fsync-lie
+     * cell pins). Self-durable {@code put}s to other keys are unaffected.
+     */
+    void lieOnSyncForKey(String key) {
+        this.lieOnSyncKey = key;
+    }
+
     /** Number of mutating operations issued so far. */
     int operationCount() {
         return operationCount;
@@ -202,6 +217,14 @@ final class CrashStorage implements Storage {
             return; // crashed before this put landed
         }
         byte[] v = value.clone();
+        if (lieOnSyncKey != null && lieOnSyncKey.equals(key)) {
+            // fsync-lie: visible to the live instance now, but NEVER durable — the bytes are
+            // dropped on crash()/recoveredView() despite this put returning normally.
+            working.kv.put(key, v.clone());
+            operationCount++;
+            maybeAutoCrash();
+            return;
+        }
         durable.kv.put(key, v.clone());
         working.kv.put(key, v.clone());
         operationCount++;
