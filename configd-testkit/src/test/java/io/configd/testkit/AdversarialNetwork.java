@@ -113,6 +113,16 @@ final class AdversarialNetwork {
         partitions.clear();
     }
 
+    /** Current base drop rate (S4/RR-095 diagnosis seam — read the end-of-run network state). */
+    double dropRateForTest() {
+        return dropRate;
+    }
+
+    /** Number of active directed partition edges (S4/RR-095 diagnosis seam). */
+    int activePartitionsForTest() {
+        return partitions.size();
+    }
+
     /** Send with simulated latency, possible drop, delay-spike, and duplication. */
     void send(NodeId from, NodeId to, Object message, long nowMs) {
         if (partitions.contains(encode(from, to))) {

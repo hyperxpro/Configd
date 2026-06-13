@@ -6,6 +6,7 @@ import org.junit.jupiter.api.Test;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -139,5 +140,23 @@ class InvariantCallSiteTest {
                 "proposeConfigChange must invoke no_op_before_reconfig");
         assertTrue(checker.observed("reconfig_safety"),
                 "proposeConfigChange must invoke reconfig_safety");
+    }
+
+    // ====================================================================
+    // tickHeartbeat — inflight_window_progress (RR-103, per peer)
+    // ====================================================================
+
+    @Test
+    void leaderHeartbeatInvokesInflightWindowProgress() {
+        ObservingChecker checker = new ObservingChecker();
+        // A 3-node cluster with the observing checker wired into the leader; route to
+        // leadership, then step past a heartbeat interval so tickHeartbeat fires.
+        RoutingCluster cluster = new RoutingCluster(3, Map.of(N1, checker));
+        cluster.electFirst();
+        checker.clear();
+        cluster.step(150); // ≥ 2 heartbeat intervals with quorum → the per-peer loop runs
+        // Kills the VoidMethodCall removal of the inflight_window_progress check (RR-103).
+        assertTrue(checker.observed("inflight_window_progress"),
+                "a leader heartbeat must invoke the inflight_window_progress check per peer");
     }
 }

@@ -1,0 +1,2 @@
+===== Liveness sweep against FIXED kernel (soak'd scenario) → expect 0 violations =====
+[liveness-bounded-progress] seeds=200 worstBootstrapElect=398 worstMajorityReElect=995 worstPostHealConverge=48 (mean=21) ticks — 0 liveness violations

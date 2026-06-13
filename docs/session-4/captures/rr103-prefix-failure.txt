@@ -1,0 +1,52 @@
+WARNING: A restricted method in java.lang.System has been called
+WARNING: java.lang.System::load has been called by org.fusesource.jansi.internal.JansiLoader in an unnamed module (file:/home/ubuntu/.m2/wrapper/dists/apache-maven-3.9.9/3477a4f1/lib/jansi-2.4.1.jar)
+WARNING: Use --enable-native-access=ALL-UNNAMED to avoid a warning for callers in this module
+WARNING: Restricted methods will be blocked in a future release unless native access is enabled
+
+WARNING: A terminally deprecated method in sun.misc.Unsafe has been called
+WARNING: sun.misc.Unsafe::objectFieldOffset has been called by com.google.common.util.concurrent.AbstractFuture$UnsafeAtomicHelper (file:/home/ubuntu/.m2/wrapper/dists/apache-maven-3.9.9/3477a4f1/lib/guava-33.2.1-jre.jar)
+WARNING: Please consider reporting this to the maintainers of class com.google.common.util.concurrent.AbstractFuture$UnsafeAtomicHelper
+WARNING: sun.misc.Unsafe::objectFieldOffset will be removed in a future release
+[ERROR] Tests run: 1, Failures: 1, Errors: 0, Skipped: 0, Time elapsed: 0.327 s <<< FAILURE! -- in io.configd.raft.Rr103InflightWindowRecoveryTest
+[ERROR] io.configd.raft.Rr103InflightWindowRecoveryTest.leaderBackfillsHealedFollowerWithinSameTerm -- Time elapsed: 0.200 s <<< FAILURE!
+org.opentest4j.AssertionFailedError: after heal, the healed follower must be backfilled to the committed prefix — PRE-FIX this stays pinned behind forever (inflight window never freed) ==> expected: <19> but was: <5>
+	at org.junit.jupiter.api.AssertionFailureBuilder.build(AssertionFailureBuilder.java:151)
+	at org.junit.jupiter.api.AssertionFailureBuilder.buildAndThrow(AssertionFailureBuilder.java:132)
+	at org.junit.jupiter.api.AssertEquals.failNotEqual(AssertEquals.java:197)
+	at org.junit.jupiter.api.AssertEquals.assertEquals(AssertEquals.java:166)
+	at org.junit.jupiter.api.Assertions.assertEquals(Assertions.java:664)
+	at io.configd.raft.Rr103InflightWindowRecoveryTest.leaderBackfillsHealedFollowerWithinSameTerm(Rr103InflightWindowRecoveryTest.java:167)
+	at java.base/java.lang.reflect.Method.invoke(Method.java:565)
+	at java.base/java.util.ArrayList.forEach(ArrayList.java:1604)
+	at java.base/java.util.ArrayList.forEach(ArrayList.java:1604)
+
+[ERROR] Failures: 
+[ERROR]   Rr103InflightWindowRecoveryTest.leaderBackfillsHealedFollowerWithinSameTerm:167 after heal, the healed follower must be backfilled to the committed prefix — PRE-FIX this stays pinned behind forever (inflight window never freed) ==> expected: <19> but was: <5>
+[ERROR] Tests run: 1, Failures: 1, Errors: 0, Skipped: 0
+[ERROR] Failed to execute goal org.apache.maven.plugins:maven-surefire-plugin:3.5.2:test (default-test) on project configd-consensus-core: There are test failures.
+[ERROR] 
+[ERROR] See /home/ubuntu/Code/Configd/configd-consensus-core/target/surefire-reports for the individual test results.
+[ERROR] See dump files (if any exist) [date].dump, [date]-jvmRun[N].dump and [date].dumpstream.
+[ERROR] -> [Help 1]
+[ERROR] 
+[ERROR] To see the full stack trace of the errors, re-run Maven with the -e switch.
+[ERROR] Re-run Maven using the -X switch to enable full debug logging.
+[ERROR] 
+[ERROR] For more information about the errors and possible solutions, please read the following articles:
+[ERROR] [Help 1] http://cwiki.apache.org/confluence/display/MAVEN/MojoFailureException
+[ERROR] 
+[ERROR] After correcting the problems, you can resume the build with the command
+[ERROR]   mvn <args> -rf :configd-consensus-core
+===== MUTATION-REVERT (i): decay loop removed (keep check) — expect Rr103 RED =====
+[ERROR] Tests run: 1, Failures: 1, Errors: 0, Skipped: 0, Time elapsed: 0.369 s <<< FAILURE! -- in io.configd.raft.Rr103InflightWindowRecoveryTest
+[ERROR] io.configd.raft.Rr103InflightWindowRecoveryTest.leaderBackfillsHealedFollowerWithinSameTerm -- Time elapsed: 0.263 s <<< FAILURE!
+org.opentest4j.AssertionFailedError: after heal, the healed follower must be backfilled to the committed prefix — PRE-FIX this stays pinned behind forever (inflight window never freed) ==> expected: <19> but was: <5>
+[ERROR]   Rr103InflightWindowRecoveryTest.leaderBackfillsHealedFollowerWithinSameTerm:79 after heal, the healed follower must be backfilled to the committed prefix — PRE-FIX this stays pinned behind forever (inflight window never freed) ==> expected: <19> but was: <5>
+[ERROR] Tests run: 1, Failures: 1, Errors: 0, Skipped: 0
+===== MUTATION-REVERT (ii): inflight_window_progress check call removed — expect InvariantCallSiteTest RED, Rr103 GREEN =====
+[ERROR] Tests run: 5, Failures: 1, Errors: 0, Skipped: 0, Time elapsed: 0.139 s <<< FAILURE! -- in io.configd.raft.InvariantCallSiteTest
+[ERROR] io.configd.raft.InvariantCallSiteTest.leaderHeartbeatInvokesInflightWindowProgress -- Time elapsed: 0.058 s <<< FAILURE!
+org.opentest4j.AssertionFailedError: a leader heartbeat must invoke the inflight_window_progress check per peer ==> expected: <true> but was: <false>
+	at io.configd.raft.InvariantCallSiteTest.leaderHeartbeatInvokesInflightWindowProgress(InvariantCallSiteTest.java:159)
+[ERROR]   InvariantCallSiteTest.leaderHeartbeatInvokesInflightWindowProgress:159 a leader heartbeat must invoke the inflight_window_progress check per peer ==> expected: <true> but was: <false>
+[ERROR] Tests run: 6, Failures: 1, Errors: 0, Skipped: 0

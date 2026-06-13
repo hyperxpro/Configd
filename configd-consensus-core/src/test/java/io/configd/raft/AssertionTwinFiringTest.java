@@ -86,7 +86,7 @@ class AssertionTwinFiringTest {
             "election_safety", "leader_completeness", "log_matching",
             "state_machine_safety", "version_monotonicity",
             "single_server_invariant", "no_op_before_reconfig", "reconfig_safety",
-            "durable_prefix_no_gap",
+            "durable_prefix_no_gap", "inflight_window_progress",
             "read_freshness", "no_stale_leader_serve", "read_index_bounded",
             "snapshot_bounded", "snapshot_matching",
             "snapshot_no_commit_revert", "snapshot_term_consistent");
@@ -191,7 +191,7 @@ class AssertionTwinFiringTest {
             for (String twin : List.of("election_safety", "leader_completeness",
                     "log_matching", "version_monotonicity", "state_machine_safety",
                     "single_server_invariant", "no_op_before_reconfig", "reconfig_safety",
-                    "durable_prefix_no_gap")) {
+                    "durable_prefix_no_gap", "inflight_window_progress")) {
                 checker.expectFires(twin, () -> node.fireInNodeTwinForTest(twin));
             }
         }

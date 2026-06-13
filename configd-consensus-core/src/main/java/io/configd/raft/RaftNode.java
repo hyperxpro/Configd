@@ -592,6 +592,10 @@ public final class RaftNode {
             case "durable_prefix_no_gap" -> invariantChecker.check("durable_prefix_no_gap",
                     false, "Recovered snapshot boundary with no durable bytes (forced firing — RR-030;"
                             + " real-path firing proven by SnapshotCrashRecoveryTest)");
+            case "inflight_window_progress" -> invariantChecker.check("inflight_window_progress",
+                    false, "Leader silenced toward a peer: inflight window pinned at the cap while the"
+                            + " peer is inactive (forced firing — RR-103; real-path firing proven by"
+                            + " Rr103InflightWindowRecoveryTest's mutation-revert)");
             default -> throw new IllegalArgumentException("not an in-node seam twin: " + name);
         }
     }
@@ -1184,6 +1188,47 @@ public final class RaftNode {
                 return;
             }
             confirmPendingReads(activeSet);
+
+            // RR-103: heartbeat decay of the per-peer pipelining window. The window
+            // (inflightCount, capped at maxInflightAppends) is incremented on every
+            // send and decremented ONLY by a response. Because the periodic heartbeat
+            // is itself routed through sendAppendEntries — which skips a peer once its
+            // window is full — a peer that loses maxInflightAppends messages
+            // (partition / crash / drop) pins the window at the cap and is PERMANENTLY
+            // silenced for the rest of the term: no heartbeat, no backfill, no
+            // InstallSnapshot, no error, no metric (only a term change resets the map).
+            // A heartbeat is a liveness guarantee and must never be suppressible by a
+            // flow-control optimization. Free the window of any peer that is BOTH pinned
+            // at the cap (the silenced state) AND absent from the active set (no response
+            // this interval ⇒ its in-flight RPCs are presumed lost), before the broadcast,
+            // so this heartbeat reaches it. Narrowing to the pinned-AND-inactive state
+            // (rather than every inactive peer) keeps the window intact for a merely
+            // congested-but-alive peer whose RTT exceeds one heartbeat interval (a WAN
+            // follower, architecture §12) — it would otherwise be reset mid-pipeline and
+            // briefly over-send. A peer draining normally stays in the active set and is
+            // never touched.
+            for (NodeId peer : clusterConfig.peersOf(config.nodeId())) {
+                if (!activeSet.contains(peer)
+                        && inflightCount.getOrDefault(peer, 0) >= config.maxInflightAppends()) {
+                    inflightCount.put(peer, 0);
+                }
+                // RR-103 inflight-accounting twin (defence-in-depth, like the other
+                // structurally-guarded ConsensusSpec twins): at heartbeat-broadcast time no
+                // peer may be both silenced (window at the cap) AND not draining (inactive
+                // this interval) — exactly the permanent-silence state. The decay above
+                // re-establishes this, so on the un-mutated path the check is a postcondition
+                // that always holds; its live value is that a regression DROPPING the decay
+                // trips it on the SENDER under any window-pinning seed (throw in test/sim,
+                // metric + SEVERE log in prod). Real-path firing is proven by mutation-revert
+                // (review §5(iii)); forced firing by AssertionTwinFiringTest.
+                invariantChecker.check("inflight_window_progress",
+                        inflightCount.getOrDefault(peer, 0) < config.maxInflightAppends()
+                                || activeSet.contains(peer),
+                        "leader silenced toward peer " + peer + ": inflightCount="
+                                + inflightCount.getOrDefault(peer, 0) + " at cap "
+                                + config.maxInflightAppends() + " and peer inactive this interval");
+            }
+
             broadcastAppendEntries();
         }
     }
@@ -2252,5 +2297,15 @@ public final class RaftNode {
     /** The heartbeat interval the leader actually fires at, in ticks. */
     int heartbeatTimeoutTicksForTest() {
         return heartbeatTimeoutTicks;
+    }
+
+    /**
+     * The current per-peer in-flight AppendEntries window count (RR-103). Test seam so a
+     * recovery test can prove the wedge precondition (window pinned at {@code
+     * maxInflightAppends}) before exercising the heartbeat decay. Production code never
+     * reads this; it is leader-only volatile state.
+     */
+    int inflightCountForTest(NodeId peer) {
+        return inflightCount == null ? 0 : inflightCount.getOrDefault(peer, 0);
     }
 }
