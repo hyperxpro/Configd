@@ -1,0 +1,17 @@
+-------------------------------------------------------------------------------
+Test set: io.configd.raft.ReconfigurationTest$JointConsensusEndToEnd
+-------------------------------------------------------------------------------
+Tests run: 2, Failures: 1, Errors: 0, Skipped: 0, Time elapsed: 0.218 s <<< FAILURE! -- in io.configd.raft.ReconfigurationTest$JointConsensusEndToEnd
+io.configd.raft.ReconfigurationTest$JointConsensusEndToEnd.restartRecoversJointStateFromDurableJointEntry -- Time elapsed: 0.028 s <<< FAILURE!
+org.opentest4j.AssertionFailedError: recomputeConfigFromLog must rebuild the JOINT config across a mid-joint crash ==> expected: <true> but was: <false>
+	at org.junit.jupiter.api.AssertionFailureBuilder.build(AssertionFailureBuilder.java:151)
+	at org.junit.jupiter.api.AssertionFailureBuilder.buildAndThrow(AssertionFailureBuilder.java:132)
+	at org.junit.jupiter.api.AssertTrue.failNotTrue(AssertTrue.java:63)
+	at org.junit.jupiter.api.AssertTrue.assertTrue(AssertTrue.java:36)
+	at org.junit.jupiter.api.Assertions.assertTrue(Assertions.java:214)
+	at io.configd.raft.ReconfigurationTest$JointConsensusEndToEnd.restartRecoversJointStateFromDurableJointEntry(ReconfigurationTest.java:746)
+	at java.base/java.lang.reflect.Method.invoke(Method.java:565)
+	at java.base/java.util.ArrayList.forEach(ArrayList.java:1604)
+	at java.base/java.util.ArrayList.forEach(ArrayList.java:1604)
+	at java.base/java.util.ArrayList.forEach(ArrayList.java:1604)
+

@@ -30,10 +30,10 @@ Status legend: ✅ done (test cited) · 🔬 partial (mechanism exists, cell not
 
 | Cell | Oracle | Status |
 |---|---|---|
-| kill -9 pre-joint (`C_old,new` not yet committed) | restart → config == old; change can be re-proposed | ⏳ D §2 |
-| kill -9 with `C_old,new` committed, `C_new` not | restart → `recomputeConfigFromLog` rebuilds joint; new leader (dual majority) finalizes | ⏳ D §2 (the genuine mid-joint case — see reconfiguration-status-check.md) |
-| kill -9 with `C_new` committed | restart → config == new (4-voter) | ✅ in-sim `recomputeConfigFromLogRestoresMembershipAcrossRestart` (RR-018); kill-cell variant ⏳ |
-| leader crash mid-joint-config | new leader under dual majority completes the transition; no committed-entry loss | ⏳ D §2 (gap: existing test finalizes before the election — see status check) |
+| kill -9 pre-joint (`C_old,new` not yet in the log) | restart → config == old; change can be re-proposed | ✅ **EXP-004 Cell B'** (`preJointRestartRecoversOldConfigAndChangeCanBeReproposed`) |
+| kill -9 with `C_old,new` durable, `C_new` not | restart → `recomputeConfigFromLog` rebuilds the **JOINT** state (not the simple final / static config) | ✅ **EXP-004 Cell B** (`restartRecoversJointStateFromDurableJointEntry`); M2-discriminated. NB commit-state does not alter the recovered config — recompute uses the latest config entry regardless of commit and sets `configChangePending = (i > commitIndex)` |
+| kill -9 with `C_new` committed | restart → config == new (4-voter) | ✅ in-sim `recomputeConfigFromLogRestoresMembershipAcrossRestart` (RR-018) |
+| leader crash mid-joint-config | new leader under dual majority completes the transition; no committed-entry loss | ✅ positive: `leaderElectionDuringJointPhaseStillCompletesTheChange` (S2). negative/split-brain: **EXP-004 Cell A** — a single (old-only) majority CANNOT elect mid-joint (M1-discriminated) |
 
 ## Edge data plane
 

@@ -1,0 +1,17 @@
+-------------------------------------------------------------------------------
+Test set: io.configd.raft.ReconfigurationTest$JointConsensusEndToEnd
+-------------------------------------------------------------------------------
+Tests run: 1, Failures: 1, Errors: 0, Skipped: 0, Time elapsed: 0.232 s <<< FAILURE! -- in io.configd.raft.ReconfigurationTest$JointConsensusEndToEnd
+io.configd.raft.ReconfigurationTest$JointConsensusEndToEnd.oldMajorityAloneCannotElectDuringJointPhase_splitBrainPrevention -- Time elapsed: 0.189 s <<< FAILURE!
+org.opentest4j.AssertionFailedError: split-brain prevention: an OLD-majority-only PreVote must NOT advance the term / start a real election during the joint phase (lacks a C_new majority) ==> expected: <1> but was: <2>
+	at org.junit.jupiter.api.AssertionFailureBuilder.build(AssertionFailureBuilder.java:151)
+	at org.junit.jupiter.api.AssertionFailureBuilder.buildAndThrow(AssertionFailureBuilder.java:132)
+	at org.junit.jupiter.api.AssertEquals.failNotEqual(AssertEquals.java:197)
+	at org.junit.jupiter.api.AssertEquals.assertEquals(AssertEquals.java:166)
+	at org.junit.jupiter.api.Assertions.assertEquals(Assertions.java:664)
+	at io.configd.raft.ReconfigurationTest$JointConsensusEndToEnd.oldMajorityAloneCannotElectDuringJointPhase_splitBrainPrevention(ReconfigurationTest.java:686)
+	at java.base/java.lang.reflect.Method.invoke(Method.java:565)
+	at java.base/java.util.ArrayList.forEach(ArrayList.java:1604)
+	at java.base/java.util.ArrayList.forEach(ArrayList.java:1604)
+	at java.base/java.util.ArrayList.forEach(ArrayList.java:1604)
+

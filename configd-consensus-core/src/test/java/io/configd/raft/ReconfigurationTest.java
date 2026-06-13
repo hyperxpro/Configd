@@ -598,6 +598,185 @@ class ReconfigurationTest {
                     "committed entries from before the election must be preserved");
         }
 
+        // ====================================================================
+        // Session 4 / Workstream D §2 — reconfiguration UNDER FAULT.
+        //
+        // The S2 RR-018 work proved the POSITIVE dual-majority path: a
+        // dual-majority survivor set elects mid-joint and finalizes
+        // (leaderElectionDuringJointPhaseStillCompletesTheChange). What no test
+        // pinned is the historically-deadly NEGATIVE property — that a single
+        // majority (old-only or new-only) CANNOT elect during the joint phase —
+        // and the restart cell that recovers the JOINT (not just the final)
+        // config. Both are added here with mutation-revert captures under
+        // docs/session-4/experiments/EXP-004.
+        // ====================================================================
+        @Test
+        void oldMajorityAloneCannotElectDuringJointPhase_splitBrainPrevention() {
+            // The split-brain test for joint consensus. Membership change
+            // {1,2,3} -> {3,4,5}: nodes 1 and 2 are removed, 4 and 5 are added,
+            // only 3 is shared. The ENTIRE old cluster {1,2,3} is a majority of
+            // C_old but NOT a majority of C_new (new∩{1,2,3} = {3} = 1 < 2).
+            //
+            // The historically-deadly bug (treating a joint config as a single
+            // majority — Ongaro's single-server-reconfig defect class) would let
+            // {1,2,3} elect a leader under old-only rules while {3,4,5} could
+            // independently elect under new-only rules: two leaders committing in
+            // overlapping terms == split brain == lost acked writes. The
+            // dual-majority isQuorum gate (PreVote, vote, becomeLeader INV-1) must
+            // REFUSE: with only {1,2,3} reachable, NO leader may emerge.
+            //
+            // Oracle: no leader among {1,2,3} during the joint phase; the cluster
+            // correctly makes no progress (a liveness non-event — safety holds);
+            // single-leader-per-term throughout.
+            TestCluster cluster = new TestCluster(3);
+            NodeId n1 = NodeId.of(1), n2 = NodeId.of(2), n3 = NodeId.of(3),
+                    n4 = NodeId.of(4), n5 = NodeId.of(5);
+            cluster.electLeader(n1);
+            RaftNode leader = cluster.nodes.get(n1);
+            assertEquals(RaftRole.LEADER, leader.role());
+            cluster.addNode(n4, Set.of(n1, n2, n3));
+            cluster.addNode(n5, Set.of(n1, n2, n3));
+
+            // A committed user write before the reconfig — must never be lost.
+            assertEquals(ProposalResult.ACCEPTED, leader.propose("durable".getBytes()).result());
+            cluster.deliverAllMessages(20);
+            long committedBefore = leader.log().commitIndex();
+
+            // Enter joint C_old,new = ({1,2,3}, {3,4,5}).
+            assertTrue(leader.proposeConfigChange(Set.of(n3, n4, n5)));
+            assertTrue(leader.clusterConfig().isJoint());
+            assertEquals(Set.of(n1, n2, n3), leader.clusterConfig().voters());
+            assertEquals(Set.of(n3, n4, n5), leader.clusterConfig().newVoters());
+            long jointIndex = leader.log().lastIndex();
+
+            // Land C_old,new in n2 and n3's logs (in-memory joint via
+            // recomputeConfigFromLog) but DROP the responses, so the leader never
+            // reaches dual majority, never commits the joint entry, and never
+            // appends C_new / steps down. Everyone we test is genuinely mid-joint.
+            cluster.deliverMessages();   // n1's AppendEntries(C_old,new) reach 2,3 (and the unreachable 4,5)
+            cluster.dropAllMessages();   // discard responses -> no commit on n1
+            assertTrue(cluster.nodes.get(n2).clusterConfig().isJoint(),
+                    "n2 must be mid-joint (C_old,new in its log)");
+            assertTrue(cluster.nodes.get(n3).clusterConfig().isJoint(),
+                    "n3 must be mid-joint (C_old,new in its log)");
+            assertTrue(leader.clusterConfig().isJoint(),
+                    "the leader must NOT have finalized — joint entry uncommitted");
+            assertTrue(leader.log().commitIndex() < jointIndex,
+                    "C_old,new must NOT have committed (responses were dropped)");
+
+            // THE PINNED SAFETY CLAIM. Drive n2 (a voter of C_old) into a clean
+            // PreVote and hand it a FULL OLD MAJORITY of grants — {1,2,3} — by
+            // injecting the grant responses directly (the harness's electAmong
+            // gates PreVotes on leader-recency, which would mask the property we
+            // are pinning; we want the dual-majority gate to be the SOLE reason an
+            // election cannot proceed). isQuorum must REFUSE: {1,2,3} is a majority
+            // of C_old but holds only ONE member of C_new={3,4,5}, so no real
+            // election may start. A single-majority bug (EXP-004 M1) would start
+            // one here -> split brain.
+            cluster.dropAllMessages();
+            RaftNode n2node = cluster.nodes.get(n2);
+            cluster.triggerElectionTimeout(n2);    // clears leaderId, enters PreVote (no term bump yet)
+            long termAtPrevote = n2node.currentTerm();
+            assertTrue(n2node.clusterConfig().isJoint(), "n2 must still be mid-joint as it campaigns");
+
+            // Old-majority-only PreVote grants: {1,2,3} (n2 self + n1 + n3).
+            n2node.handleMessage(new RequestVoteResponse(termAtPrevote, true, n1, true));
+            n2node.handleMessage(new RequestVoteResponse(termAtPrevote, true, n3, true));
+
+            assertEquals(termAtPrevote, n2node.currentTerm(),
+                    "split-brain prevention: an OLD-majority-only PreVote must NOT advance the term / "
+                            + "start a real election during the joint phase (lacks a C_new majority)");
+            assertEquals(RaftRole.FOLLOWER, n2node.role(),
+                    "n2 must not become CANDIDATE/LEADER on an old-majority-only PreVote mid-joint");
+
+            // POSITIVE CONTROL (proves the gate is specifically the C_new majority,
+            // not a blanket failure): add ONE new-side voter's grant (n4). Now the
+            // grant set {1,2,3,4} is a majority of BOTH C_old and C_new -> the
+            // PreVote MUST succeed and start a real election (term advances).
+            n2node.handleMessage(new RequestVoteResponse(termAtPrevote, true, n4, true));
+            assertTrue(n2node.currentTerm() > termAtPrevote,
+                    "with a DUAL majority (old {1,2,3} + new voter 4) the PreVote must succeed "
+                            + "and start a real election — confirming the gate is the C_new majority");
+
+            // Safety, not just liveness: the committed prefix is intact throughout —
+            // the cluster correctly refused to make progress without a dual majority.
+            for (NodeId id : Set.of(n1, n2, n3)) {
+                assertTrue(cluster.nodes.get(id).log().commitIndex() >= committedBefore - 1,
+                        id + " must retain its committed prefix (no loss during the stalled joint phase)");
+            }
+            assertTrue(cluster.atMostOneLeaderPerTerm(),
+                    "single-leader-per-term must hold throughout");
+        }
+
+        @Test
+        void restartRecoversJointStateFromDurableJointEntry() {
+            // Kill-matrix reconfig cell "kill -9 with C_old,new committed, C_new
+            // not". recomputeConfigFromLog must rebuild the JOINT state from the
+            // durable C_old,new entry — not the simple final config (the existing
+            // recompute test) and not the static initial config. A node that comes
+            // back from a crash mid-joint must keep using dual-majority rules until
+            // C_new reaches its log, or election safety is lost.
+            //
+            // Oracle: restart -> isJoint() with the exact old and new voter sets;
+            // the recovered node is NOT the static initial config.
+            TestCluster cluster = new TestCluster(3);
+            NodeId n1 = NodeId.of(1), n2 = NodeId.of(2), n3 = NodeId.of(3), n4 = NodeId.of(4);
+            cluster.electLeader(n1);
+            RaftNode leader = cluster.nodes.get(n1);
+            cluster.addNode(n4, Set.of(n1, n2, n3));
+
+            // Enter joint {1,2,3} -> {1,2,3,4}; land C_old,new in n2's durable log
+            // but drop responses so it stays uncommitted on the leader (the leader
+            // never appends C_new). n2's LATEST durable config entry is C_old,new.
+            assertTrue(leader.proposeConfigChange(Set.of(n1, n2, n3, n4)));
+            assertTrue(leader.clusterConfig().isJoint());
+            cluster.deliverMessages();
+            cluster.dropAllMessages();
+            RaftNode n2Before = cluster.nodes.get(n2);
+            assertTrue(n2Before.clusterConfig().isJoint(),
+                    "precondition: n2 must be mid-joint before the crash");
+            assertEquals(Set.of(n1, n2, n3), n2Before.clusterConfig().voters());
+            assertEquals(Set.of(n1, n2, n3, n4), n2Before.clusterConfig().newVoters());
+
+            // kill -9 + restart over the retained durable storage. The fresh
+            // RaftConfig lists only the static {1,3} peers, so the ONLY way the
+            // recovered node can be joint with newVoters={1,2,3,4} is
+            // recomputeConfigFromLog reading the durable C_old,new entry.
+            RaftNode n2After = cluster.restartNode(n2);
+            assertTrue(n2After.clusterConfig().isJoint(),
+                    "recomputeConfigFromLog must rebuild the JOINT config across a mid-joint crash");
+            assertEquals(Set.of(n1, n2, n3), n2After.clusterConfig().voters(),
+                    "recovered old-voter set must match the durable C_old,new entry");
+            assertEquals(Set.of(n1, n2, n3, n4), n2After.clusterConfig().newVoters(),
+                    "recovered new-voter set must include the added node n4");
+        }
+
+        @Test
+        void preJointRestartRecoversOldConfigAndChangeCanBeReproposed() {
+            // Kill-matrix reconfig cell "kill -9 pre-joint (C_old,new not yet in
+            // the log)". A node crashed before any config entry reached its log
+            // must recover the OLD simple config (recompute's fallback), and the
+            // change must remain re-proposable afterwards.
+            TestCluster cluster = new TestCluster(3);
+            NodeId n1 = NodeId.of(1), n2 = NodeId.of(2), n3 = NodeId.of(3), n4 = NodeId.of(4);
+            cluster.electLeader(n1);
+            RaftNode leader = cluster.nodes.get(n1);
+            assertEquals(ProposalResult.ACCEPTED, leader.propose("pre".getBytes()).result());
+            cluster.deliverAllMessages(20);
+
+            // n2 has only the no-op + user entry durable — NO config entry.
+            RaftNode n2After = cluster.restartNode(n2);
+            assertFalse(n2After.clusterConfig().isJoint(),
+                    "a node with no durable config entry must recover a SIMPLE config");
+            assertEquals(Set.of(n1, n2, n3), n2After.clusterConfig().voters(),
+                    "pre-joint recovery must restore the OLD 3-voter config");
+
+            // The change is still re-proposable on the (untouched) leader.
+            cluster.addNode(n4, Set.of(n1, n2, n3));
+            assertTrue(leader.proposeConfigChange(Set.of(n1, n2, n3, n4)),
+                    "the config change must remain proposable after a pre-joint crash of a follower");
+        }
+
         @Test
         void recomputeConfigFromLogRestoresMembershipAcrossRestart() {
             // After a completed reconfiguration, restart a node and assert its

@@ -13,6 +13,11 @@ every fault cell declares its oracle (in `kill-matrix.md` / the partition matrix
   (all never-healed artifacts; RR-103 refuted as cause); `LivenessBoundedProgressSweepTest`
   (200 seeds, 0 violations, proven a live net). → `experiments/EXP-002`.
 - **D §1 status check**: joint consensus is REAL → no P0. → `reconfiguration-status-check.md`.
+- **D §2 reconfig-under-fault (in-sim)**: negative split-brain cell (old-only majority cannot
+  elect mid-joint, M1-discriminated) + mid-joint crash recovery (restart rebuilds JOINT,
+  M2-discriminated) + pre-joint/final restart cells. `ReconfigurationTest$JointConsensusEndToEnd`
+  3→6, full reconfig suite GREEN, prod source byte-clean. → `experiments/EXP-004`,
+  `captures/exp-004-m{1,2}-*-RED.txt`. Live/under-load reconfig gated on S6 admin seam.
 - **B1 storage-fault layer**: `FaultInjectingStorage` + self-test; oracle catalogue +
   ENVIRONMENT-BLOCKED. → `storage-fault-layer-design.md`.
 - **B/RR-008 RESOLVED**: inbound-routing Throwable swallow → mute zombie; fixed + red→green.

@@ -30,7 +30,12 @@ labelled.
 - Majority/minority partition heal → leader re-establishment — Workstream C partition matrix.
 - Asymmetric partition recovery — Workstream C.
 - Edge reconnect → re-bootstrap → CURRENT (staleness-bound convergence) — Workstream C / A3.
-- Membership add/remove convergence under load — Workstream D.
+- Membership add/remove convergence under load — Workstream D. **(D§2 safety landed, EXP-004:**
+  the negative split-brain gate and mid-joint crash recovery are proven in-sim; these are
+  *safety* cells, not recovery-time measurements — the old-only-majority case is a liveness
+  non-event (the cluster correctly makes no progress), and config rebuild on restart is
+  immediate. **Convergence-time under sustained write load + during a live netem partition
+  remains pending**, structurally gated on the S6 admin seam for the live path.)
 - Gray-failure (loss/latency) detection-to-degradation latency — Workstream C.
 
 ## Method

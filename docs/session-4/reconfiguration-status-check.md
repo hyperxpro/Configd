@@ -27,7 +27,25 @@ Because the mechanism is real, Workstream D is the *chaos* charter (membership c
 load / partition / leader crash mid-joint / kill -9 mid-reconfig per phase boundary,
 reusing the B2 kill matrix), **not** a P0 implementation effort.
 
-### One genuine gap to target (carried from the S2 RR-018 review, non-blocking there):
+### UPDATE (EXP-004, this run): the carried gap is CLOSED for the in-sim path.
+
+The two cells below are now landed in `ReconfigurationTest$JointConsensusEndToEnd` with
+mutation-revert captures (`experiments/EXP-004-reconfig-under-fault.md`):
+- **Negative dual-majority / split-brain prevention** (the historically-deadly property the S2
+  positive test did NOT isolate): with `{1,2,3}→{3,4,5}`, a full OLD majority `{1,2,3}` — which
+  holds only one member of `C_new` — must NOT elect mid-joint. Discriminated by mutation **M1**
+  (drop the `&& new-majority` clause from `isQuorum`): the old majority then advances the term
+  and starts a real election (split brain). A built-in positive control (add new-voter n4 → both
+  majorities → election proceeds) proves the gate is specifically the `C_new` majority.
+- **Mid-joint crash recovery**: restart with a durable `C_old,new` (no `C_new`) recovers the
+  JOINT state via `recomputeConfigFromLog`; discriminated by mutation **M2**. Pre-joint and
+  final-committed restart cells also pinned.
+
+What remains (NOT blocking, moves to Workstream C / S6): reconfig under a *live* netem partition
+and under *sustained write load* on Compose — structurally gated on the S6 admin seam
+(`proposeConfigChange` still has zero non-test callers, below).
+
+### Original gap (carried from the S2 RR-018 review, non-blocking there) — for the record:
 `leaderElectionDuringJointPhaseStillCompletesTheChange` does **not** actually elect during
 the joint phase — instrumentation at the S2 review showed `isJoint()==false` by the election
 point (the transition had already finalized in the 30-round delivery). So **no test yet
