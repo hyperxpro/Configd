@@ -2,38 +2,41 @@
 
 Branch `session-4-chaos`. Commits: `892eb95` (Workstream A) · `d63b74d` (B partial) ·
 `ce916b3` (progress index) · `869dbdb` (D§2 in-sim, EXP-004) · `a4535b5` (A3 four legs, EXP-005) ·
-`d171bf1` (RR-005 re-verification).
+`d171bf1` (RR-005 re-verification) · `684dd7d` (resume handoff) · `47b6022` (RR-005 RESOLVED fix,
+EXP-006 — first S4 production change, 2nd-agent signed off).
 CI was green at pickup (run 27412723506 / 14a0f87). **Matrix-before-execution rule holds:** every
 fault cell declares its oracle (in `fault-matrix.md` / `kill-matrix.md`) before it runs.
 
 ---
 
-## ⏭ RESUME HERE — first item, treat as P0-grade consensus work
+## ⏭ RESUME HERE — next B-rest cell (RR-005 fix is DONE, `47b6022`, signed off)
 
-**RR-005 FIX** (re-verified OPEN this run; `rr-005-reverification.md`, register row, commit
-`d171bf1`). Two coupled, independent bugs in the *wired* server:
-1. Raft-log compaction is **unreachable** — nothing in `configd-server/src/main` triggers
-   `RaftNode.triggerSnapshot()` by size/interval; the only caller is the circular
-   `sendInstallSnapshot` (`RaftNode.java:1730`). WAL grows for the life of the process.
-   (The resume-note's "ConfigdServer already calls `compactor.compact()`" was a FALSE ALARM —
-   that `:656` call is the snapshot-RETENTION `Compactor`, `io.configd.store.Compactor`, NOT
-   Raft-log compaction; it never touches the WAL. Verified against `a4535b5`.)
-2. `FileStorage.java:128` `ByteBuffer.allocate((int) fileSize)` truncates on a ≥ 2 GiB WAL at
-   boot → opaque crash-loop (made inevitable by (1)).
+The prior P0-grade item — **RR-005 — is RESOLVED** (compaction reachable + long-safe WAL read;
+EXP-006; 2nd-agent SOUND). Resume at the **fsync-lie durability cell** (kill-matrix), which has a
+precise spec ready:
 
-**Handle as P0-grade from minute one** (per the resume directive), even though it is filed P1
-(availability/crash-loop, not a safety violation): the fix touches the **consensus tick loop**
-(the H-009 zombie-tick surface — an uncaught throwable there silently kills consensus) **and the
-storage recovery read path**, and it **interacts with RR-003's durable-prefix invariant**
-(compaction becomes *reachable* for the first time in the wired server, so persist-before-truncate
-+ `durable_prefix_no_gap` get genuinely exercised end-to-end — re-run `SnapshotCrashRecoveryTest`
-semantics through the live trigger). **Write the discriminating (RED) test BEFORE any production
-change**: pre-fix the WAL/applied grows without bound and `snapshotIndex` never advances in the
-wired server; post-fix compaction fires at the threshold and the durable-prefix invariant holds
-across a real compaction+restart. Second-agent reproduction required before the fix is accepted.
-Fix shape: a threshold trigger (`lastApplied − snapshotIndex > compactionThreshold`, a named
-config + metric) calling `triggerSnapshot()` in the tick loop, analogous to the retention
-`compactor.compact()` already there; + a long-safe / fail-loud recovery read for (2).
+**fsync-lie cell** — extend `CrashStorage` (consensus-core test infra; **do NOT fork it**, per
+`storage-fault-layer-design.md §1/§4`) with a `lieOnSyncForKey(String key)` arming:
+- Model: a `put(key, …)` to the lied key writes to `working` ONLY, **not** `durable` (the device
+  ACKs the fsync — `put` returns normally — but the bytes never reach the platter). On
+  `crash()`/`recoveredView()` the lied write is gone. (Mirror the existing `crashBeforeKeyPut`
+  branch in `put()`; self-durable writes otherwise hit both `durable` + `working`.)
+- Test (model on `SnapshotCrashRecoveryTest.gapDetectionFiresWhenSnapshotBlobUnrecoverable` —
+  reuse its snapshot+restart setup): arm `lieOnSyncForKey("raft-log.snapshot")`, `triggerSnapshot()`
+  (persistSnapshot puts the blob → lied → working-only; compact truncates the WAL prefix + `sync()`
+  → durable), `crash()`, restart over `recoveredView()`.
+- **Oracle:** the recovered state is *no snapshot blob + truncated WAL* = a gap below the snapshot
+  boundary → `durable_prefix_no_gap` **fires / boot fails loud** (never silently serves missing
+  committed state). **Key insight (verified this run):** a faithful WAL-level fsync-lie recovers to
+  a state *indistinguishable* from "blob unrecoverable," so it is caught by the SAME oracle the
+  existing gap-detection test already proves — the fsync-lie cell adds the *injection-path-agnostic*
+  proof (lied fsync ≡ never-written, at the WAL level). The **real-firmware** lie (volatile write
+  cache + power cut) detection boundary stays **ENVIRONMENT-BLOCKED** (design §3 staging recipe:
+  `hdparm -W1`, no `fua`, power-cut). Low marginal safety value over the existing gap test, but it
+  closes the kill-matrix cell honestly; delicate harness work — do it with fresh context.
+
+Then the rest of B-rest (ENOSPC-under-load, short-read, snapshot-install/leadership-transfer crash
+cells; RR-019/086/064), then C / D-overload / E / gate-4 / handoff-S5.
 
 ---
 
@@ -46,7 +49,7 @@ config + metric) calling `triggerSnapshot()` in the tick loop, analogous to the 
 | **A3 (4 owed edge-chaos legs)** | ✅ ALL FOUR — A3-1 accept-then-blackhole (real-socket TLS, handshake-timeout bites; CT-40 closed), A3-2 prod-threshold ack-lag 8192 (M-acklag RED), A3-3 wedged transport (RR-102 characterization; stalled-transfer signal → S6), A3-4 governor churn (never evicts distressed; M-evict RED). 2nd-agent signed off | `EXP-005`, `fault-matrix.md §A3`, `captures/exp-005-*` |
 | **B1 storage-fault layer** | ✅ `FaultInjectingStorage` + self-test; oracle catalogue + ENVIRONMENT-BLOCKED list | `storage-fault-layer-design.md` |
 | **B/RR-008** | ✅ RESOLVED — inbound-routing Throwable swallow → mute zombie; red→green | `EXP-003` |
-| **B/RR-005 re-verify** | ✅ both halves CONFIRMED OPEN (fix owed — see RESUME above) | `rr-005-reverification.md`, `d171bf1` |
+| **B/RR-005** | ✅ RESOLVED — re-verified both halves OPEN (`d171bf1`) then FIXED: compaction reachable (`RaftNode.maybeCompact`→`MultiRaftDriver.maybeCompact`→tick-loop) + long-safe `FileStorage` recovery guard; M-compact RED, RR-003 6/6 green; 2nd-agent SOUND | `rr-005-reverification.md`, `EXP-006`, `47b6022` |
 | **D §1 status check** | ✅ joint consensus is REAL → no P0 | `reconfiguration-status-check.md` |
 | **D §2 reconfig-under-fault (in-sim)** | ✅ negative split-brain (M1-discriminated) + mid-joint crash recovery (M2-discriminated) + pre-joint/final restart; reconfig suite GREEN; 2nd-agent signed off | `EXP-004`, `captures/exp-004-m{1,2}-*` |
 | **Fault-matrix spine** | ✅ created (`fault-matrix.md`, charter §8) — indexes A/A3/B2/D§2/C/E | `fault-matrix.md` |
@@ -55,8 +58,7 @@ config + metric) calling `triggerSnapshot()` in the tick loop, analogous to the 
 
 | # | Item | Where / oracle | Note |
 |---|---|---|---|
-| 1 | **RR-005 FIX** | see RESUME-HERE above | **first; P0-grade; RED test before any prod change; 2nd-agent** |
-| 2 | B: fsync-lie cell | extend `CrashStorage.lieOnSync`; oracle in `storage-fault-layer-design.md §2` | restart detects the gap / fails loud, never loads un-fsynced data; in-sim shim models it (real-FS-shim variant ENVIRONMENT-BLOCKED w/ exact infra) |
+| 1 | **B: fsync-lie cell** | see RESUME-HERE (precise spec) — extend `CrashStorage.lieOnSyncForKey`; oracle in `storage-fault-layer-design.md §2` | **first**; recovers to the same `durable_prefix_no_gap` gap the existing `gapDetectionFires…` test proves (injection-path-agnostic); real-firmware variant ENVIRONMENT-BLOCKED |
 | 3 | B: ENOSPC-under-load · short-read · snapshot-install-on-follower · leadership-transfer crash cells | `kill-matrix.md` (cells declared) | `FaultInjectingStorage` built (`enospcAfterBytes`/`shortReadLog`); storage-back a follower WAL to reach the append path |
 | 4 | B: RR-019 · RR-086 · RR-064 | durability review | |
 | 5 | **C — partition & WAN matrix** | Compose + netem/iptables (REJECT *and* DROP); clock skew vs the documented 500 ms bound | per cell: safety (linearizability over the failover/partition history) + liveness + client-experience + recovery-time. **Heaviest** — Compose cannot share the box with Maven; some cells may be ENVIRONMENT-BLOCKED |
@@ -68,7 +70,7 @@ config + metric) calling `triggerSnapshot()` in the tick loop, analogous to the 
 ## Register deltas (cumulative this session)
 
 RR-103 OPEN→RESOLVED · RR-095 OPEN→ACCEPTED-RISK · RR-008 OPEN→RESOLVED ·
-RR-005 OPEN (re-verified, both halves confirmed real; fix owed) ·
+RR-005 OPEN→RESOLVED (re-verified both halves real, then fixed — EXP-006, `47b6022`) ·
 RR-018 RESOLVED-row annotated with the D§2 under-fault discharge (EXP-004).
 
 ## Environment reminders
