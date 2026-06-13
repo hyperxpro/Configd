@@ -217,6 +217,52 @@ jobs:
           path: ${{ runner.temp }}/gate3-logs
           retention-days: 7
 
+  gate-4:
+    # Session-4 cumulative gate (gates/gate-4.sh) — durability, recovery & chaos.
+    # REQUIRES gate-3 green (runs as its own job here, so the gate-4 run sets
+    # GATE4_SKIP_GATE3=1 — cumulative coverage comes from the job dependency, not
+    # a redundant re-run). CI-subset steps (push/PR): the RR-103/RR-095 liveness
+    # regression seeds, D§2 reconfiguration-under-fault, the A3 edge-chaos legs,
+    # and the B-rest durability cells (RR-005, fsync-lie, ENOSPC, short-read). The
+    # HEAVY integrated sweeps (EdgeIntegratedNightlySweepTest + the RR-095
+    # integrated rerun) run ONLY on the nightly schedule — GATE4_SKIP_NIGHTLY=1 on
+    # push/PR keeps the CI subset in CI time. PENDING workstreams (C partition/WAN
+    # + linearizability, D overload reconnect-storm, E mini-Jepsen) are added to
+    # gate-4 when they land — see docs/session-4/PROGRESS.md.
+    needs: gate-3
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 25
+        uses: actions/setup-java@v4
+        with:
+          java-version: '25'
+          distribution: 'corretto'
+          cache: maven
+
+      - name: Run gate-4 (push/PR — gate-3 + heavy nightly sweeps skipped)
+        if: github.event_name != 'schedule'
+        run: GATE4_SKIP_GATE3=1 GATE4_SKIP_NIGHTLY=1 bash gates/gate-4.sh
+        env:
+          GATE4_LOG_DIR: ${{ runner.temp }}/gate4-logs
+        timeout-minutes: 60
+
+      - name: Run gate-4 FULL (nightly — incl. the heavy integrated chaos sweeps)
+        if: github.event_name == 'schedule'
+        run: GATE4_SKIP_GATE3=1 bash gates/gate-4.sh
+        env:
+          GATE4_LOG_DIR: ${{ runner.temp }}/gate4-logs
+        timeout-minutes: 120
+
+      - name: Upload gate-4 step logs
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: gate-4-logs
+          path: ${{ runner.temp }}/gate4-logs
+          retention-days: 7
+
   wire-compat:
     # ADR-0029 §8.10 fixture-bump guardrail.
     # Fails the build if GoldenFixtures.java changed without a matching bump

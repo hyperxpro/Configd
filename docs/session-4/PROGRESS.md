@@ -9,27 +9,44 @@ fault cell declares its oracle (in `fault-matrix.md` / `kill-matrix.md`) before 
 
 ---
 
-## ⏭ RESUME HERE — remaining B-rest cells (RR-005, fsync-lie, ENOSPC, short-read all DONE)
+## ⏭ RESUME HERE — Workstream C (partition/WAN matrix); A, B-rest, D§2, A3, gate-4 all DONE
 
-Done so far in B-rest: RR-005 (`47b6022`), fsync-lie (`EXP-007`), **ENOSPC-append + short-read
-(`EXP-008`)**. Resume at:
-1. **ENOSPC during SNAPSHOT write** (distinct from the append cell already done) — `persistSnapshot`
-   put ENOSPCs → `compact` must NOT run / WAL prefix NOT truncated (no loss), retry next interval.
-   Inject via `CrashStorage`-style or a `FaultInjectingStorage.failNextWrites` armed on the snapshot
-   `put`; oracle: WAL prefix intact, snapshotIndex unchanged, no `durable_prefix_no_gap`.
-2. **Crash during snapshot-install on a FOLLOWER** + **crash during leadership transfer** — reuse the
-   `CrashStorage` kill matrix; persist-before-compact on the install path; no split-brain on transfer.
-3. **RR-019 / RR-086 / RR-064** durability review.
-Then **C** (partition/WAN matrix — heavy, Compose/netem) / **D-overload** (reconnect storm) /
-**E** (mini-Jepsen) / **gate-4 + CI** / **handoff-S5**.
+**gate-4 is wired + GREEN + captured** (CI subset `gate-4-ci-subset-run.txt`; nightly
+`gate-4-nightly-run.txt`, 0 safety violations across the 10k integrated sweep + the 7 RR-095 seeds).
+B-rest is effectively done: RR-005 (`47b6022`), fsync-lie (`EXP-007`), ENOSPC append+snapshot-write +
+short-read (`EXP-008`). The big remaining workstream is **C**.
 
-NB short-read is CLOSED by analysis (EXP-008): trailing short-read ≡ torn-tail (covered); middle
-short-read ≡ gap → `durable_prefix_no_gap` (covered). `FaultInjectingStorage` only injects trailing;
-a middle-drop injector is a non-blocking follow-up.
+### PENDING for the next run (charter §5/§6, §9):
+- **C — partition & WAN matrix** (the big one): execute the arch §12 scenarios on Compose with
+  `netem`/`iptables` — single-region isolation (minority/majority), leader isolation, asymmetric +
+  partial partitions, gray failure (loss/latency), fan-out partition, heal+convergence. Per cell:
+  safety (linearizability over the write history spanning the partition — the `configd-linz`
+  checker), liveness, client-experience, recovery-time histogram. REJECT *and* DROP (RR-002 fixed).
+- **D — overload / reconnect storm** (charter §6, extra scrutiny): the post-partition reconnect
+  storm (the data plane's most dangerous overload) — assert §11 shed order + client signals
+  (429/version-stale) + bounded queues + clean recovery.
+- **E — sustained mini-Jepsen**: LAST, against the fully-fixed system; nightly, not in the CI gate.
+- **handoff-S5** (charter §9): the session-close handoff (distinct from this resume index).
 
-Pattern reminder (held all run): declare the cell oracle first → write the discriminating/RED test
-→ implement (if prod change) → revert any mutation → confirm GREEN → `git diff -- '*/src/main'` clean
-→ commit → second-agent replay for production/safety cells.
+### ⚠ ENVIRONMENT-BLOCKED candidates to clear BEFORE starting C (carried forward):
+1. **netem/iptables need NET_ADMIN/root** on the Compose host; the bridge network can do
+   intra-host loss/latency/partition, but **true multi-host asymmetric/partial partitions across
+   real hosts** are limited on the single 2-vCPU box — those cells are ENVIRONMENT-BLOCKED → S5
+   multi-host hardware. **Compose cannot share the box with Maven** (env memory) — serialize.
+2. **Clock-skew injection** (charter §6 D) needs container time control (`libfaketime` or per-
+   container clock offset) — verify the harness can skew one node's clock without host-wide effect.
+3. **Real fsync / firmware-lie** (from EXP-007 / `storage-fault-layer-design.md §3`): `dm-flakey` /
+   `dm-delay` + `hdparm -W1` + power-cut on a real disk — ENVIRONMENT-BLOCKED → S5.
+4. **CT-02** staleness-distribution NUMBERS (p99 < 500 ms) — sanctioned S5 deferral (handoff §3).
+5. **Stalled-transfer signal** (A3-3 / c5-signoff F2) — S6 observability item (detection proxy works).
+
+### Low-value B-rest tail (optional; mostly re-verifies RR-003-covered behavior):
+snapshot-install-on-follower crash + leadership-transfer crash (CrashStorage kill cells);
+RR-019/086/064 durability review. Not gating; skip toward C unless a reviewer wants them.
+
+Pattern reminder (held all session): declare the cell oracle first → write the discriminating/RED
+test → implement (if prod change) → revert any mutation → confirm GREEN → `git diff -- '*/src/main'`
+clean → commit → second-agent replay for production/safety cells.
 
 ---
 
@@ -48,19 +65,17 @@ Pattern reminder (held all run): declare the cell oracle first → write the dis
 | **B: fsync-lie cell** | ✅ `CrashStorage.lieOnSyncForKey` + `gapDetectionFiresWhenSnapshotFsyncLied` (recovers to the same gap as blob-unrecoverable → `durable_prefix_no_gap` fires; M-lie RED); real-firmware variant ENVIRONMENT-BLOCKED | `EXP-007`, `captures/exp-007-*`, kill-matrix |
 | **B: ENOSPC-append + short-read** | ✅ ENOSPC at the consensus layer (`StorageEnospcConsensusReactionTest` — surfaces, no silent log advance via durable-first `RaftLog.append`, recovers; M-order RED). short-read CLOSED by analysis (trailing≡torn-tail; middle≡gap→`durable_prefix_no_gap`) | `EXP-008`, `captures/exp-008-*`, kill-matrix |
 | **Fault-matrix spine** | ✅ created (`fault-matrix.md`, charter §8) — indexes A/A3/B2/D§2/C/E | `fault-matrix.md` |
+| **gate-4 + CI** | ✅ `gates/gate-4.sh` cumulative (gates 1-3 stay green) + CI job `needs: gate-3` (CI-subset on push/PR, full nightly on schedule). CI subset GREEN (liveness/RR-103-095, D§2, A3, B-rest); nightly chaos GREEN (10k integrated sweep + 7 RR-095 seeds, 0 safety violations) | `gates/gate-4.sh`, `.github/workflows/ci.yml`, `captures/gate-4-{ci-subset,nightly}-run.txt` |
 
 ## PENDING (resume at clean seams)
 
 | # | Item | Where / oracle | Note |
 |---|---|---|---|
-| 1 | **B: ENOSPC-snapshot-write + crash cells** | see RESUME-HERE — snapshot-write ENOSPC (WAL prefix NOT truncated), snapshot-install-on-follower + leadership-transfer crash (`CrashStorage`) | **first**; ENOSPC-append + short-read already DONE (EXP-008) |
-| 3 | B: ENOSPC-under-load · short-read · snapshot-install-on-follower · leadership-transfer crash cells | `kill-matrix.md` (cells declared) | `FaultInjectingStorage` built (`enospcAfterBytes`/`shortReadLog`); storage-back a follower WAL to reach the append path |
-| 4 | B: RR-019 · RR-086 · RR-064 | durability review | |
-| 5 | **C — partition & WAN matrix** | Compose + netem/iptables (REJECT *and* DROP); clock skew vs the documented 500 ms bound | per cell: safety (linearizability over the failover/partition history) + liveness + client-experience + recovery-time. **Heaviest** — Compose cannot share the box with Maven; some cells may be ENVIRONMENT-BLOCKED |
-| 6 | **D — reconnect-storm overload** (charter §6) | post-partition reconnect storm (the data plane's most dangerous overload) | charter flags it for extra scrutiny alongside reconfig-under-fault (done) |
-| 7 | **E — sustained mini-Jepsen** | LAST, against the fully-fixed system; nightly, not in the CI gate | |
-| 8 | **Gate-4** | `gates/gate-4.sh` CI-wired, cumulative (gates 1–3 stay green) | RR-103/095 seeds + `LivenessBoundedProgressSweepTest` in the gate seed set; curated chaos subset (incl. D§2/A3 cells); ledger lint; recovery-bounds coverage; mutation unregressed |
-| 9 | **Handoff-S5** | `handoff-to-session-5.md` | at session close: residual risks, the ENVIRONMENT-BLOCKED list (incl. CT-02, fsync-shim), measured recovery-time baselines, the chaos scenarios S5 re-runs on real multi-host hardware |
+| 1 | **C — partition & WAN matrix** | Compose + netem/iptables (REJECT *and* DROP); clock skew; `configd-linz` linearizability over the partition/failover write history | **the big remaining workstream.** per cell: safety + liveness + client-experience + recovery-time histogram. See RESUME-HERE for the ⚠ ENVIRONMENT-BLOCKED candidates to clear FIRST (NET_ADMIN, multi-host, clock-skew injection) |
+| 2 | **D — reconnect-storm overload** (charter §6) | post-partition reconnect storm (the data plane's most dangerous overload) | §11 shed order + 429/version-stale signals + bounded queues + clean recovery. Extra-scrutiny cell |
+| 3 | **E — sustained mini-Jepsen** | LAST, against the fully-fixed system; nightly, not in the CI gate | |
+| 4 | **Handoff-S5** | `handoff-to-session-5.md` | session-close (≠ this resume index): residual risks, the ENVIRONMENT-BLOCKED list (CT-02, fsync-shim, netem multi-host), measured recovery-time baselines, chaos to re-run on real multi-host hardware |
+| — | (optional) B-rest tail | snapshot-install-on-follower + leadership-transfer crash cells; RR-019/086/064 | low value — mostly re-verifies RR-003-covered behavior; not gating |
 
 ## Register deltas (cumulative this session)
 
