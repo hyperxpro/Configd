@@ -30,6 +30,11 @@ labelled.
 - Majority/minority partition heal → leader re-establishment — Workstream C partition matrix.
 - Asymmetric partition recovery — Workstream C.
 - Edge reconnect → re-bootstrap → CURRENT (staleness-bound convergence) — Workstream C / A3.
+  **(A3-1 partial, EXP-005:** abandon of a black-holed (accept-then-silent) endpoint is bounded by
+  `HANDSHAKE_TIMEOUT_MS = 2000 ms` per attempt (edge `setSoTimeout` around `startHandshake`),
+  then jittered reconnect backoff; the edge retries/fails-over rather than wedging. Live/wall, one
+  deterministic real-socket scenario — full failover-to-CURRENT against a live alternate endpoint
+  is the Workstream C round-robin-failover measurement, still pending.)
 - Membership add/remove convergence under load — Workstream D. **(D§2 safety landed, EXP-004:**
   the negative split-brain gate and mid-joint crash recovery are proven in-sim; these are
   *safety* cells, not recovery-time measurements — the old-only-majority case is a liveness

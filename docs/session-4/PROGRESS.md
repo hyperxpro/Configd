@@ -22,6 +22,12 @@ every fault cell declares its oracle (in `kill-matrix.md` / the partition matrix
   ENVIRONMENT-BLOCKED. → `storage-fault-layer-design.md`.
 - **B/RR-008 RESOLVED**: inbound-routing Throwable swallow → mute zombie; fixed + red→green.
   → `experiments/EXP-003`.
+- **A3 — the four owed edge-chaos legs DONE** (EXP-005, fault-matrix §A3): A3-1 accept-then-
+  blackhole (real-socket TLS, handshake-timeout bites, edge retries — CT-40 closed); A3-2
+  prod-threshold ack-lag demotion (8192, M-acklag-discriminated); A3-3 wedged transport
+  (RR-102 pause/resume characterization + observability proxy, stalled-transfer signal → S6);
+  A3-4 governor churn (bounded identity map never evicts distressed, M-evict-discriminated).
+- The session spine `fault-matrix.md` created (charter §8) — indexes A/A3/B2/D§2/C/E.
 - Recovery bounds recorded so far → `recovery-bounds.md`.
 
 ## PENDING (resume here, at clean seams — see kill-matrix.md for B cells)
@@ -31,7 +37,7 @@ every fault cell declares its oracle (in `kill-matrix.md` / the partition matrix
 | B: ENOSPC-under-load, short-read, snapshot-install/leadership-transfer crash cells | kill-matrix.md | `FaultInjectingStorage` built; storage-back a follower WAL to reach the append path |
 | B/RR-005 | `FileStorage` `(int) fileSize` 2 GiB cast; compaction trigger | RE-VERIFY first: ConfigdServer tick loop ALREADY calls `compactor.compact()` every 1000 ticks — the "compaction unreachable" half may be stale |
 | B: RR-019, RR-086, RR-064 | durability review | |
-| A3 | 4 owed edge chaos legs (S3 handoff §1) | accept-then-blackhole fanout; prod-threshold ack-lag demotion; wedged transport; governor churn |
+| ~~A3~~ DONE | 4 owed edge chaos legs (S3 handoff §1) | ✅ all four — EXP-005 / fault-matrix §A3 |
 | C | partition matrix on Compose + netem/iptables; clock skew vs documented 500ms bound; recovery-bound ledger per fault class | REJECT + DROP both; safety+liveness+client-experience per cell |
 | D §2 | reconfig under fault | **build the mid-joint-phase leader-election case** (existing test finalizes before the election) + kill -9 per phase boundary (reuse B2) |
 | E | sustained mini-Jepsen | LAST, against fully-fixed system; nightly, not in gate |

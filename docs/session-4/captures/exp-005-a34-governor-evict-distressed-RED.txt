@@ -1,0 +1,28 @@
+-------------------------------------------------------------------------------
+Test set: io.configd.distribution.fanout.GovernorBoundedIdentityMapChurnTest
+-------------------------------------------------------------------------------
+Tests run: 2, Failures: 2, Errors: 0, Skipped: 0, Time elapsed: 0.387 s <<< FAILURE! -- in io.configd.distribution.fanout.GovernorBoundedIdentityMapChurnTest
+io.configd.distribution.fanout.GovernorBoundedIdentityMapChurnTest.allDistressedOverflowsHonestlyWithoutEvictingPolicyState -- Time elapsed: 0.208 s <<< FAILURE!
+org.opentest4j.AssertionFailedError: no quarantined identity may be dropped to satisfy maxTrackedIdentities ==> expected: <QUARANTINED> but was: <HEALTHY>
+	at org.junit.jupiter.api.AssertionFailureBuilder.build(AssertionFailureBuilder.java:151)
+	at org.junit.jupiter.api.AssertionFailureBuilder.buildAndThrow(AssertionFailureBuilder.java:132)
+	at org.junit.jupiter.api.AssertEquals.failNotEqual(AssertEquals.java:197)
+	at org.junit.jupiter.api.AssertEquals.assertEquals(AssertEquals.java:182)
+	at org.junit.jupiter.api.Assertions.assertEquals(Assertions.java:1156)
+	at io.configd.distribution.fanout.GovernorBoundedIdentityMapChurnTest.allDistressedOverflowsHonestlyWithoutEvictingPolicyState(GovernorBoundedIdentityMapChurnTest.java:109)
+	at java.base/java.lang.reflect.Method.invoke(Method.java:565)
+	at java.base/java.util.ArrayList.forEach(ArrayList.java:1604)
+	at java.base/java.util.ArrayList.forEach(ArrayList.java:1604)
+
+io.configd.distribution.fanout.GovernorBoundedIdentityMapChurnTest.churnNeverEvictsDistressedAndBoundsHealthyGrowth -- Time elapsed: 0.072 s <<< FAILURE!
+org.opentest4j.AssertionFailedError: q0 must NOT be evicted by HEALTHY churn — evicting a distressed record is a policy escape (cooldown skipped on re-admit) ==> expected: <QUARANTINED> but was: <HEALTHY>
+	at org.junit.jupiter.api.AssertionFailureBuilder.build(AssertionFailureBuilder.java:151)
+	at org.junit.jupiter.api.AssertionFailureBuilder.buildAndThrow(AssertionFailureBuilder.java:132)
+	at org.junit.jupiter.api.AssertEquals.failNotEqual(AssertEquals.java:197)
+	at org.junit.jupiter.api.AssertEquals.assertEquals(AssertEquals.java:182)
+	at org.junit.jupiter.api.Assertions.assertEquals(Assertions.java:1156)
+	at io.configd.distribution.fanout.GovernorBoundedIdentityMapChurnTest.churnNeverEvictsDistressedAndBoundsHealthyGrowth(GovernorBoundedIdentityMapChurnTest.java:78)
+	at java.base/java.lang.reflect.Method.invoke(Method.java:565)
+	at java.base/java.util.ArrayList.forEach(ArrayList.java:1604)
+	at java.base/java.util.ArrayList.forEach(ArrayList.java:1604)
+

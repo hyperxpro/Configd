@@ -23,12 +23,15 @@ import org.junit.jupiter.api.io.TempDir;
 
 import java.io.IOException;
 import java.net.InetSocketAddress;
+import java.net.ServerSocket;
+import java.net.Socket;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.util.Comparator;
 import java.util.List;
+import java.util.concurrent.CopyOnWriteArrayList;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
@@ -75,6 +78,7 @@ class EdgeTransportMtlsTest {
     private FanOutServer server;
     private FanOutBuffer buffer;
     private EdgeNodeMain edge;
+    private ServerSocket blackhole; // A3-1: accept-then-black-hole endpoint
 
     @BeforeAll
     static void generateTlsFixture() throws Exception {
@@ -122,6 +126,14 @@ class EdgeTransportMtlsTest {
         if (server != null) {
             server.close();
             server = null;
+        }
+        if (blackhole != null) {
+            try {
+                blackhole.close(); // the accept thread exits on the resulting SocketException
+            } catch (IOException ignored) {
+                // best-effort
+            }
+            blackhole = null;
         }
     }
 
@@ -177,9 +189,57 @@ class EdgeTransportMtlsTest {
         assertEquals(0, edge.core().currentVersion());
     }
 
+    @Test
+    @Timeout(120)
+    void blackholedEndpointHandshakeTimesOutAndEdgeKeepsRetrying() throws Exception {
+        // S4 Workstream A3 leg 1 (S3 handoff §1; CT-40 edge-side gap): an endpoint that
+        // completes the TCP accept but NEVER performs the TLS handshake (never reads/writes,
+        // holds the socket open). The ONLY mechanism that lets the edge abandon such a peer is
+        // HANDSHAKE_TIMEOUT_MS (the setSoTimeout around SSLSocket.startHandshake in
+        // EdgeStreamClient.createClientSocket). Without it, startHandshake() blocks forever and
+        // the edge wedges on the first peer — never failing over, never retrying.
+        //
+        // Proof the bound bites edge-side: the reconnect counter ADVANCES (the edge timed out of
+        // a black-holed handshake and looped to retry) while it never subscribes. If the timeout
+        // did not bite, the session thread would be parked in startHandshake and the counter
+        // could not advance — awaitReconnectAttempts would fail (this is the discriminator;
+        // mutation: drop the setSoTimeout(HANDSHAKE_TIMEOUT_MS) → this test hangs to its @Timeout).
+        int port = startBlackholeServer();
+        edge = startEdge(port, tlsManager(clientCert, clientKeyStore, serverTrustStore));
+
+        awaitReconnectAttempts(edge, 2); // got PAST a black-holed handshake at least twice
+        assertNull(edge.core().mode(), "a black-holed handshake must never reach SUBSCRIBE_OK");
+        assertEquals(0, edge.core().heartbeatsObserved(), "no heartbeats from a peer that never handshakes");
+        assertEquals(0, edge.core().currentVersion(), "store never advances behind a dead endpoint");
+    }
+
     // -----------------------------------------------------------------------
     // Fixture plumbing
     // -----------------------------------------------------------------------
+
+    /**
+     * A3-1: an "accept-then-black-hole" endpoint. Binds a plain TCP listener and an accept
+     * loop that holds every accepted connection OPEN without ever performing the TLS
+     * handshake (no read, no write, no close), so the client blocks in {@code startHandshake()}
+     * until {@code HANDSHAKE_TIMEOUT_MS} bites — rather than getting an immediate EOF (which a
+     * close would deliver). Returns the listening port.
+     */
+    private int startBlackholeServer() throws IOException {
+        blackhole = new ServerSocket();
+        blackhole.bind(new InetSocketAddress("127.0.0.1", 0), 128);
+        ServerSocket ss = blackhole;
+        List<Socket> held = new CopyOnWriteArrayList<>(); // keep accepted sockets open (un-GC'd)
+        Thread.ofVirtual().name("a3-1-blackhole-accept").start(() -> {
+            try {
+                while (!ss.isClosed()) {
+                    held.add(ss.accept()); // accept and HOLD: never read/write/close
+                }
+            } catch (IOException ignored) {
+                // ServerSocket closed at teardown — exit the loop
+            }
+        });
+        return blackhole.getLocalPort();
+    }
 
     private int startMtlsServer(Path keyStore) throws Exception {
         TlsConfig serverTls = new TlsConfig(

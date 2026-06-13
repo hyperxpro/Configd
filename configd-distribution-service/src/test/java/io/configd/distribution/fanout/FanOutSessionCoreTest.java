@@ -285,6 +285,130 @@ class FanOutSessionCoreTest {
         assertEquals(DemotionEvent.REASON_ACK_LAG, s.lastDemotion().reason());
     }
 
+    // ---- A3-2: prod-threshold ack-lag demotion (8192) ----------------------
+    // S4 Workstream A3 leg 2 (S3 handoff §1): the E2E/integrated sim can only ever
+    // reach the tuned-down ackLagDemoteSeqs=2 (above: ackLagBreachDemotes). Chaos
+    // exercises the PRODUCTION threshold (FanOutConfig.defaults()=8192) directly, and
+    // pins the strict-'>' boundary so an off-by-one (>=) is caught. Construction note:
+    // ack-lag is checked once at the TOP of drainStreaming, while queue-overflow is
+    // checked per-frame inside the drain loop — so to make ACK_LAG (not
+    // QUEUE_OVERFLOW) the gate, the frame count at the breach must stay < queueFrames.
+    // 8193 seqs / batch 64 = 129 frames < 256 queueFrames: ack-lag wins. fault-matrix §A3-1[sic A3-2].
+
+    @Test
+    void prodThresholdAckLagOverThresholdDemotes() {
+        FanOutConfig cfg = FanOutConfig.defaults(); // queueFrames=256, batch=64, ackLagDemoteSeqs=8192
+        long over = cfg.ackLagDemoteSeqs() + 1; // 8193
+        FanOutBuffer buffer = new FanOutBuffer(16_384);
+        FanOutSessionCore s = session(buffer, snapshotAt(0), cfg);
+        s.onSubscribe(subscribe(0)); // empty buffer -> TAIL -> STREAMING (no fresh-backlog snapshot)
+        for (long i = 1; i <= over; i++) {
+            buffer.publish(put(i, "k" + i, "v"));
+        }
+        sink.clear();
+        s.tick(clock.now()); // streams all 8193 in one drain: 129 frames, cursor=8193, lastAcked=0
+        assertEquals(over, s.cursor(), "all offered seqs streamed");
+        assertTrue(s.inFlightFrames() < cfg.queueFrames(),
+                "ack-lag must be reached BEFORE queue overflow (129 frames < 256) — else the cell "
+                        + "would prove QUEUE_OVERFLOW, not ACK_LAG");
+        assertEquals(SessionState.streaming(), s.state(), "no demotion yet (ack-lag checked next tick)");
+
+        s.tick(clock.now()); // ack-lag check at top: 8193 - 0 = 8193 > 8192 -> demote
+        assertEquals(SessionState.catchup(), s.state(),
+                "a consumer lagging the offered cursor by > ackLagDemoteSeqs must demote at the prod threshold");
+        assertEquals(DemotionEvent.REASON_ACK_LAG, s.lastDemotion().reason());
+        assertEquals(over, s.lastDemotion().cursor(), "demotion event carries the offered cursor");
+        assertEquals(0L, s.lastDemotion().lastAckedSeq(), "demotion event carries the (zero) acked position");
+    }
+
+    @Test
+    void prodThresholdAckLagAtThresholdDoesNotDemote() {
+        // The strict-'>' boundary: EXACTLY ackLagDemoteSeqs offered (8192) and unacked must
+        // NOT demote. This is the discriminator that an off-by-one (cursor-lastAcked >= T)
+        // would break (mutation M-acklag in EXP-005).
+        FanOutConfig cfg = FanOutConfig.defaults();
+        long atThreshold = cfg.ackLagDemoteSeqs(); // 8192
+        FanOutBuffer buffer = new FanOutBuffer(16_384);
+        FanOutSessionCore s = session(buffer, snapshotAt(0), cfg);
+        s.onSubscribe(subscribe(0));
+        for (long i = 1; i <= atThreshold; i++) {
+            buffer.publish(put(i, "k" + i, "v"));
+        }
+        sink.clear();
+        s.tick(clock.now()); // streams 8192: 128 frames, cursor=8192
+        assertEquals(atThreshold, s.cursor());
+        assertTrue(s.inFlightFrames() < cfg.queueFrames(), "no queue overflow at the threshold");
+        s.tick(clock.now()); // ack-lag: 8192 - 0 = 8192, NOT > 8192 -> stays streaming
+        assertEquals(SessionState.streaming(), s.state(),
+                "exactly ackLagDemoteSeqs offered must NOT demote (strict >, not >=)");
+        assertEquals(null, s.lastDemotion(), "no demotion event at the threshold");
+    }
+
+    // ---- A3-3: wedged-but-open transport during a paced snapshot transfer --
+    // S4 Workstream A3 leg 3 (S3 handoff §1): the RR-102 would-block pause path when the
+    // transport never drains (wedged-but-open, not dead). Characterizes the SAFE degradation
+    // and the resume-as-one-envelope guarantee, and records the observability proxy (there is
+    // no dedicated stalled-transfer signal — c5-signoff F2 / S6). fault-matrix §A3-3.
+
+    @Test
+    void wedgedTransportDuringSnapshotPausesSafelyThenResumesAsOneEnvelope() {
+        // A multi-chunk snapshot so the transfer is genuinely paced (small chunk bytes).
+        FanOutBuffer buffer = new FanOutBuffer(4);
+        for (long i = 1; i <= 10; i++) {
+            buffer.publish(put(i, "k" + i, "v" + i)); // evicts oldest; seq 1 long gone
+        }
+        // snapshotChunkBytes=64 with many keys -> body spans multiple chunks (paced transfer).
+        FanOutConfig cfg = new FanOutConfig(256, 80, 64, 262_144, 8_192L, 250L, 5L, 64);
+        ReplaySource replay = snapshotAt(10,
+                "k1", "value-1", "k2", "value-2", "k3", "value-3", "k4", "value-4",
+                "k5", "value-5", "k6", "value-6", "k7", "value-7", "k8", "value-8",
+                "k9", "value-9", "k10", "value-10", "k11", "value-11", "k12", "value-12");
+        FanOutSessionCore s = session(buffer, replay, cfg);
+        s.onSubscribe(subscribe(1)); // cursor 1 evicted -> GAP -> SNAPSHOT_FIRST -> CATCHUP
+        assertEquals(EdgeFrame.Mode.SNAPSHOT_FIRST,
+                sink.sentOfType(EdgeFrame.SubscribeOk.class).get(0).mode());
+        assertEquals(SessionState.catchup(), s.state());
+        long cursorBeforeTransfer = s.cursor();
+        sink.clear();
+
+        // WEDGE the transport: every offer would-block. (performSnapshotTransfer offers
+        // snapshot frames directly, treating refusal as would-block, NOT transport death,
+        // so the session is NOT torn down — RR-102.)
+        sink.blockNextOffers(10_000);
+        for (int tick = 0; tick < 20; tick++) {
+            s.tick(clock.now());
+            // Safe, bounded degradation: no cutover, no hot loop, no exception, no progress.
+            assertEquals(SessionState.catchup(), s.state(),
+                    "a wedged transport must keep the session paused in CATCHUP (no premature cutover)");
+            assertEquals(cursorBeforeTransfer, s.cursor(),
+                    "cursor must NOT advance while the snapshot transfer is wedged");
+        }
+        // Nothing was delivered: not even SNAPSHOT_BEGIN was accepted, and certainly no END.
+        assertTrue(sink.sentOfType(EdgeFrame.SnapshotBegin.class).isEmpty(),
+                "no snapshot frame is delivered while wedged");
+        assertTrue(sink.sentOfType(EdgeFrame.SnapshotEnd.class).isEmpty(),
+                "the transfer never completes (no cutover) while wedged");
+        // OBSERVABILITY (charter §8.9): the only detection proxy today is "stuck in CATCHUP +
+        // no SnapshotEnd / no snapshot_transfers_total increment + queue pinned". There is NO
+        // dedicated stalled-transfer signal (c5-signoff F2 → S6). Detection IS possible via the
+        // proxy, so no new metric is emitted here; the clean-attribution signal stays an S6 item.
+
+        // UNWEDGE: the transport drains. The transfer resumes the SAME paused envelope and
+        // completes — exactly one BEGIN + one END (not a restarted/torn envelope), then cutover.
+        sink.blockNextOffers(0);
+        s.tick(clock.now());
+        assertEquals(SessionState.streaming(), s.state(), "resumes STREAMING after the transfer completes");
+        assertEquals(10L, s.cursor(), "cursor jumps to the snapshot seq exactly once, on END acceptance");
+        List<EdgeFrame.SnapshotBegin> begins = sink.sentOfType(EdgeFrame.SnapshotBegin.class);
+        List<EdgeFrame.SnapshotChunk> chunks = sink.sentOfType(EdgeFrame.SnapshotChunk.class);
+        List<EdgeFrame.SnapshotEnd> ends = sink.sentOfType(EdgeFrame.SnapshotEnd.class);
+        assertEquals(1, begins.size(), "exactly ONE SnapshotBegin — the wedge did not restart the envelope");
+        assertEquals(1, ends.size(), "exactly ONE SnapshotEnd");
+        assertEquals(begins.get(0).chunkCount(), chunks.size(),
+                "all chunks delivered contiguously after resume (single envelope, RR-102)");
+        assertTrue(begins.get(0).chunkCount() > 1, "fixture: the snapshot must be multi-chunk to be a 'paced' transfer");
+    }
+
     // ---- heartbeat cadence -------------------------------------------------
 
     @Test
