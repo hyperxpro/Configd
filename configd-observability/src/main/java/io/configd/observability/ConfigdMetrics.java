@@ -56,6 +56,7 @@ public final class ConfigdMetrics {
      * inside Prometheus' safe envelope.
      */
     public static final String NAME_TICK_LOOP_THROWABLE_BASE = "configd.tick.loop.throwable";
+    public static final String NAME_INBOUND_ROUTING_THROWABLE_BASE = "configd.inbound.routing.throwable";
 
     private final MetricsRegistry registry;
 
@@ -134,6 +135,25 @@ public final class ConfigdMetrics {
     public String onTickLoopThrowable(String throwableClassName) {
         String label = SafeLog.cardinalityGuard(throwableClassName);
         registry.counter(NAME_TICK_LOOP_THROWABLE_BASE + "." + label).increment();
+        return label;
+    }
+
+    /**
+     * RR-008 (S4) — increments the inbound-routing unhandled-throwable counter for the
+     * given throwable's simple class name. The inbound Raft routing task
+     * ({@code driver.routeMessage}) runs on the single tick executor; a Throwable it
+     * raises (e.g. a disk write failing during {@code applyCommitted -> apply}) was
+     * previously swallowed by the executor with no metric and no structured log — a
+     * disk-failing follower became a mute zombie. This counter (mirroring
+     * {@link #onTickLoopThrowable}) makes that observable. Class label is
+     * {@link SafeLog#cardinalityGuard cardinality-bounded}. Returns the bounded label.
+     *
+     * @param throwableClassName the simple class name (may be null → "unknown")
+     * @return the bounded label value that was actually used
+     */
+    public String onInboundRoutingThrowable(String throwableClassName) {
+        String label = SafeLog.cardinalityGuard(throwableClassName);
+        registry.counter(NAME_INBOUND_ROUTING_THROWABLE_BASE + "." + label).increment();
         return label;
     }
 

@@ -317,6 +317,14 @@ public final class ConfigdServer {
             return t;
         });
 
+        // RR-008 (S4): the inbound-routing handler needs the metrics handle so a
+        // Throwable escaping driver.routeMessage (e.g. a disk write failing during
+        // applyCommitted -> apply on a follower) is surfaced as a counter + SEVERE log
+        // rather than swallowed by the executor (mute zombie). Build it here, before the
+        // handler is registered (it only needs metricsRegistry, available above). Eager
+        // construction also populates the SLO counter families for the first scrape.
+        ConfigdMetrics configdMetrics = new ConfigdMetrics(metricsRegistry, () -> 0L);
+
         // Register inbound message handler on TCP transport.
         // R-01: marshal inbound routing onto the single tick executor so
         // node.handleMessage() (and applyCommitted -> stateMachine.apply)
@@ -325,7 +333,8 @@ public final class ConfigdServer {
         // published before the accept loop begins.
         if (tcpTransport != null) {
             RaftTransportAdapter adapter = (RaftTransportAdapter) transport;
-            adapter.registerInboundHandler(raftInboundHandler(driver, DEFAULT_RAFT_GROUP, tickExecutor));
+            adapter.registerInboundHandler(
+                    raftInboundHandler(driver, DEFAULT_RAFT_GROUP, tickExecutor, configdMetrics));
             try {
                 tcpTransport.start();
             } catch (Exception e) {
@@ -402,11 +411,10 @@ public final class ConfigdServer {
         BurnRateAlertEvaluator burnRateAlertEvaluator = new BurnRateAlertEvaluator(sloTracker);
         PropagationLivenessMonitor propagationMonitor =
                 new PropagationLivenessMonitor(1000, metricsRegistry);
-        // H-009 (iter-2) — eager registration of the SLO metric family +
-        // the new tick_loop_throwable counter so the very first scrape
-        // returns a populated `# TYPE` line and the catch-block has a
-        // stable handle to call `onTickLoopThrowable` against.
-        ConfigdMetrics configdMetrics = new ConfigdMetrics(metricsRegistry, () -> 0L);
+        // (H-009 + RR-008) `configdMetrics` is constructed earlier, before the inbound
+        // handler is registered, so both the tick-loop and inbound-routing throwable
+        // handlers have a stable metrics handle. Eager construction populates the SLO
+        // counter families for the first scrape.
 
         // ---------------------------------------------------------------
         // Wire security (TLS already initialized above, before the Raft
@@ -778,7 +786,60 @@ public final class ConfigdServer {
      */
     static java.util.function.BiConsumer<NodeId, RaftMessage> raftInboundHandler(
             MultiRaftDriver driver, int groupId, java.util.concurrent.Executor raftExecutor) {
-        return (from, message) -> raftExecutor.execute(() -> driver.routeMessage(groupId, message));
+        return raftInboundHandler(driver, groupId, raftExecutor, null);
+    }
+
+    /**
+     * RR-008 (S4): same marshalling as above, but the routing task is wrapped so a
+     * Throwable escaping {@code driver.routeMessage} (e.g. a disk write failing during
+     * {@code applyCommitted -> apply} on a follower) is SURFACED via
+     * {@link #handleInboundRoutingThrowable} — a counter + structured SEVERE log — instead
+     * of being swallowed by the executor (which sends it to the worker's default
+     * uncaught handler / stderr, invisible to log aggregation, with no metric, and drops
+     * the message with no ack: the registered "mute zombie"). The H-009 tick-loop fix
+     * covered only the tick lambda; this closes the inbound-routing path.
+     */
+    static java.util.function.BiConsumer<NodeId, RaftMessage> raftInboundHandler(
+            MultiRaftDriver driver, int groupId, java.util.concurrent.Executor raftExecutor,
+            ConfigdMetrics metrics) {
+        return (from, message) -> raftExecutor.execute(() -> {
+            try {
+                driver.routeMessage(groupId, message);
+            } catch (Throwable t) {
+                handleInboundRoutingThrowable(t, metrics);
+            }
+        });
+    }
+
+    /**
+     * RR-008 (S4): handles a Throwable that escaped {@code driver.routeMessage} on the
+     * inbound-routing task. Mirrors {@link #handleTickLoopThrowable}: a
+     * cardinality-bounded {@code configd_inbound_routing_throwable_total{class}} counter
+     * increment plus a SEVERE log record with the throwable attached. Package-private
+     * static so the regression test ({@code InboundRoutingThrowableHandlerTest}) can drive
+     * it directly. Defensive against a null throwable / null metrics — the handler must
+     * never itself become a new failure source.
+     *
+     * @param t       the unhandled throwable (may be {@code null})
+     * @param metrics the metrics handle (may be {@code null}; counter increment skipped)
+     */
+    static void handleInboundRoutingThrowable(Throwable t, ConfigdMetrics metrics) {
+        String simpleName;
+        if (t == null) {
+            simpleName = "unknown";
+        } else {
+            String s = t.getClass().getSimpleName();
+            simpleName = (s == null || s.isEmpty()) ? t.getClass().getName() : s;
+        }
+        String label = (metrics != null)
+                ? metrics.onInboundRoutingThrowable(simpleName)
+                : SafeLog.cardinalityGuard(simpleName);
+        LOG.log(Level.SEVERE,
+                "inbound raft routing unhandled throwable: class=" + simpleName
+                        + " bucket=" + label + " — a follower whose message handling throws"
+                        + " (e.g. disk fault during apply) would otherwise drop this message"
+                        + " with no ack and no signal",
+                t);
     }
 
     /**
