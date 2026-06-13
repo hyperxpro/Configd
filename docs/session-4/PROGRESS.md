@@ -9,21 +9,23 @@ fault cell declares its oracle (in `fault-matrix.md` / `kill-matrix.md`) before 
 
 ---
 
-## ⏭ RESUME HERE — remaining B-rest crash cells (RR-005 + fsync-lie both DONE)
+## ⏭ RESUME HERE — remaining B-rest cells (RR-005, fsync-lie, ENOSPC, short-read all DONE)
 
-RR-005 RESOLVED (`47b6022`) and the fsync-lie cell DONE (`EXP-007`, `gapDetectionFiresWhenSnapshotFsyncLied`,
-M-lie RED). Resume at the remaining **B-rest crash cells** (kill-matrix), in order:
-1. **ENOSPC during WAL append / snapshot write** — `FaultInjectingStorage.enospcAfterBytes` is built
-   (B1). Oracle (design §2 / arch §11): leader sheds (503) / follower surfaces; defined degradation,
-   no crash-loop, no silent loss; snapshot ENOSPC → WAL prefix NOT truncated (no loss), retry next interval.
-2. **Short read on WAL recovery** — `FaultInjectingStorage.shortReadLog` built. Oracle: recovery detects
-   truncation (contiguity) and fails loud, never boots a short log. (NB the `(int)`-cast guard from RR-005
-   is the sibling fail-loud path; this is the contiguity check.)
-3. **Crash during snapshot-install on a FOLLOWER** + **crash during leadership transfer** — reuse the
+Done so far in B-rest: RR-005 (`47b6022`), fsync-lie (`EXP-007`), **ENOSPC-append + short-read
+(`EXP-008`)**. Resume at:
+1. **ENOSPC during SNAPSHOT write** (distinct from the append cell already done) — `persistSnapshot`
+   put ENOSPCs → `compact` must NOT run / WAL prefix NOT truncated (no loss), retry next interval.
+   Inject via `CrashStorage`-style or a `FaultInjectingStorage.failNextWrites` armed on the snapshot
+   `put`; oracle: WAL prefix intact, snapshotIndex unchanged, no `durable_prefix_no_gap`.
+2. **Crash during snapshot-install on a FOLLOWER** + **crash during leadership transfer** — reuse the
    `CrashStorage` kill matrix; persist-before-compact on the install path; no split-brain on transfer.
-   To reach the WAL append path, storage-back a follower's `RaftLog` (see kill-matrix note).
-Then RR-019/086/064 durability review, then **C** (partition/WAN matrix — heavy, Compose/netem) /
-**D-overload** (reconnect storm) / **E** (mini-Jepsen) / **gate-4 + CI** / **handoff-S5**.
+3. **RR-019 / RR-086 / RR-064** durability review.
+Then **C** (partition/WAN matrix — heavy, Compose/netem) / **D-overload** (reconnect storm) /
+**E** (mini-Jepsen) / **gate-4 + CI** / **handoff-S5**.
+
+NB short-read is CLOSED by analysis (EXP-008): trailing short-read ≡ torn-tail (covered); middle
+short-read ≡ gap → `durable_prefix_no_gap` (covered). `FaultInjectingStorage` only injects trailing;
+a middle-drop injector is a non-blocking follow-up.
 
 Pattern reminder (held all run): declare the cell oracle first → write the discriminating/RED test
 → implement (if prod change) → revert any mutation → confirm GREEN → `git diff -- '*/src/main'` clean
@@ -44,13 +46,14 @@ Pattern reminder (held all run): declare the cell oracle first → write the dis
 | **D §1 status check** | ✅ joint consensus is REAL → no P0 | `reconfiguration-status-check.md` |
 | **D §2 reconfig-under-fault (in-sim)** | ✅ negative split-brain (M1-discriminated) + mid-joint crash recovery (M2-discriminated) + pre-joint/final restart; reconfig suite GREEN; 2nd-agent signed off | `EXP-004`, `captures/exp-004-m{1,2}-*` |
 | **B: fsync-lie cell** | ✅ `CrashStorage.lieOnSyncForKey` + `gapDetectionFiresWhenSnapshotFsyncLied` (recovers to the same gap as blob-unrecoverable → `durable_prefix_no_gap` fires; M-lie RED); real-firmware variant ENVIRONMENT-BLOCKED | `EXP-007`, `captures/exp-007-*`, kill-matrix |
+| **B: ENOSPC-append + short-read** | ✅ ENOSPC at the consensus layer (`StorageEnospcConsensusReactionTest` — surfaces, no silent log advance via durable-first `RaftLog.append`, recovers; M-order RED). short-read CLOSED by analysis (trailing≡torn-tail; middle≡gap→`durable_prefix_no_gap`) | `EXP-008`, `captures/exp-008-*`, kill-matrix |
 | **Fault-matrix spine** | ✅ created (`fault-matrix.md`, charter §8) — indexes A/A3/B2/D§2/C/E | `fault-matrix.md` |
 
 ## PENDING (resume at clean seams)
 
 | # | Item | Where / oracle | Note |
 |---|---|---|---|
-| 1 | **B: ENOSPC + short-read cells** | see RESUME-HERE — `FaultInjectingStorage.enospcAfterBytes`/`shortReadLog` (built, B1) | **first**; ENOSPC → defined degradation (503/surface, no crash-loop, no loss); short-read → contiguity fail-loud |
+| 1 | **B: ENOSPC-snapshot-write + crash cells** | see RESUME-HERE — snapshot-write ENOSPC (WAL prefix NOT truncated), snapshot-install-on-follower + leadership-transfer crash (`CrashStorage`) | **first**; ENOSPC-append + short-read already DONE (EXP-008) |
 | 3 | B: ENOSPC-under-load · short-read · snapshot-install-on-follower · leadership-transfer crash cells | `kill-matrix.md` (cells declared) | `FaultInjectingStorage` built (`enospcAfterBytes`/`shortReadLog`); storage-back a follower WAL to reach the append path |
 | 4 | B: RR-019 · RR-086 · RR-064 | durability review | |
 | 5 | **C — partition & WAN matrix** | Compose + netem/iptables (REJECT *and* DROP); clock skew vs the documented 500 ms bound | per cell: safety (linearizability over the failover/partition history) + liveness + client-experience + recovery-time. **Heaviest** — Compose cannot share the box with Maven; some cells may be ENVIRONMENT-BLOCKED |

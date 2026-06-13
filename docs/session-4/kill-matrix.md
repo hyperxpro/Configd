@@ -20,11 +20,11 @@ Status legend: ✅ done (test cited) · 🔬 partial (mechanism exists, cell not
 | Unrecoverable snapshot blob (gap) | `durable_prefix_no_gap` FIRES; refuse to boot silently | ✅ `SnapshotCrashRecoveryTest.gapDetectionFires...` |
 | **Write failure during apply on a follower** | surface (metric + SEVERE log), not swallow → mute zombie | ✅ **RR-008 / EXP-003** (`InboundRoutingThrowableHandlerTest`) |
 | fsync-lie on WAL/snapshot (firmware ACK then drop) | restart detects the gap; refuse to boot / fail loud | ✅ **EXP-007** `SnapshotCrashRecoveryTest.gapDetectionFiresWhenSnapshotFsyncLied` (`CrashStorage.lieOnSyncForKey`; recovers to the same gap as blob-unrecoverable → `durable_prefix_no_gap` fires; M-lie RED). Real-firmware variant 🌍 ENVIRONMENT-BLOCKED (design §3) |
-| ENOSPC during WAL append | leader sheds (503), follower surfaces; defined degradation, no crash-loop, no silent loss | 🔬 `FaultInjectingStorage.enospcAfterBytes` built (B1); cell not yet run (B3) |
+| ENOSPC during WAL append | leader sheds (503), follower surfaces; defined degradation, no crash-loop, no silent loss | ✅ **EXP-008** `StorageEnospcConsensusReactionTest` — propose surfaces the ENOSPC, log never silently advances (durable-first `RaftLog.append`), recovers after space returns; M-order RED |
 | ENOSPC during snapshot write | snapshot fails cleanly; WAL prefix NOT truncated (no loss); retry next interval | ⏳ pending (B3) |
 | Crash during snapshot install on a FOLLOWER | persist-before-compact on the install path; recover; no gap | 🔬 RR-003 fix covers `handleInstallSnapshot` persist-then-compact; dedicated kill cell ⏳ |
 | Crash during leadership transfer | new leader elected; committed prefix preserved; no split-brain | ⏳ pending |
-| short read on WAL recovery | detect truncation (contiguity); fail loud | 🔬 `FaultInjectingStorage.shortReadLog` built; cell ⏳ |
+| short read on WAL recovery | detect truncation (contiguity); fail loud | ✅ **EXP-008 (analysis)** — trailing short-read (the only kind `shortReadLog` injects) ≡ torn-tail → graceful uncommitted-tail discard (`recoversCleanlyFromTornFinalWalRecord`); middle/non-contiguous drop → `durable_prefix_no_gap` fail-loud (`gapDetectionFires…`, EXP-007). Both outcomes covered; middle-drop injector a non-blocking follow-up |
 
 ## Reconfiguration (ties into Workstream D §2)
 
