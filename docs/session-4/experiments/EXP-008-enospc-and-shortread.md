@@ -30,6 +30,18 @@ durable → assertion (2) RED (`an ENOSPC append must NOT advance the log … ex
 Capture: `captures/exp-008-enospc-durable-first-RED.txt`. Reverted + reinstalled; GREEN. Production
 source byte-clean.
 
+## ENOSPC during the snapshot write — WAL stays intact (no loss)
+
+`StorageEnospcConsensusReactionTest.enospcDuringSnapshotWriteLeavesWalIntactNoLoss`: arm
+`failNextWrites(1)` so the snapshot-blob `put` ENOSPCs, then `triggerSnapshot()`. Because
+`triggerSnapshot` is **persist-before-truncate** (`persistSnapshot` puts the blob BEFORE
+`compact` truncates the WAL prefix — RR-003), the failed blob write aborts the snapshot with the
+**WAL prefix intact**: `triggerSnapshot` throws (surfaces), `snapshotIndex`/`lastIndex`/`commitIndex`
+unchanged, no loss, no `durable_prefix_no_gap` on a later restart; once the disk recovers a later
+`triggerSnapshot` succeeds and compacts. The ordering this relies on is the RR-003 invariant
+(mutation-covered by `SnapshotCrashRecoveryTest`'s persist-after-compact revert); here the trigger is
+an ENOSPC throw rather than a crash.
+
 ## Short-read on WAL recovery — closed by analysis (no redundant test)
 
 `FaultInjectingStorage.shortReadLog` drops the **last** frame (B1 self-test: "short read must drop

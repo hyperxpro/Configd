@@ -84,4 +84,51 @@ class StorageEnospcConsensusReactionTest {
                 "the node must recover and accept writes after ENOSPC clears");
         assertTrue(log.lastIndex() > lastIndexBefore, "post-recovery write advances the log");
     }
+
+    /**
+     * ENOSPC during the SNAPSHOT write (distinct from the WAL-append cell above). Oracle
+     * (design §2 / RR-003): `triggerSnapshot` persists the blob BEFORE compaction truncates the
+     * WAL prefix, so a disk-full on the blob `put` must abort the snapshot with the **WAL prefix
+     * intact** — no truncation, no snapshot-index advance, NO loss, no `durable_prefix_no_gap` on
+     * a later restart. (The persist-before-truncate ORDERING this relies on is the RR-003 invariant,
+     * mutation-covered by SnapshotCrashRecoveryTest's persist-after-compact revert; here the trigger
+     * is an ENOSPC throw rather than a crash.)
+     */
+    @Test
+    void enospcDuringSnapshotWriteLeavesWalIntactNoLoss() {
+        FaultInjectingStorage storage = new FaultInjectingStorage(Storage.inMemory());
+        RaftConfig config = RaftConfig.of(NodeId.of(1), Set.of());
+        RaftLog log = new RaftLog(storage);
+        RaftNode node = new RaftNode(config, log, (target, message) -> { }, new RecordingSM(),
+                new Random(1), storage);
+        for (int i = 0; i < 400; i++) {
+            node.tick();
+        }
+        assertEquals(RaftRole.LEADER, node.role());
+        for (int i = 0; i < 3; i++) {
+            assertEquals(ProposalResult.ACCEPTED, node.propose(("e" + i).getBytes()).result());
+        }
+        long lastIndexBefore = log.lastIndex();
+        long snapBefore = log.snapshotIndex();
+        long committedBefore = log.commitIndex();
+        assertEquals(0L, snapBefore, "no snapshot yet");
+
+        // Disk full exactly when the snapshot blob is written: the NEXT write (persistSnapshot's
+        // put of the blob) throws — BEFORE compaction truncates the WAL prefix.
+        storage.failNextWrites(1);
+        assertThrows(UncheckedIOException.class, node::triggerSnapshot,
+                "a failed snapshot-blob write must surface, not be swallowed");
+
+        // Oracle: WAL prefix NOT truncated (no loss), snapshot boundary NOT advanced.
+        assertEquals(snapBefore, log.snapshotIndex(),
+                "snapshotIndex must NOT advance when the blob write failed");
+        assertEquals(lastIndexBefore, log.lastIndex(),
+                "the WAL prefix must NOT be truncated when the snapshot write failed (persist-before-truncate, no loss)");
+        assertEquals(committedBefore, log.commitIndex(), "committed prefix intact");
+
+        // Defined degradation: once the disk recovers, a later snapshot succeeds and DOES compact.
+        assertEquals(ProposalResult.ACCEPTED, node.propose("more".getBytes()).result());
+        assertTrue(node.triggerSnapshot(), "a later snapshot succeeds once the disk recovers");
+        assertTrue(log.snapshotIndex() > snapBefore, "snapshot now advances");
+    }
 }
