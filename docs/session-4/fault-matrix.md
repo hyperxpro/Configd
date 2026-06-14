@@ -82,3 +82,16 @@ recovery after load clears.
 | D-1 | **Control-plane write flood** (proposals past capacity) | shed with `OVERLOADED` (the §11 429-equivalent); the uncommitted queue PLATEAUS at `maxPendingProposals`, never grows unbounded; drains + accepts again once delivery resumes | `OverloadChaosTest.controlPlaneWriteFlood…` — flood 2×1500, queue plateau == 1024 across both waves, all further writes shed, recovers | ✅ EXP-010 |
 | D-2 | **Post-partition reconnect storm** (whole fleet DISCONNECTED → healed at once — *the data plane's most dangerous overload*, charter §6) | catch-up thundering herd absorbed; every edge recovers to CURRENT; none stuck stale-but-silent; none pushed TERMINAL | `OverloadChaosTest.postPartitionReconnectStorm…` — 5 edges, all → DISCONNECTED → simultaneous heal → all CURRENT (258 recovery ticks), 0 terminal | ✅ EXP-010 |
 | D-fanout | **Fan-out admission/queue bounds under load** (subscriber storm, slow consumers) | bounded admission, bounded outbound queue, demotion ladder, refusals during quarantine | cited: `FanOutServerAdmissionBoundTest`, `DemotionNoticeBackpressureTest`, `BootstrapSnapshotBackpressureTest`, A3-2/A3-3/A3-4 | ✅ (cited) |
+
+---
+
+## §E — Sustained mini-Jepsen (against the fully-fixed system)
+
+Charter §6 step 5: LAST, against the fully-fixed system; nightly, not in the CI gate.
+
+| Cell | Fault | Oracle | Status |
+|---|---|---|---|
+| E-1 | **Sustained mixed-fault history** (random partitions + asymmetric cuts + 10–40% loss + latency spikes + heals, continuous writes, long horizon) | the consistency-contract SAFETY oracle asserted EVERY tick (single-leader-per-term + no divergent commit + no committed-entry loss); final heal converges the whole cluster (recoverable, not wedged) | `MiniJepsenSweepTest` — nightly (`-Dconfigd.minijepsen.{seeds,horizon}`); 0 safety violations | ✅ EXP-011 |
+| E-2 | **Re-run the adversarial sweeps on the fixed system** | 0 safety violations post RR-103/RR-005/etc. | cited: 10k `SeedSweepTest` (build-and-test) + 10k `EdgeIntegratedNightlySweepTest` + `Rr095StallSeedsIntegratedRerunTest` (gate-4 nightly, EXP-005/gate-4 capture: 0 safety violations) | ✅ (cited) |
+
+Nightly, gated out of the CI subset (`GATE4_SKIP_NIGHTLY=1` on push/PR).
