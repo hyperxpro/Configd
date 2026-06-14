@@ -309,19 +309,18 @@ jobs:
           go-version-file: configd-linz/src/main/go/porcupine-check/go.mod
           cache-dependency-path: configd-linz/src/main/go/porcupine-check/go.sum
 
-      - name: Run gate-5 (push/PR — gate-4 chain skipped; perf regression steps)
-        if: github.event_name != 'schedule' && github.event.inputs.run_full_nightly != 'true'
+      # gate-5 always SKIPs the gate-4 chain (GATE5_SKIP_GATE4=1) — cumulative
+      # coverage of gates 1-4 comes from the gate-4 JOB dependency (which itself
+      # runs the full chaos chain on the nightly path), exactly like gate-4 sets
+      # GATE4_SKIP_GATE3=1. Re-running the chain inside gate-5 would double the
+      # work. gate-5's own perf-regression steps are identical on every event, so
+      # there is no separate nightly variant; the nightly schedule simply captures
+      # the perf gate alongside the full gate-4 chaos run (the perf nightly lane).
+      - name: Run gate-5 (perf regression gate; gate-4 chain via the job dependency)
         run: GATE5_SKIP_GATE4=1 bash gates/gate-5.sh
         env:
           GATE5_LOG_DIR: ${{ runner.temp }}/gate5-logs
         timeout-minutes: 60
-
-      - name: Run gate-5 FULL (nightly — incl. the cumulative gate-4 chain)
-        if: github.event_name == 'schedule' || github.event.inputs.run_full_nightly == 'true'
-        run: bash gates/gate-5.sh
-        env:
-          GATE5_LOG_DIR: ${{ runner.temp }}/gate5-logs
-        timeout-minutes: 180
 
       - name: Upload gate-5 step logs
         uses: actions/upload-artifact@v4
