@@ -1,0 +1,331 @@
+# promtool test rules — proves each S6 alert FIRES on its injected condition and
+# STAYS QUIET on normal operation (charter §3.3 / §10). Run: promtool test rules
+# ops/alerts/configd-slo-alerts.test.yaml (gate-6 downloads a pinned promtool).
+#
+# Synthetic series mirror the real emitted series (bare names; cluster/instance are
+# Prometheus-added). Thresholds under test are the PROPOSED S5-baseline thresholds.
+
+rule_files:
+  - configd-slo-alerts.yaml
+
+evaluation_interval: 1m
+
+tests:
+  # === write-commit burn-rate ============================================
+  - interval: 1m
+    name: write-commit fast-burn fires when fraction-under-150ms collapses
+    input_series:
+      - series: 'configd_write_commit_seconds_bucket{le="0.150"}'
+        values: '0+30x15'
+      - series: 'configd_write_commit_seconds_count'
+        values: '0+100x15'
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: ConfigdWriteCommitFastBurn
+        exp_alerts:
+          - exp_labels: {severity: page, slo: write.commit.latency.p99}
+            exp_annotations:
+              summary: "Write commit p99 burning fast (14.4x rate, 5m window)"
+              description: "Fraction of commits under the 150 ms budget has dropped below the 14.4x burn-rate threshold; 2% of the monthly error budget will burn in <1h. Investigate the Raft commit pipeline."
+              runbook_url: ops/runbooks/write-commit-latency.md
+
+  - interval: 1m
+    name: write-commit burn stays quiet when all commits are fast
+    input_series:
+      - series: 'configd_write_commit_seconds_bucket{le="0.150"}'
+        values: '0+100x80'
+      - series: 'configd_write_commit_seconds_count'
+        values: '0+100x80'
+    alert_rule_test:
+      - eval_time: 70m
+        alertname: ConfigdWriteCommitFastBurn
+        exp_alerts: []
+      - eval_time: 70m
+        alertname: ConfigdWriteCommitSlowBurn
+        exp_alerts: []
+
+  - interval: 1m
+    name: write-commit slow-burn fires on a sustained 1h breach
+    input_series:
+      - series: 'configd_write_commit_seconds_bucket{le="0.150"}'
+        values: '0+30x80'
+      - series: 'configd_write_commit_seconds_count'
+        values: '0+100x80'
+    alert_rule_test:
+      - eval_time: 70m
+        alertname: ConfigdWriteCommitSlowBurn
+        exp_alerts:
+          - exp_labels: {severity: page, slo: write.commit.latency.p99}
+            exp_annotations:
+              summary: "Write commit p99 burning at 6x rate (1h window)"
+              runbook_url: ops/runbooks/write-commit-latency.md
+
+  # === edge-read =========================================================
+  - interval: 1m
+    name: edge-read fast-burn fires when sub-1ms fraction collapses
+    input_series:
+      - series: 'configd_edge_read_seconds_bucket{le="0.001"}'
+        values: '0+10x15'
+      - series: 'configd_edge_read_seconds_count'
+        values: '0+100x15'
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: ConfigdEdgeReadFastBurn
+        exp_alerts:
+          - exp_labels: {severity: page, slo: edge.read.latency.p99}
+            exp_annotations:
+              summary: "Edge read p99 burning fast (14.4x rate, 5m window)"
+              runbook_url: ops/runbooks/edge-read-latency.md
+
+  - interval: 1m
+    name: edge-read fast-burn quiet when reads are fast
+    input_series:
+      - series: 'configd_edge_read_seconds_bucket{le="0.001"}'
+        values: '0+100x15'
+      - series: 'configd_edge_read_seconds_count'
+        values: '0+100x15'
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: ConfigdEdgeReadFastBurn
+        exp_alerts: []
+
+  - interval: 1m
+    name: edge-read p999 fires when the tail crosses 5ms
+    input_series:
+      - series: 'configd_edge_read_seconds_bucket{le="0.005"}'
+        values: '0+1x15'
+      - series: 'configd_edge_read_seconds_bucket{le="0.100"}'
+        values: '0+1x15'
+      - series: 'configd_edge_read_seconds_bucket{le="+Inf"}'
+        values: '0+1000x15'
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: ConfigdEdgeReadP999Breach
+        exp_alerts:
+          - exp_labels: {severity: warn, slo: edge.read.latency.p999}
+            exp_annotations:
+              summary: "Edge read p999 > 5 ms"
+              runbook_url: ops/runbooks/edge-read-latency.md
+
+  - interval: 1m
+    name: edge-read p999 quiet when the tail is tight
+    input_series:
+      - series: 'configd_edge_read_seconds_bucket{le="0.005"}'
+        values: '0+1000x15'
+      - series: 'configd_edge_read_seconds_bucket{le="0.100"}'
+        values: '0+1000x15'
+      - series: 'configd_edge_read_seconds_bucket{le="+Inf"}'
+        values: '0+1000x15'
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: ConfigdEdgeReadP999Breach
+        exp_alerts: []
+
+  # === edge staleness ====================================================
+  - interval: 1m
+    name: edge staleness warn + degraded fire on high staleness
+    input_series:
+      - series: 'edge_staleness_ms{instance="edge1"}'
+        values: '2500x10'
+    alert_rule_test:
+      - eval_time: 5m
+        alertname: ConfigdEdgeStalenessWarn
+        exp_alerts:
+          - exp_labels: {severity: warn, slo: edge.staleness.p99}
+            exp_annotations:
+              summary: "Edge staleness > 500 ms (CURRENT->STALE boundary)"
+              runbook_url: ops/runbooks/propagation-delay.md
+      - eval_time: 5m
+        alertname: ConfigdEdgeStalenessDegraded
+        exp_alerts:
+          - exp_labels: {severity: page, slo: edge.staleness.p99}
+            exp_annotations:
+              summary: "Edge staleness > 2 s (STALE->DEGRADED) — fan-out propagation stalled"
+              runbook_url: ops/runbooks/propagation-delay.md
+
+  - interval: 1m
+    name: edge staleness quiet at normal staleness
+    input_series:
+      - series: 'edge_staleness_ms{instance="edge1"}'
+        values: '120x10'
+    alert_rule_test:
+      - eval_time: 5m
+        alertname: ConfigdEdgeStalenessWarn
+        exp_alerts: []
+      - eval_time: 5m
+        alertname: ConfigdEdgeStalenessDegraded
+        exp_alerts: []
+
+  # === availability ======================================================
+  - interval: 1m
+    name: availability fires when writes fail
+    input_series:
+      - series: 'configd_write_commit_failed_total'
+        values: '0+10x40'
+      - series: 'configd_write_commit_total'
+        values: '0+100x40'
+    alert_rule_test:
+      - eval_time: 35m
+        alertname: ConfigdControlPlaneAvailability
+        exp_alerts:
+          - exp_labels: {severity: page, slo: control.plane.availability}
+            exp_annotations:
+              summary: "Control-plane write availability < 99.999% over 30 min"
+              runbook_url: ops/runbooks/control-plane-down.md
+
+  - interval: 1m
+    name: availability quiet when writes succeed
+    input_series:
+      - series: 'configd_write_commit_failed_total'
+        values: '0+0x40'
+      - series: 'configd_write_commit_total'
+        values: '0+100x40'
+    alert_rule_test:
+      - eval_time: 35m
+        alertname: ConfigdControlPlaneAvailability
+        exp_alerts: []
+
+  # === overload + apply backlog ==========================================
+  - interval: 1m
+    name: overload shedding fires on sustained 429s
+    input_series:
+      - series: 'configd_write_rejected_overloaded_total'
+        values: '0+120x15'
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: ConfigdWriteOverloadShedding
+        exp_alerts:
+          - exp_labels: {severity: warn}
+            exp_annotations:
+              summary: "Sustained write 429s (bounded proposal queue shedding)"
+              runbook_url: ops/runbooks/overload-shedding.md
+
+  - interval: 1m
+    name: overload + apply-backlog quiet in steady state
+    input_series:
+      - series: 'configd_write_rejected_overloaded_total'
+        values: '0+0x15'
+      - series: 'configd_raft_pending_apply_entries'
+        values: '3x15'
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: ConfigdWriteOverloadShedding
+        exp_alerts: []
+      - eval_time: 10m
+        alertname: ConfigdRaftApplyBacklog
+        exp_alerts: []
+
+  - interval: 1m
+    name: apply-backlog fires when commit outruns apply
+    input_series:
+      - series: 'configd_raft_pending_apply_entries{instance="cp1"}'
+        values: '6000x15'
+    alert_rule_test:
+      - eval_time: 8m
+        alertname: ConfigdRaftApplyBacklog
+        exp_alerts:
+          - exp_labels: {severity: warn}
+            exp_annotations:
+              summary: "Raft apply backlog > 5000 (leader applying slower than it commits)"
+              runbook_url: ops/runbooks/raft-saturation.md
+
+  # === integrity (snapshot install, clock skew) ==========================
+  - interval: 1m
+    name: snapshot-install stalled fires on repeated failures
+    input_series:
+      - series: 'configd_snapshot_install_failed_total'
+        values: '0 1 2 3 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4'
+    alert_rule_test:
+      - eval_time: 12m
+        alertname: ConfigdSnapshotInstallStalled
+        exp_alerts:
+          - exp_labels: {severity: warn}
+            exp_annotations:
+              summary: "InstallSnapshot failed >= 3 times in 15 min"
+              runbook_url: ops/runbooks/snapshot-install.md
+
+  - interval: 1m
+    name: snapshot-install + clock-skew quiet on a single transient / no skew
+    input_series:
+      - series: 'configd_snapshot_install_failed_total'
+        values: '0 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1'
+      - series: 'edge_staleness_implausible_total'
+        values: '0+0x20'
+    alert_rule_test:
+      - eval_time: 12m
+        alertname: ConfigdSnapshotInstallStalled
+        exp_alerts: []
+      - eval_time: 12m
+        alertname: ConfigdClockSkewSuspected
+        exp_alerts: []
+
+  - interval: 1m
+    name: clock-skew fires on an implausible future-dated frontier
+    input_series:
+      - series: 'edge_staleness_implausible_total{instance="edge2"}'
+        values: '0 1 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2'
+    alert_rule_test:
+      - eval_time: 12m
+        alertname: ConfigdClockSkewSuspected
+        exp_alerts:
+          - exp_labels: {severity: warn, instance: edge2}
+            exp_annotations:
+              summary: "Implausible (future-dated) edge frontier — clock skew suspected"
+              runbook_url: ops/runbooks/edge-catchup-storm.md
+
+  # === runtime leaks =====================================================
+  - interval: 1m
+    name: FD + thread + heap leak alerts fire above the S5 baselines
+    input_series:
+      - series: 'process_open_fds{instance="cp1"}'
+        values: '600x35'
+      - series: 'jvm_threads_current{instance="cp1"}'
+        values: '450x35'
+      - series: 'jvm_heap_used_bytes{instance="cp1"}'
+        values: '950x35'
+      - series: 'jvm_heap_max_bytes{instance="cp1"}'
+        values: '1000x35'
+    alert_rule_test:
+      - eval_time: 31m
+        alertname: ConfigdFileDescriptorLeak
+        exp_alerts:
+          - exp_labels: {severity: warn}
+            exp_annotations:
+              summary: "Open FDs > 500 (S5 baseline ~69) — descriptor leak suspected"
+              runbook_url: ops/runbooks/resource-leak.md
+      - eval_time: 31m
+        alertname: ConfigdThreadLeak
+        exp_alerts:
+          - exp_labels: {severity: warn}
+            exp_annotations:
+              summary: "Thread count > 400 (S5 baseline ~93) — thread leak suspected"
+              runbook_url: ops/runbooks/resource-leak.md
+      - eval_time: 31m
+        alertname: ConfigdHeapPressure
+        exp_alerts:
+          - exp_labels: {severity: warn}
+            exp_annotations:
+              summary: "Heap > 90% of max for 30 min — pressure or leak (ZGC should reclaim)"
+              runbook_url: ops/runbooks/resource-leak.md
+
+  - interval: 1m
+    name: runtime-leak alerts quiet at the S5 baselines
+    input_series:
+      - series: 'process_open_fds{instance="cp1"}'
+        values: '69x35'
+      - series: 'jvm_threads_current{instance="cp1"}'
+        values: '93x35'
+      - series: 'jvm_heap_used_bytes{instance="cp1"}'
+        values: '260x35'
+      - series: 'jvm_heap_max_bytes{instance="cp1"}'
+        values: '1000x35'
+    alert_rule_test:
+      - eval_time: 31m
+        alertname: ConfigdFileDescriptorLeak
+        exp_alerts: []
+      - eval_time: 31m
+        alertname: ConfigdThreadLeak
+        exp_alerts: []
+      - eval_time: 31m
+        alertname: ConfigdHeapPressure
+        exp_alerts: []

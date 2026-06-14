@@ -13,7 +13,7 @@
         "name": "cluster",
         "type": "query",
         "label": "Cluster",
-        "query": "label_values(configd_build_info, cluster)",
+        "query": "label_values(configd_write_commit_seconds_count, cluster)",
         "datasource": {"type": "prometheus", "uid": "prometheus"}
       }
     ]
@@ -69,16 +69,24 @@
     },
     {
       "id": 3,
-      "title": "Propagation delay p99 (target < 500 ms)",
+      "title": "Edge staleness (max, target < 500 ms / page > 2 s) — D-2: real served signal",
       "type": "timeseries",
       "datasource": {"type": "prometheus", "uid": "prometheus"},
       "gridPos": {"x": 0, "y": 8, "w": 12, "h": 8},
       "targets": [{
-        "expr": "histogram_quantile(0.99, sum by (le) (rate(configd_propagation_delay_seconds_bucket{cluster=\"$cluster\"}[5m])))",
-        "legendFormat": "p99",
+        "expr": "max(edge_staleness_ms{cluster=\"$cluster\"})",
+        "legendFormat": "max staleness (ms)",
         "refId": "A"
       }],
-      "fieldConfig": {"defaults": {"unit": "s"}}
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ms",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [{"color": "green", "value": null}, {"color": "yellow", "value": 500}, {"color": "red", "value": 2000}]
+          }
+        }
+      }
     },
     {
       "id": 4,
@@ -99,8 +107,8 @@
       "datasource": {"type": "prometheus", "uid": "prometheus"},
       "gridPos": {"x": 0, "y": 16, "w": 12, "h": 8},
       "targets": [{
-        "expr": "sum(rate(configd_raft_elections_total{cluster=\"$cluster\"}[5m])) * 60",
-        "legendFormat": "elections/min",
+        "expr": "max(rate(configd_raft_elections_total{cluster=\"$cluster\"}[5m])) * 60",
+        "legendFormat": "term changes/min (max across nodes, D-4)",
         "refId": "A"
       }]
     },

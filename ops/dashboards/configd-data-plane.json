@@ -1,0 +1,72 @@
+{
+  "title": "Configd Data Plane (fan-out + edge)",
+  "uid": "configd-data-plane",
+  "tags": ["configd", "data-plane", "fan-out", "edge"],
+  "timezone": "utc",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "30s",
+  "time": {"from": "now-1h", "to": "now"},
+  "templating": {"list": [{"name": "cluster", "type": "query", "label": "Cluster", "query": "label_values(edge_reads_total, cluster)", "datasource": {"type": "prometheus", "uid": "prometheus"}}]},
+  "panels": [
+    {
+      "id": 1, "title": "Per-edge staleness (ms) — STALE>500, DEGRADED>2000", "type": "timeseries",
+      "datasource": {"type": "prometheus", "uid": "prometheus"}, "gridPos": {"x": 0, "y": 0, "w": 12, "h": 8},
+      "targets": [{"expr": "edge_staleness_ms{cluster=\"$cluster\"}", "legendFormat": "{{instance}}", "refId": "A"}],
+      "fieldConfig": {"defaults": {"unit": "ms", "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "yellow", "value": 500}, {"color": "red", "value": 2000}]}}}
+    },
+    {
+      "id": 2, "title": "Edge cursor lag (latestSeq − applied)", "type": "timeseries",
+      "datasource": {"type": "prometheus", "uid": "prometheus"}, "gridPos": {"x": 12, "y": 0, "w": 12, "h": 8},
+      "targets": [{"expr": "edge_cursor_lag{cluster=\"$cluster\"}", "legendFormat": "{{instance}}", "refId": "A"}]
+    },
+    {
+      "id": 3, "title": "Fan-out queue depth (per-process high-water)", "type": "timeseries",
+      "datasource": {"type": "prometheus", "uid": "prometheus"}, "gridPos": {"x": 0, "y": 8, "w": 12, "h": 8},
+      "targets": [{"expr": "edge_fanout_queue_depth{cluster=\"$cluster\"}", "legendFormat": "{{instance}}", "refId": "A"}]
+    },
+    {
+      "id": 4, "title": "Connected subscribers", "type": "timeseries",
+      "datasource": {"type": "prometheus", "uid": "prometheus"}, "gridPos": {"x": 12, "y": 8, "w": 12, "h": 8},
+      "targets": [{"expr": "edge_fanout_connected_subscribers{cluster=\"$cluster\"}", "legendFormat": "{{instance}}", "refId": "A"}]
+    },
+    {
+      "id": 5, "title": "Slow-consumer state transitions (rate/min)", "type": "timeseries",
+      "datasource": {"type": "prometheus", "uid": "prometheus"}, "gridPos": {"x": 0, "y": 16, "w": 12, "h": 8},
+      "targets": [
+        {"expr": "sum(rate(edge_fanout_slow_transitions_total{cluster=\"$cluster\"}[5m])) * 60", "legendFormat": "slow", "refId": "A"},
+        {"expr": "sum(rate(edge_fanout_quarantines_total{cluster=\"$cluster\"}[5m])) * 60", "legendFormat": "quarantined", "refId": "B"},
+        {"expr": "sum(rate(edge_fanout_unhealthy_total{cluster=\"$cluster\"}[5m])) * 60", "legendFormat": "unhealthy", "refId": "C"},
+        {"expr": "sum(rate(edge_fanout_readmissions_total{cluster=\"$cluster\"}[5m])) * 60", "legendFormat": "readmitted", "refId": "D"}
+      ]
+    },
+    {
+      "id": 6, "title": "Edge consumer state population", "type": "timeseries",
+      "datasource": {"type": "prometheus", "uid": "prometheus"}, "gridPos": {"x": 12, "y": 16, "w": 12, "h": 8},
+      "targets": [
+        {"expr": "sum(edge_fanout_consumer_state_healthy{cluster=\"$cluster\"})", "legendFormat": "healthy", "refId": "A"},
+        {"expr": "sum(edge_fanout_consumer_state_slow{cluster=\"$cluster\"})", "legendFormat": "slow", "refId": "B"},
+        {"expr": "sum(edge_fanout_consumer_state_catchup{cluster=\"$cluster\"})", "legendFormat": "catchup", "refId": "C"},
+        {"expr": "sum(edge_fanout_consumer_state_quarantined{cluster=\"$cluster\"})", "legendFormat": "quarantined", "refId": "D"}
+      ]
+    },
+    {
+      "id": 7, "title": "Edge read throughput + refusals (rate/s)", "type": "timeseries",
+      "datasource": {"type": "prometheus", "uid": "prometheus"}, "gridPos": {"x": 0, "y": 24, "w": 12, "h": 8},
+      "targets": [
+        {"expr": "sum(rate(edge_reads_total{cluster=\"$cluster\"}[5m]))", "legendFormat": "reads", "refId": "A"},
+        {"expr": "sum(rate(edge_read_refusals_cursor_behind_total{cluster=\"$cluster\"}[5m]))", "legendFormat": "refused: cursor-behind", "refId": "B"},
+        {"expr": "sum(rate(edge_read_refusals_strong_read_total{cluster=\"$cluster\"}[5m]))", "legendFormat": "refused: strong-read", "refId": "C"}
+      ]
+    },
+    {
+      "id": 8, "title": "Edge re-bootstrap / reconnect (rate/min)", "type": "timeseries",
+      "datasource": {"type": "prometheus", "uid": "prometheus"}, "gridPos": {"x": 12, "y": 24, "w": 12, "h": 8},
+      "targets": [
+        {"expr": "sum(rate(edge_reconnects_total{cluster=\"$cluster\"}[5m])) * 60", "legendFormat": "reconnects", "refId": "A"},
+        {"expr": "sum(rate(edge_rebootstrap_triggered_total{cluster=\"$cluster\"}[5m])) * 60", "legendFormat": "re-bootstraps", "refId": "B"},
+        {"expr": "sum(rate(edge_gaps_total{cluster=\"$cluster\"}[5m])) * 60", "legendFormat": "gaps", "refId": "C"}
+      ]
+    }
+  ]
+}

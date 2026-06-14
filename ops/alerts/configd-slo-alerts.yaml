@@ -1,22 +1,32 @@
-# Configd SLO alert rules — Prometheus / Alertmanager.
+# Configd SLO / failure alert rules — Prometheus / Alertmanager.
 #
-# Rules track the SLOs from PROMPT.md §0.1 / ProductionSloDefinitions.java.
-# Each rule annotates a runbook_url that maps to ops/runbooks/<file>.md;
-# the operator's paging integration consumes this annotation and routes
-# the alert to whoever owns that runbook.
+# S6 reconciliation (operability): EVERY rule below queries a series that is now
+# PROVEN EMITTED by a contract test (MetricsWiringContractTest /
+# EdgeMetricsContractTest / DashboardSeriesContractTest) and RECORDED with real
+# data on its real path — closing the S1 "6/9 alerts query never-emitted series"
+# defect. The S5 ghost `configd_propagation_delay_seconds` alert is removed and
+# replaced by the real, served `edge_staleness_ms` gauge (Decision Log D-2).
 #
-# Multi-window / multi-burn-rate (MWMBR) per Google SRE workbook §5: a
-# fast-burn (5 min @ 14.4× rate) and a slow-burn (1 hr @ 6× rate) page
-# the on-call; a 24 hr long-burn opens a ticket. This pattern is the O3
-# / O4 deliverable from gap-closure.
+# THRESHOLDS ARE PROPOSED — derived from the S5 reference-hardware baselines (in the
+# `# PROPOSED:` comment on each rule), to be CONFIRMED under real production load in
+# the Session 7.5 infrastructure campaign (M-1…M-10). They are NOT load-validated.
 #
-# ADR-0025: this file ships rules but no notification channel — the
-# operator wires their own paging service to Alertmanager.
+# Labels: `cluster`/`instance` are added by the Prometheus scrape config (external
+# labels / relabel), NOT emitted by the app (the registry has no label support) —
+# the series names below are the bare app names. Each rule carries a runbook_url
+# annotation routing the page to the runbook that was execution-validated in S6/WS-B.
+#
+# Test harness: ops/alerts/configd-slo-alerts.test.yaml (promtool test rules) proves
+# each rule FIRES on its injected condition and STAYS QUIET on normal operation.
 
 groups:
+  # ----------------------------------------------------------------------------
   - name: configd-slo-write-commit
     interval: 30s
     rules:
+      # PROPOSED: SLO 99% of write commits < 150 ms. S5 measured local commit p99 =
+      # 16 ms (~9x headroom); burn-rate guards error-budget exhaustion. Cross-region
+      # budget (<150 ms, 5-voter modeled ~84 ms) is M-1, confirm in S7.5.
       - alert: ConfigdWriteCommitFastBurn
         expr: |
           (
@@ -25,17 +35,11 @@ groups:
             sum(rate(configd_write_commit_seconds_count[5m]))
           ) < (1 - 14.4 * (1 - 0.99))
         for: 2m
-        labels:
-          severity: page
-          slo: write.commit.latency.p99
+        labels: {severity: page, slo: write.commit.latency.p99}
         annotations:
-          summary: "Write commit p99 burning fast (14.4× rate, 5m window)"
-          description: |
-            Write commit latency p99 is breaching the 150 ms budget at a
-            rate that will exhaust 2% of the monthly error budget in
-            under an hour. Investigate Raft commit pipeline.
+          summary: "Write commit p99 burning fast (14.4x rate, 5m window)"
+          description: "Fraction of commits under the 150 ms budget has dropped below the 14.4x burn-rate threshold; 2% of the monthly error budget will burn in <1h. Investigate the Raft commit pipeline."
           runbook_url: ops/runbooks/write-commit-latency.md
-
       - alert: ConfigdWriteCommitSlowBurn
         expr: |
           (
@@ -44,22 +48,18 @@ groups:
             sum(rate(configd_write_commit_seconds_count[1h]))
           ) < (1 - 6 * (1 - 0.99))
         for: 15m
-        labels:
-          severity: page
-          slo: write.commit.latency.p99
+        labels: {severity: page, slo: write.commit.latency.p99}
         annotations:
-          summary: "Write commit p99 burning at 6× rate (1h window)"
+          summary: "Write commit p99 burning at 6x rate (1h window)"
           runbook_url: ops/runbooks/write-commit-latency.md
 
+  # ----------------------------------------------------------------------------
   - name: configd-slo-edge-read
     interval: 30s
     rules:
-      # H-005 closure (iter-2): rewritten as a real MWMBR burn-rate
-      # alert against the bucket. The previous expression was a raw
-      # `histogram_quantile(...) > 0.001` threshold that paged on a
-      # single 5-min p99 excursion (a 1.7%-of-day breach, well under
-      # the 14.4× burn rate the alert is named for). Shape now matches
-      # ConfigdWriteCommitFastBurn verbatim.
+      # PROPOSED: SLO 99% of edge reads < 1 ms. S5 measured p99 = 1.60 us (~600x
+      # headroom); this should essentially never fire — if it does, the edge read
+      # path has regressed badly. Series is served by the EDGE process /metrics.
       - alert: ConfigdEdgeReadFastBurn
         expr: |
           (
@@ -68,132 +68,148 @@ groups:
             sum(rate(configd_edge_read_seconds_count[5m]))
           ) < (1 - 14.4 * (1 - 0.99))
         for: 2m
-        labels:
-          severity: page
-          slo: edge.read.latency.p99
+        labels: {severity: page, slo: edge.read.latency.p99}
         annotations:
-          summary: "Edge read p99 burning fast (14.4× rate, 5m window)"
-          description: |
-            Fraction-under-1ms over the last 5 min has dropped below the
-            14.4× burn-rate threshold. Will exhaust 2% of the monthly
-            error budget in under an hour. The raw p99 dashboard panel
-            is the symptom view; this alert is the burn-rate trigger.
+          summary: "Edge read p99 burning fast (14.4x rate, 5m window)"
           runbook_url: ops/runbooks/edge-read-latency.md
-
-      - alert: ConfigdEdgeReadSlowBurn
-        expr: |
-          (
-            sum(rate(configd_edge_read_seconds_bucket{le="0.001"}[1h]))
-            /
-            sum(rate(configd_edge_read_seconds_count[1h]))
-          ) < (1 - 6 * (1 - 0.99))
-        for: 15m
-        labels:
-          severity: page
-          slo: edge.read.latency.p99
-        annotations:
-          summary: "Edge read p99 burning at 6× rate (1h window)"
-          runbook_url: ops/runbooks/edge-read-latency.md
-
-      # P999 dashboard panel kept as a raw threshold (warn-only, not
-      # paging) — this is a symptom view, not an SLO burn-rate gate.
+      # PROPOSED: p999 symptom view, warn-only. S5 p999 = 32 us; 5 ms is a generous
+      # ceiling (~150x). Not a paging burn-rate gate.
       - alert: ConfigdEdgeReadP999Breach
         expr: |
-          histogram_quantile(0.999,
-            sum by (le) (rate(configd_edge_read_seconds_bucket[5m]))
-          ) > 0.005
+          histogram_quantile(0.999, sum by (le) (rate(configd_edge_read_seconds_bucket[5m]))) > 0.005
         for: 5m
-        labels:
-          severity: warn
-          slo: edge.read.latency.p999
+        labels: {severity: warn, slo: edge.read.latency.p999}
         annotations:
           summary: "Edge read p999 > 5 ms"
           runbook_url: ops/runbooks/edge-read-latency.md
 
-  - name: configd-slo-propagation
+  # ----------------------------------------------------------------------------
+  - name: configd-slo-edge-staleness
     interval: 30s
     rules:
-      - alert: ConfigdPropagationFastBurn
-        expr: |
-          histogram_quantile(0.99,
-            sum by (le) (rate(configd_propagation_delay_seconds_bucket[5m]))
-          ) > 0.5
+      # PROPOSED: replaces the S5 GHOST configd_propagation_delay_seconds alert with
+      # the REAL served edge_staleness_ms gauge (ADR-0039 frontier). S5 staleness p99
+      # = 255 ms local; thresholds are the consistency-contract state boundaries
+      # (CURRENT->STALE = 500 ms warn, STALE->DEGRADED = 2 s page). Global propagation
+      # (<500 ms) is M-2, confirm in S7.5. RR-099: do NOT page on the monotonic-read
+      # invariant counter alone — staleness here is the operator signal.
+      - alert: ConfigdEdgeStalenessWarn
+        expr: max(edge_staleness_ms) > 500
         for: 2m
-        labels:
-          severity: page
-          slo: propagation.delay.p99
+        labels: {severity: warn, slo: edge.staleness.p99}
         annotations:
-          summary: "Global propagation p99 > 500 ms (fast burn)"
+          summary: "Edge staleness > 500 ms (CURRENT->STALE boundary)"
+          runbook_url: ops/runbooks/propagation-delay.md
+      - alert: ConfigdEdgeStalenessDegraded
+        expr: max(edge_staleness_ms) > 2000
+        for: 1m
+        labels: {severity: page, slo: edge.staleness.p99}
+        annotations:
+          summary: "Edge staleness > 2 s (STALE->DEGRADED) — fan-out propagation stalled"
           runbook_url: ops/runbooks/propagation-delay.md
 
+  # ----------------------------------------------------------------------------
   - name: configd-availability
     interval: 1m
     rules:
-      # H-004 closure (iter-2): the previous denominator
-      # `configd_write_commit_total` counts SUCCESSES only (incremented
-      # on `onWriteCommitSuccess` in ConfigdServer.java) — so
-      # `failed/total == failed/successes` is unbounded as successes →
-      # 0. A complete outage produced NaN (no alert); a partial outage
-      # produced a nonsensical "availability = -900%" value. Use
-      # `failed / (failed + total)` so the denominator is actual
-      # ATTEMPTS regardless of the wiring convention. The Java fix to
-      # rename `_total` → `_succeeded_total` and increment a real
-      # `_total` on every attempt is tracked separately (see
-      # docs/review/iter-002/hostile-principal-sre.md H-004).
+      # PROPOSED: control-plane write availability SLO 99.999% over 30m. Denominator
+      # is failed+total (= attempts) so a full outage still pages (no NaN). Both
+      # series are now RECORDED at the raftProposer site (D-2).
       - alert: ConfigdControlPlaneAvailability
         expr: |
           (
-            1
-            -
-            (
+            1 - (
               sum(rate(configd_write_commit_failed_total[30m]))
               /
               (
                 sum(rate(configd_write_commit_failed_total[30m]))
-                +
-                sum(rate(configd_write_commit_total[30m]))
+                + sum(rate(configd_write_commit_total[30m]))
               )
             )
           ) < 0.99999
         for: 10m
-        labels:
-          severity: page
-          slo: control.plane.availability
+        labels: {severity: page, slo: control.plane.availability}
         annotations:
           summary: "Control-plane write availability < 99.999% over 30 min"
-          description: |
-            Denominator is failed+success (i.e. all attempts) so a fully
-            broken control plane still pages. NaN is no longer a silent
-            failure mode.
           runbook_url: ops/runbooks/control-plane-down.md
 
-  - name: configd-saturation
-    interval: 1m
+  # ----------------------------------------------------------------------------
+  - name: configd-overload
+    interval: 30s
     rules:
-      - alert: ConfigdRaftPipelineSaturation
-        expr: configd_raft_pending_apply_entries > 5000
+      # PROPOSED (RR-110 / D-1): sustained write-overload shedding. The bounded
+      # proposal queue sheds at maxPendingProposals=1024 -> 429 + Retry-After. Any
+      # sustained shedding (> 1 reject/s for 5m) means write pressure exceeds commit
+      # throughput — scale writers/cores. Box ceiling is ~125-172 commits/s (M-9);
+      # confirm the real shed threshold under load in S7.5 (M-10).
+      - alert: ConfigdWriteOverloadShedding
+        expr: rate(configd_write_rejected_overloaded_total[5m]) > 1
         for: 5m
-        labels:
-          severity: warn
+        labels: {severity: warn}
         annotations:
-          summary: "Raft apply queue depth > 5000 — leader falling behind"
+          summary: "Sustained write 429s (bounded proposal queue shedding)"
+          runbook_url: ops/runbooks/overload-shedding.md
+      # PROPOSED: apply-backlog OBSERVABILITY alert (RR-110: no 503 shed). A leader
+      # that commits but cannot apply (slow disk) accrues commitIndex-lastApplied.
+      # 5000 is a heuristic ceiling (apply backlog is ~0 in steady state); confirm S7.5.
+      - alert: ConfigdRaftApplyBacklog
+        expr: max(configd_raft_pending_apply_entries) > 5000
+        for: 5m
+        labels: {severity: warn}
+        annotations:
+          summary: "Raft apply backlog > 5000 (leader applying slower than it commits)"
           runbook_url: ops/runbooks/raft-saturation.md
 
-      # H-006 closure (iter-2): pages on a sustained failure rate, not
-      # "ever". The previous expression (`increase(...[15m]) > 0` for
-      # `1m`) paged on a single transient — and the runbook's own
-      # mitigation says "wait one retry window" first, so the alert was
-      # paging on something the operator was already told to ignore.
-      # Threshold = ≥ 3 failures in 15 min with a 5-min debounce.
+  # ----------------------------------------------------------------------------
+  - name: configd-integrity
+    interval: 1m
+    rules:
+      # PROPOSED: >= 3 InstallSnapshot failures in 15m (a single transient self-clears
+      # via leader retry). Series RECORDED via ServerStateMachineMetrics.
       - alert: ConfigdSnapshotInstallStalled
         expr: increase(configd_snapshot_install_failed_total[15m]) >= 3
         for: 5m
-        labels:
-          severity: warn
+        labels: {severity: warn}
         annotations:
-          summary: "InstallSnapshot failed ≥ 3 times in last 15 min"
-          description: |
-            A single transient is below threshold and self-clears via
-            the leader's automatic retry. Sustained failures (≥ 3 in
-            15 min, holding for 5 min) indicate a real install regression.
+          summary: "InstallSnapshot failed >= 3 times in 15 min"
           runbook_url: ops/runbooks/snapshot-install.md
+      # PROPOSED: clock-skew fence signal. edge_staleness_implausible_total counts a
+      # frontier dated in the future == control-plane/edge clock skew past the 500 ms
+      # HLC fence (architecture §6.3). Any sustained occurrence is worth a look.
+      - alert: ConfigdClockSkewSuspected
+        expr: increase(edge_staleness_implausible_total[15m]) >= 1
+        for: 5m
+        labels: {severity: warn}
+        annotations:
+          summary: "Implausible (future-dated) edge frontier — clock skew suspected"
+          runbook_url: ops/runbooks/edge-catchup-storm.md
+
+  # ----------------------------------------------------------------------------
+  - name: configd-runtime-leaks
+    interval: 1m
+    rules:
+      # PROPOSED leak ceilings from the S5 soak flats (3.45 h clean: FD 69, threads
+      # 93, heap ~220-290 MB). A monotonic leak eventually crosses these generous
+      # margins without the GC-sawtooth false positives a deriv() alert would suffer.
+      # Confirm/tighten on real hardware in S7.5 (and the M-4 representative soak).
+      - alert: ConfigdFileDescriptorLeak
+        expr: max(process_open_fds) > 500
+        for: 15m
+        labels: {severity: warn}
+        annotations:
+          summary: "Open FDs > 500 (S5 baseline ~69) — descriptor leak suspected"
+          runbook_url: ops/runbooks/resource-leak.md
+      - alert: ConfigdThreadLeak
+        expr: max(jvm_threads_current) > 400
+        for: 15m
+        labels: {severity: warn}
+        annotations:
+          summary: "Thread count > 400 (S5 baseline ~93) — thread leak suspected"
+          runbook_url: ops/runbooks/resource-leak.md
+      - alert: ConfigdHeapPressure
+        expr: (max(jvm_heap_used_bytes) / max(jvm_heap_max_bytes)) > 0.9
+        for: 30m
+        labels: {severity: warn}
+        annotations:
+          summary: "Heap > 90% of max for 30 min — pressure or leak (ZGC should reclaim)"
+          runbook_url: ops/runbooks/resource-leak.md

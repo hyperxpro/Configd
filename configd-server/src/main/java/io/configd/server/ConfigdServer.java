@@ -219,6 +219,9 @@ public final class ConfigdServer {
         // (RaftNode's and ConfigStateMachine's) both bridge to this monitor.
         // ---------------------------------------------------------------
         MetricsRegistry metricsRegistry = new MetricsRegistry();
+        // S6/WS-A: JVM/process runtime gauges (heap, threads, FDs, GC) — the runtime dashboard
+        // board + leak alerts query these; before S6 no JVM series were served.
+        io.configd.observability.JvmMetrics.bind(metricsRegistry);
         InvariantMonitor invariantMonitor = new InvariantMonitor(metricsRegistry, false);
         ConfigStateMachine.InvariantChecker smInvariantChecker = invariantMonitor::check;
         RaftNode.InvariantChecker raftInvariantChecker = invariantMonitor::check;

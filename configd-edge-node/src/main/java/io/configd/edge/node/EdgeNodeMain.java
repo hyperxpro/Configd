@@ -124,6 +124,8 @@ public final class EdgeNodeMain {
 
         Clock clock = Clock.system();
         MetricsRegistry registry = new MetricsRegistry();
+        // S6/WS-A: JVM/process runtime gauges on the edge process too (runtime board + leak alerts).
+        io.configd.observability.JvmMetrics.bind(registry);
         // Fail-open production monitor (the ConfigdServer policy): an invariant violation
         // increments invariant.violation.* and keeps serving — never throws in-process.
         InvariantMonitor invariantMonitor = new InvariantMonitor(registry, false);

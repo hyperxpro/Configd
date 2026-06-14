@@ -320,6 +320,98 @@ class EdgeMetricsContractTest {
     }
 
     // ------------------------------------------------------------------------------
+    // S6/WS-A — the anti-blind-dashboard gate (charter Hard Rule 1): EVERY series a
+    // committed dashboard panel or alert rule references must be in the union of what the
+    // processes actually emit (edge + server fan-out + control-plane SLO + JVM runtime). A
+    // rename or a phantom panel fails here loudly; the S1 blind-dashboard defect cannot recur.
+    // ------------------------------------------------------------------------------
+
+    @Test
+    void everyDashboardAndAlertSeriesIsProvenEmitted() throws Exception {
+        java.util.Set<String> emitted = new java.util.HashSet<>();
+
+        // edge process: edge_* + configd_edge_read_seconds (with its bucket schedule) + JVM gauges
+        EdgeHalf edge = EdgeHalf.create();
+        edge.metrics.syncFromCore(edge.core, null);
+        io.configd.observability.JvmMetrics.bind(edge.registry);
+        addEmitted(emitted, new PrometheusExporter(edge.registry,
+                io.configd.observability.ConfigdMetrics.edgeProcessHistogramSchedules()).export());
+
+        // server-side fan-out series
+        MetricsRegistry fanReg = new MetricsRegistry();
+        new RegistryFanOutSessionMetrics(fanReg);
+        addEmitted(emitted, new PrometheusExporter(fanReg).export());
+
+        // control-plane SLO series (with histogram schedules) + subscription gauge + JVM runtime
+        MetricsRegistry cpReg = new MetricsRegistry();
+        io.configd.observability.ConfigdMetrics cp =
+                new io.configd.observability.ConfigdMetrics(cpReg, () -> 0L);
+        cp.bindSubscriptionPrefixGauge(() -> 0L);
+        io.configd.observability.JvmMetrics.bind(cpReg);
+        addEmitted(emitted, new PrometheusExporter(cpReg,
+                io.configd.observability.ConfigdMetrics.histogramSchedules()).export());
+
+        java.nio.file.Path ops = locateOpsRoot();
+        java.util.Set<String> referenced = new java.util.TreeSet<>();
+        referenced.addAll(seriesRefs(stripYamlComments(
+                java.nio.file.Files.readString(ops.resolve("alerts/configd-slo-alerts.yaml")))));
+        try (var ds = java.nio.file.Files.newDirectoryStream(ops.resolve("dashboards"), "*.json")) {
+            for (java.nio.file.Path d : ds) {
+                referenced.addAll(seriesRefs(java.nio.file.Files.readString(d)));
+            }
+        }
+
+        java.util.List<String> missing = referenced.stream()
+                .filter(s -> !emitted.contains(s)).sorted().toList();
+        assertTrue(missing.isEmpty(),
+                "dashboard/alert series NOT proven emitted (S1 blind-dashboard defect):\n  missing="
+                        + missing + "\n  referenced=" + referenced);
+    }
+
+    /** Adds each exported sample line's bare metric name (before `{` or ` `) to the set. */
+    private static void addEmitted(java.util.Set<String> set, String scrape) {
+        for (String line : scrape.split("\n")) {
+            if (line.isBlank() || line.startsWith("#")) continue;
+            int brace = line.indexOf('{');
+            int space = line.indexOf(' ');
+            int end = brace < 0 ? space : (space < 0 ? brace : Math.min(brace, space));
+            if (end > 0) set.add(line.substring(0, end));
+        }
+    }
+
+    /** Extracts Configd metric-series identifiers (our four prefixes) from a dashboard/alert file. */
+    private static java.util.Set<String> seriesRefs(String text) {
+        java.util.Set<String> out = new java.util.TreeSet<>();
+        java.util.regex.Matcher m = java.util.regex.Pattern
+                .compile("\\b(?:configd|edge|jvm|process)_[a-z0-9_]+\\b").matcher(text);
+        while (m.find()) out.add(m.group());
+        return out;
+    }
+
+    private static String stripYamlComments(String yaml) {
+        StringBuilder sb = new StringBuilder();
+        for (String line : yaml.split("\n", -1)) {
+            int h = line.indexOf('#');
+            sb.append(h < 0 ? line : line.substring(0, h)).append('\n');
+        }
+        return sb.toString();
+    }
+
+    private static java.nio.file.Path locateOpsRoot() {
+        java.nio.file.Path p = java.nio.file.Paths.get("").toAbsolutePath();
+        for (int i = 0; i < 8 && p != null; i++) {
+            java.nio.file.Path ops = p.resolve("ops");
+            if (java.nio.file.Files.isDirectory(ops.resolve("dashboards"))
+                    && java.nio.file.Files.isDirectory(ops.resolve("alerts"))) {
+                return ops;
+            }
+            p = p.getParent();
+        }
+        throw new IllegalStateException(
+                "could not locate ops/ from " + java.nio.file.Paths.get("").toAbsolutePath());
+    }
+
+    // ------------------------------------------------------------------------------
     // Helpers: exact sample-line assertions (a `# TYPE` comment or a longer name with
     // the same prefix must never satisfy a presence check).
     // ------------------------------------------------------------------------------

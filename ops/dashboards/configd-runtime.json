@@ -1,0 +1,44 @@
+{
+  "title": "Configd Runtime (JVM / ZGC / process)",
+  "uid": "configd-runtime",
+  "tags": ["configd", "runtime", "jvm", "zgc"],
+  "timezone": "utc",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "30s",
+  "time": {"from": "now-1h", "to": "now"},
+  "templating": {"list": [{"name": "cluster", "type": "query", "label": "Cluster", "query": "label_values(jvm_heap_used_bytes, cluster)", "datasource": {"type": "prometheus", "uid": "prometheus"}}]},
+  "panels": [
+    {
+      "id": 1, "title": "Heap used vs max (S5 soak flat ~220–290 MB)", "type": "timeseries",
+      "datasource": {"type": "prometheus", "uid": "prometheus"}, "gridPos": {"x": 0, "y": 0, "w": 12, "h": 8},
+      "targets": [
+        {"expr": "jvm_heap_used_bytes{cluster=\"$cluster\"}", "legendFormat": "used {{instance}}", "refId": "A"},
+        {"expr": "jvm_heap_max_bytes{cluster=\"$cluster\"}", "legendFormat": "max {{instance}}", "refId": "B"}
+      ],
+      "fieldConfig": {"defaults": {"unit": "bytes"}}
+    },
+    {
+      "id": 2, "title": "GC time fraction (ZGC; STW pause max 0.045 ms per S5)", "type": "timeseries",
+      "datasource": {"type": "prometheus", "uid": "prometheus"}, "gridPos": {"x": 12, "y": 0, "w": 12, "h": 8},
+      "targets": [{"expr": "rate(jvm_gc_collection_millis{cluster=\"$cluster\"}[5m]) / 1000", "legendFormat": "GC s/s {{instance}}", "refId": "A"}]
+    },
+    {
+      "id": 3, "title": "Threads (S5 soak flat ~93)", "type": "timeseries",
+      "datasource": {"type": "prometheus", "uid": "prometheus"}, "gridPos": {"x": 0, "y": 8, "w": 12, "h": 8},
+      "targets": [{"expr": "jvm_threads_current{cluster=\"$cluster\"}", "legendFormat": "{{instance}}", "refId": "A"}],
+      "fieldConfig": {"defaults": {"thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "yellow", "value": 400}]}}}
+    },
+    {
+      "id": 4, "title": "Open file descriptors (S5 soak flat ~69)", "type": "timeseries",
+      "datasource": {"type": "prometheus", "uid": "prometheus"}, "gridPos": {"x": 12, "y": 8, "w": 12, "h": 8},
+      "targets": [{"expr": "process_open_fds{cluster=\"$cluster\"}", "legendFormat": "{{instance}}", "refId": "A"}],
+      "fieldConfig": {"defaults": {"thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "yellow", "value": 500}]}}}
+    },
+    {
+      "id": 5, "title": "GC collections (cumulative count)", "type": "timeseries",
+      "datasource": {"type": "prometheus", "uid": "prometheus"}, "gridPos": {"x": 0, "y": 16, "w": 12, "h": 8},
+      "targets": [{"expr": "rate(jvm_gc_collections{cluster=\"$cluster\"}[5m]) * 60", "legendFormat": "collections/min {{instance}}", "refId": "A"}]
+    }
+  ]
+}
