@@ -158,26 +158,51 @@ public final class LivePropagationProbeMain {
                 .build();
         String base = "http://127.0.0.1:" + opts.apiPort;
 
+        EdgeWatcher watcher = new EdgeWatcher(
+                server.commitNotificationSource(), server.replaySource(), edge, probe);
         try {
             awaitLeader(http, base, opts);
 
+            // METHODOLOGY §3c: the edge staleness sampler runs on a FIXED wall-clock cadence
+            // at the edge CONCURRENTLY with the open-loop write drive — its clock does NOT
+            // pause when the data plane stalls. Run the watcher on its own daemon thread so
+            // each committed seq's visibility is recorded at the moment the edge's applied
+            // cursor covers it (true commit→edge propagation), NOT after all writes finish
+            // driving (which would fold the write-drive duration into every early sample — the
+            // pre-S5 serial-watch artifact that produced a false ~400 ms p50). The probe is
+            // thread-safe (synchronized record/read); a single watcher thread keeps
+            // recordPublished-before-recordVisible ordering per seq structural.
+            Thread watcherThread = null;
+            if (opts.concurrentWatch) {
+                Runnable loop = () -> {
+                    while (!watcher.stopped()) {
+                        if (!watcher.pumpOnce()) {
+                            Thread.onSpinWait();
+                        }
+                    }
+                };
+                watcherThread = new Thread(loop, "probe-edge-watcher");
+                watcherThread.setDaemon(true);
+                watcherThread.start();
+            }
+
             long lastSeq = driveWrites(http, base, opts);
 
-            // ONE watcher loop (single thread, so publish-before-visible ordering is
-            // structural): drain the boundary recording publish ts per seq, then sample
-            // the edge's applied cursor and record visible ts for every seq the edge
-            // newly covers AND whose publish ts is already recorded. A snapshot cutover
-            // jumping the cursor records all covered seqs at the cutover moment — which
-            // is exactly when they became readable at the edge (correct visibility
-            // semantics, noted in the header).
-            EdgeWatcher watcher = new EdgeWatcher(
-                    server.commitNotificationSource(), server.replaySource(), edge, probe);
+            // Drain: wait — by polling, never a fixed sleep — until the edge has been observed
+            // covering every committed seq, or the deadline expires. With the concurrent
+            // watcher this only OBSERVES progress; without it, this thread pumps the watcher.
             long deadline = System.nanoTime() + opts.drainDeadline.toNanos();
             while (System.nanoTime() < deadline
                     && probe.count(EDGE_OBSERVER_ID) < opts.writes) {
-                if (!watcher.pumpOnce()) {
+                if (opts.concurrentWatch) {
+                    Thread.onSpinWait();
+                } else if (!watcher.pumpOnce()) {
                     Thread.onSpinWait();
                 }
+            }
+            watcher.stop();
+            if (watcherThread != null) {
+                watcherThread.join(Duration.ofSeconds(5).toMillis());
             }
             if (probe.count(EDGE_OBSERVER_ID) < opts.writes) {
                 System.out.println("WARNING: drain deadline hit with "
@@ -187,7 +212,11 @@ public final class LivePropagationProbeMain {
             // lastSeq is informational here; the loop condition is the per-write count.
             System.out.println("edge applied cursor at finish: " + edge.core().cursor()
                     + " (highest committed seq " + lastSeq + ")");
+            System.out.println("sampling=" + (opts.concurrentWatch
+                    ? "CONCURRENT fixed-cadence edge watcher (methodology §3c)"
+                    : "serial drive-then-watch (pre-S5; folds write-drive duration into samples)"));
         } finally {
+            watcher.stop();
             edge.shutdown();
             server.shutdown();
             deleteRecursive(dataDir);
@@ -210,8 +239,9 @@ public final class LivePropagationProbeMain {
         private final ReplaySource replaySource;
         private final EdgeNodeMain edge;
         private final PropagationProbe probe;
-        private long boundaryCursor;
-        private long edgeRecordedUpTo;
+        private final AtomicBoolean stopped = new AtomicBoolean(false);
+        private volatile long boundaryCursor;
+        private volatile long edgeRecordedUpTo;
 
         EdgeWatcher(CommitNotificationSource source, ReplaySource replaySource,
                     EdgeNodeMain edge, PropagationProbe probe) {
@@ -219,6 +249,16 @@ public final class LivePropagationProbeMain {
             this.replaySource = replaySource;
             this.edge = edge;
             this.probe = probe;
+        }
+
+        /** Signals the concurrent watcher loop to finish. */
+        void stop() {
+            stopped.set(true);
+        }
+
+        /** True once {@link #stop()} has been called. */
+        boolean stopped() {
+            return stopped.get();
         }
 
         /** One pump pass; returns true if anything was recorded (publish or visible). */
@@ -333,13 +373,19 @@ public final class LivePropagationProbeMain {
     private static long driveWrites(HttpClient http, String base, Options opts)
             throws Exception {
         long maxSeq = -1;
+        long startNanos = System.nanoTime();
         for (int i = 0; i < opts.writes; i++) {
             String key = opts.keyPrefix + i;
             String body = "probe-value-" + i;
             long seq = putCommitted(http, base, key, body, opts);
             maxSeq = Math.max(maxSeq, seq);
         }
-        System.out.println("drove " + opts.writes + " committed writes; highest seq=" + maxSeq);
+        double driveSeconds = (System.nanoTime() - startNanos) / 1e9;
+        double rate = driveSeconds > 0 ? opts.writes / driveSeconds : 0.0;
+        System.out.printf("drove %d committed writes; highest seq=%d; drive=%.2fs; "
+                + "achieved write rate=%.1f commits/s (box-sustainable; the staleness"
+                + " measure is independent of this rate per methodology §3c)%n",
+                opts.writes, maxSeq, driveSeconds, rate);
         return maxSeq;
     }
 
@@ -558,6 +604,13 @@ public final class LivePropagationProbeMain {
         int nodeId = 1;
         Duration writeDeadline = Duration.ofSeconds(10);
         Duration drainDeadline = Duration.ofSeconds(30);
+        /**
+         * Edge mode (§3c): run the edge staleness sampler on a concurrent fixed-cadence
+         * watcher thread (true, default — the honest measurement) vs the pre-S5 serial
+         * drive-then-watch path (false — kept for the before/after, folds write-drive
+         * duration into every sample).
+         */
+        boolean concurrentWatch = true;
 
         static Options parse(String[] args) {
             Options o = new Options();
@@ -573,6 +626,8 @@ public final class LivePropagationProbeMain {
                             o.writeDeadline = Duration.ofMillis(Long.parseLong(requireNext(args, ++i, "--write-deadline-ms")));
                     case "--drain-deadline-ms" ->
                             o.drainDeadline = Duration.ofMillis(Long.parseLong(requireNext(args, ++i, "--drain-deadline-ms")));
+                    case "--concurrent-watch" ->
+                            o.concurrentWatch = Boolean.parseBoolean(requireNext(args, ++i, "--concurrent-watch"));
                     default -> throw new IllegalArgumentException("unknown argument: " + args[i]);
                 }
             }

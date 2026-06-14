@@ -1,0 +1,48 @@
+=== CONCURRENT watch, 500 writes (tail population) ===
+=== Configd propagation probe — LIVE EDGE MODE (C6) ===
+Measures commit->EDGE-visibility wall time through the REAL wire path: server fan-out endpoint -> socket -> Ed25519 verify -> apply -> edge applied cursor.
+HARDWARE CAVEAT: 2-vCPU throttled box, single host, loopback — honest numbers, NOT a performance target (Session 5 owns p99 < 500 ms).
+SAMPLING CAVEAT: edge visibility is sampled by polling the applied cursor; recorded latency >= true latency by up to the poll granularity. Snapshot-cutover-covered seqs record at the cutover moment (when they became readable).
+staleness sample = visible_ts(cursor covers seq) - publish_ts(CommitNotification.commitTimestampMillis, ADR-0035 §2)
+writes=500 key-prefix=probe/ api-port=18093 node-id=1
+
+WARNING: ************************************************************
+WARNING: Authentication is DISABLED (--auth-token not set).
+WARNING: All write/delete/admin endpoints are unauthenticated.
+WARNING: DO NOT run in production without --auth-token.
+WARNING: ************************************************************
+  Write rate   : 10000/s (burst 10000)
+  Strong reads : [secure/] (fail-closed linearizable, ADR-0030 INV-1)
+Jun 14, 2026 3:54:18 AM io.configd.server.fanout.FanOutServer start
+INFO: FanOutServer listening on /127.0.0.1:39543 (PLAINTEXT)
+  Edge port    : 39543 (PLAINTEXT) [C1 fan-out, ADR-0037]
+drove 500 committed writes; highest seq=500
+edge applied cursor at finish: 500 (highest committed seq 500)
+sampling=CONCURRENT fixed-cadence edge watcher (methodology §3c)
+
+=== propagation staleness: scope=observer-1 ===
+  count   = 500
+  min     = 4 ms
+  p50     = 11 ms
+  p90     = 35 ms
+  p99     = 144 ms
+  p999    = 150 ms
+  p9999   = 150 ms
+  max     = 150 ms
+  unmatched = 0
+  overflow  = 0 (clamped to 600000 ms)
+PROBE-HISTOGRAM: scope=observer-1 count=500 p50=11 p99=144 p999=150 max=150 unit=ms
+=== propagation staleness: scope=global ===
+  count   = 500
+  min     = 4 ms
+  p50     = 11 ms
+  p90     = 35 ms
+  p99     = 144 ms
+  p999    = 150 ms
+  p9999   = 150 ms
+  max     = 150 ms
+  unmatched = 0
+  overflow  = 0 (clamped to 600000 ms)
+PROBE-HISTOGRAM: scope=global count=500 p50=11 p99=144 p999=150 max=150 unit=ms
+
+Configd shutting down...
