@@ -1,0 +1,1703 @@
+# Workstream A / A2 — latency tails (HdrHistogram via JMH SampleTime), single-thread unloaded service time
+# date: 2026-06-14T02:16:32Z  git: 1bd8a70
+# JDK: openjdk version "25" 2025-09-16 LTS
+# legs: getHitWithCursor (real serving read), getIntoHit, getMiss
+# sizes: 10000, 100000, 1000000
+# invocation: java --enable-preview -jar configd-testkit/target/benchmarks.jar 'LocalConfigStoreReadBenchmark.(getHitWithCursor|getIntoHit|getMiss)$' -bm sample -p size=10000,100000,1000000 -f 1 -wi 5 -i 12 -w 2 -r 3 -t 1
+# CO: SampleTime in a tight synchronous in-process loop is structurally CO-free (methodology 3a) — no arrival schedule to fall behind.
+# F1: tail-bin sample counts are in the per-leg percentile blocks below (Cnt column / sample count).
+
+WARNING: A terminally deprecated method in sun.misc.Unsafe has been called
+WARNING: sun.misc.Unsafe::objectFieldOffset has been called by org.openjdk.jmh.util.Utils (file:/home/ubuntu/Code/Configd/configd-testkit/target/benchmarks.jar)
+WARNING: Please consider reporting this to the maintainers of class org.openjdk.jmh.util.Utils
+WARNING: sun.misc.Unsafe::objectFieldOffset will be removed in a future release
+# JMH version: 1.37
+# VM version: JDK 25, OpenJDK 64-Bit Server VM, 25+36-LTS
+# VM invoker: /home/ubuntu/.sdkman/candidates/java/25-amzn/bin/java
+# VM options: --enable-preview
+# Blackhole mode: compiler (auto-detected, use -Djmh.blackhole.autoDetect=false to disable)
+# Warmup: 5 iterations, 2 s each
+# Measurement: 12 iterations, 3 s each
+# Timeout: 10 min per iteration
+# Threads: 1 thread, will synchronize iterations
+# Benchmark mode: Sampling time
+# Benchmark: io.configd.bench.LocalConfigStoreReadBenchmark.getHitWithCursor
+# Parameters: (size = 10000)
+
+# Run progress: 0.00% complete, ETA 00:06:54
+# Fork: 1 of 1
+WARNING: A terminally deprecated method in sun.misc.Unsafe has been called
+WARNING: sun.misc.Unsafe::objectFieldOffset has been called by org.openjdk.jmh.util.Utils (file:/home/ubuntu/Code/Configd/configd-testkit/target/benchmarks.jar)
+WARNING: Please consider reporting this to the maintainers of class org.openjdk.jmh.util.Utils
+WARNING: sun.misc.Unsafe::objectFieldOffset will be removed in a future release
+# Warmup Iteration   1: 295.908 ±(99.9%) 126.724 ns/op
+# Warmup Iteration   2: 320.453 ±(99.9%) 199.858 ns/op
+# Warmup Iteration   3: 314.787 ±(99.9%) 187.093 ns/op
+# Warmup Iteration   4: 214.421 ±(99.9%) 90.111 ns/op
+# Warmup Iteration   5: 231.613 ±(99.9%) 38.500 ns/op
+Iteration   1: 280.910 ±(99.9%) 129.376 ns/op
+                 p0.00:   60.000 ns/op
+                 p0.50:   120.000 ns/op
+                 p0.90:   210.000 ns/op
+                 p0.95:   280.000 ns/op
+                 p0.99:   530.000 ns/op
+                 p0.999:  20721.152 ns/op
+                 p0.9999: 229127.168 ns/op
+                 p1.00:   3067904.000 ns/op
+
+Iteration   2: 373.282 ±(99.9%) 191.202 ns/op
+                 p0.00:   60.000 ns/op
+                 p0.50:   120.000 ns/op
+                 p0.90:   210.000 ns/op
+                 p0.95:   290.000 ns/op
+                 p0.99:   520.000 ns/op
+                 p0.999:  17860.256 ns/op
+                 p0.9999: 1032561.357 ns/op
+                 p1.00:   2048000.000 ns/op
+
+Iteration   3: 233.920 ±(99.9%) 39.903 ns/op
+                 p0.00:   60.000 ns/op
+                 p0.50:   120.000 ns/op
+                 p0.90:   200.000 ns/op
+                 p0.95:   270.000 ns/op
+                 p0.99:   506.760 ns/op
+                 p0.999:  21288.192 ns/op
+                 p0.9999: 218756.915 ns/op
+                 p1.00:   559104.000 ns/op
+
+Iteration   4: 282.524 ±(99.9%) 134.259 ns/op
+                 p0.00:   60.000 ns/op
+                 p0.50:   120.000 ns/op
+                 p0.90:   200.000 ns/op
+                 p0.95:   250.000 ns/op
+                 p0.99:   480.000 ns/op
+                 p0.999:  19343.040 ns/op
+                 p0.9999: 141421.312 ns/op
+                 p1.00:   2045952.000 ns/op
+
+Iteration   5: 334.427 ±(99.9%) 220.959 ns/op
+                 p0.00:   60.000 ns/op
+                 p0.50:   120.000 ns/op
+                 p0.90:   150.000 ns/op
+                 p0.95:   210.000 ns/op
+                 p0.99:   400.000 ns/op
+                 p0.999:  13316.224 ns/op
+                 p0.9999: 163177.421 ns/op
+                 p1.00:   5029888.000 ns/op
+
+Iteration   6: 284.463 ±(99.9%) 146.480 ns/op
+                 p0.00:   60.000 ns/op
+                 p0.50:   120.000 ns/op
+                 p0.90:   200.000 ns/op
+                 p0.95:   270.000 ns/op
+                 p0.99:   500.000 ns/op
+                 p0.999:  13870.752 ns/op
+                 p0.9999: 163721.728 ns/op
+                 p1.00:   2097152.000 ns/op
+
+Iteration   7: 279.103 ±(99.9%) 102.369 ns/op
+                 p0.00:   60.000 ns/op
+                 p0.50:   120.000 ns/op
+                 p0.90:   200.000 ns/op
+                 p0.95:   250.000 ns/op
+                 p0.99:   480.000 ns/op
+                 p0.999:  19627.776 ns/op
+                 p0.9999: 268623.462 ns/op
+                 p1.00:   2048000.000 ns/op
+
+Iteration   8: 159.127 ±(99.9%) 18.475 ns/op
+                 p0.00:   60.000 ns/op
+                 p0.50:   120.000 ns/op
+                 p0.90:   150.000 ns/op
+                 p0.95:   210.000 ns/op
+                 p0.99:   390.000 ns/op
+                 p0.999:  5652.800 ns/op
+                 p0.9999: 31738.240 ns/op
+                 p1.00:   502272.000 ns/op
+
+Iteration   9: 210.342 ±(99.9%) 81.227 ns/op
+                 p0.00:   60.000 ns/op
+                 p0.50:   120.000 ns/op
+                 p0.90:   190.000 ns/op
+                 p0.95:   230.000 ns/op
+                 p0.99:   440.000 ns/op
+                 p0.999:  15406.880 ns/op
+                 p0.9999: 64624.512 ns/op
+                 p1.00:   2031616.000 ns/op
+
+Iteration  10: 167.333 ±(99.9%) 14.920 ns/op
+                 p0.00:   60.000 ns/op
+                 p0.50:   120.000 ns/op
+                 p0.90:   180.000 ns/op
+                 p0.95:   220.000 ns/op
+                 p0.99:   420.000 ns/op
+                 p0.999:  11591.440 ns/op
+                 p0.9999: 65523.744 ns/op
+                 p1.00:   189440.000 ns/op
+
+Iteration  11: 183.681 ±(99.9%) 43.495 ns/op
+                 p0.00:   60.000 ns/op
+                 p0.50:   120.000 ns/op
+                 p0.90:   160.000 ns/op
+                 p0.95:   210.000 ns/op
+                 p0.99:   400.000 ns/op
+                 p0.999:  10108.320 ns/op
+                 p0.9999: 97091.328 ns/op
+                 p1.00:   1431552.000 ns/op
+
+Iteration  12: 193.114 ±(99.9%) 36.995 ns/op
+                 p0.00:   60.000 ns/op
+                 p0.50:   120.000 ns/op
+                 p0.90:   190.000 ns/op
+                 p0.95:   230.000 ns/op
+                 p0.99:   440.000 ns/op
+                 p0.999:  14448.896 ns/op
+                 p0.9999: 121217.638 ns/op
+                 p1.00:   1039360.000 ns/op
+
+
+
+Result "io.configd.bench.LocalConfigStoreReadBenchmark.getHitWithCursor":
+  N = 1325996
+  mean =    245.978 ±(99.9%) 33.161 ns/op
+
+  Histogram, ns/op:
+    [      0.000,  500000.000) = 1325952 
+    [ 500000.000, 1000000.000) = 5 
+    [1000000.000, 1500000.000) = 11 
+    [1500000.000, 2000000.000) = 1 
+    [2000000.000, 2500000.000) = 24 
+    [2500000.000, 3000000.000) = 0 
+    [3000000.000, 3500000.000) = 1 
+    [3500000.000, 4000000.000) = 0 
+    [4000000.000, 4500000.000) = 1 
+    [4500000.000, 5000000.000) = 0 
+    [5000000.000, 5500000.000) = 1 
+
+  Percentiles, ns/op:
+      p(0.0000) =     60.000 ns/op
+     p(50.0000) =    120.000 ns/op
+     p(90.0000) =    190.000 ns/op
+     p(95.0000) =    240.000 ns/op
+     p(99.0000) =    460.000 ns/op
+     p(99.9000) =  14848.000 ns/op
+     p(99.9900) = 142745.907 ns/op
+     p(99.9990) = 2039275.581 ns/op
+     p(99.9999) = 4704078.774 ns/op
+    p(100.0000) = 5029888.000 ns/op
+
+
+# JMH version: 1.37
+# VM version: JDK 25, OpenJDK 64-Bit Server VM, 25+36-LTS
+# VM invoker: /home/ubuntu/.sdkman/candidates/java/25-amzn/bin/java
+# VM options: --enable-preview
+# Blackhole mode: compiler (auto-detected, use -Djmh.blackhole.autoDetect=false to disable)
+# Warmup: 5 iterations, 2 s each
+# Measurement: 12 iterations, 3 s each
+# Timeout: 10 min per iteration
+# Threads: 1 thread, will synchronize iterations
+# Benchmark mode: Sampling time
+# Benchmark: io.configd.bench.LocalConfigStoreReadBenchmark.getHitWithCursor
+# Parameters: (size = 100000)
+
+# Run progress: 11.11% complete, ETA 00:06:15
+# Fork: 1 of 1
+WARNING: A terminally deprecated method in sun.misc.Unsafe has been called
+WARNING: sun.misc.Unsafe::objectFieldOffset has been called by org.openjdk.jmh.util.Utils (file:/home/ubuntu/Code/Configd/configd-testkit/target/benchmarks.jar)
+WARNING: Please consider reporting this to the maintainers of class org.openjdk.jmh.util.Utils
+WARNING: sun.misc.Unsafe::objectFieldOffset will be removed in a future release
+# Warmup Iteration   1: 625.878 ±(99.9%) 52.106 ns/op
+# Warmup Iteration   2: 715.205 ±(99.9%) 264.928 ns/op
+# Warmup Iteration   3: 627.046 ±(99.9%) 140.365 ns/op
+# Warmup Iteration   4: 578.127 ±(99.9%) 87.158 ns/op
+# Warmup Iteration   5: 625.767 ±(99.9%) 115.600 ns/op
+Iteration   1: 656.926 ±(99.9%) 164.980 ns/op
+                 p0.00:   70.000 ns/op
+                 p0.50:   440.000 ns/op
+                 p0.90:   620.000 ns/op
+                 p0.95:   720.000 ns/op
+                 p0.99:   950.000 ns/op
+                 p0.999:  24978.080 ns/op
+                 p0.9999: 190968.064 ns/op
+                 p1.00:   3031040.000 ns/op
+
+Iteration   2: 796.080 ±(99.9%) 186.176 ns/op
+                 p0.00:   70.000 ns/op
+                 p0.50:   460.000 ns/op
+                 p0.90:   650.000 ns/op
+                 p0.95:   750.000 ns/op
+                 p0.99:   1010.000 ns/op
+                 p0.999:  36873.920 ns/op
+                 p0.9999: 1057356.288 ns/op
+                 p1.00:   2064384.000 ns/op
+
+Iteration   3: 600.360 ±(99.9%) 84.535 ns/op
+                 p0.00:   70.000 ns/op
+                 p0.50:   440.000 ns/op
+                 p0.90:   630.000 ns/op
+                 p0.95:   740.000 ns/op
+                 p0.99:   990.000 ns/op
+                 p0.999:  26514.784 ns/op
+                 p0.9999: 194667.981 ns/op
+                 p1.00:   2064384.000 ns/op
+
+Iteration   4: 525.301 ±(99.9%) 46.199 ns/op
+                 p0.00:   70.000 ns/op
+                 p0.50:   430.000 ns/op
+                 p0.90:   580.000 ns/op
+                 p0.95:   690.000 ns/op
+                 p0.99:   890.000 ns/op
+                 p0.999:  19396.192 ns/op
+                 p0.9999: 166832.998 ns/op
+                 p1.00:   824320.000 ns/op
+
+Iteration   5: 589.493 ±(99.9%) 197.882 ns/op
+                 p0.00:   70.000 ns/op
+                 p0.50:   430.000 ns/op
+                 p0.90:   590.000 ns/op
+                 p0.95:   690.000 ns/op
+                 p0.99:   890.000 ns/op
+                 p0.999:  20160.000 ns/op
+                 p0.9999: 91589.274 ns/op
+                 p1.00:   6045696.000 ns/op
+
+Iteration   6: 558.392 ±(99.9%) 35.224 ns/op
+                 p0.00:   70.000 ns/op
+                 p0.50:   440.000 ns/op
+                 p0.90:   610.000 ns/op
+                 p0.95:   720.000 ns/op
+                 p0.99:   930.000 ns/op
+                 p0.999:  23553.312 ns/op
+                 p0.9999: 195957.581 ns/op
+                 p1.00:   339456.000 ns/op
+
+Iteration   7: 558.297 ±(99.9%) 69.326 ns/op
+                 p0.00:   70.000 ns/op
+                 p0.50:   430.000 ns/op
+                 p0.90:   600.000 ns/op
+                 p0.95:   700.000 ns/op
+                 p0.99:   910.000 ns/op
+                 p0.999:  22965.760 ns/op
+                 p0.9999: 175083.520 ns/op
+                 p1.00:   2039808.000 ns/op
+
+Iteration   8: 508.499 ±(99.9%) 65.622 ns/op
+                 p0.00:   70.000 ns/op
+                 p0.50:   420.000 ns/op
+                 p0.90:   580.000 ns/op
+                 p0.95:   680.000 ns/op
+                 p0.99:   870.000 ns/op
+                 p0.999:  17569.120 ns/op
+                 p0.9999: 133023.360 ns/op
+                 p1.00:   2031616.000 ns/op
+
+Iteration   9: 540.444 ±(99.9%) 34.853 ns/op
+                 p0.00:   70.000 ns/op
+                 p0.50:   420.000 ns/op
+                 p0.90:   590.000 ns/op
+                 p0.95:   690.000 ns/op
+                 p0.99:   900.000 ns/op
+                 p0.999:  22849.920 ns/op
+                 p0.9999: 214282.240 ns/op
+                 p1.00:   325632.000 ns/op
+
+Iteration  10: 519.721 ±(99.9%) 59.338 ns/op
+                 p0.00:   70.000 ns/op
+                 p0.50:   430.000 ns/op
+                 p0.90:   600.000 ns/op
+                 p0.95:   700.000 ns/op
+                 p0.99:   900.000 ns/op
+                 p0.999:  17690.048 ns/op
+                 p0.9999: 133697.690 ns/op
+                 p1.00:   1810432.000 ns/op
+
+Iteration  11: 544.042 ±(99.9%) 52.522 ns/op
+                 p0.00:   70.000 ns/op
+                 p0.50:   420.000 ns/op
+                 p0.90:   580.000 ns/op
+                 p0.95:   680.000 ns/op
+                 p0.99:   900.000 ns/op
+                 p0.999:  21985.408 ns/op
+                 p0.9999: 200005.222 ns/op
+                 p1.00:   1400832.000 ns/op
+
+Iteration  12: 504.743 ±(99.9%) 29.143 ns/op
+                 p0.00:   70.000 ns/op
+                 p0.50:   430.000 ns/op
+                 p0.90:   590.000 ns/op
+                 p0.95:   690.000 ns/op
+                 p0.99:   900.000 ns/op
+                 p0.999:  17502.304 ns/op
+                 p0.9999: 138010.240 ns/op
+                 p1.00:   553984.000 ns/op
+
+
+
+Result "io.configd.bench.LocalConfigStoreReadBenchmark.getHitWithCursor":
+  N = 1315246
+  mean =    572.608 ±(99.9%) 29.267 ns/op
+
+  Histogram, ns/op:
+    [      0.000,  500000.000) = 1315213 
+    [ 500000.000, 1000000.000) = 8 
+    [1000000.000, 1500000.000) = 7 
+    [1500000.000, 2000000.000) = 2 
+    [2000000.000, 2500000.000) = 14 
+    [2500000.000, 3000000.000) = 0 
+    [3000000.000, 3500000.000) = 1 
+    [3500000.000, 4000000.000) = 0 
+    [4000000.000, 4500000.000) = 0 
+    [4500000.000, 5000000.000) = 0 
+    [5000000.000, 5500000.000) = 0 
+    [5500000.000, 6000000.000) = 0 
+    [6000000.000, 6500000.000) = 1 
+
+  Percentiles, ns/op:
+      p(0.0000) =     70.000 ns/op
+     p(50.0000) =    430.000 ns/op
+     p(90.0000) =    600.000 ns/op
+     p(95.0000) =    700.000 ns/op
+     p(99.0000) =    920.000 ns/op
+     p(99.9000) =  22144.000 ns/op
+     p(99.9900) = 183002.061 ns/op
+     p(99.9990) = 2033351.741 ns/op
+     p(99.9999) = 5095334.740 ns/op
+    p(100.0000) = 6045696.000 ns/op
+
+
+# JMH version: 1.37
+# VM version: JDK 25, OpenJDK 64-Bit Server VM, 25+36-LTS
+# VM invoker: /home/ubuntu/.sdkman/candidates/java/25-amzn/bin/java
+# VM options: --enable-preview
+# Blackhole mode: compiler (auto-detected, use -Djmh.blackhole.autoDetect=false to disable)
+# Warmup: 5 iterations, 2 s each
+# Measurement: 12 iterations, 3 s each
+# Timeout: 10 min per iteration
+# Threads: 1 thread, will synchronize iterations
+# Benchmark mode: Sampling time
+# Benchmark: io.configd.bench.LocalConfigStoreReadBenchmark.getHitWithCursor
+# Parameters: (size = 1000000)
+
+# Run progress: 22.22% complete, ETA 00:05:28
+# Fork: 1 of 1
+WARNING: A terminally deprecated method in sun.misc.Unsafe has been called
+WARNING: sun.misc.Unsafe::objectFieldOffset has been called by org.openjdk.jmh.util.Utils (file:/home/ubuntu/Code/Configd/configd-testkit/target/benchmarks.jar)
+WARNING: Please consider reporting this to the maintainers of class org.openjdk.jmh.util.Utils
+WARNING: sun.misc.Unsafe::objectFieldOffset will be removed in a future release
+# Warmup Iteration   1: 1241.034 ±(99.9%) 162.325 ns/op
+# Warmup Iteration   2: 1150.774 ±(99.9%) 248.661 ns/op
+# Warmup Iteration   3: 1235.841 ±(99.9%) 355.641 ns/op
+# Warmup Iteration   4: 994.265 ±(99.9%) 135.560 ns/op
+# Warmup Iteration   5: 951.248 ±(99.9%) 135.401 ns/op
+Iteration   1: 1972.835 ±(99.9%) 2745.066 ns/op
+                 p0.00:   100.000 ns/op
+                 p0.50:   760.000 ns/op
+                 p0.90:   1040.000 ns/op
+                 p0.95:   1150.000 ns/op
+                 p0.99:   1420.000 ns/op
+                 p0.999:  27803.712 ns/op
+                 p0.9999: 1050462.464 ns/op
+                 p1.00:   92274688.000 ns/op
+
+Iteration   2: 1021.234 ±(99.9%) 141.517 ns/op
+                 p0.00:   120.000 ns/op
+                 p0.50:   750.000 ns/op
+                 p0.90:   1030.000 ns/op
+                 p0.95:   1140.000 ns/op
+                 p0.99:   1480.000 ns/op
+                 p0.999:  34585.728 ns/op
+                 p0.9999: 239767.987 ns/op
+                 p1.00:   2027520.000 ns/op
+
+Iteration   3: 905.895 ±(99.9%) 33.388 ns/op
+                 p0.00:   110.000 ns/op
+                 p0.50:   750.000 ns/op
+                 p0.90:   1030.000 ns/op
+                 p0.95:   1150.000 ns/op
+                 p0.99:   1610.000 ns/op
+                 p0.999:  24482.080 ns/op
+                 p0.9999: 191623.450 ns/op
+                 p1.00:   436736.000 ns/op
+
+Iteration   4: 994.322 ±(99.9%) 40.899 ns/op
+                 p0.00:   110.000 ns/op
+                 p0.50:   780.000 ns/op
+                 p0.90:   1080.000 ns/op
+                 p0.95:   1210.000 ns/op
+                 p0.99:   3820.000 ns/op
+                 p0.999:  28307.840 ns/op
+                 p0.9999: 214047.027 ns/op
+                 p1.00:   396288.000 ns/op
+
+Iteration   5: 1125.149 ±(99.9%) 248.962 ns/op
+                 p0.00:   110.000 ns/op
+                 p0.50:   740.000 ns/op
+                 p0.90:   990.000 ns/op
+                 p0.95:   1100.000 ns/op
+                 p0.99:   1490.800 ns/op
+                 p0.999:  77647.360 ns/op
+                 p0.9999: 288235.622 ns/op
+                 p1.00:   4042752.000 ns/op
+
+Iteration   6: 914.633 ±(99.9%) 85.624 ns/op
+                 p0.00:   100.000 ns/op
+                 p0.50:   750.000 ns/op
+                 p0.90:   1020.000 ns/op
+                 p0.95:   1120.000 ns/op
+                 p0.99:   1390.000 ns/op
+                 p0.999:  24325.888 ns/op
+                 p0.9999: 169775.104 ns/op
+                 p1.00:   2037760.000 ns/op
+
+Iteration   7: 1097.015 ±(99.9%) 290.696 ns/op
+                 p0.00:   120.000 ns/op
+                 p0.50:   750.000 ns/op
+                 p0.90:   1020.000 ns/op
+                 p0.95:   1130.000 ns/op
+                 p0.99:   1480.000 ns/op
+                 p0.999:  30673.664 ns/op
+                 p0.9999: 316993.741 ns/op
+                 p1.00:   4026368.000 ns/op
+
+Iteration   8: 991.229 ±(99.9%) 45.055 ns/op
+                 p0.00:   100.000 ns/op
+                 p0.50:   780.000 ns/op
+                 p0.90:   1070.000 ns/op
+                 p0.95:   1180.000 ns/op
+                 p0.99:   1480.000 ns/op
+                 p0.999:  41857.152 ns/op
+                 p0.9999: 229734.451 ns/op
+                 p1.00:   431104.000 ns/op
+
+Iteration   9: 1022.481 ±(99.9%) 76.034 ns/op
+                 p0.00:   100.000 ns/op
+                 p0.50:   770.000 ns/op
+                 p0.90:   1080.000 ns/op
+                 p0.95:   1220.000 ns/op
+                 p0.99:   4088.000 ns/op
+                 p0.999:  28374.208 ns/op
+                 p0.9999: 207614.362 ns/op
+                 p1.00:   2158592.000 ns/op
+
+Iteration  10: 1056.775 ±(99.9%) 91.500 ns/op
+                 p0.00:   100.000 ns/op
+                 p0.50:   790.000 ns/op
+                 p0.90:   1100.000 ns/op
+                 p0.95:   1220.000 ns/op
+                 p0.99:   1570.000 ns/op
+                 p0.999:  54223.360 ns/op
+                 p0.9999: 236882.944 ns/op
+                 p1.00:   2486272.000 ns/op
+
+Iteration  11: 1071.537 ±(99.9%) 141.039 ns/op
+                 p0.00:   100.000 ns/op
+                 p0.50:   790.000 ns/op
+                 p0.90:   1100.000 ns/op
+                 p0.95:   1220.000 ns/op
+                 p0.99:   1560.000 ns/op
+                 p0.999:  45461.120 ns/op
+                 p0.9999: 257247.616 ns/op
+                 p1.00:   3760128.000 ns/op
+
+Iteration  12: 1017.326 ±(99.9%) 54.660 ns/op
+                 p0.00:   100.000 ns/op
+                 p0.50:   780.000 ns/op
+                 p0.90:   1080.000 ns/op
+                 p0.95:   1200.000 ns/op
+                 p0.99:   1530.000 ns/op
+                 p0.999:  49357.440 ns/op
+                 p0.9999: 244578.816 ns/op
+                 p1.00:   599040.000 ns/op
+
+
+
+Result "io.configd.bench.LocalConfigStoreReadBenchmark.getHitWithCursor":
+  N = 1177023
+  mean =   1100.484 ±(99.9%) 260.676 ns/op
+
+  Histogram, ns/op:
+    [        0.000,  10000000.000) = 1177022 
+    [ 10000000.000,  20000000.000) = 0 
+    [ 20000000.000,  30000000.000) = 0 
+    [ 30000000.000,  40000000.000) = 0 
+    [ 40000000.000,  50000000.000) = 0 
+    [ 50000000.000,  60000000.000) = 0 
+    [ 60000000.000,  70000000.000) = 0 
+    [ 70000000.000,  80000000.000) = 0 
+    [ 80000000.000,  90000000.000) = 0 
+
+  Percentiles, ns/op:
+      p(0.0000) =    100.000 ns/op
+     p(50.0000) =    770.000 ns/op
+     p(90.0000) =   1060.000 ns/op
+     p(95.0000) =   1180.000 ns/op
+     p(99.0000) =   1600.000 ns/op
+     p(99.9000) =  32350.464 ns/op
+     p(99.9900) = 231756.186 ns/op
+     p(99.9990) = 2061699.645 ns/op
+     p(99.9999) = 76662043.566 ns/op
+    p(100.0000) = 92274688.000 ns/op
+
+
+# JMH version: 1.37
+# VM version: JDK 25, OpenJDK 64-Bit Server VM, 25+36-LTS
+# VM invoker: /home/ubuntu/.sdkman/candidates/java/25-amzn/bin/java
+# VM options: --enable-preview
+# Blackhole mode: compiler (auto-detected, use -Djmh.blackhole.autoDetect=false to disable)
+# Warmup: 5 iterations, 2 s each
+# Measurement: 12 iterations, 3 s each
+# Timeout: 10 min per iteration
+# Threads: 1 thread, will synchronize iterations
+# Benchmark mode: Sampling time
+# Benchmark: io.configd.bench.LocalConfigStoreReadBenchmark.getIntoHit
+# Parameters: (size = 10000)
+
+# Run progress: 33.33% complete, ETA 00:04:45
+# Fork: 1 of 1
+WARNING: A terminally deprecated method in sun.misc.Unsafe has been called
+WARNING: sun.misc.Unsafe::objectFieldOffset has been called by org.openjdk.jmh.util.Utils (file:/home/ubuntu/Code/Configd/configd-testkit/target/benchmarks.jar)
+WARNING: Please consider reporting this to the maintainers of class org.openjdk.jmh.util.Utils
+WARNING: sun.misc.Unsafe::objectFieldOffset will be removed in a future release
+# Warmup Iteration   1: 486.102 ±(99.9%) 272.069 ns/op
+# Warmup Iteration   2: 258.602 ±(99.9%) 125.245 ns/op
+# Warmup Iteration   3: 261.365 ±(99.9%) 66.342 ns/op
+# Warmup Iteration   4: 199.650 ±(99.9%) 21.135 ns/op
+# Warmup Iteration   5: 211.336 ±(99.9%) 44.963 ns/op
+Iteration   1: 253.830 ±(99.9%) 62.128 ns/op
+                 p0.00:   70.000 ns/op
+                 p0.50:   140.000 ns/op
+                 p0.90:   240.000 ns/op
+                 p0.95:   320.000 ns/op
+                 p0.99:   590.000 ns/op
+                 p0.999:  18592.448 ns/op
+                 p0.9999: 181695.078 ns/op
+                 p1.00:   1331200.000 ns/op
+
+Iteration   2: 291.855 ±(99.9%) 114.793 ns/op
+                 p0.00:   70.000 ns/op
+                 p0.50:   140.000 ns/op
+                 p0.90:   230.000 ns/op
+                 p0.95:   310.000 ns/op
+                 p0.99:   580.000 ns/op
+                 p0.999:  22376.832 ns/op
+                 p0.9999: 190831.488 ns/op
+                 p1.00:   2121728.000 ns/op
+
+Iteration   3: 292.413 ±(99.9%) 116.983 ns/op
+                 p0.00:   70.000 ns/op
+                 p0.50:   140.000 ns/op
+                 p0.90:   240.000 ns/op
+                 p0.95:   320.000 ns/op
+                 p0.99:   570.000 ns/op
+                 p0.999:  19343.232 ns/op
+                 p0.9999: 171515.904 ns/op
+                 p1.00:   2031616.000 ns/op
+
+Iteration   4: 220.065 ±(99.9%) 28.052 ns/op
+                 p0.00:   80.000 ns/op
+                 p0.50:   140.000 ns/op
+                 p0.90:   230.000 ns/op
+                 p0.95:   280.000 ns/op
+                 p0.99:   520.000 ns/op
+                 p0.999:  18411.200 ns/op
+                 p0.9999: 118418.496 ns/op
+                 p1.00:   374784.000 ns/op
+
+Iteration   5: 386.021 ±(99.9%) 174.243 ns/op
+                 p0.00:   70.000 ns/op
+                 p0.50:   140.000 ns/op
+                 p0.90:   240.000 ns/op
+                 p0.95:   320.000 ns/op
+                 p0.99:   570.000 ns/op
+                 p0.999:  25027.552 ns/op
+                 p0.9999: 854750.310 ns/op
+                 p1.00:   2039808.000 ns/op
+
+Iteration   6: 409.064 ±(99.9%) 251.398 ns/op
+                 p0.00:   80.000 ns/op
+                 p0.50:   140.000 ns/op
+                 p0.90:   220.000 ns/op
+                 p0.95:   260.000 ns/op
+                 p0.99:   520.000 ns/op
+                 p0.999:  20173.152 ns/op
+                 p0.9999: 335887.206 ns/op
+                 p1.00:   5046272.000 ns/op
+
+Iteration   7: 244.139 ±(99.9%) 79.175 ns/op
+                 p0.00:   80.000 ns/op
+                 p0.50:   140.000 ns/op
+                 p0.90:   230.000 ns/op
+                 p0.95:   270.000 ns/op
+                 p0.99:   530.000 ns/op
+                 p0.999:  17689.280 ns/op
+                 p0.9999: 159523.123 ns/op
+                 p1.00:   2029568.000 ns/op
+
+Iteration   8: 252.751 ±(99.9%) 43.777 ns/op
+                 p0.00:   70.000 ns/op
+                 p0.50:   140.000 ns/op
+                 p0.90:   220.000 ns/op
+                 p0.95:   270.000 ns/op
+                 p0.99:   520.000 ns/op
+                 p0.999:  19637.632 ns/op
+                 p0.9999: 196565.453 ns/op
+                 p1.00:   523776.000 ns/op
+
+Iteration   9: 192.818 ±(99.9%) 13.984 ns/op
+                 p0.00:   70.000 ns/op
+                 p0.50:   140.000 ns/op
+                 p0.90:   220.000 ns/op
+                 p0.95:   260.000 ns/op
+                 p0.99:   510.000 ns/op
+                 p0.999:  14209.440 ns/op
+                 p0.9999: 38579.776 ns/op
+                 p1.00:   197120.000 ns/op
+
+Iteration  10: 271.620 ±(99.9%) 94.540 ns/op
+                 p0.00:   70.000 ns/op
+                 p0.50:   140.000 ns/op
+                 p0.90:   230.000 ns/op
+                 p0.95:   290.000 ns/op
+                 p0.99:   530.000 ns/op
+                 p0.999:  16330.048 ns/op
+                 p0.9999: 171201.971 ns/op
+                 p1.00:   2031616.000 ns/op
+
+Iteration  11: 257.039 ±(99.9%) 44.256 ns/op
+                 p0.00:   70.000 ns/op
+                 p0.50:   140.000 ns/op
+                 p0.90:   230.000 ns/op
+                 p0.95:   280.000 ns/op
+                 p0.99:   540.000 ns/op
+                 p0.999:  22170.208 ns/op
+                 p0.9999: 185509.478 ns/op
+                 p1.00:   808960.000 ns/op
+
+Iteration  12: 205.180 ±(99.9%) 24.550 ns/op
+                 p0.00:   70.000 ns/op
+                 p0.50:   140.000 ns/op
+                 p0.90:   210.000 ns/op
+                 p0.95:   260.000 ns/op
+                 p0.99:   490.000 ns/op
+                 p0.999:  14204.032 ns/op
+                 p0.9999: 114314.854 ns/op
+                 p1.00:   397824.000 ns/op
+
+
+
+Result "io.configd.bench.LocalConfigStoreReadBenchmark.getIntoHit":
+  N = 1074782
+  mean =    272.005 ±(99.9%) 31.460 ns/op
+
+  Histogram, ns/op:
+    [      0.000,  500000.000) = 1074753 
+    [ 500000.000, 1000000.000) = 6 
+    [1000000.000, 1500000.000) = 9 
+    [1500000.000, 2000000.000) = 2 
+    [2000000.000, 2500000.000) = 10 
+    [2500000.000, 3000000.000) = 1 
+    [3000000.000, 3500000.000) = 0 
+    [3500000.000, 4000000.000) = 0 
+    [4000000.000, 4500000.000) = 0 
+    [4500000.000, 5000000.000) = 0 
+    [5000000.000, 5500000.000) = 1 
+
+  Percentiles, ns/op:
+      p(0.0000) =     70.000 ns/op
+     p(50.0000) =    140.000 ns/op
+     p(90.0000) =    230.000 ns/op
+     p(95.0000) =    290.000 ns/op
+     p(99.0000) =    540.000 ns/op
+     p(99.9000) =  18816.000 ns/op
+     p(99.9900) = 173701.555 ns/op
+     p(99.9990) = 2030084.444 ns/op
+     p(99.9999) = 4866773.655 ns/op
+    p(100.0000) = 5046272.000 ns/op
+
+
+# JMH version: 1.37
+# VM version: JDK 25, OpenJDK 64-Bit Server VM, 25+36-LTS
+# VM invoker: /home/ubuntu/.sdkman/candidates/java/25-amzn/bin/java
+# VM options: --enable-preview
+# Blackhole mode: compiler (auto-detected, use -Djmh.blackhole.autoDetect=false to disable)
+# Warmup: 5 iterations, 2 s each
+# Measurement: 12 iterations, 3 s each
+# Timeout: 10 min per iteration
+# Threads: 1 thread, will synchronize iterations
+# Benchmark mode: Sampling time
+# Benchmark: io.configd.bench.LocalConfigStoreReadBenchmark.getIntoHit
+# Parameters: (size = 100000)
+
+# Run progress: 44.44% complete, ETA 00:03:56
+# Fork: 1 of 1
+WARNING: A terminally deprecated method in sun.misc.Unsafe has been called
+WARNING: sun.misc.Unsafe::objectFieldOffset has been called by org.openjdk.jmh.util.Utils (file:/home/ubuntu/Code/Configd/configd-testkit/target/benchmarks.jar)
+WARNING: Please consider reporting this to the maintainers of class org.openjdk.jmh.util.Utils
+WARNING: sun.misc.Unsafe::objectFieldOffset will be removed in a future release
+# Warmup Iteration   1: 670.415 ±(99.9%) 53.538 ns/op
+# Warmup Iteration   2: 714.769 ±(99.9%) 164.735 ns/op
+# Warmup Iteration   3: 724.035 ±(99.9%) 120.807 ns/op
+# Warmup Iteration   4: 790.791 ±(99.9%) 84.287 ns/op
+# Warmup Iteration   5: 694.068 ±(99.9%) 71.964 ns/op
+Iteration   1: 646.912 ±(99.9%) 38.920 ns/op
+                 p0.00:   80.000 ns/op
+                 p0.50:   510.000 ns/op
+                 p0.90:   720.000 ns/op
+                 p0.95:   820.000 ns/op
+                 p0.99:   1060.000 ns/op
+                 p0.999:  27181.504 ns/op
+                 p0.9999: 185789.056 ns/op
+                 p1.00:   262144.000 ns/op
+
+Iteration   2: 775.685 ±(99.9%) 197.689 ns/op
+                 p0.00:   90.000 ns/op
+                 p0.50:   510.000 ns/op
+                 p0.90:   720.000 ns/op
+                 p0.95:   820.000 ns/op
+                 p0.99:   1060.000 ns/op
+                 p0.999:  25763.456 ns/op
+                 p0.9999: 412572.006 ns/op
+                 p1.00:   3039232.000 ns/op
+
+Iteration   3: 874.429 ±(99.9%) 166.785 ns/op
+                 p0.00:   80.000 ns/op
+                 p0.50:   550.000 ns/op
+                 p0.90:   790.000 ns/op
+                 p0.95:   900.000 ns/op
+                 p0.99:   1230.000 ns/op
+                 p0.999:  63948.672 ns/op
+                 p0.9999: 286848.512 ns/op
+                 p1.00:   3051520.000 ns/op
+
+Iteration   4: 996.068 ±(99.9%) 363.419 ns/op
+                 p0.00:   80.000 ns/op
+                 p0.50:   510.000 ns/op
+                 p0.90:   730.000 ns/op
+                 p0.95:   830.000 ns/op
+                 p0.99:   1110.000 ns/op
+                 p0.999:  69664.000 ns/op
+                 p0.9999: 423129.600 ns/op
+                 p1.00:   8093696.000 ns/op
+
+Iteration   5: 645.816 ±(99.9%) 81.847 ns/op
+                 p0.00:   80.000 ns/op
+                 p0.50:   500.000 ns/op
+                 p0.90:   700.000 ns/op
+                 p0.95:   800.000 ns/op
+                 p0.99:   1032.300 ns/op
+                 p0.999:  24251.072 ns/op
+                 p0.9999: 175846.349 ns/op
+                 p1.00:   2029568.000 ns/op
+
+Iteration   6: 725.437 ±(99.9%) 91.501 ns/op
+                 p0.00:   80.000 ns/op
+                 p0.50:   520.000 ns/op
+                 p0.90:   730.000 ns/op
+                 p0.95:   840.000 ns/op
+                 p0.99:   1110.000 ns/op
+                 p0.999:  36813.760 ns/op
+                 p0.9999: 229658.496 ns/op
+                 p1.00:   2029568.000 ns/op
+
+Iteration   7: 726.522 ±(99.9%) 166.262 ns/op
+                 p0.00:   80.000 ns/op
+                 p0.50:   500.000 ns/op
+                 p0.90:   700.000 ns/op
+                 p0.95:   800.000 ns/op
+                 p0.99:   1030.000 ns/op
+                 p0.999:  24983.744 ns/op
+                 p0.9999: 225638.426 ns/op
+                 p1.00:   2048000.000 ns/op
+
+Iteration   8: 734.924 ±(99.9%) 155.692 ns/op
+                 p0.00:   80.000 ns/op
+                 p0.50:   510.000 ns/op
+                 p0.90:   720.000 ns/op
+                 p0.95:   820.000 ns/op
+                 p0.99:   1050.000 ns/op
+                 p0.999:  26259.488 ns/op
+                 p0.9999: 263365.478 ns/op
+                 p1.00:   2037760.000 ns/op
+
+Iteration   9: 819.139 ±(99.9%) 173.334 ns/op
+                 p0.00:   80.000 ns/op
+                 p0.50:   540.000 ns/op
+                 p0.90:   760.000 ns/op
+                 p0.95:   870.000 ns/op
+                 p0.99:   1150.000 ns/op
+                 p0.999:  47215.104 ns/op
+                 p0.9999: 261311.078 ns/op
+                 p1.00:   3055616.000 ns/op
+
+Iteration  10: 613.621 ±(99.9%) 34.222 ns/op
+                 p0.00:   80.000 ns/op
+                 p0.50:   500.000 ns/op
+                 p0.90:   710.000 ns/op
+                 p0.95:   820.000 ns/op
+                 p0.99:   1050.000 ns/op
+                 p0.999:  23087.360 ns/op
+                 p0.9999: 173688.013 ns/op
+                 p1.00:   449536.000 ns/op
+
+Iteration  11: 725.306 ±(99.9%) 54.267 ns/op
+                 p0.00:   80.000 ns/op
+                 p0.50:   520.000 ns/op
+                 p0.90:   730.000 ns/op
+                 p0.95:   830.000 ns/op
+                 p0.99:   1090.000 ns/op
+                 p0.999:  44480.000 ns/op
+                 p0.9999: 219371.520 ns/op
+                 p1.00:   596992.000 ns/op
+
+Iteration  12: 606.737 ±(99.9%) 26.486 ns/op
+                 p0.00:   80.000 ns/op
+                 p0.50:   510.000 ns/op
+                 p0.90:   720.000 ns/op
+                 p0.95:   820.000 ns/op
+                 p0.99:   1060.000 ns/op
+                 p0.999:  22011.072 ns/op
+                 p0.9999: 128950.144 ns/op
+                 p1.00:   232448.000 ns/op
+
+
+
+Result "io.configd.bench.LocalConfigStoreReadBenchmark.getIntoHit":
+  N = 1057563
+  mean =    738.087 ±(99.9%) 45.229 ns/op
+
+  Histogram, ns/op:
+    [      0.000,  500000.000) = 1057529 
+    [ 500000.000, 1000000.000) = 6 
+    [1000000.000, 1500000.000) = 0 
+    [1500000.000, 2000000.000) = 2 
+    [2000000.000, 2500000.000) = 22 
+    [2500000.000, 3000000.000) = 0 
+    [3000000.000, 3500000.000) = 3 
+    [3500000.000, 4000000.000) = 0 
+    [4000000.000, 4500000.000) = 0 
+    [4500000.000, 5000000.000) = 0 
+    [5000000.000, 5500000.000) = 0 
+    [5500000.000, 6000000.000) = 0 
+    [6000000.000, 6500000.000) = 0 
+    [6500000.000, 7000000.000) = 0 
+    [7000000.000, 7500000.000) = 0 
+    [7500000.000, 8000000.000) = 0 
+    [8000000.000, 8500000.000) = 1 
+
+  Percentiles, ns/op:
+      p(0.0000) =     80.000 ns/op
+     p(50.0000) =    510.000 ns/op
+     p(90.0000) =    730.000 ns/op
+     p(95.0000) =    830.000 ns/op
+     p(99.0000) =   1090.000 ns/op
+     p(99.9000) =  29773.952 ns/op
+     p(99.9900) = 227515.085 ns/op
+     p(99.9990) = 2041546.179 ns/op
+     p(99.9999) = 7803683.962 ns/op
+    p(100.0000) = 8093696.000 ns/op
+
+
+# JMH version: 1.37
+# VM version: JDK 25, OpenJDK 64-Bit Server VM, 25+36-LTS
+# VM invoker: /home/ubuntu/.sdkman/candidates/java/25-amzn/bin/java
+# VM options: --enable-preview
+# Blackhole mode: compiler (auto-detected, use -Djmh.blackhole.autoDetect=false to disable)
+# Warmup: 5 iterations, 2 s each
+# Measurement: 12 iterations, 3 s each
+# Timeout: 10 min per iteration
+# Threads: 1 thread, will synchronize iterations
+# Benchmark mode: Sampling time
+# Benchmark: io.configd.bench.LocalConfigStoreReadBenchmark.getIntoHit
+# Parameters: (size = 1000000)
+
+# Run progress: 55.56% complete, ETA 00:03:09
+# Fork: 1 of 1
+WARNING: A terminally deprecated method in sun.misc.Unsafe has been called
+WARNING: sun.misc.Unsafe::objectFieldOffset has been called by org.openjdk.jmh.util.Utils (file:/home/ubuntu/Code/Configd/configd-testkit/target/benchmarks.jar)
+WARNING: Please consider reporting this to the maintainers of class org.openjdk.jmh.util.Utils
+WARNING: sun.misc.Unsafe::objectFieldOffset will be removed in a future release
+# Warmup Iteration   1: 1080.855 ±(99.9%) 53.587 ns/op
+# Warmup Iteration   2: 1349.739 ±(99.9%) 491.067 ns/op
+# Warmup Iteration   3: 1116.951 ±(99.9%) 172.196 ns/op
+# Warmup Iteration   4: 1107.730 ±(99.9%) 120.057 ns/op
+# Warmup Iteration   5: 1085.250 ±(99.9%) 63.577 ns/op
+Iteration   1: 1122.074 ±(99.9%) 143.902 ns/op
+                 p0.00:   120.000 ns/op
+                 p0.50:   850.000 ns/op
+                 p0.90:   1140.000 ns/op
+                 p0.95:   1250.000 ns/op
+                 p0.99:   1540.000 ns/op
+                 p0.999:  29612.480 ns/op
+                 p0.9999: 266646.938 ns/op
+                 p1.00:   2035712.000 ns/op
+
+Iteration   2: 968.280 ±(99.9%) 39.740 ns/op
+                 p0.00:   120.000 ns/op
+                 p0.50:   840.000 ns/op
+                 p0.90:   1120.000 ns/op
+                 p0.95:   1220.000 ns/op
+                 p0.99:   1470.000 ns/op
+                 p0.999:  24039.552 ns/op
+                 p0.9999: 118945.382 ns/op
+                 p1.00:   1029120.000 ns/op
+
+Iteration   3: 1093.152 ±(99.9%) 87.880 ns/op
+                 p0.00:   100.000 ns/op
+                 p0.50:   870.000 ns/op
+                 p0.90:   1170.000 ns/op
+                 p0.95:   1280.000 ns/op
+                 p0.99:   1580.000 ns/op
+                 p0.999:  31799.168 ns/op
+                 p0.9999: 227373.005 ns/op
+                 p1.00:   2039808.000 ns/op
+
+Iteration   4: 1083.094 ±(99.9%) 51.413 ns/op
+                 p0.00:   120.000 ns/op
+                 p0.50:   870.000 ns/op
+                 p0.90:   1170.000 ns/op
+                 p0.95:   1280.000 ns/op
+                 p0.99:   1580.000 ns/op
+                 p0.999:  35315.712 ns/op
+                 p0.9999: 240755.712 ns/op
+                 p1.00:   666624.000 ns/op
+
+Iteration   5: 1053.868 ±(99.9%) 99.676 ns/op
+                 p0.00:   120.000 ns/op
+                 p0.50:   850.000 ns/op
+                 p0.90:   1140.000 ns/op
+                 p0.95:   1240.000 ns/op
+                 p0.99:   1520.000 ns/op
+                 p0.999:  27311.680 ns/op
+                 p0.9999: 239212.723 ns/op
+                 p1.00:   2031616.000 ns/op
+
+Iteration   6: 987.600 ±(99.9%) 69.553 ns/op
+                 p0.00:   100.000 ns/op
+                 p0.50:   840.000 ns/op
+                 p0.90:   1130.000 ns/op
+                 p0.95:   1240.000 ns/op
+                 p0.99:   1510.000 ns/op
+                 p0.999:  22632.448 ns/op
+                 p0.9999: 144888.218 ns/op
+                 p1.00:   2029568.000 ns/op
+
+Iteration   7: 1166.452 ±(99.9%) 96.741 ns/op
+                 p0.00:   110.000 ns/op
+                 p0.50:   890.000 ns/op
+                 p0.90:   1190.000 ns/op
+                 p0.95:   1310.000 ns/op
+                 p0.99:   1630.000 ns/op
+                 p0.999:  54210.176 ns/op
+                 p0.9999: 311411.712 ns/op
+                 p1.00:   2031616.000 ns/op
+
+Iteration   8: 1205.378 ±(99.9%) 126.100 ns/op
+                 p0.00:   110.000 ns/op
+                 p0.50:   880.000 ns/op
+                 p0.90:   1190.000 ns/op
+                 p0.95:   1310.000 ns/op
+                 p0.99:   1660.000 ns/op
+                 p0.999:  64808.192 ns/op
+                 p0.9999: 320566.886 ns/op
+                 p1.00:   2138112.000 ns/op
+
+Iteration   9: 1133.386 ±(99.9%) 106.900 ns/op
+                 p0.00:   100.000 ns/op
+                 p0.50:   870.000 ns/op
+                 p0.90:   1180.000 ns/op
+                 p0.95:   1300.000 ns/op
+                 p0.99:   1640.000 ns/op
+                 p0.999:  36774.400 ns/op
+                 p0.9999: 269578.240 ns/op
+                 p1.00:   2048000.000 ns/op
+
+Iteration  10: 1123.177 ±(99.9%) 88.582 ns/op
+                 p0.00:   100.000 ns/op
+                 p0.50:   880.000 ns/op
+                 p0.90:   1200.000 ns/op
+                 p0.95:   1320.000 ns/op
+                 p0.99:   1650.000 ns/op
+                 p0.999:  32778.432 ns/op
+                 p0.9999: 267190.477 ns/op
+                 p1.00:   2033664.000 ns/op
+
+Iteration  11: 1062.612 ±(99.9%) 58.536 ns/op
+                 p0.00:   100.000 ns/op
+                 p0.50:   860.000 ns/op
+                 p0.90:   1160.000 ns/op
+                 p0.95:   1280.000 ns/op
+                 p0.99:   1600.000 ns/op
+                 p0.999:  29640.992 ns/op
+                 p0.9999: 244494.541 ns/op
+                 p1.00:   1017856.000 ns/op
+
+Iteration  12: 1054.453 ±(99.9%) 41.706 ns/op
+                 p0.00:   110.000 ns/op
+                 p0.50:   870.000 ns/op
+                 p0.90:   1180.000 ns/op
+                 p0.95:   1300.000 ns/op
+                 p0.99:   1610.000 ns/op
+                 p0.999:  28712.768 ns/op
+                 p0.9999: 224036.710 ns/op
+                 p1.00:   331264.000 ns/op
+
+
+
+Result "io.configd.bench.LocalConfigStoreReadBenchmark.getIntoHit":
+  N = 1226486
+  mean =   1086.364 ±(99.9%) 25.892 ns/op
+
+  Histogram, ns/op:
+    [      0.000,  250000.000) = 1226377 
+    [ 250000.000,  500000.000) = 78 
+    [ 500000.000,  750000.000) = 8 
+    [ 750000.000, 1000000.000) = 2 
+    [1000000.000, 1250000.000) = 4 
+    [1250000.000, 1500000.000) = 2 
+    [1500000.000, 1750000.000) = 2 
+    [1750000.000, 2000000.000) = 0 
+    [2000000.000, 2250000.000) = 13 
+    [2250000.000, 2500000.000) = 0 
+    [2500000.000, 2750000.000) = 0 
+
+  Percentiles, ns/op:
+      p(0.0000) =    100.000 ns/op
+     p(50.0000) =    860.000 ns/op
+     p(90.0000) =   1170.000 ns/op
+     p(95.0000) =   1280.000 ns/op
+     p(99.0000) =   1590.000 ns/op
+     p(99.9000) =  31056.416 ns/op
+     p(99.9900) = 241152.000 ns/op
+     p(99.9990) = 2029025.546 ns/op
+     p(99.9999) = 2117702.803 ns/op
+    p(100.0000) = 2138112.000 ns/op
+
+
+# JMH version: 1.37
+# VM version: JDK 25, OpenJDK 64-Bit Server VM, 25+36-LTS
+# VM invoker: /home/ubuntu/.sdkman/candidates/java/25-amzn/bin/java
+# VM options: --enable-preview
+# Blackhole mode: compiler (auto-detected, use -Djmh.blackhole.autoDetect=false to disable)
+# Warmup: 5 iterations, 2 s each
+# Measurement: 12 iterations, 3 s each
+# Timeout: 10 min per iteration
+# Threads: 1 thread, will synchronize iterations
+# Benchmark mode: Sampling time
+# Benchmark: io.configd.bench.LocalConfigStoreReadBenchmark.getMiss
+# Parameters: (size = 10000)
+
+# Run progress: 66.67% complete, ETA 00:02:22
+# Fork: 1 of 1
+WARNING: A terminally deprecated method in sun.misc.Unsafe has been called
+WARNING: sun.misc.Unsafe::objectFieldOffset has been called by org.openjdk.jmh.util.Utils (file:/home/ubuntu/Code/Configd/configd-testkit/target/benchmarks.jar)
+WARNING: Please consider reporting this to the maintainers of class org.openjdk.jmh.util.Utils
+WARNING: sun.misc.Unsafe::objectFieldOffset will be removed in a future release
+# Warmup Iteration   1: 169.737 ±(99.9%) 172.019 ns/op
+# Warmup Iteration   2: 87.469 ±(99.9%) 64.191 ns/op
+# Warmup Iteration   3: 76.917 ±(99.9%) 25.118 ns/op
+# Warmup Iteration   4: 65.603 ±(99.9%) 13.822 ns/op
+# Warmup Iteration   5: 59.208 ±(99.9%) 7.272 ns/op
+Iteration   1: 69.605 ±(99.9%) 16.092 ns/op
+                 p0.00:   40.000 ns/op
+                 p0.50:   50.000 ns/op
+                 p0.90:   50.000 ns/op
+                 p0.95:   60.000 ns/op
+                 p0.99:   140.000 ns/op
+                 p0.999:  850.000 ns/op
+                 p0.9999: 26817.946 ns/op
+                 p1.00:   323072.000 ns/op
+
+Iteration   2: 58.804 ±(99.9%) 9.032 ns/op
+                 p0.00:   40.000 ns/op
+                 p0.50:   50.000 ns/op
+                 p0.90:   50.000 ns/op
+                 p0.95:   60.000 ns/op
+                 p0.99:   110.000 ns/op
+                 p0.999:  580.740 ns/op
+                 p0.9999: 18095.398 ns/op
+                 p1.00:   227584.000 ns/op
+
+Iteration   3: 77.209 ±(99.9%) 40.814 ns/op
+                 p0.00:   40.000 ns/op
+                 p0.50:   50.000 ns/op
+                 p0.90:   50.000 ns/op
+                 p0.95:   60.000 ns/op
+                 p0.99:   120.000 ns/op
+                 p0.999:  680.000 ns/op
+                 p0.9999: 23553.888 ns/op
+                 p1.00:   1105920.000 ns/op
+
+Iteration   4: 91.563 ±(99.9%) 72.591 ns/op
+                 p0.00:   40.000 ns/op
+                 p0.50:   50.000 ns/op
+                 p0.90:   50.000 ns/op
+                 p0.95:   60.000 ns/op
+                 p0.99:   130.000 ns/op
+                 p0.999:  840.000 ns/op
+                 p0.9999: 53773.107 ns/op
+                 p1.00:   2033664.000 ns/op
+
+Iteration   5: 78.701 ±(99.9%) 17.128 ns/op
+                 p0.00:   40.000 ns/op
+                 p0.50:   50.000 ns/op
+                 p0.90:   50.000 ns/op
+                 p0.95:   60.000 ns/op
+                 p0.99:   120.000 ns/op
+                 p0.999:  949.810 ns/op
+                 p0.9999: 95433.946 ns/op
+                 p1.00:   210944.000 ns/op
+
+Iteration   6: 66.123 ±(99.9%) 10.085 ns/op
+                 p0.00:   40.000 ns/op
+                 p0.50:   50.000 ns/op
+                 p0.90:   50.000 ns/op
+                 p0.95:   60.000 ns/op
+                 p0.99:   130.000 ns/op
+                 p0.999:  650.790 ns/op
+                 p0.9999: 42615.430 ns/op
+                 p1.00:   141312.000 ns/op
+
+Iteration   7: 67.766 ±(99.9%) 12.538 ns/op
+                 p0.00:   40.000 ns/op
+                 p0.50:   50.000 ns/op
+                 p0.90:   50.000 ns/op
+                 p0.95:   60.000 ns/op
+                 p0.99:   120.000 ns/op
+                 p0.999:  856.790 ns/op
+                 p0.9999: 33624.723 ns/op
+                 p1.00:   271872.000 ns/op
+
+Iteration   8: 108.319 ±(99.9%) 78.889 ns/op
+                 p0.00:   40.000 ns/op
+                 p0.50:   50.000 ns/op
+                 p0.90:   50.000 ns/op
+                 p0.95:   60.000 ns/op
+                 p0.99:   130.000 ns/op
+                 p0.999:  757.460 ns/op
+                 p0.9999: 98707.482 ns/op
+                 p1.00:   2027520.000 ns/op
+
+Iteration   9: 93.555 ±(99.9%) 78.923 ns/op
+                 p0.00:   40.000 ns/op
+                 p0.50:   50.000 ns/op
+                 p0.90:   50.000 ns/op
+                 p0.95:   60.000 ns/op
+                 p0.99:   120.000 ns/op
+                 p0.999:  720.210 ns/op
+                 p0.9999: 23654.938 ns/op
+                 p1.00:   2029568.000 ns/op
+
+Iteration  10: 77.392 ±(99.9%) 37.112 ns/op
+                 p0.00:   40.000 ns/op
+                 p0.50:   50.000 ns/op
+                 p0.90:   50.000 ns/op
+                 p0.95:   60.000 ns/op
+                 p0.99:   120.280 ns/op
+                 p0.999:  860.280 ns/op
+                 p0.9999: 31304.064 ns/op
+                 p1.00:   1030144.000 ns/op
+
+Iteration  11: 70.477 ±(99.9%) 17.384 ns/op
+                 p0.00:   40.000 ns/op
+                 p0.50:   50.000 ns/op
+                 p0.90:   50.000 ns/op
+                 p0.95:   60.000 ns/op
+                 p0.99:   140.000 ns/op
+                 p0.999:  1053.110 ns/op
+                 p0.9999: 27719.011 ns/op
+                 p1.00:   424960.000 ns/op
+
+Iteration  12: 88.468 ±(99.9%) 34.753 ns/op
+                 p0.00:   40.000 ns/op
+                 p0.50:   50.000 ns/op
+                 p0.90:   50.000 ns/op
+                 p0.95:   60.000 ns/op
+                 p0.99:   130.000 ns/op
+                 p0.999:  840.000 ns/op
+                 p0.9999: 86374.592 ns/op
+                 p1.00:   579584.000 ns/op
+
+
+
+Result "io.configd.bench.LocalConfigStoreReadBenchmark.getMiss":
+  N = 1132080
+  mean =     78.958 ±(99.9%) 12.665 ns/op
+
+  Histogram, ns/op:
+    [      0.000,  250000.000) = 1132062 
+    [ 250000.000,  500000.000) = 10 
+    [ 500000.000,  750000.000) = 2 
+    [ 750000.000, 1000000.000) = 0 
+    [1000000.000, 1250000.000) = 3 
+    [1250000.000, 1500000.000) = 0 
+    [1500000.000, 1750000.000) = 0 
+    [1750000.000, 2000000.000) = 0 
+    [2000000.000, 2250000.000) = 3 
+    [2250000.000, 2500000.000) = 0 
+    [2500000.000, 2750000.000) = 0 
+
+  Percentiles, ns/op:
+      p(0.0000) =     40.000 ns/op
+     p(50.0000) =     50.000 ns/op
+     p(90.0000) =     50.000 ns/op
+     p(95.0000) =     60.000 ns/op
+     p(99.0000) =    120.000 ns/op
+     p(99.9000) =    780.000 ns/op
+     p(99.9900) =  36341.632 ns/op
+     p(99.9990) = 394139.320 ns/op
+     p(99.9999) = 2033122.996 ns/op
+    p(100.0000) = 2033664.000 ns/op
+
+
+# JMH version: 1.37
+# VM version: JDK 25, OpenJDK 64-Bit Server VM, 25+36-LTS
+# VM invoker: /home/ubuntu/.sdkman/candidates/java/25-amzn/bin/java
+# VM options: --enable-preview
+# Blackhole mode: compiler (auto-detected, use -Djmh.blackhole.autoDetect=false to disable)
+# Warmup: 5 iterations, 2 s each
+# Measurement: 12 iterations, 3 s each
+# Timeout: 10 min per iteration
+# Threads: 1 thread, will synchronize iterations
+# Benchmark mode: Sampling time
+# Benchmark: io.configd.bench.LocalConfigStoreReadBenchmark.getMiss
+# Parameters: (size = 100000)
+
+# Run progress: 77.78% complete, ETA 00:01:34
+# Fork: 1 of 1
+WARNING: A terminally deprecated method in sun.misc.Unsafe has been called
+WARNING: sun.misc.Unsafe::objectFieldOffset has been called by org.openjdk.jmh.util.Utils (file:/home/ubuntu/Code/Configd/configd-testkit/target/benchmarks.jar)
+WARNING: Please consider reporting this to the maintainers of class org.openjdk.jmh.util.Utils
+WARNING: sun.misc.Unsafe::objectFieldOffset will be removed in a future release
+# Warmup Iteration   1: 151.897 ±(99.9%) 89.404 ns/op
+# Warmup Iteration   2: 174.987 ±(99.9%) 219.046 ns/op
+# Warmup Iteration   3: 149.483 ±(99.9%) 209.139 ns/op
+# Warmup Iteration   4: 141.006 ±(99.9%) 178.470 ns/op
+# Warmup Iteration   5: 70.614 ±(99.9%) 11.092 ns/op
+Iteration   1: 102.071 ±(99.9%) 29.735 ns/op
+                 p0.00:   50.000 ns/op
+                 p0.50:   50.000 ns/op
+                 p0.90:   60.000 ns/op
+                 p0.95:   60.000 ns/op
+                 p0.99:   160.000 ns/op
+                 p0.999:  9038.400 ns/op
+                 p0.9999: 121799.526 ns/op
+                 p1.00:   239360.000 ns/op
+
+Iteration   2: 93.636 ±(99.9%) 33.168 ns/op
+                 p0.00:   50.000 ns/op
+                 p0.50:   50.000 ns/op
+                 p0.90:   60.000 ns/op
+                 p0.95:   60.000 ns/op
+                 p0.99:   160.000 ns/op
+                 p0.999:  1373.360 ns/op
+                 p0.9999: 92844.378 ns/op
+                 p1.00:   467456.000 ns/op
+
+Iteration   3: 117.007 ±(99.9%) 52.573 ns/op
+                 p0.00:   50.000 ns/op
+                 p0.50:   50.000 ns/op
+                 p0.90:   60.000 ns/op
+                 p0.95:   60.000 ns/op
+                 p0.99:   160.000 ns/op
+                 p0.999:  10342.592 ns/op
+                 p0.9999: 133735.654 ns/op
+                 p1.00:   836608.000 ns/op
+
+Iteration   4: 164.473 ±(99.9%) 194.135 ns/op
+                 p0.00:   50.000 ns/op
+                 p0.50:   50.000 ns/op
+                 p0.90:   60.000 ns/op
+                 p0.95:   60.000 ns/op
+                 p0.99:   150.000 ns/op
+                 p0.999:  7908.464 ns/op
+                 p0.9999: 188261.043 ns/op
+                 p1.00:   3641344.000 ns/op
+
+Iteration   5: 84.330 ±(99.9%) 20.254 ns/op
+                 p0.00:   50.000 ns/op
+                 p0.50:   50.000 ns/op
+                 p0.90:   60.000 ns/op
+                 p0.95:   60.000 ns/op
+                 p0.99:   160.000 ns/op
+                 p0.999:  3743.260 ns/op
+                 p0.9999: 51075.226 ns/op
+                 p1.00:   213248.000 ns/op
+
+Iteration   6: 114.595 ±(99.9%) 94.705 ns/op
+                 p0.00:   50.000 ns/op
+                 p0.50:   50.000 ns/op
+                 p0.90:   60.000 ns/op
+                 p0.95:   60.000 ns/op
+                 p0.99:   160.000 ns/op
+                 p0.999:  7074.368 ns/op
+                 p0.9999: 70309.888 ns/op
+                 p1.00:   1775616.000 ns/op
+
+Iteration   7: 91.864 ±(99.9%) 24.732 ns/op
+                 p0.00:   50.000 ns/op
+                 p0.50:   50.000 ns/op
+                 p0.90:   60.000 ns/op
+                 p0.95:   60.000 ns/op
+                 p0.99:   160.000 ns/op
+                 p0.999:  3826.240 ns/op
+                 p0.9999: 67573.453 ns/op
+                 p1.00:   283136.000 ns/op
+
+Iteration   8: 78.276 ±(99.9%) 20.093 ns/op
+                 p0.00:   50.000 ns/op
+                 p0.50:   50.000 ns/op
+                 p0.90:   60.000 ns/op
+                 p0.95:   60.000 ns/op
+                 p0.99:   140.000 ns/op
+                 p0.999:  1048.710 ns/op
+                 p0.9999: 25883.738 ns/op
+                 p1.00:   276480.000 ns/op
+
+Iteration   9: 87.262 ±(99.9%) 19.691 ns/op
+                 p0.00:   50.000 ns/op
+                 p0.50:   50.000 ns/op
+                 p0.90:   60.000 ns/op
+                 p0.95:   60.000 ns/op
+                 p0.99:   150.000 ns/op
+                 p0.999:  7079.520 ns/op
+                 p0.9999: 87987.328 ns/op
+                 p1.00:   186624.000 ns/op
+
+Iteration  10: 97.393 ±(99.9%) 25.500 ns/op
+                 p0.00:   50.000 ns/op
+                 p0.50:   50.000 ns/op
+                 p0.90:   60.000 ns/op
+                 p0.95:   60.000 ns/op
+                 p0.99:   140.000 ns/op
+                 p0.999:  9153.600 ns/op
+                 p0.9999: 109021.184 ns/op
+                 p1.00:   201216.000 ns/op
+
+Iteration  11: 135.254 ±(99.9%) 88.829 ns/op
+                 p0.00:   50.000 ns/op
+                 p0.50:   50.000 ns/op
+                 p0.90:   60.000 ns/op
+                 p0.95:   60.000 ns/op
+                 p0.99:   170.000 ns/op
+                 p0.999:  8922.080 ns/op
+                 p0.9999: 175299.635 ns/op
+                 p1.00:   1292288.000 ns/op
+
+Iteration  12: 89.334 ±(99.9%) 30.956 ns/op
+                 p0.00:   50.000 ns/op
+                 p0.50:   50.000 ns/op
+                 p0.90:   60.000 ns/op
+                 p0.95:   60.000 ns/op
+                 p0.99:   150.000 ns/op
+                 p0.999:  1360.940 ns/op
+                 p0.9999: 86770.637 ns/op
+                 p1.00:   471040.000 ns/op
+
+
+
+Result "io.configd.bench.LocalConfigStoreReadBenchmark.getMiss":
+  N = 760670
+  mean =    104.545 ±(99.9%) 20.848 ns/op
+
+  Histogram, ns/op:
+    [      0.000,  250000.000) = 760657 
+    [ 250000.000,  500000.000) = 7 
+    [ 500000.000,  750000.000) = 1 
+    [ 750000.000, 1000000.000) = 2 
+    [1000000.000, 1250000.000) = 0 
+    [1250000.000, 1500000.000) = 1 
+    [1500000.000, 1750000.000) = 0 
+    [1750000.000, 2000000.000) = 1 
+    [2000000.000, 2250000.000) = 0 
+    [2250000.000, 2500000.000) = 0 
+    [2500000.000, 2750000.000) = 0 
+    [2750000.000, 3000000.000) = 0 
+    [3000000.000, 3250000.000) = 0 
+    [3250000.000, 3500000.000) = 0 
+    [3500000.000, 3750000.000) = 1 
+
+  Percentiles, ns/op:
+      p(0.0000) =     50.000 ns/op
+     p(50.0000) =     50.000 ns/op
+     p(90.0000) =     60.000 ns/op
+     p(95.0000) =     60.000 ns/op
+     p(99.0000) =    150.000 ns/op
+     p(99.9000) =   4786.528 ns/op
+     p(99.9900) =  93312.000 ns/op
+     p(99.9990) = 468865.551 ns/op
+     p(99.9999) = 3641344.000 ns/op
+    p(100.0000) = 3641344.000 ns/op
+
+
+# JMH version: 1.37
+# VM version: JDK 25, OpenJDK 64-Bit Server VM, 25+36-LTS
+# VM invoker: /home/ubuntu/.sdkman/candidates/java/25-amzn/bin/java
+# VM options: --enable-preview
+# Blackhole mode: compiler (auto-detected, use -Djmh.blackhole.autoDetect=false to disable)
+# Warmup: 5 iterations, 2 s each
+# Measurement: 12 iterations, 3 s each
+# Timeout: 10 min per iteration
+# Threads: 1 thread, will synchronize iterations
+# Benchmark mode: Sampling time
+# Benchmark: io.configd.bench.LocalConfigStoreReadBenchmark.getMiss
+# Parameters: (size = 1000000)
+
+# Run progress: 88.89% complete, ETA 00:00:47
+# Fork: 1 of 1
+WARNING: A terminally deprecated method in sun.misc.Unsafe has been called
+WARNING: sun.misc.Unsafe::objectFieldOffset has been called by org.openjdk.jmh.util.Utils (file:/home/ubuntu/Code/Configd/configd-testkit/target/benchmarks.jar)
+WARNING: Please consider reporting this to the maintainers of class org.openjdk.jmh.util.Utils
+WARNING: sun.misc.Unsafe::objectFieldOffset will be removed in a future release
+# Warmup Iteration   1: 98.886 ±(99.9%) 35.913 ns/op
+# Warmup Iteration   2: 72.638 ±(99.9%) 13.366 ns/op
+# Warmup Iteration   3: 71.336 ±(99.9%) 16.412 ns/op
+# Warmup Iteration   4: 61.027 ±(99.9%) 7.417 ns/op
+# Warmup Iteration   5: 73.169 ±(99.9%) 22.188 ns/op
+Iteration   1: 81.951 ±(99.9%) 28.157 ns/op
+                 p0.00:   40.000 ns/op
+                 p0.50:   50.000 ns/op
+                 p0.90:   60.000 ns/op
+                 p0.95:   60.000 ns/op
+                 p0.99:   130.000 ns/op
+                 p0.999:  1120.560 ns/op
+                 p0.9999: 85072.486 ns/op
+                 p1.00:   439296.000 ns/op
+
+Iteration   2: 83.830 ±(99.9%) 48.464 ns/op
+                 p0.00:   40.000 ns/op
+                 p0.50:   50.000 ns/op
+                 p0.90:   60.000 ns/op
+                 p0.95:   60.000 ns/op
+                 p0.99:   140.000 ns/op
+                 p0.999:  1298.780 ns/op
+                 p0.9999: 37284.506 ns/op
+                 p1.00:   1058816.000 ns/op
+
+Iteration   3: 64.469 ±(99.9%) 12.086 ns/op
+                 p0.00:   40.000 ns/op
+                 p0.50:   50.000 ns/op
+                 p0.90:   50.000 ns/op
+                 p0.95:   60.000 ns/op
+                 p0.99:   140.000 ns/op
+                 p0.999:  951.960 ns/op
+                 p0.9999: 23198.618 ns/op
+                 p1.00:   186112.000 ns/op
+
+Iteration   4: 84.995 ±(99.9%) 26.544 ns/op
+                 p0.00:   40.000 ns/op
+                 p0.50:   50.000 ns/op
+                 p0.90:   60.000 ns/op
+                 p0.95:   60.000 ns/op
+                 p0.99:   130.000 ns/op
+                 p0.999:  1223.950 ns/op
+                 p0.9999: 96115.968 ns/op
+                 p1.00:   361472.000 ns/op
+
+Iteration   5: 89.473 ±(99.9%) 29.976 ns/op
+                 p0.00:   40.000 ns/op
+                 p0.50:   50.000 ns/op
+                 p0.90:   60.000 ns/op
+                 p0.95:   60.000 ns/op
+                 p0.99:   140.000 ns/op
+                 p0.999:  1453.600 ns/op
+                 p0.9999: 99969.434 ns/op
+                 p1.00:   336896.000 ns/op
+
+Iteration   6: 86.488 ±(99.9%) 23.513 ns/op
+                 p0.00:   40.000 ns/op
+                 p0.50:   50.000 ns/op
+                 p0.90:   60.000 ns/op
+                 p0.95:   60.000 ns/op
+                 p0.99:   140.000 ns/op
+                 p0.999:  2410.540 ns/op
+                 p0.9999: 100408.909 ns/op
+                 p1.00:   237056.000 ns/op
+
+Iteration   7: 71.862 ±(99.9%) 11.229 ns/op
+                 p0.00:   40.000 ns/op
+                 p0.50:   50.000 ns/op
+                 p0.90:   60.000 ns/op
+                 p0.95:   60.000 ns/op
+                 p0.99:   140.000 ns/op
+                 p0.999:  1163.370 ns/op
+                 p0.9999: 45101.600 ns/op
+                 p1.00:   102400.000 ns/op
+
+Iteration   8: 72.533 ±(99.9%) 10.074 ns/op
+                 p0.00:   40.000 ns/op
+                 p0.50:   50.000 ns/op
+                 p0.90:   60.000 ns/op
+                 p0.95:   70.000 ns/op
+                 p0.99:   190.000 ns/op
+                 p0.999:  1197.290 ns/op
+                 p0.9999: 27055.264 ns/op
+                 p1.00:   131584.000 ns/op
+
+Iteration   9: 103.400 ±(99.9%) 93.381 ns/op
+                 p0.00:   40.000 ns/op
+                 p0.50:   50.000 ns/op
+                 p0.90:   60.000 ns/op
+                 p0.95:   60.000 ns/op
+                 p0.99:   150.000 ns/op
+                 p0.999:  1276.400 ns/op
+                 p0.9999: 38733.824 ns/op
+                 p1.00:   2037760.000 ns/op
+
+Iteration  10: 84.420 ±(99.9%) 21.028 ns/op
+                 p0.00:   40.000 ns/op
+                 p0.50:   50.000 ns/op
+                 p0.90:   60.000 ns/op
+                 p0.95:   60.000 ns/op
+                 p0.99:   150.000 ns/op
+                 p0.999:  1205.860 ns/op
+                 p0.9999: 90187.008 ns/op
+                 p1.00:   221184.000 ns/op
+
+Iteration  11: 83.391 ±(99.9%) 24.857 ns/op
+                 p0.00:   40.000 ns/op
+                 p0.50:   50.000 ns/op
+                 p0.90:   50.000 ns/op
+                 p0.95:   60.000 ns/op
+                 p0.99:   140.000 ns/op
+                 p0.999:  1163.230 ns/op
+                 p0.9999: 97232.934 ns/op
+                 p1.00:   299008.000 ns/op
+
+Iteration  12: 72.762 ±(99.9%) 12.731 ns/op
+                 p0.00:   40.000 ns/op
+                 p0.50:   50.000 ns/op
+                 p0.90:   50.000 ns/op
+                 p0.95:   60.000 ns/op
+                 p0.99:   130.000 ns/op
+                 p0.999:  1245.020 ns/op
+                 p0.9999: 57169.651 ns/op
+                 p1.00:   129792.000 ns/op
+
+
+
+Result "io.configd.bench.LocalConfigStoreReadBenchmark.getMiss":
+  N = 875667
+  mean =     81.651 ±(99.9%) 10.446 ns/op
+
+  Histogram, ns/op:
+    [      0.000,  250000.000) = 875657 
+    [ 250000.000,  500000.000) = 8 
+    [ 500000.000,  750000.000) = 0 
+    [ 750000.000, 1000000.000) = 0 
+    [1000000.000, 1250000.000) = 1 
+    [1250000.000, 1500000.000) = 0 
+    [1500000.000, 1750000.000) = 0 
+    [1750000.000, 2000000.000) = 0 
+    [2000000.000, 2250000.000) = 1 
+    [2250000.000, 2500000.000) = 0 
+    [2500000.000, 2750000.000) = 0 
+
+  Percentiles, ns/op:
+      p(0.0000) =     40.000 ns/op
+     p(50.0000) =     50.000 ns/op
+     p(90.0000) =     60.000 ns/op
+     p(95.0000) =     60.000 ns/op
+     p(99.0000) =    140.000 ns/op
+     p(99.9000) =   1210.000 ns/op
+     p(99.9900) =  60883.174 ns/op
+     p(99.9990) = 289322.496 ns/op
+     p(99.9999) = 2037760.000 ns/op
+    p(100.0000) = 2037760.000 ns/op
+
+
+# Run complete. Total time: 00:07:07
+
+REMEMBER: The numbers below are just data. To gain reusable insights, you need to follow up on
+why the numbers are the way they are. Use profilers (see -prof, -lprof), design factorial
+experiments, perform baseline and negative tests that provide experimental control, make sure
+the benchmarking environment is safe on JVM/OS/HW level, ask for reviews from the domain experts.
+Do not assume the numbers tell you what you want them to tell.
+
+NOTE: Current JVM experimentally supports Compiler Blackholes, and they are in use. Please exercise
+extra caution when trusting the results, look into the generated code to check the benchmark still
+works, and factor in a small probability of new VM bugs. Additionally, while comparisons between
+different JVMs are already problematic, the performance difference caused by different Blackhole
+modes can be very significant. Please make sure you use the consistent Blackhole mode for comparisons.
+
+Benchmark                                                (size)    Mode      Cnt         Score     Error  Units
+LocalConfigStoreReadBenchmark.getHitWithCursor            10000  sample  1325996       245.978 ±  33.161  ns/op
+LocalConfigStoreReadBenchmark.getHitWithCursor:p0.00      10000  sample                 60.000            ns/op
+LocalConfigStoreReadBenchmark.getHitWithCursor:p0.50      10000  sample                120.000            ns/op
+LocalConfigStoreReadBenchmark.getHitWithCursor:p0.90      10000  sample                190.000            ns/op
+LocalConfigStoreReadBenchmark.getHitWithCursor:p0.95      10000  sample                240.000            ns/op
+LocalConfigStoreReadBenchmark.getHitWithCursor:p0.99      10000  sample                460.000            ns/op
+LocalConfigStoreReadBenchmark.getHitWithCursor:p0.999     10000  sample              14848.000            ns/op
+LocalConfigStoreReadBenchmark.getHitWithCursor:p0.9999    10000  sample             142745.907            ns/op
+LocalConfigStoreReadBenchmark.getHitWithCursor:p1.00      10000  sample            5029888.000            ns/op
+LocalConfigStoreReadBenchmark.getHitWithCursor           100000  sample  1315246       572.608 ±  29.267  ns/op
+LocalConfigStoreReadBenchmark.getHitWithCursor:p0.00     100000  sample                 70.000            ns/op
+LocalConfigStoreReadBenchmark.getHitWithCursor:p0.50     100000  sample                430.000            ns/op
+LocalConfigStoreReadBenchmark.getHitWithCursor:p0.90     100000  sample                600.000            ns/op
+LocalConfigStoreReadBenchmark.getHitWithCursor:p0.95     100000  sample                700.000            ns/op
+LocalConfigStoreReadBenchmark.getHitWithCursor:p0.99     100000  sample                920.000            ns/op
+LocalConfigStoreReadBenchmark.getHitWithCursor:p0.999    100000  sample              22144.000            ns/op
+LocalConfigStoreReadBenchmark.getHitWithCursor:p0.9999   100000  sample             183002.061            ns/op
+LocalConfigStoreReadBenchmark.getHitWithCursor:p1.00     100000  sample            6045696.000            ns/op
+LocalConfigStoreReadBenchmark.getHitWithCursor          1000000  sample  1177023      1100.484 ± 260.676  ns/op
+LocalConfigStoreReadBenchmark.getHitWithCursor:p0.00    1000000  sample                100.000            ns/op
+LocalConfigStoreReadBenchmark.getHitWithCursor:p0.50    1000000  sample                770.000            ns/op
+LocalConfigStoreReadBenchmark.getHitWithCursor:p0.90    1000000  sample               1060.000            ns/op
+LocalConfigStoreReadBenchmark.getHitWithCursor:p0.95    1000000  sample               1180.000            ns/op
+LocalConfigStoreReadBenchmark.getHitWithCursor:p0.99    1000000  sample               1600.000            ns/op
+LocalConfigStoreReadBenchmark.getHitWithCursor:p0.999   1000000  sample              32350.464            ns/op
+LocalConfigStoreReadBenchmark.getHitWithCursor:p0.9999  1000000  sample             231756.186            ns/op
+LocalConfigStoreReadBenchmark.getHitWithCursor:p1.00    1000000  sample           92274688.000            ns/op
+LocalConfigStoreReadBenchmark.getIntoHit                  10000  sample  1074782       272.005 ±  31.460  ns/op
+LocalConfigStoreReadBenchmark.getIntoHit:p0.00            10000  sample                 70.000            ns/op
+LocalConfigStoreReadBenchmark.getIntoHit:p0.50            10000  sample                140.000            ns/op
+LocalConfigStoreReadBenchmark.getIntoHit:p0.90            10000  sample                230.000            ns/op
+LocalConfigStoreReadBenchmark.getIntoHit:p0.95            10000  sample                290.000            ns/op
+LocalConfigStoreReadBenchmark.getIntoHit:p0.99            10000  sample                540.000            ns/op
+LocalConfigStoreReadBenchmark.getIntoHit:p0.999           10000  sample              18816.000            ns/op
+LocalConfigStoreReadBenchmark.getIntoHit:p0.9999          10000  sample             173701.555            ns/op
+LocalConfigStoreReadBenchmark.getIntoHit:p1.00            10000  sample            5046272.000            ns/op
+LocalConfigStoreReadBenchmark.getIntoHit                 100000  sample  1057563       738.087 ±  45.229  ns/op
+LocalConfigStoreReadBenchmark.getIntoHit:p0.00           100000  sample                 80.000            ns/op
+LocalConfigStoreReadBenchmark.getIntoHit:p0.50           100000  sample                510.000            ns/op
+LocalConfigStoreReadBenchmark.getIntoHit:p0.90           100000  sample                730.000            ns/op
+LocalConfigStoreReadBenchmark.getIntoHit:p0.95           100000  sample                830.000            ns/op
+LocalConfigStoreReadBenchmark.getIntoHit:p0.99           100000  sample               1090.000            ns/op
+LocalConfigStoreReadBenchmark.getIntoHit:p0.999          100000  sample              29773.952            ns/op
+LocalConfigStoreReadBenchmark.getIntoHit:p0.9999         100000  sample             227515.085            ns/op
+LocalConfigStoreReadBenchmark.getIntoHit:p1.00           100000  sample            8093696.000            ns/op
+LocalConfigStoreReadBenchmark.getIntoHit                1000000  sample  1226486      1086.364 ±  25.892  ns/op
+LocalConfigStoreReadBenchmark.getIntoHit:p0.00          1000000  sample                100.000            ns/op
+LocalConfigStoreReadBenchmark.getIntoHit:p0.50          1000000  sample                860.000            ns/op
+LocalConfigStoreReadBenchmark.getIntoHit:p0.90          1000000  sample               1170.000            ns/op
+LocalConfigStoreReadBenchmark.getIntoHit:p0.95          1000000  sample               1280.000            ns/op
+LocalConfigStoreReadBenchmark.getIntoHit:p0.99          1000000  sample               1590.000            ns/op
+LocalConfigStoreReadBenchmark.getIntoHit:p0.999         1000000  sample              31056.416            ns/op
+LocalConfigStoreReadBenchmark.getIntoHit:p0.9999        1000000  sample             241152.000            ns/op
+LocalConfigStoreReadBenchmark.getIntoHit:p1.00          1000000  sample            2138112.000            ns/op
+LocalConfigStoreReadBenchmark.getMiss                     10000  sample  1132080        78.958 ±  12.665  ns/op
+LocalConfigStoreReadBenchmark.getMiss:p0.00               10000  sample                 40.000            ns/op
+LocalConfigStoreReadBenchmark.getMiss:p0.50               10000  sample                 50.000            ns/op
+LocalConfigStoreReadBenchmark.getMiss:p0.90               10000  sample                 50.000            ns/op
+LocalConfigStoreReadBenchmark.getMiss:p0.95               10000  sample                 60.000            ns/op
+LocalConfigStoreReadBenchmark.getMiss:p0.99               10000  sample                120.000            ns/op
+LocalConfigStoreReadBenchmark.getMiss:p0.999              10000  sample                780.000            ns/op
+LocalConfigStoreReadBenchmark.getMiss:p0.9999             10000  sample              36341.632            ns/op
+LocalConfigStoreReadBenchmark.getMiss:p1.00               10000  sample            2033664.000            ns/op
+LocalConfigStoreReadBenchmark.getMiss                    100000  sample   760670       104.545 ±  20.848  ns/op
+LocalConfigStoreReadBenchmark.getMiss:p0.00              100000  sample                 50.000            ns/op
+LocalConfigStoreReadBenchmark.getMiss:p0.50              100000  sample                 50.000            ns/op
+LocalConfigStoreReadBenchmark.getMiss:p0.90              100000  sample                 60.000            ns/op
+LocalConfigStoreReadBenchmark.getMiss:p0.95              100000  sample                 60.000            ns/op
+LocalConfigStoreReadBenchmark.getMiss:p0.99              100000  sample                150.000            ns/op
+LocalConfigStoreReadBenchmark.getMiss:p0.999             100000  sample               4786.528            ns/op
+LocalConfigStoreReadBenchmark.getMiss:p0.9999            100000  sample              93312.000            ns/op
+LocalConfigStoreReadBenchmark.getMiss:p1.00              100000  sample            3641344.000            ns/op
+LocalConfigStoreReadBenchmark.getMiss                   1000000  sample   875667        81.651 ±  10.446  ns/op
+LocalConfigStoreReadBenchmark.getMiss:p0.00             1000000  sample                 40.000            ns/op
+LocalConfigStoreReadBenchmark.getMiss:p0.50             1000000  sample                 50.000            ns/op
+LocalConfigStoreReadBenchmark.getMiss:p0.90             1000000  sample                 60.000            ns/op
+LocalConfigStoreReadBenchmark.getMiss:p0.95             1000000  sample                 60.000            ns/op
+LocalConfigStoreReadBenchmark.getMiss:p0.99             1000000  sample                140.000            ns/op
+LocalConfigStoreReadBenchmark.getMiss:p0.999            1000000  sample               1210.000            ns/op
+LocalConfigStoreReadBenchmark.getMiss:p0.9999           1000000  sample              60883.174            ns/op
+LocalConfigStoreReadBenchmark.getMiss:p1.00             1000000  sample            2037760.000            ns/op

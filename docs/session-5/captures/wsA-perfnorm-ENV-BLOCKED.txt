@@ -1,0 +1,9 @@
+# Workstream A / A3 — perfnorm attempt (lock-event evidence) — ENV-BLOCKED on this box
+# date: 2026-06-14T02:27:32Z  git: 1bd8a70
+# /proc/sys/kernel/perf_event_paranoid = 4
+# perf binary present: /usr/bin/perf
+# perf_event_paranoid=4 blocks non-root hardware perf counters; JMH -prof perfnorm cannot initialize.
+# invocation: java --enable-preview -jar configd-testkit/target/benchmarks.jar 'LocalConfigStoreReadBenchmark.getHitWithCursor$' -p size=10000 -prof perfnorm -f 1 -wi 1 -i 1 -w 1 -r 1
+
+Profilers failed to initialize, exiting.
+No supported events.
