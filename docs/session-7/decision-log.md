@@ -82,6 +82,21 @@ items folded in by the lead before commit** (each with a new locking test in `In
 
 ---
 
+## D-4 (SCOPE) — Workstreams B/C/D/E run sequentially, not in parallel
+
+**Question.** Charter §12.3 suggests B/C/D/E proceed "in parallel across specialist agents." Do that,
+or sequence them?
+
+**Resolution (conservative default).** Run them as **sequential committed seams**. Two concrete
+reasons: (1) the box is **2 vCPU** (documented env gotcha — "never run two heavy jobs at once");
+four agents each running `./mvnw` build/test would thrash and risk flaky timeouts. (2) B, C, E and
+the gate-7 assembly all touch `ci.yml` and/or root `pom.xml`; serializing avoids merge races. CI
+wiring (gate-7, nightly fuzz lane, CVE/gitleaks lanes) is **centralized in Seam 6** — the workstream
+agents produce tests/code + the lane snippet they need, and the lead assembles `ci.yml` once. Each
+control still gets its negative test before its config is touched (§2.1). Logged per §1 scope rule.
+
+---
+
 ## D-2 (SCOPE) — Session sequencing: A first and alone, then B/C/D/E
 
 **Question.** The charter (§12) prescribes threat-model → Workstream A (PA-2021) with most care →
