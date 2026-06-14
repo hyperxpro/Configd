@@ -27,8 +27,12 @@ labelled.
 
 - WAL/snapshot crash-recovery restart (kill -9 at each lifecycle state) — Workstream B kill matrix.
 - InstallSnapshot-on-follower interrupted + resumed — Workstream B.
-- Majority/minority partition heal → leader re-establishment — Workstream C partition matrix.
-- Asymmetric partition recovery — Workstream C.
+- ~~Majority/minority partition heal → leader re-establishment~~ **DONE (EXP-009, `PartitionMatrixTest`,
+  12 seeds, sim ticks):** single-region isolation → majority re-elect worst **703**, whole-cluster
+  convergence after heal worst **59**; leader-isolation (1 vs 4) re-elect worst **543**. Asymmetric /
+  partial / gray-failure / clock-skew: safety held throughout, bounded convergence after heal (no
+  numeric re-elect bound — those soak then heal). All measured continuously (safety asserted every tick).
+- ~~Asymmetric partition recovery~~ **DONE (EXP-009)** — safety held throughout the cut; converges on heal.
 - Edge reconnect → re-bootstrap → CURRENT (staleness-bound convergence) — Workstream C / A3.
   **(A3-1 partial, EXP-005:** abandon of a black-holed (accept-then-silent) endpoint is bounded by
   `HANDSHAKE_TIMEOUT_MS = 2000 ms` per attempt (edge `setSoTimeout` around `startHandshake`),

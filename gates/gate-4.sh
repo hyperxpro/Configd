@@ -126,6 +126,16 @@ step_edgechaos() {
   echo "GATE-4 edgechaos: OK (A3 — ack-lag/wedged-transport/governor-churn/accept-then-blackhole)"
 }
 
+step_partition() {
+  # C — partition & WAN matrix (control plane), in-sim with continuous safety oracles +
+  # recovery measurement: single-region isolation, leader isolation, asymmetric, partial,
+  # gray-failure, clock-skew. The Porcupine full-history linearizability check over a fault
+  # history is gate-2's linzgate (CI, Go); the edge fan-out partition is gate-3's E2E phase 3 +
+  # EdgeReBootstrapOnDisconnectTest; the live iptables partition is gate-1's rr-002 drill.
+  run_tests partition configd-testkit "PartitionMatrixTest"
+  echo "GATE-4 partition: OK (C — §12 isolation/leader/asymmetric/partial/gray/clock-skew; safety + recovery)"
+}
+
 step_nightly() {
   if [ "${GATE4_SKIP_NIGHTLY:-0}" = "1" ]; then
     echo "GATE-4 nightly: SKIPPED by GATE4_SKIP_NIGHTLY=1 (LOUD: heavy integrated sweeps NOT run this run)"
@@ -144,6 +154,7 @@ main() {
   step_reconfig
   step_durability
   step_edgechaos
+  step_partition
   step_nightly
   echo "=== GATE-4: ALL STEPS GREEN ==="
 }

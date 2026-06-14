@@ -41,3 +41,30 @@ Enforcement points located by reconnaissance (file:line) cited per cell.
 **Notes carried from recon:** A3-1's timeouts have **no in-sim seam** (socket layer); A3-3 is partly
 covered by `BootstrapSnapshotBackpressureTest` (paced) — this cell adds the *wedged-forever* (not
 merely paced) characterization; A3-2/A3-4 are deterministic and fast.
+
+---
+
+## §C — Partition & WAN chaos matrix (architecture §12)
+
+Governing docs: `architecture.md` §6 (failure handling) / §12 (WAN modeling); `consistency-contract.md`
+(no two leaders commit in the same term; no acked write lost; committed prefix never regresses;
+bounded-stale minority reads; monotonic-read survival). **Primary oracle (deterministic, always-on,
+CI):** the in-sim matrix asserts the linearizability-relevant SAFETY invariants every step —
+single-leader-per-term + no divergent commit + no committed-entry loss + minority-no-progress. The
+**full Porcupine history-linearizability** check is the env-gated `configd-linz` path (gate-2 linzgate).
+
+| # | Fault (cell) | Expected behavior (clause) | Oracle | Status |
+|---|---|---|---|---|
+| C-1 | **Single-region isolation** (leader+1 → 2-node minority, 3-node majority) | majority elects + commits; minority makes NO progress (no-quorum); heal → all converge, committed prefix preserved | `PartitionMatrixTest.singleRegionIsolation…` — continuous safety + minority-frozen-commit + measured recovery (worst re-elect 703, converge 59 ticks/12 seeds) | ✅ EXP-009 |
+| C-2 | **Leader isolation** (leader alone vs 4-node majority) | old leader sheds (CheckQuorum) within bound, majority re-elects; isolated leader does NOT keep committing; no split-brain | `PartitionMatrixTest.leaderIsolation…` (worst re-elect 543 ticks) | ✅ EXP-009 |
+| C-3 | **Asymmetric partition** (A→B cut, B→A intact) | PreVote prevents term inflation; CheckQuorum sheds; no split-brain commit; heal converges | `PartitionMatrixTest.asymmetricPartition…` (safety held throughout 800-tick soak ×12 seeds) | ✅ EXP-009 |
+| C-4 | **Partial partition** (a subset of links cut; no clean split) | a connected majority component still progresses; no split-brain / no divergent commit; heal converges | `PartitionMatrixTest.partialPartition…` | ✅ EXP-009 |
+| C-5 | **Gray failure** (elevated latency, no drops) | safety holds; leadership does NOT flap into a storm; writes still commit (slower); recovers when latency clears | `PartitionMatrixTest.grayFailure…` (termBumps ≤ 25 under +40 ms ×12 seeds) | ✅ EXP-009 |
+| C-6 | **Clock skew** (per-node ±hours wall-clock offset) | consensus safety + liveness are INDEPENDENT of synchronized clocks (Raft is tick-driven) — charter §6 | `PartitionMatrixTest.clockSkew…` — full isolate+heal under maximal skew, safety + bounded re-elect/converge | ✅ EXP-009 |
+| C-edge | **Fan-out partition** (edge cut from fan-out) | ADR-0039 staleness ladder → DISCONNECTED → re-bootstrap → catch-up → CURRENT; no edge stuck stale-but-silent | `EdgeReBootstrapOnDisconnectTest` (S3, sim) + `e2e-compose-scenario.sh` phase 3 (live docker-network disconnect, gate-3) | ✅ (cited) |
+| C-linz | **Linearizability over the partition/failover history** (full Porcupine check) | the recorded write/read history is linearizable across the fault | `configd-linz` HarnessMain + `FaultInjector` (real iptables partitions + kill-9) → Porcupine; **gate-2 linzgate** (CI, builds porcupine from Go) | 🌍 ENVIRONMENT-BLOCKED on this dev box (Go ABSENT → porcupine unbuildable, `PORCUPINE_BIN` unset). Runs in CI gate-2; the deterministic in-sim safety invariants (C-1..C-6) are the always-on substitute. → S5 |
+| C-live | **Live partition** (real network) | a black-holed peer must not freeze the node; live partition + heal | `rr-002-blackhole-drill.sh` (iptables DROP a follower's raft port, gate-1; `sudo -n iptables` works here) + `e2e-compose` phase 3 (docker-network) | ✅ (cited, CI). True **multi-host asymmetric/partial** partitions across real hosts → 🌍 ENVIRONMENT-BLOCKED → S5 |
+
+**Recovery bounds (sim ticks, 12 seeds each)** → `recovery-bounds.md`: leader-isolation re-elect ≤ 543;
+single-region re-elect ≤ 703, converge ≤ 59. Asymmetric/partial/gray/clock-skew: safety held, bounded
+convergence after heal.
