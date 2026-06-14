@@ -1,0 +1,44 @@
+=== GATE-7 (Session 7: security & supply chain) — logs in /tmp/gate7-run4 ===
+GATE-7 gate6: SKIPPED by GATE7_SKIP_GATE6=1 (LOUD: gates 1..6 NOT verified this run; CI supplies them via the gate-6 job)
+GATE-7 build: SKIPPED by GATE7_SKIP_BUILD=1 (reusing installed jars; CI must not do this)
+GATE-7 pa2021: snapshot/WAL/raft-state tamper+forge+downgrade refused; S4 cells still green...
+GATE-7   ✓ IntegrityEnvelopeTest: io.configd.common.IntegrityEnvelopeTest
+GATE-7   ✓ HkdfTest: io.configd.common.HkdfTest
+GATE-7   ✓ SnapshotIntegrityTest: io.configd.raft.SnapshotIntegrityTest
+GATE-7   ✓ WalRecordIntegrityTest: io.configd.raft.WalRecordIntegrityTest
+GATE-7   ✓ DurableRaftStateIntegrityTest: io.configd.raft.DurableRaftStateIntegrityTest
+GATE-7   ✓ SnapshotCrashRecoveryTest: io.configd.raft.SnapshotCrashRecoveryTest
+GATE-7   ✓ WalSyncCrashTest: io.configd.raft.WalSyncCrashTest
+GATE-7   ✓ VotePersistenceCrashTest: io.configd.raft.VotePersistenceCrashTest
+GATE-7 pa2021: OK
+GATE-7 mtls: plaintext/expired/wrong-SAN/downgrade refused on both planes...
+GATE-7   ✓ RaftTransportMtlsAttackTest: io.configd.transport.RaftTransportMtlsAttackTest
+GATE-7   ✓ FanOutServerMtlsAttackTest: io.configd.server.fanout.FanOutServerMtlsAttackTest
+GATE-7   ✓ EdgeTransportSanMismatchTest: io.configd.edge.node.EdgeTransportSanMismatchTest
+GATE-7   ✓ FanOutServerMtlsTest: io.configd.server.fanout.FanOutServerMtlsTest
+GATE-7   ✓ EdgeTransportMtlsTest: io.configd.edge.node.EdgeTransportMtlsTest
+GATE-7 mtls: OK
+GATE-7 fuzz: malformed/oversized/length-lie → bounded reject, no crash/OOM/hang...
+GATE-7   ✓ FrameCodecFuzzTest: io.configd.transport.FrameCodecFuzzTest
+GATE-7   ✓ EdgeFrameCodecFuzzTest: io.configd.distribution.wire.EdgeFrameCodecFuzzTest
+GATE-7   ✓ InboundReadDeadlineFuzzTest: io.configd.transport.InboundReadDeadlineFuzzTest
+GATE-7 fuzz: OK
+GATE-7 api: 401/403, verbatim-replay 409, keyed-HMAC tamper-evident audit...
+GATE-7   ✓ AuditLogTest: io.configd.api.AuditLogTest
+GATE-7   ✓ ReplayGuardTest: io.configd.api.ReplayGuardTest
+GATE-7   ✓ ConfigHandlerAuthTest: io.configd.server.ConfigHandlerAuthTest
+GATE-7   ✓ ConfigHandlerReplayTest: io.configd.server.ConfigHandlerReplayTest
+GATE-7   ✓ ConfigHandlerAuditTest: io.configd.server.ConfigHandlerAuditTest
+GATE-7 api: OK
+GATE-7 sbom: regenerate CycloneDX + normalized-diff vs the committed SBOM...
+GATE-7 sbom: OK (committed SBOM components match a fresh generation — no drift)
+GATE-7 repro: reproducible-build config present...
+GATE-7 repro: OK (outputTimestamp set)
+GATE-7 repro: byte-identical two-build proof runs on the FULL/nightly path (GATE7_FULL=1); captured in docs/session-7/supply-chain.md.
+GATE-7 cve: dependency-check fails on CVSS>=7...
+GATE-7 cve: ENV-BLOCKED loud-skip — no NVD_API_KEY (NVD feed update is impractical without it; charter §10.8). CI nightly sets the key. -Pcve-scan profile is wired (pom.xml).
+GATE-7 secret: gitleaks over repo + history...
+GATE-7 secret: ENV-BLOCKED loud-skip — gitleaks not installed (charter §10.8). CI runs gitleaks-action; .gitleaks.toml is committed.
+
+=== GATE-7 GREEN: security bar locked (PA-2021 at-rest integrity, mTLS both planes, wire fuzz, API authz/audit/replay, SBOM, reproducible-build config) ===
+    ENV-BLOCKED steps (CVE NVD, gitleaks, full byte-repro) run on the CI nightly lane — see docs/session-7/supply-chain.md + the S7.5 manifest.

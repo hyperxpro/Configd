@@ -56,8 +56,11 @@ jobs:
         run: ./mvnw clean verify --no-transfer-progress
 
       # CycloneDX SBOM is attached to the GitHub release.
+      # S7 (Workstream E): dropped `-N` — with -N (non-recursive) makeAggregateBom
+      # only sees the root aggregator POM and emits a 0-component SBOM; the full
+      # reactor run aggregates every module's dependency graph (37 components).
       - name: Generate CycloneDX SBOM
-        run: ./mvnw -N --no-transfer-progress org.cyclonedx:cyclonedx-maven-plugin:2.9.0:makeAggregateBom
+        run: ./mvnw --no-transfer-progress org.cyclonedx:cyclonedx-maven-plugin:2.9.0:makeAggregateBom
 
       - name: Log in to GHCR
         uses: docker/login-action@v3

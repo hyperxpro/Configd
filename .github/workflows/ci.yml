@@ -368,6 +368,71 @@ jobs:
           path: ${{ runner.temp }}/gate6-logs
           retention-days: 7
 
+  gate-7:
+    # Session-7 cumulative gate (gates/gate-7.sh) — SECURITY & supply chain.
+    # REQUIRES gate-6 green (runs as its own job here, so the gate-7 run sets
+    # GATE7_SKIP_GATE6=1 — cumulative coverage via the job dependency, like every
+    # prior gate). Locks the security bar so Session 8 cannot silently erode it:
+    # PA-2021 at-rest integrity (tampered snapshot/WAL/raft-state + forged
+    # install-snapshot REFUSED; ADR-0042), mTLS adversarially verified on BOTH
+    # planes (plaintext/expired/wrong-SAN/TLSv1.2-downgrade refused), wire-protocol
+    # fuzz (resource oracle — no crash/OOM/unbounded-alloc/hang), API authn/authz
+    # (401 vs 403) + verbatim-replay 409 + KEYED-HMAC tamper-evident audit, the
+    # committed CycloneDX SBOM matches a fresh generation, and reproducible-build
+    # config (project.build.outputTimestamp). The S4 durability cells re-run inside
+    # the PA-2021 step prove no recovery-path regression.
+    #
+    # ENV-BLOCKED-on-fast-path steps run on the NIGHTLY path (charter §10.8): the
+    # OWASP dependency-check NVD CVE scan (needs NVD_API_KEY + network), the
+    # gitleaks secret scan (needs the binary), and the two-build byte-identical
+    # reproducibility proof (GATE7_FULL=1). On push/PR they loud-skip.
+    needs: gate-6
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # gitleaks (nightly) scans history
+
+      - name: Set up JDK 25
+        uses: actions/setup-java@v4
+        with:
+          java-version: '25'
+          distribution: 'corretto'
+          cache: maven
+
+      - name: Run gate-7 (push/PR — CVE/secret/full-repro loud-skipped, run nightly)
+        if: github.event_name != 'schedule' && github.event.inputs.run_full_nightly != 'true'
+        run: GATE7_SKIP_GATE6=1 bash gates/gate-7.sh
+        env:
+          GATE7_LOG_DIR: ${{ runner.temp }}/gate7-logs
+        timeout-minutes: 45
+
+      - name: Install gitleaks (nightly secret scan)
+        if: github.event_name == 'schedule' || github.event.inputs.run_full_nightly == 'true'
+        run: |
+          set -euo pipefail
+          GL_VER="8.18.4"
+          curl -fsSL -o /tmp/gitleaks.tgz \
+            "https://github.com/gitleaks/gitleaks/releases/download/v${GL_VER}/gitleaks_${GL_VER}_linux_x64.tar.gz"
+          tar -xzf /tmp/gitleaks.tgz -C /tmp gitleaks
+          echo "GITLEAKS=/tmp/gitleaks" >> "$GITHUB_ENV"
+
+      - name: Run gate-7 FULL (nightly — CVE scan + gitleaks + byte-repro proof)
+        if: github.event_name == 'schedule' || github.event.inputs.run_full_nightly == 'true'
+        run: GATE7_SKIP_GATE6=1 GATE7_FULL=1 bash gates/gate-7.sh
+        env:
+          GATE7_LOG_DIR: ${{ runner.temp }}/gate7-logs
+          NVD_API_KEY: ${{ secrets.NVD_API_KEY }}   # empty → CVE step loud-skips (honest, never assumed-passing)
+        timeout-minutes: 90
+
+      - name: Upload gate-7 step logs
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: gate-7-logs
+          path: ${{ runner.temp }}/gate7-logs
+          retention-days: 7
+
   wire-compat:
     # ADR-0029 §8.10 fixture-bump guardrail.
     # Fails the build if GoldenFixtures.java changed without a matching bump

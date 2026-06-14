@@ -82,7 +82,24 @@ items folded in by the lead before commit** (each with a new locking test in `In
 
 ---
 
-## D-6 (TECH) — Audit log must be a KEYED HMAC chain, not a keyless hash chain
+## D-7 (TECH+SCOPE) — gate-7 assembly, CI wiring, and ENV-BLOCKED lane placement
+
+**Question.** How to gate the S7 security bar in CI without (a) ENV-BLOCKED steps faking green and
+(b) the gate's own non-vacuity checks giving false passes.
+
+**Resolution.** `gates/gate-7.sh` mirrors gate-6 (cumulative `GATE7_SKIP_GATE6=1` via the CI job
+dependency `needs: gate-6`; `assert_class_green` non-vacuity per class). Test steps (PA-2021, mTLS,
+fuzz, API) + the SBOM regen-and-diff + the reproducible-build-config assertion run on **every** event;
+the three steps needing absent local resources — the OWASP dependency-check **NVD CVE scan**
+(`NVD_API_KEY`), the **gitleaks** secret scan (binary), and the **two-build byte-identical
+reproducibility** proof (`GATE7_FULL=1`) — **loud-skip** on the fast path and run on the CI **nightly**
+path (charter §10.8 — never assumed-passing; the byte-identical proof was captured once in
+`supply-chain.md`). Two gate-script bugs were found and fixed while validating the gate against itself
+(charter §2 "the gate must be real"): a comment hugging a closing quote appended `#` to a test-name
+arg, and the `.*${cls}$` non-vacuity pattern matched a superstring class (`FrameCodecFuzzTest` ⊂
+`EdgeFrameCodecFuzzTest`) — now anchored at the FQN package boundary (`.*\.${cls}$`). Also fixed the
+`release.yml` SBOM step (`-N makeAggregateBom` → full reactor; `-N` emitted a 0-component SBOM).
+gate-7 GREEN locally (`captures/gate-7-run.txt`). Logged per §1.
 
 **Question.** Workstream D's first audit-log cut used a keyless SHA-256 hash chain. Is that
 "tamper-evident" enough for charter §7 ("an attacker who can edit the audit log defeats it")?
