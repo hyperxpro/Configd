@@ -82,6 +82,23 @@ items folded in by the lead before commit** (each with a new locking test in `In
 
 ---
 
+## D-5 (SCOPE) — Slowloris/FD-exhaustion (F-S7-FUZZ-1): document + S7.5, not fixed in S7
+
+**Question.** Wire fuzzing (Workstream C) found a real availability gap: inbound sockets set no read
+deadline + unbounded connections ⇒ a stalled peer holds a thread+FD indefinitely (slowloris → FD
+exhaustion). Fix now, or document + flag?
+
+**Resolution (conservative default).** **Document as F-S7-FUZZ-1 + S7.5 manifest; do NOT fix in S7.**
+The fix (inbound idle/read deadline + connection cap) modifies the **RR-002-hardened** transport read
+loop, and the charter demands red/green for any fix — but a faithful slow-drip repro is
+integration-scale and flaky on the 2-vCPU box, so applying the fix here would risk an RR-002/liveness
+regression *without* the proving test. The mechanism is pinned deterministically by
+`InboundReadDeadlineFuzzTest`; the e2e repro + fix + red/green go to S7.5. Flagged as the
+highest-priority availability residual in the handoff + pre-S8 summary. (The malformed-input/allocation
+oracle IS closed this session — only the connection-count lever is deferred.) Logged per §1 scope rule.
+
+---
+
 ## D-4 (SCOPE) — Workstreams B/C/D/E run sequentially, not in parallel
 
 **Question.** Charter §12.3 suggests B/C/D/E proceed "in parallel across specialist agents." Do that,

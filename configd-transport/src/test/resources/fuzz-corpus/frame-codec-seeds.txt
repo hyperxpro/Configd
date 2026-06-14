@@ -1,0 +1,44 @@
+# Wire-protocol fuzz corpus — FrameCodec (Raft wire) seed/regression inputs.
+# Format: <name> = <hex bytes>   (lowercase hex, no separators; '#' starts a comment)
+# Oracle for every seed: FrameCodec.decode(bytes) returns a Frame OR throws one of
+# {IllegalArgumentException, UnsupportedWireVersionException, BufferUnderflowException};
+# never OOM / NPE / ArrayIndexOOB / NegativeArraySize / a hang.
+# Frame layout: [len:4][ver:1=01][type:1][groupId:4][term:8][payload:N][crc32c:4]
+
+# ---- Valid frames (must DECODE; anchor the corruption cases) ----
+# HEARTBEAT (type 0x0e), groupId 0, term 0, empty payload — the minimum 22-byte frame.
+valid_min_heartbeat   = 00000016010e0000000000000000000000008cff2224
+# APPEND_ENTRIES (0x01), groupId 7, term 99, payload 01 02 03.
+valid_append_entries  = 000000190101000000070000000000000063010203f8a33f52
+# REQUEST_VOTE (0x03), groupId 1, term 5, empty payload.
+valid_request_vote    = 0000001601030000000100000000000000053dd78c58
+
+# ---- Empty / tiny (under the 22-byte minimum) → IllegalArgumentException ----
+empty                 =
+one_byte              = 00
+header_only           = 00000016010e000000000000000000000000     # 18 bytes (HEADER_SIZE, no trailer)
+min_minus_one         = 00000016010e0000000000000000000000008cff22 # 21 bytes (MIN_FRAME-1)
+
+# ---- CRC corruption (CRC verified BEFORE version/type) ----
+# valid_min_heartbeat with the last CRC byte flipped → "CRC32C mismatch".
+crc_mismatch          = 00000016010e0000000000000000000000008cff2225
+# valid_append_entries with version byte (offset 4) set to 0x02 but CRC left stale →
+# must read as CRC mismatch (corruption), NOT as UnsupportedWireVersion.
+badversion_stale_crc  = 000000190201000000070000000000000063010203f8a33f52
+
+# ---- Length-prefix lies (the OOM lever) — rejected BEFORE allocation ----
+# Declared length = 0x7fffffff (Integer.MAX_VALUE), 22 actual bytes present.
+len_lie_intmax        = 7fffffff010e0000000000000000000000008cff2224
+# Declared length = 0x80000000 (Integer.MIN_VALUE / negative).
+len_lie_negative      = 80000000010e0000000000000000000000008cff2224
+# Declared length = 0x01000001 (MAX_FRAME_SIZE + 1 = 16777217), tiny body.
+len_lie_over_cap      = 01000001010e0000000000000000000000008cff2224
+# Declared length = 0x00000000 (zero).
+len_lie_zero          = 00000000010e0000000000000000000000008cff2224
+
+# ---- Regression: shrunk case from FrameCodecFuzzTest.lengthPrefixLieIsRejectedCleanly ----
+# A 23-byte minimum-ish frame whose prefix was overwritten with 23 (== its own length):
+# proved the test's "lie" guard must skip the no-op case. Kept as a regression anchor:
+# this IS a structurally valid 1-byte-payload frame (decodes cleanly), not a lie.
+# REGRESSION_no_op_prefix is generated live by the property (seed=1001); documented here
+# so a reader knows why the property skips hostileLength == valid.length.
