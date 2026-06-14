@@ -1,0 +1,11 @@
+# WS-B F4 self-calibration sweep (live 3-node single-host, ZGC)
+# box: t3a.large 2 vCPU; each PUT blocks to quorum commit; SYSTEM ceiling (not generator)
+CALIBRATE-RESULT concurrency=1 measureSec=3.0 committed_200=409 non200=0 retargets=0 sustained_commit_rate_per_sec=136
+CALIBRATE-STATUS 200=409
+CALIBRATE-RESULT concurrency=2 measureSec=3.0 committed_200=449 non200=0 retargets=0 sustained_commit_rate_per_sec=150
+CALIBRATE-STATUS 200=449
+CALIBRATE-RESULT concurrency=4 measureSec=3.0 committed_200=516 non200=0 retargets=0 sustained_commit_rate_per_sec=172
+CALIBRATE-STATUS 200=516
+CALIBRATE-RESULT concurrency=8 measureSec=3.0 committed_200=481 non200=0 retargets=1 sustained_commit_rate_per_sec=160
+CALIBRATE-STATUS 200=481
+SWEEP-DONE
