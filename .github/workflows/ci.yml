@@ -330,6 +330,44 @@ jobs:
           path: ${{ runner.temp }}/gate5-logs
           retention-days: 7
 
+  gate-6:
+    # Session-6 cumulative gate (gates/gate-6.sh) — OPERABILITY & deployment readiness.
+    # REQUIRES gate-5 green (runs as its own job here, so the gate-6 run sets
+    # GATE6_SKIP_GATE5=1 — cumulative coverage via the job dependency, like every prior
+    # gate). Locks the operability bar so Sessions 7-8 cannot silently erode it: every
+    # dashboard panel + alert series is PROVEN EMITTED and the SLO series RECORDED with
+    # real data (metric-contract), every alert FIRES on its condition and STAYS QUIET on
+    # normal op (promtool), wire byte-stability N<->N+1 (golden fixtures), zero-state cold
+    # start, backup/restore state-equality, and the alert->runbook->recovery loop closes
+    # for one scenario. gate-6 downloads a pinned promtool. The full multi-node game-day
+    # drill is the nightly/ops lane (gates/game-day-drill.sh wraps e2e-compose-scenario.sh,
+    # itself a gate-3 step) — captured, not in the fast gate.
+    needs: gate-5
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 25
+        uses: actions/setup-java@v4
+        with:
+          java-version: '25'
+          distribution: 'corretto'
+          cache: maven
+
+      - name: Run gate-6 (operability gate; gates 1..5 via the job dependency)
+        run: GATE6_SKIP_GATE5=1 bash gates/gate-6.sh
+        env:
+          GATE6_LOG_DIR: ${{ runner.temp }}/gate6-logs
+        timeout-minutes: 30
+
+      - name: Upload gate-6 step logs
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: gate-6-logs
+          path: ${{ runner.temp }}/gate6-logs
+          retention-days: 7
+
   wire-compat:
     # ADR-0029 §8.10 fixture-bump guardrail.
     # Fails the build if GoldenFixtures.java changed without a matching bump

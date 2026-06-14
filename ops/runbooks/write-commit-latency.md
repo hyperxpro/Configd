@@ -1,140 +1,109 @@
 # Runbook: Write Commit Latency
 
-**Alert:** `ConfigdWriteCommitFastBurn`, `ConfigdWriteCommitSlowBurn`
-**SLO:** `write.commit.latency.p99 < 150 ms`
-**Severity:** page (fast-burn after 2 min, slow-burn after 15 min)
+**Alerts:** `ConfigdWriteCommitFastBurn` (page, 2m), `ConfigdWriteCommitSlowBurn` (page, 15m)
+**SLO:** write commit p99 < 150 ms (`configd_write_commit_seconds`)
+**Severity:** page
 
-## Symptoms
+A burn-rate guard fired: the fraction of commits under the 150 ms budget
+dropped below the burn threshold (14.4× over 5 min for fast-burn, 6× over
+1 h for slow-burn). The Raft commit pipeline is degrading and the monthly
+error budget is draining fast.
 
-- `ConfigdWriteCommitFastBurn` paged within 2 minutes of breach, or
-  `ConfigdWriteCommitSlowBurn` paged at the 15-minute mark.
-- `Configd Overview` dashboard shows `configd_write_commit_seconds` p99
-  sitting above 150 ms across multiple scrape intervals.
-- Per-stage `_seconds_bucket` panels show one stage (sign / append /
-  replicate / apply) dominating the budget.
+## Symptom
 
-## Impact
-
-A control-plane write (PutConfig / DeleteConfig) is the round-trip from
-client RPC to Raft log commit on a quorum of voters. Crossing 150 ms p99
-indicates one of the leader's commit pipeline stages is degrading. The
-fast-burn variant is paging because we are exhausting the monthly error
-budget at 14.4× the steady-state rate — left unchecked the budget is
-gone in under one hour.
-
-## Operator-Setup
-
-Per ADR-0025 the operator must, before this runbook applies:
-
-1. Wire `ConfigdWriteCommitFastBurn` / `SlowBurn` from
-   `ops/alerts/configd-slo-alerts.yaml` into the on-call paging
-   service.
-2. Provision the Grafana dashboard `ops/dashboards/configd-overview.json`
-   into the operator's Grafana instance.
-3. Distribute `${CONFIGD_AUTH_TOKEN}` (with admin scope) so the
-   transfer-leadership command below can run from the on-call
-   workstation.
+- `ConfigdWriteCommitFastBurn` pages within 2 min, or
+  `ConfigdWriteCommitSlowBurn` at 15 min.
+- `Configd Control Plane` dashboard **"Write commit p99"** panel
+  (`histogram_quantile(0.99, ... configd_write_commit_seconds_bucket ...)`)
+  sits above the 150 ms threshold line across multiple scrapes.
+- Clients see slow `PUT/DELETE /v1/config/<key>` round-trips (not errors —
+  these are committing, just slowly).
 
 ## Diagnosis
 
-1. **Confirm scope.** Open the `Configd Overview` Grafana dashboard
-   (`ops/dashboards/configd-overview.json`) and check whether the breach is
-   isolated to one cluster or global. Cross-check the **Raft apply queue
-   depth** panel (`configd_raft_pending_apply_entries`) and per-pod
-   leader-id transitions in the logs (no dedicated leader-churn metric
-   yet).
-   <!-- TODO PA-XXXX: dedicated `Leader churn` panel/metric not yet
-   emitted; per-pod log scraping for leader-id transitions is the
-   current operator-visible signal. -->
+Open `Configd Control Plane` (`ops/dashboards/configd-control-plane.json`).
 
+1. **Confirm scope and that commits are slow, not failing.** **"Write commit
+   p99"** high while **"Write throughput + outcomes"** shows `committed`
+   (`configd_write_commit_total`) still flowing and `failed` / `429 shed`
+   near zero → latency regression, not an availability or overload event.
+   (If `failed` is climbing → [control-plane-down.md](control-plane-down.md);
+   if `429 shed` is climbing → [overload-shedding.md](overload-shedding.md).)
+2. **Is the cost in apply (state machine) or in append/replicate?**
+   - **"State-machine apply p99"** (`configd_apply_seconds`) high AND
+     **"Raft apply backlog"** (`configd_raft_pending_apply_entries`) climbing
+     → the state machine is the bottleneck. Go to
+     [raft-saturation.md](raft-saturation.md).
+   - Apply p99 and backlog normal, but commit p99 high → the cost is in the
+     leader's WAL append/fsync or quorum replication. Check disk:
+     ```sh
+     kubectl -n configd exec <leader> -- sh -c 'iostat -x 1 3 2>/dev/null || cat /proc/diskstats'
+     ```
+     Growing await / queue depth on `/data` → fsync saturation →
+     [disk-full-fsync.md](disk-full-fsync.md).
+3. **Is leadership churning?** **"Term changes / min"** panel
+   (`rate(configd_raft_elections_total[5m]) * 60`). Repeated term changes mean
+   commits are paying re-election + no-op-commit cost each time →
+   [control-plane-down.md](control-plane-down.md).
+4. **Recent deploy?** If the latency rise correlates with a `configd-config-store`
+   or consensus deploy, suspect a state-machine cost regression (`git log` the
+   relevant module).
 
-2. **Identify the bottleneck stage.** The commit pipeline has four
-   measurable stages:
-   - serialize + sign (client thread)
-   - leader Raft append (disk fsync)
-   - replicate to quorum (network)
-   - apply on followers (state machine)
-   Inspect the corresponding `_seconds_bucket` series for each — the one
-   with the worst p99 is the one to investigate.
+## Resolution steps
 
-3. **Eliminate likely root causes.**
-   - Disk: `iostat -x 1` on the leader. fsync queue depth growing → disk
-     saturation, page out the platform team.
-   - Network: check `node_network_transmit_drop_total` and link MTU
-     between voters.
-   - State machine: a regression in HAMT mutation cost can cascade. Check
-     `configd_apply_seconds` p99 and `git log -p` on `configd-config-store`
-     for recent changes.
+1. **If a voter's disk is the cause** (fsync await high): follow
+   [disk-full-fsync.md](disk-full-fsync.md). Tactically, step the leader off
+   the bad disk so a healthier voter takes over — only the leader pod is
+   evicted:
+   ```sh
+   kubectl -n configd delete pod <leader>
+   ```
+2. **If a hot-prefix write burst is driving apply cost up:** rate-limit the
+   offending namespace at the API gateway. Do **not** raise the apply queue
+   bound. See [raft-saturation.md](raft-saturation.md).
+3. **If a code regression correlates:** roll back the deploy —
+   ```sh
+   kubectl -n configd rollout undo statefulset/configd
+   ```
+   then confirm apply p99 returns to baseline (the apply queue drains within
+   a minute once the cost regression is gone). See `release.md` for the full
+   rollback procedure.
+4. **Do not raise the 150 ms SLO threshold.** The budget is the contract; the
+   fix is in the system. Do not silence the alert without an incident ticket.
 
-## Mitigation
+## Verification
 
-Acceptable tactical mitigations until the root cause is fixed:
+- `histogram_quantile(0.99, sum by (le)(rate(configd_write_commit_seconds_bucket[5m])))`
+  returns below 0.150 across two scrape intervals.
+- Both `ConfigdWriteCommitFastBurn` and `ConfigdWriteCommitSlowBurn` clear
+  after their respective windows.
+- `configd_raft_pending_apply_entries` is back to ~0; a test write
+  round-trips at baseline latency.
 
-- Step down the current leader to pick a healthier voter.
-  <!-- TODO PA-XXXX: admin endpoint missing — HttpApiServer does
-  not yet expose `POST /admin/raft/transfer-leadership`. Until it
-  ships, the only operator-visible "step down" is to delete the
-  current leader pod (`kubectl -n configd delete pod <leader>`) so
-  a re-election picks a different voter; the PDB ensures only the
-  leader is evicted. -->
-  ```sh
-  curl -fsS -X POST \
-    -H "Authorization: Bearer ${CONFIGD_AUTH_TOKEN}" \
-    "http://configd-0.configd.svc:8080/admin/raft/transfer-leadership?to=<voter-id>"
-  ```
-- If apply-queue saturation: throttle ingress at the API gateway. Do
-  **not** disable the SLO check.
+## Escalation
 
-## Resolution
+- Page platform/storage if the bottleneck is fsync await on the data device
+  (hardware — Configd cannot mitigate disk latency).
+- If commit p99 stays breached after isolating disk, apply, churn, and
+  recent deploys, escalate to the consensus owner — an undiagnosed commit-
+  pipeline regression is a P1.
 
-`configd_write_commit_seconds` p99 returns below 150 ms across the next
-two scrape intervals; both fast-burn and slow-burn alerts clear after
-their respective windows. The root cause is identified (disk, network,
-or state-machine regression) and a follow-up ticket is filed.
+## Validation (fault injection)
 
-If the regression is a state-machine cost change, `git revert` the
-offending commit to `configd-config-store` and re-deploy; the apply-
-queue should drain within one minute.
-
-## Rollback
-
-If transfer-leadership picked a worse voter (visible in per-pod log
-leader-id transitions), transfer back to a healthier voter or delete
-the new leader's pod so re-election picks again. If a recent code
-deploy correlates with the latency rise, follow the standard rollback
-in `release.md` (`kubectl rollout undo statefulset/configd -n configd`).
-<!-- TODO PA-XXXX: dedicated Leader-churn panel/metric not yet emitted;
-log-scraping is the current signal. -->
-
-
-## Postmortem
-
-Open a post-incident review within one business day. Required fields:
-
-- Which pipeline stage was the bottleneck and why.
-- Whether disk / network / code change was the root cause.
-- Was the SLO budget exhausted? Cross-check the in-process `SloTracker`
-  exports.
-  <!-- TODO PA-XXXX: metric configd_slo_budget_seconds_remaining not
-  yet emitted by ConfigdMetrics; the in-process SloTracker is
-  authoritative until a derived gauge ships. -->
-
-- Action items: instrumentation gap (which `_seconds_bucket` was missing
-  and would have caught this earlier), capacity gap (do we need a
-  bigger fsync-bandwidth pool?), or a regression-test gap.
+Slow/failing fsync is injected by `FaultInjectingStorage.failNextSyncs(n)`
+(`configd-testkit/src/test/java/io/configd/testkit/FaultInjectingStorage.java`),
+exercised via `StorageEnospcConsensusReactionTest`. The
+`configd_write_commit_seconds` emission itself is proven by
+`MetricsWiringContractTest.committedWriteRecordsCommitLatency...`
+(`configd-server/src/test/java/io/configd/server/MetricsWiringContractTest.java`).
+A true production-grade *latency* injection (artificial fsync delay end-to-
+end at a running cluster) does **not** exist as a harness — validation here
+is the metric-emission + storage-fault contract, not a live p99-breach drill.
+Recovery-verified = commit p99 back under 150 ms after the injected disk
+fault clears.
 
 ## Related
 
-- `docs/decisions/adr-0007-deterministic-simulation-testing.md` — the
-  simulation-testing ADR that exercises the commit pipeline under
-  injected disk/network faults; the regression test for any commit-
-  pipeline change MUST include a sim-test case (per §8.1 / §8.7).
-- `docs/decisions/adr-0001-embedded-raft-consensus.md` — the embedded-
-  Raft pipeline whose stages are listed in Diagnosis step 2.
-- `ProductionSloDefinitions.WRITE_COMMIT_LATENCY_P99`
-
-## Do not
-
-- Do not raise the SLO threshold. The 150 ms budget is the contract; the
-  fix is in the system, not the alert.
-- Do not silence the alert without opening an incident ticket.
+- `docs/decisions/adr-0001-embedded-raft-consensus.md` — commit pipeline.
+- [raft-saturation.md](raft-saturation.md), [disk-full-fsync.md](disk-full-fsync.md),
+  [control-plane-down.md](control-plane-down.md), [overload-shedding.md](overload-shedding.md)

@@ -1,0 +1,16 @@
+=== GATE-6 (Session 6: operability & deployment readiness) — logs in /tmp/gate6-dDEHwz ===
+GATE-6 gate5: SKIPPED by GATE6_SKIP_GATE5=1 (LOUD: gates 1..5 NOT verified this run; CI supplies them via the gate-5 job)
+GATE-6 build: SKIPPED by GATE6_SKIP_BUILD=1 (reusing installed jars; CI must not do this)
+GATE-6 tests: metric-contract + wire-compat + bootstrap + backup-restore + drill...
+GATE-6   ✓ EdgeMetricsContractTest: io.configd.edge.node.EdgeMetricsContractTest
+GATE-6   ✓ MetricsWiringContractTest: io.configd.server.MetricsWiringContractTest
+GATE-6   ✓ WireCompatGoldenBytesTest: io.configd.transport.wirecompat.WireCompatGoldenBytesTest
+GATE-6   ✓ EdgeFrameCodecGoldenFixtureTest: io.configd.distribution.wire.EdgeFrameCodecGoldenFixtureTest
+GATE-6   ✓ BootstrapColdStartTest: io.configd.server.BootstrapColdStartTest
+GATE-6   ✓ BackupRestoreRoundTripTest: io.configd.store.BackupRestoreRoundTripTest
+GATE-6   ✓ GameDayDrillTest: io.configd.edge.node.GameDayDrillTest
+GATE-6 tests: OK
+GATE-6 alerts: promtool check rules + fires/quiet test rules...
+GATE-6 alerts: OK (SUCCESS: 14 rules found + fires/quiet green)
+
+=== GATE-6 GREEN: operability bar locked (metric-contract, alert fires/quiet, wire-compat, bootstrap, backup-restore, drill loop) ===

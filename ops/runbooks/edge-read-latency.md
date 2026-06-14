@@ -1,123 +1,92 @@
 # Runbook: Edge Read Latency
 
-**Alert:** `ConfigdEdgeReadFastBurn`, `ConfigdEdgeReadP999Breach`
-**SLO:** `edge.read.latency.p99 < 1 ms`, `edge.read.latency.p999 < 5 ms`
+**Alerts:** `ConfigdEdgeReadFastBurn` (page, p99 burn-rate), `ConfigdEdgeReadP999Breach` (warn, p999 > 5 ms)
+**SLO:** edge read p99 < 1 ms, p999 < 5 ms (`configd_edge_read_seconds`)
 **Severity:** page (p99), warn (p999)
 
-## Symptoms
+Edge reads are served from a per-node in-process HAMT snapshot — an
+O(log₃₂ N) lookup with no remote IO (S5 p99 = 1.6 µs, ~600× headroom). If
+this alert fires, the local read path has regressed badly; the usual cause
+is a JVM pause, not the lookup itself.
 
-- Page from `ConfigdEdgeReadFastBurn` (p99 breach) or warn from
-  `ConfigdEdgeReadP999Breach`.
-- `Configd Overview` dashboard shows `configd_edge_read_seconds` p99
-  above 1 ms or p999 above 5 ms across multiple scrape intervals (this
-  is the histogram registered by `ConfigdMetrics.NAME_EDGE_READ_SECONDS`;
-  the legacy `configd_edge_read_latency_seconds` name is not emitted).
-  <!-- TODO PA-XXXX: legacy metric configd_edge_read_latency_seconds
-  not emitted; the canonical histogram is configd_edge_read_seconds. -->
+## Symptom
 
-- Application-side timeouts on config reads (typically logged by client
-  libraries as `read deadline exceeded`).
-
-## Impact
-
-Edge reads are served from a per-node materialized HAMT snapshot — they
-should be in-process O(log₃₂ N) lookups with no remote IO. Crossing
-the SLO means application threads are blocking on what is supposed to
-be a sub-microsecond local lookup. Effects compound:
-
-- Application thread pools fill, causing upstream cascades.
-- Cache thrash if the application has its own short-TTL cache layered
-  above Configd reads.
-- Operator dashboards drift further from the SLA contract — the
-  five-nines edge-read claim is the customer-facing latency promise.
-
-## Operator-Setup
-
-Per ADR-0025 the operator must, before this runbook applies:
-
-1. Wire `ConfigdEdgeReadFastBurn` / `ConfigdEdgeReadP999Breach` from
-   `ops/alerts/configd-slo-alerts.yaml` into the on-call paging
-   service.
-2. Make sure each edge pod is shipping JFR or async-profiler-friendly
-   binaries (the `jcmd` mitigation step assumes a JDK image, not a JRE
-   image; `docker/Dockerfile.runtime` already uses the JDK).
+- Page from `ConfigdEdgeReadFastBurn` or warn from `ConfigdEdgeReadP999Breach`.
+- `Configd Overview` / `Configd Data Plane` dashboards show
+  `histogram_quantile(0.99, ... configd_edge_read_seconds_bucket ...)` above
+  1 ms (or p999 above 5 ms).
+- Application threads block on config reads (client libs log read-deadline
+  exceeded).
 
 ## Diagnosis
 
-1. **Check JVM pause.** `kubectl logs <pod> | grep -E "Pause|Total time"`.
-   ZGC pauses > 1 ms are anomalous; investigate heap pressure or pinned
-   threads.
+The read path is in-process, so a slow read is almost always the JVM
+stalling, not Configd logic.
 
-2. **Check snapshot rebuild rate.** The metric
-   `configd_snapshot_rebuild_total` should increment only on
-   leader-change. A high rate during steady state indicates either Raft
-   leadership churn (see `propagation-delay.md`) or a poison entry that
-   keeps re-failing.
+1. **JVM / GC pause** — `Configd Runtime` dashboard, **"GC time fraction"**
+   (`rate(jvm_gc_collection_millis[5m])`) and **"Heap used vs max"**. ZGC
+   STW pauses should be sub-millisecond (S5 max 0.045 ms); a spike here is
+   the prime suspect. Confirm on the pod:
+   ```sh
+   kubectl -n configd exec <edge> -- sh -c 'pid=$(pgrep -f configd); jcmd $pid GC.heap_info'
+   ```
+   Heap > 90% / climbing → [resource-leak.md](resource-leak.md).
+2. **Read volume / fan-in spike** — `Configd Data Plane` panel **"Edge read
+   throughput + refusals"** (`rate(edge_reads_total[5m])`). A read-rate spike
+   correlated with a client deploy means the pressure is fan-in, not a server
+   regression.
+3. **Read refusals** — same panel, `edge_read_refusals_cursor_behind_total` /
+   `edge_read_refusals_strong_read_total`. A spike in cursor-behind refusals
+   means the edge is stale (not slow) — that is a propagation problem, go to
+   [propagation-delay.md](propagation-delay.md), not a read-latency one.
 
-3. **Check read concurrency.** If the spike correlates with a known
-   client deployment, the issue is fan-in not the server. Confirm via
-   `configd_edge_read_total` rate.
+## Resolution steps
 
-## Mitigation
+1. **Recycle the affected edge pod** (safe in a 3+ replica tier — the
+   replacement comes up from the latest verified snapshot and rejoins
+   fan-out):
+   ```sh
+   kubectl -n configd delete pod <edge>
+   ```
+   A freshly-rolled pod with a cold cache is briefly slower — give it the
+   bootstrap window before declaring failure.
+2. **If GC pause is the culprit and recurs after recycle:** suspect a heap
+   leak — capture `jcmd <pid> GC.class_histogram` and follow
+   [resource-leak.md](resource-leak.md). Do not just keep recycling.
+3. **If fan-in is the cause:** the server is healthy; the fix is client-side
+   (rate-limit or cache at the caller). Do not route reads around the edge
+   tier to the leader — that is a ~50× latency hit and breaches propagation
+   SLO too.
+4. **Do not raise the SLO.** The sub-millisecond edge read is the customer-
+   facing latency promise.
 
-- Roll the affected pod (in a 3+ replica edge tier, this is safe):
-  `kubectl -n configd delete pod <edge-pod>`. The replacement comes up
-  from the most recent verified snapshot and rejoins fan-out.
-- If JVM pause is the culprit, check for off-heap leak via
-  `jcmd <pid> Native.memory.summary`; if a leak is confirmed, recycle
-  the pod immediately and file a follow-up ticket against
-  `configd-edge-cache`.
-- If snapshot-rebuild is thrashing on a poison entry, isolate the bad
-  config key and submit a `DELETE` of that key from the control plane
-  to clear the rebuild loop.
+## Verification
 
-## Resolution
+- `histogram_quantile(0.99, sum by (le)(rate(configd_edge_read_seconds_bucket[5m])))`
+  back below 0.001 (and p999 below 0.005) for the full alert window.
+- Both alerts clear after the SLO evaluation interval.
+- `Configd Runtime` GC-time-fraction back to the ZGC baseline.
 
-`configd_edge_read_seconds` p99 returns below 1 ms (and p999
-below 5 ms) for the entire alert window. Both alerts clear after the
-SLO evaluation interval. The root cause (GC pause, snapshot churn,
-fan-in spike, or poison entry) is documented and a follow-up ticket
-filed if the cause is a code regression rather than a transient.
+## Escalation
 
-## Rollback
+- Page the next tier only if the p99 page (not the p999 warn) persists after
+  recycling, with GC ruled out — an in-process read path that is slow with no
+  GC pause is an unexplained regression and a P1 against the edge read path.
 
-If the chosen mitigation made the situation worse:
+## Validation (fault injection)
 
-- A rolled pod that comes up slower than the others (cold cache) is
-  expected — give it the documented bootstrap window before declaring
-  failure.
-- If the `DELETE` of a "poison entry" turns out to have been a wrongful
-  deletion (the entry was real config some application depended on),
-  re-PUT the entry from the source-of-truth in the operator's config
-  repo. There is no automatic undelete.
-
-## Postmortem
-
-Open a post-incident review only if the alert was paged (not for the
-warn-level p999 breach unless it sustained > 30 minutes). Required
-fields:
-
-- Was the cause GC pause, snapshot rebuild, fan-in spike, or other?
-- Was the SLO budget exhausted? Cross-check the in-process
-  `SloTracker` exports.
-  <!-- TODO PA-XXXX: metric configd_slo_budget_seconds_remaining not
-  yet emitted by ConfigdMetrics; the in-process SloTracker is
-  authoritative until a derived gauge ships. -->
-
-- Action items: profile capture (JFR if possible), instrumentation
-  gap, regression-test gap.
+No harness injects edge-read p99 breach directly. The hot-path guard is
+`gates/jmh-gc-check.sh` (CT-34), which runs the JMH GC profiler on
+`LocalConfigStoreReadBenchmark.getMiss` / `getIntoHit` and gates
+`gc.alloc.rate.norm < 1 B/op` — i.e. zero steady-state allocation, the
+property whose violation would cause GC pressure and a read-latency breach.
+Metric emission is proven by `EdgeMetricsContractTest`
+(`configd-edge-node/src/test/java/io/configd/edge/node/EdgeMetricsContractTest.java`).
+Recovery-verified = `gc.alloc.rate.norm` stays at 0 B/op and edge read p99
+stays sub-millisecond; the live-breach drill is **validation-pending** (no
+injector exists).
 
 ## Related
 
-- `ProductionSloDefinitions.EDGE_READ_LATENCY_P99`
-- `docs/decisions/adr-0005-lock-free-edge-reads.md` — the design
-  contract that asserts the < 50 ns read path.
-- `docs/decisions/adr-0014-zgc-shenandoah-gc-strategy.md` — the GC
-  strategy that this SLO depends on.
-- `docs/perf-baseline.md` — historical edge read latencies.
-
-## Do not
-
-- Do not route around the edge tier — the SLA assumes edge reads.
-  Going to the leader for reads is a 50× latency hit and will breach
-  propagation SLO too.
+- `docs/decisions/adr-0041-zgc-collector.md` — the GC strategy this SLO leans on.
+- [resource-leak.md](resource-leak.md), [propagation-delay.md](propagation-delay.md)

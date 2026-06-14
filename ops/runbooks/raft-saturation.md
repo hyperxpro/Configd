@@ -1,100 +1,120 @@
-# Runbook: Raft Apply Queue Saturation
+# Runbook: Raft Apply Backlog / Wedged Leader / Election Livelock
 
-**Alert:** `ConfigdRaftPipelineSaturation`
-**Threshold:** `configd_raft_pending_apply_entries > 5000` for 5 min
-**Severity:** warn
+**Alert:** `ConfigdRaftApplyBacklog` (warn, `max(configd_raft_pending_apply_entries) > 5000`, 5m)
+**Also covers (no direct alert):** stuck/wedged leader, election livelock
+(the RR-095 / RR-103 family).
+**Severity:** warn (early indicator before `ConfigdWriteCommitFastBurn`)
 
-## Symptoms
+The leader is committing entries faster than the state machine applies them
+(`commitIndex − lastApplied` is growing), OR the leader is wedged and not
+making progress at all. Apply backlog is ~0 in steady state; sustained
+growth means write commit latency will breach within minutes.
 
-- Warn from `ConfigdRaftPipelineSaturation`.
-- `configd_raft_pending_apply_entries` gauge above 5 000 for at least
-  5 minutes.
-- `configd_apply_seconds` p99 trending upward; the leader is accepting
-  faster than the state machine can apply.
+## Symptom
 
-## Impact
-
-The leader has accepted entries from clients but the apply pipeline
-(the state machine call that mutates the HAMT) is falling behind.
-Sustained queue depth > 5 000 means write commit latency will breach
-within minutes. **This alert is an early warning before
-`ConfigdWriteCommitFastBurn` fires** — treat it accordingly.
-
-## Operator-Setup
-
-Per ADR-0025 the operator must, before this runbook applies:
-
-1. Wire `ConfigdRaftPipelineSaturation` from
-   `ops/alerts/configd-slo-alerts.yaml` into the on-call notification
-   channel (warn-level, not necessarily a page).
-2. Have JFR / async-profiler available on the leader pod (the
-   `docker/Dockerfile.runtime` JDK image already includes `jcmd`).
+- `ConfigdRaftApplyBacklog` warns after 5 min above 5000.
+- `Configd Control Plane` dashboard **"Raft apply backlog"** panel
+  (`configd_raft_pending_apply_entries`) climbing on the leader.
+- **"State-machine apply p99"** (`configd_apply_seconds`) trending up: the
+  apply call (HAMT mutation) is the bottleneck.
+- Wedged-leader variant: a leader is present (consistent `X-Leader-Hint`)
+  but `configd_write_commit_total` rate is flat at zero — it accepts nothing
+  new, or accepts but never applies.
 
 ## Diagnosis
 
-1. **Check apply throughput.** `rate(configd_apply_seconds_count[1m])` —
-   compare to ingress `rate(configd_write_commit_total[1m])`. If apply <
-   ingress, queue grows.
-   <!-- TODO PA-XXXX: counter configd_apply_total not yet emitted; the
-   `_count` series of the `configd_apply_seconds` histogram is the
-   canonical apply-rate signal until a dedicated counter ships
-   alongside the histogram in ConfigdMetrics. -->
+Open `Configd Control Plane` (`ops/dashboards/configd-control-plane.json`).
 
+1. **Backlog growing — is apply slower than ingress?** Compare
+   `rate(configd_apply_seconds_count[1m])` (apply rate) against
+   `rate(configd_write_commit_total[1m])` (commit rate). Apply < commit →
+   the queue grows.
+   ```sh
+   kubectl -n configd exec <leader> -- curl -sf http://localhost:8080/metrics | \
+     grep -E '^configd_(raft_pending_apply_entries|apply_seconds_count|write_commit_total)'
+   ```
+2. **Profile the apply hot path.** On the leader:
+   ```sh
+   pid=$(kubectl -n configd exec <leader> -- pgrep -f configd-server)
+   kubectl -n configd exec <leader> -- jcmd $pid JFR.start duration=30s filename=/tmp/apply.jfr
+   ```
+   Usual culprits: a HAMT mutation-cost regression on a deep prefix, a
+   signature-verification spike, or a GC pause during apply
+   (`Configd Runtime` GC panel).
+3. **Wedged leader (backlog NOT growing, but no commits either).** This is
+   the RR-095/RR-103 family: the leader holds leadership but inflight
+   replication is starved.
+   - `Configd Control Plane` **"Term changes / min"** flat (it is **not**
+     re-electing — it still thinks it is leader) and `configd_write_commit_total`
+     flat at zero.
+   - The operator-visible Raft diagnostics — `leaderId`, `currentTerm`,
+     `role` — are in the per-pod logs (there is no `/raft/status` endpoint);
+     grep the leader's log for the role/term/leaderId lines to confirm it is
+     LEADER at a stable term while making no progress.
+4. **Election livelock (term climbing, no stable leader).** **"Term changes /
+   min"** climbing while no `X-Leader-Hint` is stable across voters → repeated
+   elections, usually one voter with a stale log forcing them. This is the
+   leader-loss path — go to [control-plane-down.md](control-plane-down.md).
 
-2. **Profile the apply hot path.** `jcmd <leader-pid> JFR.start
-   duration=30s filename=apply.jfr`. The usual culprits:
-   - HAMT mutation cost regression on a deep prefix
-   - Signature verification overhead spike
-   - GC pause during apply (check ZGC logs)
+## Resolution steps
 
-## Mitigation
+1. **Apply backlog from a hot-prefix burst:** rate-limit the offending
+   namespace at the API gateway. Do **not** raise the apply-queue capacity —
+   the bound is intentional back-pressure; lifting it just delays the symptom.
+2. **Apply backlog from a slow leader (GC / disk):** step the leader to a
+   less-loaded voter; the PDB ensures only the leader is evicted:
+   ```sh
+   kubectl -n configd delete pod <leader>
+   ```
+   If JFR shows signature verification dominating, confirm the pinned
+   `ConfigSigner` library in `pom.xml` was not swapped. If GC, follow
+   [resource-leak.md](resource-leak.md). If fsync await is high, follow
+   [disk-full-fsync.md](disk-full-fsync.md).
+3. **Wedged leader (RR-095/RR-103):** force a leadership change by recycling
+   the wedged leader so a fresh voter takes over and unblocks progress:
+   ```sh
+   kubectl -n configd delete pod <leader>
+   ```
+   Confirm the new leader's `configd_write_commit_total` rate resumes. File
+   against the consensus owner with the leader's logs (leaderId/term/role
+   evidence) — a recurring wedge is a P1 (RR-095 is a known stall family).
+4. **Election livelock:** go to [control-plane-down.md](control-plane-down.md)
+   — recycle the churn-source voter.
 
-- Step down the leader to a less-loaded voter
-  (`kubectl -n configd delete pod <leader-pod>` — the StatefulSet
-  PDB ensures only the current leader rolls; re-election picks a
-  fresh voter).
-- If JFR shows signature verification dominating: confirm the
-  configured `ConfigSigner` library hasn't been swapped for a slow
-  implementation. The shipped library is pinned in `pom.xml` for a
-  reason.
-- If a hot-prefix write burst is the cause: rate-limit the offending
-  namespace at the API gateway. Do NOT raise the apply-queue capacity.
+## Verification
 
-## Resolution
+- `configd_raft_pending_apply_entries` returns below 5000 and holds; the
+  `ConfigdRaftApplyBacklog` alert clears.
+- Apply rate (`rate(configd_apply_seconds_count[1m])`) ≥ commit rate.
+- A test write commits and applies; if no `ConfigdWriteCommitFastBurn`
+  followed, the mitigation held (otherwise switch to
+  [write-commit-latency.md](write-commit-latency.md)).
 
-`configd_raft_pending_apply_entries` returns below 5 000 sustained.
-The warn alert clears. Apply throughput matches or exceeds ingress
-rate. If a follow-up `ConfigdWriteCommitFastBurn` did not fire, the
-mitigation succeeded; otherwise switch to `write-commit-latency.md`.
+## Escalation
 
-## Rollback
+- Page the consensus owner if the leader re-wedges after recycle (RR-095
+  family stall recurring) — this is a correctness-adjacent P1, not a capacity
+  event.
+- Escalate to [control-plane-down.md](control-plane-down.md) if the backlog
+  is a symptom of leader churn rather than apply cost.
 
-If stepping down the leader made things worse (the new leader is even
-slower), transfer back via the same mechanism — there is no
-hard-to-revert state in a leader transfer.
+## Validation (fault injection)
 
-## Postmortem
-
-Open a post-incident review only if the apply queue stayed saturated
-for > 30 minutes or escalated into the write-commit alert. Required
-fields:
-
-- Was the cause a hot prefix, a signature library swap, a HAMT
-  regression, or GC?
-- Was the JFR profile attached to the incident ticket?
-- Action items: capacity calibration update in `docs/perf-baseline.md`
-  if the baseline write rate has shifted.
+`Rr095StallSeedDiagnosisTest`
+(`configd-testkit/src/test/java/io/configd/testkit/Rr095StallSeedDiagnosisTest.java`)
+re-runs the registered stall seeds against the RR-103-fixed kernel and proves
+the wedge family; `LivenessBoundedProgressSweepTest` (same module)
+distinguishes never-heals (RR-095) from recovers-after-heal (RR-103). The
+apply-backlog gauge being live (not hardwired to 0) is proven by
+`MetricsWiringContractTest.gaugesAndElectionsCounterAreNotHardwiredToZero`
+(`configd-server/src/test/java/io/configd/server/MetricsWiringContractTest.java`).
+There is **no** harness that injects a *running-cluster* apply backlog >5000;
+the backlog-threshold drill is validation-pending. Recovery-verified for the
+wedge = a recycled leader resumes `configd_write_commit_total`.
 
 ## Related
 
-- `ProductionSloDefinitions.WRITE_COMMIT_LATENCY_P99` (downstream effect)
-- `docs/decisions/adr-0001-embedded-raft-consensus.md` — apply pipeline
-  ownership.
-- `docs/decisions/adr-0012-purpose-built-storage-engine.md` — HAMT
-  mutation cost contract.
-
-## Do not
-
-- Do not increase the apply queue capacity. The queue is bounded for
-  back-pressure on purpose. Lifting the bound just delays the eventual
-  symptom.
+- RR-095 (stall seeds) / RR-103 (per-peer inflight leak, S4 fix).
+- `docs/decisions/adr-0001-embedded-raft-consensus.md` — apply pipeline.
+- [write-commit-latency.md](write-commit-latency.md), [control-plane-down.md](control-plane-down.md),
+  [resource-leak.md](resource-leak.md), [disk-full-fsync.md](disk-full-fsync.md)

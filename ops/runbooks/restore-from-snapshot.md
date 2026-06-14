@@ -165,17 +165,16 @@ Verify health:
 kubectl -n configd exec configd-0 -- \
   curl -sf http://localhost:8080/health/ready
 
-# Verify state is loaded — the snapshot's last index should be visible
-# via the Prometheus exposition. The `configd_raft_last_applied_index`
-# gauge (when wired) should equal the snapshot's lastIncludedIndex.
-# <!-- TODO PA-XXXX: admin endpoint missing — `/raft/status` does not
-# exist on HttpApiServer. The `configd_raft_last_applied_index` gauge
-# is not yet emitted by MetricsRegistry either; until both ship the
-# operator must approximate via the `X-Config-Version` response header
-# returned on a GET /v1/config/<probe-key>. -->
+# Verify state is loaded. There is no `/raft/status` endpoint and no
+# applied-index gauge; the operator-visible signals are (a) apply backlog
+# ~0 once caught up, and (b) the `X-Config-Version` response header on a
+# GET of a known restored key, which must equal the snapshot's version.
 kubectl -n configd exec configd-0 -- \
   curl -sf http://localhost:8080/metrics \
-  | grep -E '^configd_raft_last_applied_index' || true
+  | grep -E '^configd_raft_pending_apply_entries' || true
+kubectl -n configd exec configd-0 -- \
+  curl -sf -D - -o /dev/null http://localhost:8080/v1/config/<known-restored-key> \
+  | grep -i 'X-Config-Version' || true
 ```
 
 ### Step 5. Re-add the other voters one at a time
@@ -184,13 +183,11 @@ kubectl -n configd exec configd-0 -- \
 kubectl -n configd scale statefulset/configd --replicas=2
 kubectl -n configd wait --for=condition=ready pod/configd-1 --timeout=300s
 # Voter 1 will catch up via InstallSnapshot from the leader.
-# Confirm it has caught up before adding voter 2:
-# <!-- TODO PA-XXXX: admin endpoint missing — same gap as above; until
-# `/raft/status` and `configd_raft_last_applied_index` ship, fall back
-# to the metrics surface or the `X-Config-Version` header. -->
+# Confirm it has caught up before adding voter 2: apply backlog ~0 and a
+# probe read returns the same `X-Config-Version` as voter-0.
 kubectl -n configd exec configd-1 -- \
   curl -sf http://localhost:8080/metrics \
-  | grep -E '^configd_raft_last_applied_index' || true
+  | grep -E '^configd_raft_pending_apply_entries' || true
 
 kubectl -n configd scale statefulset/configd --replicas=3
 kubectl -n configd wait --for=condition=ready pod/configd-2 --timeout=300s
@@ -200,13 +197,11 @@ kubectl -n configd wait --for=condition=ready pod/configd-2 --timeout=300s
 
 Only after **all** of:
 - All voters report `ready`.
-- Quorum > 1 (≥ ⌊N/2⌋ + 1 voters reporting healthy from
-  `kubectl -n configd get pods -l app=configd` and a leader visible —
-  the per-voter check is `curl -sf http://<pod>:8080/health/ready`).
-  <!-- TODO PA-XXXX: admin endpoint missing — HttpApiServer does not
-  expose `/raft/status` or `/admin/raft/status`. Until it ships,
-  quorum has to be inferred from the readiness probes plus the
-  `X-Leader-Hint` header returned on a write attempt. -->
+- Quorum (≥ ⌊N/2⌋ + 1 voters reporting healthy from
+  `kubectl -n configd get pods -l app=configd`) and a leader visible. There
+  is no `/raft/status` endpoint; quorum + leader are inferred from the
+  readiness probes (`curl -sf http://<pod>:8080/health/ready`) plus a
+  consistent `X-Leader-Hint` header on a probe write across voters.
 - A test write commits successfully.
 
 ```sh
@@ -217,15 +212,14 @@ Only after **all** of:
 
 The runbook is **complete** when all of the following hold:
 
-- All voters ready and at the same `commit_index`.
+- All voters ready and at the same applied index (apply backlog
+  `configd_raft_pending_apply_entries ≈ 0` on every pod).
 - A test write round-trips end-to-end (API gateway → leader → quorum →
   state machine, observable via a follow-up read).
-- Edge propagation p99 (`configd_propagation_delay_seconds`) has
-  returned to baseline.
-  <!-- TODO PA-XXXX: metric configd_edge_staleness_seconds not yet
-  emitted by ConfigdMetrics; the propagation-delay histogram is the
-  closest registered signal until a dedicated edge-staleness gauge
-  ships. -->
+- Edge propagation has returned to baseline: `max(edge_staleness_ms)` is
+  back under the 500 ms `ConfigdEdgeStalenessWarn` boundary on the
+  `Configd Data Plane` dashboard (S6/D-2: `edge_staleness_ms` is the real
+  served signal; the old `configd_propagation_delay_seconds` was a ghost).
 
 - The conformance check below has passed:
 
@@ -294,6 +288,19 @@ the disaster-recovery PIR requirement). Required fields:
   bounds); `SnapshotConsistency` invariant background
 - `docs/decisions/adr-0027-sign-or-fail-close.md` — signing chain that
   Step 2 verification depends on
+
+## Validation (drill / conformance)
+
+This runbook is exercised end-to-end by the two operator scripts it cites,
+not by a fault injector: `ops/scripts/restore-snapshot.sh` (scales the
+StatefulSet down, restores the snapshot into a fresh data dir, scales back
+up — `--dry-run` defaults true; `--dry-run=false --i-have-a-backup` to
+execute) and `ops/scripts/restore-conformance-check.sh` (reads back every
+key in the snapshot manifest and asserts byte-equality of the restored
+state). Recovery-verified = `restore-conformance-check.sh` exits 0 (state
+equality) AND a fresh test write commits and reads back on the rebuilt
+cluster. The snapshot on-wire safety is additionally proven by
+`SnapshotInstallSpecReplayerTest` (`configd-consensus-core`).
 
 ## Do not
 
