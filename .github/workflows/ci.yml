@@ -6,9 +6,19 @@ on:
   pull_request:
     branches: [main]
   schedule:
-    # Nightly full gate-2 (incl. the heavy PIT mutation step) at 03:17 UTC.
+    # Nightly full gates (incl. the heavy PIT mutation step + the gate-4 heavy
+    # integrated chaos sweeps) at 03:17 UTC. NOTE: GitHub only fires `schedule`
+    # from the DEFAULT branch — until this file lands on `main`, the nightly is
+    # configured-but-dormant on session branches. Use the workflow_dispatch
+    # `run_full_nightly` input below to execute the exact nightly path on demand
+    # in real CI (S5/RR-107: prove the nightly chaos job runs green once).
     - cron: '17 3 * * *'
-  workflow_dispatch: {}
+  workflow_dispatch:
+    inputs:
+      run_full_nightly:
+        description: 'Run the FULL nightly path (PIT mutation + gate-4 heavy integrated chaos sweeps / mini-Jepsen) instead of the fast CI subset'
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -152,14 +162,14 @@ jobs:
           cache-dependency-path: configd-linz/src/main/go/porcupine-check/go.sum
 
       - name: Run gate-2 (push/PR — mutation skipped for speed)
-        if: github.event_name != 'schedule'
+        if: github.event_name != 'schedule' && github.event.inputs.run_full_nightly != 'true'
         run: GATE2_SKIP_MUTATION=1 bash gates/gate-2.sh
         env:
           GATE2_LOG_DIR: ${{ runner.temp }}/gate2-logs
         timeout-minutes: 90
 
       - name: Run gate-2 FULL (nightly — incl. PIT mutation thresholds)
-        if: github.event_name == 'schedule'
+        if: github.event_name == 'schedule' || github.event.inputs.run_full_nightly == 'true'
         run: bash gates/gate-2.sh
         env:
           GATE2_LOG_DIR: ${{ runner.temp }}/gate2-logs
@@ -196,14 +206,14 @@ jobs:
           cache: maven
 
       - name: Run gate-3 (push/PR — mutation skipped for speed)
-        if: github.event_name != 'schedule'
+        if: github.event_name != 'schedule' && github.event.inputs.run_full_nightly != 'true'
         run: GATE3_SKIP_GATE2=1 GATE3_SKIP_MUTATION=1 bash gates/gate-3.sh
         env:
           GATE3_LOG_DIR: ${{ runner.temp }}/gate3-logs
         timeout-minutes: 120
 
       - name: Run gate-3 FULL (nightly — incl. new-module PIT floors)
-        if: github.event_name == 'schedule'
+        if: github.event_name == 'schedule' || github.event.inputs.run_full_nightly == 'true'
         run: GATE3_SKIP_GATE2=1 bash gates/gate-3.sh
         env:
           GATE3_LOG_DIR: ${{ runner.temp }}/gate3-logs
@@ -223,12 +233,15 @@ jobs:
     # GATE4_SKIP_GATE3=1 — cumulative coverage comes from the job dependency, not
     # a redundant re-run). CI-subset steps (push/PR): the RR-103/RR-095 liveness
     # regression seeds, D§2 reconfiguration-under-fault, the A3 edge-chaos legs,
-    # and the B-rest durability cells (RR-005, fsync-lie, ENOSPC, short-read). The
-    # HEAVY integrated sweeps (EdgeIntegratedNightlySweepTest + the RR-095
-    # integrated rerun) run ONLY on the nightly schedule — GATE4_SKIP_NIGHTLY=1 on
-    # push/PR keeps the CI subset in CI time. PENDING workstreams (C partition/WAN
-    # + linearizability, D overload reconnect-storm, E mini-Jepsen) are added to
-    # gate-4 when they land — see docs/session-4/PROGRESS.md.
+    # the B-rest durability cells (RR-005, fsync-lie, ENOSPC, short-read), AND
+    # workstreams C (partition/WAN — PartitionMatrixTest) and D (overload —
+    # OverloadChaosTest), which run UNCONDITIONALLY in the CI subset. The HEAVY
+    # integrated sweeps (EdgeIntegratedNightlySweepTest, the RR-095 integrated
+    # rerun, and workstream E's MiniJepsenSweepTest) run ONLY on the nightly path
+    # (schedule, or workflow_dispatch with run_full_nightly=true) — the push/PR
+    # GATE4_SKIP_NIGHTLY=1 keeps the CI subset in CI time. (RR-106: this block
+    # previously claimed C/D/E were "NOT YET IN GATE-4"; the code has run C+D in
+    # the subset and E nightly since S4 — comment corrected 2026-06-14.)
     needs: gate-3
     runs-on: ubuntu-latest
     steps:
@@ -242,14 +255,14 @@ jobs:
           cache: maven
 
       - name: Run gate-4 (push/PR — gate-3 + heavy nightly sweeps skipped)
-        if: github.event_name != 'schedule'
+        if: github.event_name != 'schedule' && github.event.inputs.run_full_nightly != 'true'
         run: GATE4_SKIP_GATE3=1 GATE4_SKIP_NIGHTLY=1 bash gates/gate-4.sh
         env:
           GATE4_LOG_DIR: ${{ runner.temp }}/gate4-logs
         timeout-minutes: 60
 
       - name: Run gate-4 FULL (nightly — incl. the heavy integrated chaos sweeps)
-        if: github.event_name == 'schedule'
+        if: github.event_name == 'schedule' || github.event.inputs.run_full_nightly == 'true'
         run: GATE4_SKIP_GATE3=1 bash gates/gate-4.sh
         env:
           GATE4_LOG_DIR: ${{ runner.temp }}/gate4-logs

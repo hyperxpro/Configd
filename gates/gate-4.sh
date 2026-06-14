@@ -34,16 +34,25 @@
 #                   ack-lag A3-2 + wedged-transport A3-3), GovernorBoundedIdentityMapChurnTest
 #                   (governor churn A3-4), EdgeTransportMtlsTest (accept-then-blackhole
 #                   handshake-timeout A3-1, real socket). [EXP-005]
-#   (f) nightly     HEAVY/long integrated sweeps — NOT in the CI subset (run in the
-#                   nightly chaos job): EdgeIntegratedNightlySweepTest
-#                   (-Dconfigd.edge.nightly=true, 10k ticks) + Rr095StallSeedsIntegratedRerunTest
-#                   (-Dconfigd.rr095.rerun=true). The control-plane 10k SeedSweepTest
-#                   already runs in the build-and-test job; not duplicated here.
+#   (g) partition   Workstream C — PartitionMatrixTest (single-region/leader/
+#                   asymmetric/partial/gray partitions + clock-skew; continuous
+#                   safety oracles + recovery). Runs UNCONDITIONALLY in the CI
+#                   subset (main() → step_partition, no skip guard). [EXP-009]
+#   (h) overload    Workstream D — OverloadChaosTest (control-plane write-flood
+#                   backpressure + post-partition reconnect storm). Runs
+#                   UNCONDITIONALLY in the CI subset (main() → step_overload). [EXP-010]
+#   (f) nightly     HEAVY/long integrated sweeps — NOT in the CI subset (run only
+#                   on the nightly path): EdgeIntegratedNightlySweepTest
+#                   (-Dconfigd.edge.nightly=true, 10k ticks), Rr095StallSeedsIntegratedRerunTest
+#                   (-Dconfigd.rr095.rerun=true), and workstream E's MiniJepsenSweepTest
+#                   (sustained mixed-fault mini-Jepsen). The control-plane 10k
+#                   SeedSweepTest already runs in the build-and-test job; not
+#                   duplicated here.
 #
-# NOT YET IN GATE-4 (PENDING workstreams — added when they land; see
-# docs/session-4/PROGRESS.md): Workstream C (partition/WAN matrix + linearizability
-# over failover histories), D overload (post-partition reconnect storm), E
-# (sustained mini-Jepsen). gate-4 covers the DONE workstreams (A, D§2, A3, B-rest).
+# RR-106 (corrected 2026-06-14): this header previously claimed C (partition/WAN),
+# D (overload), and E (mini-Jepsen) were "NOT YET IN GATE-4". They have been wired
+# since S4 — C and D run in the CI subset (steps g/h above), E runs nightly (step f).
+# gate-4 covers all DONE workstreams (A, D§2, A3, B-rest, C, D, E).
 #
 # Environment knobs (CI must not set the skips on the nightly full run):
 #   GATE4_SKIP_GATE3=1    skip step (a) — reported LOUDLY (CI runs gate-3 as its
