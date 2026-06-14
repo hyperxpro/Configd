@@ -1,0 +1,9 @@
+# gate-5 GREEN in real GitHub CI — run 27489285072 (2026-06-14T05:36:43Z)
+# https://github.com/hyperxpro/Configd/actions/runs/27489285072 — conclusion: success (all 8 jobs incl. gate-5)
+# (first gate-5 CI execution; gate-3 E2E flake found+fixed first, RR-111)
+GATE-5 alloc: OK (zero steady-state allocation on the in-process read path)
+GATE-5 read-tail: OK (p99=550 ns < 20us, p999=11304 ns < 500us)
+GATE-5 throughput: OK (>= 50k floor)
+GATE-5 backpressure: OK (maxPendingProposals=1024 intact)
+GATE-5 co-check: OK (tails via SampleTime; CO-correct harnesses present)
+=== GATE-5: ALL STEPS GREEN ===

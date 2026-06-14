@@ -102,6 +102,11 @@ is reported as the duration it actually ran, never called a 24 h soak. A product
 - **gate-5** is CI-wired (`needs: gate-4`), cumulative: read-path 0 B/op, read p99/p999 regression bounds,
   throughput floor, the §11 1024 bound, CO self-check. It locks in the S5 wins. Full soak + sustained/burst
   are NOT in the blocking gate (ENV-BLOCKED / the lead's soak run) — documented in the gate-5 header.
+  **GREEN in real CI: run `27489285072` (all 8 jobs incl. gate-5 — the first gate-5 CI execution;
+  `docs/session-5/captures/gate-5-real-ci-green.txt`).** Confirming gate-5 in CI also surfaced + fixed a
+  pre-existing gate-3 E2E timing flake (RR-111: a non-vacuity sample floor too tight for loaded runners;
+  loosened 10→5 — not a regression, the runtime diff was empty). **S6 caution:** the gate-3 E2E is
+  Docker/timing-sensitive on shared runners; watch for similar non-vacuity-floor flakes.
 - gates 1–5 chain via CI `needs:`; the nightly path (schedule or `run_full_nightly=true`) runs the full
   cumulative gate-5. RR-107's lesson stands: the `schedule:` cron only fires once `ci.yml` is on the
   default branch (merge-to-main, an S6/S8 release decision).
