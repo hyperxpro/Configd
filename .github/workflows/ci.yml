@@ -276,6 +276,61 @@ jobs:
           path: ${{ runner.temp }}/gate4-logs
           retention-days: 7
 
+  gate-5:
+    # Session-5 cumulative gate (gates/gate-5.sh) — PERFORMANCE & capacity.
+    # REQUIRES gate-4 green (runs as its own job here, so the gate-5 run sets
+    # GATE5_SKIP_GATE4=1 — cumulative coverage comes from the job dependency, not
+    # a redundant re-run). Locks in the Session-5 wins so Sessions 6-8 cannot
+    # silently erode them: read-path 0 B/op (jmh-gc-check), read p99/p999 latency
+    # REGRESSION bounds (JMH SampleTime/HdrHistogram), a throughput SMOKE floor
+    # (RaftCommitBenchmark in-memory), the §11 as-built write bound
+    # (maxPendingProposals=1024, Workstream D / RR-110), and a coordinated-omission
+    # self-check (tails via SampleTime, CO-correct harnesses present). Collector
+    # ZGC (ADR-0041). The FULL soak + sustained 10k/s + 100k/s burst are NOT a
+    # CI job — the soak is a 24h lead-launched background run and the sustained/
+    # burst rates are ENV-BLOCKED on CI hardware (manifest M-9/M-10); they live as
+    # docs/session-5 captures + the perf nightly lane (the nightly path below runs
+    # the full gate-5, incl. the unskipped steps, captured).
+    needs: gate-4
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 25
+        uses: actions/setup-java@v4
+        with:
+          java-version: '25'
+          distribution: 'corretto'
+          cache: maven
+
+      - name: Set up Go (gate-5 chains jmh-gc-check; gate-4 chain needs the Porcupine checker if unskipped)
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: configd-linz/src/main/go/porcupine-check/go.mod
+          cache-dependency-path: configd-linz/src/main/go/porcupine-check/go.sum
+
+      - name: Run gate-5 (push/PR — gate-4 chain skipped; perf regression steps)
+        if: github.event_name != 'schedule' && github.event.inputs.run_full_nightly != 'true'
+        run: GATE5_SKIP_GATE4=1 bash gates/gate-5.sh
+        env:
+          GATE5_LOG_DIR: ${{ runner.temp }}/gate5-logs
+        timeout-minutes: 60
+
+      - name: Run gate-5 FULL (nightly — incl. the cumulative gate-4 chain)
+        if: github.event_name == 'schedule' || github.event.inputs.run_full_nightly == 'true'
+        run: bash gates/gate-5.sh
+        env:
+          GATE5_LOG_DIR: ${{ runner.temp }}/gate5-logs
+        timeout-minutes: 180
+
+      - name: Upload gate-5 step logs
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: gate-5-logs
+          path: ${{ runner.temp }}/gate5-logs
+          retention-days: 7
+
   wire-compat:
     # ADR-0029 §8.10 fixture-bump guardrail.
     # Fails the build if GoldenFixtures.java changed without a matching bump
