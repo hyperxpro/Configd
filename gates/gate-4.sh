@@ -136,6 +136,15 @@ step_partition() {
   echo "GATE-4 partition: OK (C — §12 isolation/leader/asymmetric/partial/gray/clock-skew; safety + recovery)"
 }
 
+step_overload() {
+  # D — overload under chaos (§11): control-plane write flood (OVERLOADED shed + bounded-plateau
+  # queue + recovery) and the post-partition reconnect storm (a fleet of edges all DISCONNECTED
+  # then healed at once — all recover to CURRENT, none terminal). Fan-out admission/queue bounds
+  # are pinned by FanOutServerAdmissionBoundTest / DemotionNoticeBackpressureTest / the A3 legs.
+  run_tests overload configd-testkit "OverloadChaosTest"
+  echo "GATE-4 overload: OK (D — write-flood backpressure + post-partition reconnect storm)"
+}
+
 step_nightly() {
   if [ "${GATE4_SKIP_NIGHTLY:-0}" = "1" ]; then
     echo "GATE-4 nightly: SKIPPED by GATE4_SKIP_NIGHTLY=1 (LOUD: heavy integrated sweeps NOT run this run)"
@@ -155,6 +164,7 @@ main() {
   step_durability
   step_edgechaos
   step_partition
+  step_overload
   step_nightly
   echo "=== GATE-4: ALL STEPS GREEN ==="
 }

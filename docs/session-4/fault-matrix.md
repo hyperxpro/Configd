@@ -68,3 +68,17 @@ single-leader-per-term + no divergent commit + no committed-entry loss + minorit
 **Recovery bounds (sim ticks, 12 seeds each)** → `recovery-bounds.md`: leader-isolation re-elect ≤ 543;
 single-region re-elect ≤ 703, converge ≤ 59. Asymmetric/partial/gray/clock-skew: safety held, bounded
 convergence after heal.
+
+---
+
+## §D — Overload under chaos (architecture §11)
+
+Governing doc: `architecture.md` §11 (backpressure & overload). Policy: correct shed order,
+client-visible signals (429 / version-stale / `OVERLOADED`), **bounded queues never unbounded**, clean
+recovery after load clears.
+
+| # | Fault (cell) | Expected behavior (clause) | Oracle | Status |
+|---|---|---|---|---|
+| D-1 | **Control-plane write flood** (proposals past capacity) | shed with `OVERLOADED` (the §11 429-equivalent); the uncommitted queue PLATEAUS at `maxPendingProposals`, never grows unbounded; drains + accepts again once delivery resumes | `OverloadChaosTest.controlPlaneWriteFlood…` — flood 2×1500, queue plateau == 1024 across both waves, all further writes shed, recovers | ✅ EXP-010 |
+| D-2 | **Post-partition reconnect storm** (whole fleet DISCONNECTED → healed at once — *the data plane's most dangerous overload*, charter §6) | catch-up thundering herd absorbed; every edge recovers to CURRENT; none stuck stale-but-silent; none pushed TERMINAL | `OverloadChaosTest.postPartitionReconnectStorm…` — 5 edges, all → DISCONNECTED → simultaneous heal → all CURRENT (258 recovery ticks), 0 terminal | ✅ EXP-010 |
+| D-fanout | **Fan-out admission/queue bounds under load** (subscriber storm, slow consumers) | bounded admission, bounded outbound queue, demotion ladder, refusals during quarantine | cited: `FanOutServerAdmissionBoundTest`, `DemotionNoticeBackpressureTest`, `BootstrapSnapshotBackpressureTest`, A3-2/A3-3/A3-4 | ✅ (cited) |
