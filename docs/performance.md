@@ -374,3 +374,30 @@ JAVA_HOME=/home/ubuntu/.sdkman/candidates/java/25.0.2-amzn \
 | **Operational complexity** | External Raft + Salt + replication tree | Zero external coordination | Embedded Raft, single artifact | **ARCHITECTURAL (inspectable, not benchmarked)** |
 
 **No axis is measured-surpassed.** The "all four surpass" claim is withdrawn pending Phase C1 measurement.
+
+---
+
+## 12. Session 5 reconciliation (every prior claim: REPRODUCED / SUPERSEDED / CONTRADICTED)
+
+> Session 5 is the measurement session this doc's P-017 banner deferred to. Every number above is now
+> reconciled against committed S5 artifacts (`docs/session-5/`). The benchmark *sources* were always
+> real; what was missing was a committed measured artifact and HdrHistogram tails — now produced.
+
+| Prior claim (this doc) | Status | S5 evidence |
+|---|---|---|
+| §3 read table is JMH **`avgt`** (averages) with a PLACEHOLDER artifact | **SUPERSEDED** — re-run as HdrHistogram **SampleTime** distributions (averages are not tail claims) | WS-A `workstream-a-read-path.md`; `wsA-jmh-sample-tails.txt` |
+| §3 Edge read HAMT ~30–147 ns | **REPRODUCED (consistent)** — raw `HamtMap.get` avgt stands; the *full edge read* (`getHitWithCursor`, +cursor gate +ReadResult) p50 = 770 ns @10⁶, p99 1.60 µs (both ≪ the §0.1 1 ms p99) | WS-A |
+| §1 read alloc "0 B/op (cache miss); ~24 B (hit)" | **REPRODUCED + RR-009 RESOLVED** — miss/`getInto` = true 0 B/op under load; `get()` hit = 32 B (documented VDR-0001); the stale "0 B" hit claim relabeled | WS-A; RR-009 |
+| §1/§6 GC = **ZGC** | **CONFIRMED with data** — ZGC chosen on a measured pause histogram (max STW 0.045 ms vs G1 20.6 ms) | **ADR-0041** |
+| §3/§7 write commit cross-region < 150 ms (~78 ms p50 model) | **REPRODUCED (model) + split** — local commit p99 16 ms measured; modeled cross-region ≈84 ms (5-voter); **VERIFIED(local) + ENV-BLOCKED(M-1)**, never green on one box | WS-B `workstream-b-write-throughput.md` |
+| §3 "Write throughput 10K/s: **TARGET MET** (815K ops/s in-process)" | **CONTRADICTED-as-stated → corrected** — 815K ops/s is the in-memory **mechanism** (CPU headroom), NOT an end-to-end sustained rate. End-to-end on the 2-vCPU box is bounded to ~150/s → **mechanism VERIFIED + end-to-end ENV-BLOCKED (M-9)**. "TARGET MET" was an over-claim; the honest split is in the scorecard | WS-B; M-9 |
+| §3 propagation < 500 ms p99 "ACHIEVABLE" (model) | **MEASURED (local) + split** — live Compose 3-edge staleness p99 = 255 ms (inside 500 ms, local component); global = +WAN **ENV-BLOCKED (M-2)**; CT-02 moved PARTIAL→VERIFIED(local)+ENV-BLOCKED | WS-C `workstream-c-propagation.md` |
+| §2/§4/§11 backpressure ladder (queue>1000, Retry-After, hysteresis, apply-lag-503, ReadIndex-100) | **CONTRADICTED (doc-vs-code) → RR-110** — as-built = single bounded-proposal-queue 429 (1024) + fan-out 80/100; the rest is documented-not-built | WS-D `workstream-d-overload.md`; RR-110 |
+| §9 WAN recovery (sim ticks, wall-clock estimated) | **REPRODUCED + extended** — S4 `recovery-bounds.md` anchors; reconnect-storm now a fleet-size distribution (258 ticks @5 → 261 @50, flat) | WS-D §D.3; WS-E (soak) |
+| §6 JIT warmup / megamorphic-free hot path | *see Workstream E* (`workstream-e-jit-soak.md`) | WS-E |
+| §11 Quicksilver "SURPASSED" (withdrawn S0) | **RE-FILLED from measured/modeled S5 evidence** (beats baseline on every measurable axis; full surpass PENDING real-hardware) | `scorecard-and-claim-evidence.md` §B |
+
+**Bottom line:** no prior number is silently wrong — each is reproduced (consistent), superseded by a
+proper distribution, or **explicitly corrected** (the 10k/s "TARGET MET" over-claim and the §11 ladder
+doc-vs-code gap are the two genuine corrections, both now honestly labeled with their ENV-BLOCKED /
+RR-110 disposition). The authoritative S5 numbers live in `docs/session-5/` with reproducible commands.
