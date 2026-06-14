@@ -15,7 +15,7 @@ Benchmarks located in `configd-testkit/src/test/java/io/configd/bench/`.
 | Benchmark | p50 | p99 | p999 | Alloc/op | Notes |
 |-----------|-----|-----|------|----------|-------|
 | HamtReadBenchmark | ~16 ns | ~50 ns | ~147 ns | 0 B | Lock-free volatile read + pointer chase |
-| VersionedStoreReadBenchmark | ~25 ns | ~80 ns | ~200 ns | 0 B | Includes snapshot pointer load |
+| VersionedStoreReadBenchmark | ~25 ns | ~80 ns | ~200 ns | 32 B (get hit) / 0 B (getInto, miss) | RR-009 relabel (S5): convenience `get()` hit allocates one ~32 B `ReadResult` (accepted VDR-0001); strict zero-alloc via `getInto`/miss singleton, measured 0 B/op under load (Workstream A). Snapshot pointer load is one volatile read. |
 
 ### Write Path
 

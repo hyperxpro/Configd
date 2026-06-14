@@ -59,6 +59,38 @@ class VersionedConfigStoreAllocationTest {
         assertEquals(1L, versionOut[0], "version must be stored in versionOut[0]");
     }
 
+    /**
+     * RR-009 (S5) — the arraycopy-survival guard. The other getInto tests assert
+     * only the RETURN code (length) and the version, so deleting the
+     * {@code System.arraycopy} in {@link VersionedConfigStore#getInto} survived PIT:
+     * getInto could return the correct length 64 with a GARBAGE {@code dst} and no
+     * test would notice. This asserts the value bytes are actually copied — it goes
+     * RED if the arraycopy is removed (verified by mutation-revert, S5/A).
+     */
+    @Test
+    void getIntoCopiesExactValueBytes() {
+        var store = new VersionedConfigStore();
+        byte[] payload = new byte[64];
+        for (int i = 0; i < payload.length; i++) payload[i] = (byte) (i + 1); // 1..64: never 0 or 0xFF
+        store.put("a", payload, 42);
+
+        byte[] dst = new byte[256];
+        for (int i = 0; i < dst.length; i++) dst[i] = (byte) 0xFF; // sentinel: a missing copy leaves 0xFF
+        long[] versionOut = new long[1];
+
+        int rc = store.getInto("a", dst, versionOut);
+
+        assertEquals(64, rc, "value length must be returned on hit");
+        assertEquals(42L, versionOut[0], "version must be copied into versionOut[0]");
+        // The load-bearing assertion RR-009 was missing: the value bytes are copied.
+        for (int i = 0; i < 64; i++) {
+            assertEquals(payload[i], dst[i],
+                    "getInto must copy value byte " + i + " (kills the arraycopy-removal mutant)");
+        }
+        // And it must not write past the value length (the sentinel survives at [64]).
+        assertEquals((byte) 0xFF, dst[64], "getInto must not write past the value length");
+    }
+
     @Test
     void getIntoIsZeroAllocationOnMissPath() {
         var store = new VersionedConfigStore();

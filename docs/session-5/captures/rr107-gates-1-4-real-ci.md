@@ -64,7 +64,12 @@ adds a `workflow_dispatch` input `run_full_nightly` that forces the exact nightl
 | Branch | `session-5-performance` |
 | Trigger | `workflow_dispatch` (`run_full_nightly=true`) |
 | Path exercised | FULL: gate-2 incl. PIT mutation, gate-3 incl. new-module PIT floors, **gate-4 incl. the heavy integrated chaos sweeps** (EdgeIntegratedNightlySweep 10k ticks + RR-095 integrated rerun + MiniJepsenSweepTest) |
-| Status | dispatched 2026-06-14T02:06:23Z — long-running (~1.5–3 h); result appended on completion |
+| Started / finished | 2026-06-14T02:06:23Z → 02:32:46Z (~26 min) |
+| **Conclusion** | **success** — all 7 jobs green: build-and-test, tlc, wire-compat, gate-1, gate-2 (FULL incl. PIT mutation), gate-3 (FULL incl. PIT floors), **gate-4 (FULL incl. the heavy integrated chaos sweeps + mini-Jepsen)** |
+
+**"Nightly chaos has run once" is now proven in real CI** — the exact nightly path (the heavy gate-4
+integrated chaos sweeps that the scheduled job runs) executed green on GitHub-hosted infra, not a
+local capture.
 
 > **Standing note for merge-to-main (S6/S8):** the `schedule:` cron only becomes live once `ci.yml`
 > lands on the default branch. Until then the nightly is *configured + manually executed once in real
