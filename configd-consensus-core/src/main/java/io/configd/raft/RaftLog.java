@@ -1,11 +1,15 @@
 package io.configd.raft;
 
+import io.configd.common.IntegrityEnvelope;
 import io.configd.common.Storage;
 
 import java.nio.ByteBuffer;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
+
+import static io.configd.raft.RaftArtifactMagic.SNAP_MAGIC;
+import static io.configd.raft.RaftArtifactMagic.WALE_MAGIC;
 
 /**
  * In-memory Raft log with append, truncation, and snapshot compaction.
@@ -59,6 +63,16 @@ public final class RaftLog {
      */
     private final Storage storage;
 
+    /**
+     * PA-2021 (ADR-0042): at-rest integrity codec applied as a pure transform
+     * over the WAL-entry and snapshot-blob payloads. Never null — a keyless
+     * {@link IntegrityEnvelope} (Layer A: version + CRC32C, reads legacy raw bytes)
+     * is the default so the in-memory mode and every existing test are unchanged in
+     * behavior. The server wires a KEYED envelope (Layer B: HMAC-SHA-256, fail-closed)
+     * derived from the cluster signing key.
+     */
+    private final IntegrityEnvelope integrity;
+
     private static final String WAL_NAME = "raft-log";
     private static final String WAL_TMP_NAME = "raft-log.tmp";
     private static final String SNAPSHOT_META_KEY = "raft-log.snapshot-meta";
@@ -88,6 +102,7 @@ public final class RaftLog {
         this.commitIndex = 0;
         this.lastApplied = 0;
         this.storage = null;
+        this.integrity = IntegrityEnvelope.keyless();
         this.recoveredSnapshot = null;
     }
 
@@ -104,25 +119,42 @@ public final class RaftLog {
      * @param storage the durable storage implementation
      */
     public RaftLog(Storage storage) {
+        this(storage, IntegrityEnvelope.keyless());
+    }
+
+    /**
+     * Creates a RaftLog backed by durable storage with an explicit at-rest
+     * integrity codec (PA-2021 / ADR-0042). A KEYED {@link IntegrityEnvelope}
+     * authenticates the WAL entries and snapshot blob (fail-closed: a tampered
+     * artifact is refused on recovery); a keyless one applies version + CRC32C
+     * only and reads legacy raw bytes (back-compat). The recovery behavior is
+     * otherwise identical to {@link #RaftLog(Storage)}.
+     *
+     * @param storage   the durable storage implementation
+     * @param integrity the at-rest integrity codec (non-null; use
+     *                  {@link IntegrityEnvelope#keyless()} for no authentication)
+     */
+    public RaftLog(Storage storage, IntegrityEnvelope integrity) {
         this.entries = new ArrayList<>(1024);
         this.snapshotIndex = 0;
         this.snapshotTerm = 0;
         this.commitIndex = 0;
         this.lastApplied = 0;
         this.storage = storage;
+        this.integrity = java.util.Objects.requireNonNull(integrity, "integrity");
 
         // Clean up any leftover temp WAL from an incomplete rewrite
         storage.truncateLog(WAL_TMP_NAME);
 
-        // Recover entries from the WAL
+        // Recover entries from the WAL. FileStorage has already dropped any torn
+        // trailing frame (incomplete length/data/CRC32) BEFORE these bytes reach
+        // us — so every `raw` here is a complete, CRC32-valid frame. deserializeEntry
+        // then verifies the at-rest integrity envelope: a complete-but-tampered
+        // frame (MAC mismatch under a keyed codec) fails LOUD (ADR-0042 torn-vs-
+        // tamper rule), never silently dropped.
         List<byte[]> walEntries = storage.readLog(WAL_NAME);
         for (byte[] raw : walEntries) {
-            ByteBuffer buf = ByteBuffer.wrap(raw);
-            long index = buf.getLong();
-            long term = buf.getLong();
-            byte[] command = new byte[buf.remaining()];
-            buf.get(command);
-            entries.add(new LogEntry(index, term, command));
+            entries.add(deserializeEntry(raw));
         }
 
         // Recover snapshot boundary from persisted metadata (written by compact()).
@@ -550,16 +582,47 @@ public final class RaftLog {
     // ---- WAL persistence helpers ----
 
     /**
-     * Serializes a LogEntry for WAL storage.
-     * Format: [8-byte index][8-byte term][N-byte command]
+     * Serializes a LogEntry for WAL storage, wrapped in the at-rest integrity
+     * envelope (PA-2021 / ADR-0042). The envelope IS the {@code data} that
+     * FileStorage frames as {@code [len][data][CRC32]}, so per-record
+     * authentication lives INSIDE the FileStorage frame — after FileStorage's
+     * torn-tail/length/CRC32 checks, which still run untouched.
+     * <p>
+     * Inner payload format: {@code [8-byte index][8-byte term][N-byte command]}.
      */
-    private static byte[] serializeEntry(LogEntry entry) {
+    private byte[] serializeEntry(LogEntry entry) {
         byte[] command = entry.command();
         ByteBuffer buf = ByteBuffer.allocate(8 + 8 + command.length);
         buf.putLong(entry.index());
         buf.putLong(entry.term());
         buf.put(command);
-        return buf.array();
+        return integrity.wrap(WALE_MAGIC, buf.array());
+    }
+
+    /**
+     * Deserializes a WAL record produced by {@link #serializeEntry}, verifying the
+     * at-rest integrity envelope first.
+     * <p>
+     * The frame reaching here is already complete and CRC32-valid (FileStorage
+     * dropped any torn trailing frame). A complete-but-tampered frame therefore
+     * fails the envelope's MAC/CRC32C/version check and throws
+     * {@link io.configd.common.IntegrityException} — recovery refuses rather than
+     * replaying forged committed state (ADR-0042 torn-vs-tamper rule). A keyless
+     * codec transparently accepts legacy raw (pre-envelope) WAL records.
+     */
+    private LogEntry deserializeEntry(byte[] raw) {
+        byte[] payload = integrity.unwrapOrNull(WALE_MAGIC, raw);
+        // Keyless back-compat: a legacy raw record (no envelope) returns null from
+        // unwrapOrNull — fall back to the bytes as-is. A keyed codec never returns
+        // null for non-enveloped bytes (it throws — fail-closed), so this branch is
+        // reached only in keyless mode reading a pre-ADR-0042 WAL.
+        byte[] body = (payload != null) ? payload : raw;
+        ByteBuffer buf = ByteBuffer.wrap(body);
+        long index = buf.getLong();
+        long term = buf.getLong();
+        byte[] command = new byte[buf.remaining()];
+        buf.get(command);
+        return new LogEntry(index, term, command);
     }
 
     // ---- Snapshot blob persistence (RR-003) ----
@@ -573,7 +636,7 @@ public final class RaftLog {
     //   [8 lastIncludedIndex][8 lastIncludedTerm]
     //   [4 dataLen][data][4 configLen (-1 == null)][config]
 
-    private static byte[] serializeSnapshot(SnapshotState s) {
+    private byte[] serializeSnapshot(SnapshotState s) {
         byte[] data = s.data();
         byte[] cfg = s.clusterConfigData();
         int cfgLen = (cfg == null) ? -1 : cfg.length;
@@ -587,26 +650,50 @@ public final class RaftLog {
         if (cfg != null) {
             buf.put(cfg);
         }
-        return buf.array();
+        // PA-2021 (ADR-0042): wrap the snapshot-envelope bytes in the at-rest
+        // integrity envelope. The snapshot blob is an atomic-rename artifact
+        // (never torn), so any keyed-MAC mismatch on recovery is unambiguously
+        // tamper and fails loud in readSnapshotBlob.
+        return integrity.wrap(SNAP_MAGIC, buf.array());
     }
 
     /**
      * Reads and deserializes the persisted snapshot blob, or returns {@code null}
-     * if absent or structurally invalid (a torn/short blob is treated as absent —
-     * the WAL remains authoritative for recovery).
+     * if the blob is structurally absent or too short to be an envelope (legit
+     * first boot / a torn-short blob — the WAL remains authoritative).
+     * <p>
+     * <b>PA-2021 (ADR-0042 D-1 condition 4 — BLOCKING):</b> a structurally-complete
+     * blob whose integrity envelope FAILS verification (keyed-MAC mismatch, CRC32C
+     * mismatch, rolled version, or a downgrade to algId=NONE under a configured key)
+     * propagates as an {@link io.configd.common.IntegrityException} — it MUST NOT be
+     * swallowed to {@code null}. Returning null here would re-arm the silent-
+     * downgrade vulnerability: the recovery rule would treat the tampered blob as
+     * "absent" and fall back to the (also-attacker-writable) WAL or, worse, advance
+     * past a hole. The snapshot blob is written by {@link Storage#put} (temp +
+     * fsync + atomic rename), so it is never torn — any MAC mismatch is
+     * unambiguously tamper.
      */
     private SnapshotState readSnapshotBlob() {
         byte[] raw = storage.get(SNAPSHOT_BLOB_KEY);
-        if (raw == null || raw.length < 8 + 8 + 4) {
-            return null;
+        // unwrapOrNull returns null ONLY for structurally-absent/too-short bytes (or,
+        // in keyless mode, legacy non-enveloped bytes); it THROWS IntegrityException
+        // on a present-but-tampered envelope. That throw deliberately propagates.
+        byte[] payload = integrity.unwrapOrNull(SNAP_MAGIC, raw);
+        if (payload == null) {
+            // Keyless back-compat: legacy raw (pre-envelope) blob — parse directly.
+            // (A keyed codec never returns null for non-enveloped bytes: it throws.)
+            payload = raw;
+        }
+        if (payload == null || payload.length < 8 + 8 + 4) {
+            return null; // absent / first boot / torn-short
         }
         try {
-            ByteBuffer buf = ByteBuffer.wrap(raw);
+            ByteBuffer buf = ByteBuffer.wrap(payload);
             long index = buf.getLong();
             long term = buf.getLong();
             int dataLen = buf.getInt();
             if (dataLen < 0 || buf.remaining() < dataLen + 4) {
-                return null; // torn blob
+                return null; // torn blob (only reachable for legacy raw bytes)
             }
             byte[] data = new byte[dataLen];
             buf.get(data);
@@ -614,15 +701,18 @@ public final class RaftLog {
             byte[] cfg = null;
             if (cfgLen >= 0) {
                 if (buf.remaining() < cfgLen) {
-                    return null; // torn blob
+                    return null; // torn blob (legacy raw only)
                 }
                 cfg = new byte[cfgLen];
                 buf.get(cfg);
             }
             return new SnapshotState(data, index, term, cfg);
         } catch (RuntimeException e) {
-            // Defensive: a malformed blob must not crash recovery; the WAL is
-            // authoritative. Treat as absent.
+            // Defensive: a malformed LEGACY (keyless, pre-envelope) blob must not
+            // crash recovery; the WAL is authoritative. Treat as absent. Note this
+            // does NOT mask a tamper: an integrity-verified envelope's payload is
+            // well-formed by construction, and an IntegrityException from unwrap
+            // already propagated above before reaching this parse.
             return null;
         }
     }

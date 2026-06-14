@@ -114,11 +114,11 @@ attack test is written and currently RED (pre-fix) or not yet written.
 
 | Boundary | Control | Negative test(s) | Status |
 |---|---|---|---|
-| B-DISK | Tampered snapshot byte → restore refused | _(A)_ | PENDING |
-| B-DISK | Tampered WAL record (complete) → recovery refused; torn tail still tolerated | _(A)_ | PENDING |
-| B-DISK | Downgraded/forged format version → refused | _(A)_ | PENDING |
-| B-DISK | Forged `DurableRaftState` (valid-looking `votedFor`) → refused | _(A)_ | PENDING |
-| B-INSTALL | Forged install-snapshot from peer → refused | _(A)_ | PENDING |
+| B-DISK | Tampered snapshot byte → restore refused | `SnapshotIntegrityTest#tamperedSnapshotPayloadByteIsRefused`, `#tamperedSnapshotWithRecomputedCrcIsRefusedByMac` | **VERIFIED** |
+| B-DISK | Tampered WAL record (complete) → recovery refused; torn tail still tolerated | `WalRecordIntegrityTest#tamperedCompleteWalRecordIsRefused`, `#tornTrailingWalRecordIsToleratedAndPriorEntriesRecover` | **VERIFIED** |
+| B-DISK | Downgraded/forged format version → refused | `SnapshotIntegrityTest#forgedFormatVersionIsRefused`, `#downgradeToAlgNoneIsRefused` | **VERIFIED** |
+| B-DISK | Forged `DurableRaftState` (valid-looking `votedFor`) → refused | `DurableRaftStateIntegrityTest#forgedVotedForIsRefused`, `#forgedTermIsRefused` | **VERIFIED** |
+| B-INSTALL | Forged install-snapshot from peer → refused | `SnapshotIntegrityTest#forgedInstalledSnapshotIsRefusedOnRecovery` | **VERIFIED** |
 | B-WIRE | plaintext / no-cert / wrong-CA / expired / wrong-SAN → refused (both planes) | _(B)_ | PENDING |
 | B-WIRE | TLS<1.3 / weak cipher downgrade → refused | _(B)_ | PENDING |
 | B-RESOURCE | malformed / oversized(>1 MB) / truncated / slowloris → bounded reject, no crash/OOM/hang | _(C)_ | PENDING |

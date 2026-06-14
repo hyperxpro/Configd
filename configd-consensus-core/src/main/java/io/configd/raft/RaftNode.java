@@ -189,6 +189,27 @@ public final class RaftNode {
     public RaftNode(RaftConfig config, RaftLog log, RaftTransport transport,
                     StateMachine stateMachine, RandomGenerator random,
                     Storage storage, InvariantChecker invariantChecker) {
+        this(config, log, transport, stateMachine, random, storage, invariantChecker,
+                io.configd.common.IntegrityEnvelope.keyless());
+    }
+
+    /**
+     * Creates a new RaftNode with an explicit at-rest integrity codec for the
+     * durable Raft state (PA-2021 / ADR-0042). The server passes a KEYED
+     * {@link io.configd.common.IntegrityEnvelope} so a forged {@code votedFor} is
+     * refused on load; the other constructors default to keyless (unchanged
+     * behavior for tests and in-memory mode).
+     * <p>
+     * Note: the snapshot/WAL integrity codec is carried by {@code log} (it was
+     * constructed with the same envelope by the caller); this parameter only wires
+     * the {@link DurableRaftState} envelope, which RaftNode owns.
+     *
+     * @param integrity the at-rest integrity codec for {@code raft.persistent_state}
+     */
+    public RaftNode(RaftConfig config, RaftLog log, RaftTransport transport,
+                    StateMachine stateMachine, RandomGenerator random,
+                    Storage storage, InvariantChecker invariantChecker,
+                    io.configd.common.IntegrityEnvelope integrity) {
         this.config = Objects.requireNonNull(config, "config");
         this.log = Objects.requireNonNull(log, "log");
         this.transport = Objects.requireNonNull(transport, "transport");
@@ -204,7 +225,8 @@ public final class RaftNode {
         this.heartbeatTimeoutTicks = config.heartbeatIntervalTicks();
 
         // Load persisted state (currentTerm, votedFor) from durable storage
-        this.durableState = new DurableRaftState(Objects.requireNonNull(storage, "storage"));
+        this.durableState = new DurableRaftState(Objects.requireNonNull(storage, "storage"),
+                Objects.requireNonNull(integrity, "integrity"));
         this.currentTerm = durableState.currentTerm();
         this.votedFor = durableState.votedFor();
         this.role = RaftRole.FOLLOWER;

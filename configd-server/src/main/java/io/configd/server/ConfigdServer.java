@@ -193,12 +193,18 @@ public final class ConfigdServer {
         // --signing-key-file; if omitted, the key is kept under the data
         // directory as "signing-key.bin" so restarts keep the chain valid.
         ConfigSigner configSigner;
+        // PA-2021 (ADR-0042): the at-rest integrity codec for the Raft durability
+        // artifacts (snapshot blob, WAL records, raft.persistent_state). KEYED with
+        // K_integrity derived from the cluster signing key — fail-closed: a tampered
+        // artifact is refused on recovery. Built from keyStore below.
+        io.configd.common.IntegrityEnvelope raftIntegrity;
         try {
             Path keyFile = config.signingKeyFile() != null
                     ? config.signingKeyFile()
                     : dataDir.resolve("signing-key.bin");
             SigningKeyStore keyStore = SigningKeyStore.loadOrCreate(keyFile);
             configSigner = new ConfigSigner(keyStore.keyPair());
+            raftIntegrity = deriveRaftIntegrityEnvelope(keyStore, keyFile, dataDir);
         } catch (Exception e) {
             throw new RuntimeException("Failed to load or create Ed25519 signing key", e);
         }
@@ -253,7 +259,9 @@ public final class ConfigdServer {
         // runtime. Before this fix the ms values were consumed as raw tick
         // counts, inflating every interval 10x (re-election measured ~2.3s).
         RaftConfig raftConfig = RaftConfig.of(config.nodeId(), config.peers(), TICK_PERIOD_MS);
-        RaftLog raftLog = new RaftLog(storage);
+        // PA-2021: the keyed integrity envelope authenticates the snapshot blob and
+        // WAL records written/recovered through this RaftLog.
+        RaftLog raftLog = new RaftLog(storage, raftIntegrity);
         RandomGenerator random = RandomGeneratorFactory.getDefault().create(
                 config.nodeId().id() * 31L + System.nanoTime());
 
@@ -309,7 +317,7 @@ public final class ConfigdServer {
 
         RaftNode raftNode = new RaftNode(
                 raftConfig, raftLog, transport, stateMachine,
-                random, storage, raftInvariantChecker);
+                random, storage, raftInvariantChecker, raftIntegrity);
 
         // Initialize multi-raft driver
         MultiRaftDriver driver = new MultiRaftDriver(config.nodeId(), clock);
@@ -786,6 +794,82 @@ public final class ConfigdServer {
             } catch (Exception e) {
                 System.err.println("Error closing TCP transport: " + e.getMessage());
             }
+        }
+    }
+
+    /**
+     * PA-2021 (ADR-0042): derives the keyed at-rest {@link io.configd.common.IntegrityEnvelope}
+     * for the Raft durability artifacts from the cluster signing key, and enforces
+     * the D-1 key-location requirement.
+     * <p>
+     * {@code K_integrity = HKDF-SHA256(IKM = signing private-key encoding,
+     * salt = keyId bytes, info = "configd/raft-at-rest-integrity/v2", len = 32)} —
+     * derived from the EXISTING cluster-shared signing key, so no new key file and
+     * no new key-distribution channel is introduced (charter §10.3). The verify
+     * side runs the identical derivation.
+     * <p>
+     * <b>D-1 BLOCKER mitigation:</b> {@code K_integrity}'s secrecy depends on the
+     * signing key living OUTSIDE attacker-writable snapshot/WAL/backup storage. If
+     * the resolved {@code keyFile} is co-located inside {@code dataDir} (the insecure
+     * default, {@code dataDir.resolve("signing-key.bin")}), a T3/A2 writer who can
+     * tamper the artifacts can also read the key and recompute a valid MAC — Layer B
+     * is worthless. We emit a LOUD SEVERE warning here; relocating the default path
+     * is an S8 go/no-go item and is intentionally NOT changed in S7.
+     *
+     * @param keyStore the loaded cluster signing key store
+     * @param keyFile  the resolved signing-key file path
+     * @param dataDir  the Raft data directory (where artifacts live)
+     * @return a keyed, fail-closed integrity envelope
+     */
+    private static io.configd.common.IntegrityEnvelope deriveRaftIntegrityEnvelope(
+            SigningKeyStore keyStore, Path keyFile, Path dataDir) {
+        byte[] ikm = keyStore.keyPair().getPrivate().getEncoded();
+        java.util.UUID keyId = keyStore.keyId();
+        byte[] salt = java.nio.ByteBuffer.allocate(16)
+                .putLong(keyId.getMostSignificantBits())
+                .putLong(keyId.getLeastSignificantBits())
+                .array();
+        byte[] info = "configd/raft-at-rest-integrity/v2"
+                .getBytes(java.nio.charset.StandardCharsets.UTF_8);
+        byte[] k = io.configd.common.Hkdf.deriveKey(ikm, salt, info, 32);
+        var integrity = new io.configd.common.IntegrityEnvelope(
+                new javax.crypto.spec.SecretKeySpec(k, "HmacSHA256"));
+
+        // D-1: warn loudly if the signing key is co-located with the artifacts it
+        // protects. Compare resolved absolute paths so a relative --signing-key-file
+        // pointing back into the data dir is still caught.
+        if (isInsideDataDir(keyFile, dataDir)) {
+            String banner = "************************************************************";
+            System.err.println("WARNING: " + banner);
+            System.err.println("WARNING: At-rest integrity key (PA-2021) is DERIVED FROM the cluster");
+            System.err.println("WARNING: signing key, which is CO-LOCATED inside the data directory:");
+            System.err.println("WARNING:   signing key : " + keyFile.toAbsolutePath());
+            System.err.println("WARNING:   data dir     : " + dataDir.toAbsolutePath());
+            System.err.println("WARNING: A storage-tampering adversary (threat A2/T3) can then ALSO read");
+            System.err.println("WARNING: the key and forge a valid MAC, defeating snapshot/WAL/state");
+            System.err.println("WARNING: integrity. Mount the signing key on SEPARATE storage (e.g.");
+            System.err.println("WARNING: /secrets/signing-key.bin:ro) for production.");
+            System.err.println("WARNING: " + banner);
+            LOG.log(Level.SEVERE,
+                    "PA-2021: integrity key co-located with protected artifacts (signingKey={0}, dataDir={1})"
+                            + " — production must mount the signing key on separate storage",
+                    new Object[]{keyFile.toAbsolutePath(), dataDir.toAbsolutePath()});
+        }
+        return integrity;
+    }
+
+    /** True if {@code keyFile} resolves to a path within {@code dataDir} (D-1 co-location check). */
+    private static boolean isInsideDataDir(Path keyFile, Path dataDir) {
+        try {
+            Path kf = keyFile.toAbsolutePath().normalize();
+            Path dd = dataDir.toAbsolutePath().normalize();
+            return kf.startsWith(dd);
+        } catch (RuntimeException e) {
+            // If path normalization fails for any reason, do not suppress the warning
+            // silently — err toward warning (treat as co-located) is too noisy, but a
+            // failure here is unexpected; log and treat as not-inside (best effort).
+            LOG.log(Level.WARNING, "PA-2021: could not compare key/data paths for co-location check", e);
+            return false;
         }
     }
 

@@ -44,9 +44,11 @@ A self-describing envelope, mirroring the `FrameCodec` (ADR-0029) and `SigningKe
 
 ### Layer B — HMAC-SHA-256 (keyed: tamper / forgery — the security control)
 
-- `MAC = HMAC-SHA-256(K_integrity, MAGIC || formatVersion || algId || payload)`. `algId` and
-  `formatVersion` are **inside** the MAC input → an attacker cannot downgrade `algId` to NONE or
-  roll `formatVersion` back without invalidating the MAC.
+- `MAC = HMAC-SHA-256(K_integrity, MAGIC || formatVersion || algId || reserved || payload)`. Every
+  header field is **inside** the MAC input → an attacker cannot downgrade `algId` to NONE, roll
+  `formatVersion` back, or mutate `reserved` without invalidating the MAC. (The `reserved` byte was
+  folded into the MAC input per the independent verifier's Finding 3.1 — see decision-log D-3 — to
+  remove its latent malleability before the construction reaches specialist crypto review.)
 - **`K_integrity = HKDF-SHA256(IKM = cluster Ed25519 private-key encoding, info = "configd/raft-at-rest-integrity/v2", salt = keyId)`** — derived from the **existing cluster-shared signing key**
   (`SigningKeyStore`), so **no new key file and no new key-distribution channel** is introduced
   (charter §10.3 "no new attack surface"). The verify side uses the same derivation.

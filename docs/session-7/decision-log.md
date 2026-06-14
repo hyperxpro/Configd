@@ -55,6 +55,33 @@ compat + fixtures). Recorded so S8 go/no-go can weigh it.
 
 ---
 
+## D-3 (TECH) — PA-2021 independent verification: APPROVE-WITH-CHANGES, 2 hardening items folded in
+
+**Question.** Does the PA-2021 implementation (ADR-0042) close the captured vulnerability without a
+bypass or new attack surface, and is it non-vacuous?
+
+**Method.** Implemented by a fresh `opus` data-integrity sub-agent (red-capture-first); independently
+re-verified by a SECOND fresh `opus` agent (review-architect role) that did not write the code —
+re-ran full suites from clean, reproduced both mutation-revert pairs itself, adversarially probed the
+codec for a bypass, and screened for new attack surface (key logging, silent keyless-fallback under a
+key, composition with RR-003/S4).
+
+**Resolution (ratified — APPROVE).** No exploitable bypass; non-vacuous (real on-disk byte flips +
+positive control); full suites green (common 106/106, consensus-core 334/334 [2 pre-existing skips],
+server 140/140); no key material logged; co-location warning correct; install-snapshot proven to share
+the local recovery path (`forgedInstalledSnapshotIsRefusedOnRecovery`). **Two NON-BLOCKING hardening
+items folded in by the lead before commit** (each with a new locking test in `IntegrityEnvelopeTest`):
+1. **Finding 3.1** — the `reserved` byte was CRC-covered but excluded from the MAC (latent
+   malleability). Now folded into the MAC input (`reservedByteTamperUnderKeyedThrows`).
+2. **Finding 4.1** — a buffer claiming our magic but below the envelope floor relied on an incidental
+   downstream `BufferUnderflowException`. A keyed reader now refuses it with a deliberate
+   `IntegrityException` (`magicMatchingSubFloorBufferUnderKeyedThrows`); keyless keeps absent-null
+   semantics (no S4 regression — `structurallyShortReturnsNullNotThrow` still green).
+
+**Evidence.** A-verify transcript (agentId a99e91825ca016103); `docs/session-7/captures/pa2021-prefix-failure.txt`; the two new regression tests.
+
+---
+
 ## D-2 (SCOPE) — Session sequencing: A first and alone, then B/C/D/E
 
 **Question.** The charter (§12) prescribes threat-model → Workstream A (PA-2021) with most care →

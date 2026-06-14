@@ -1,10 +1,13 @@
 package io.configd.raft;
 
+import io.configd.common.IntegrityEnvelope;
 import io.configd.common.NodeId;
 import io.configd.common.Storage;
 
 import java.nio.ByteBuffer;
 import java.util.Objects;
+
+import static io.configd.raft.RaftArtifactMagic.STATE_MAGIC;
 
 /**
  * Persists Raft's required durable state: {@code currentTerm} and
@@ -28,6 +31,14 @@ public final class DurableRaftState {
     private static final int VOTED_FOR_NULL = -1;
 
     private final Storage storage;
+    /**
+     * PA-2021 (ADR-0042): at-rest integrity codec over the 12-byte
+     * {@code [term][votedFor]} payload. Never null — a keyless
+     * {@link IntegrityEnvelope} is the default (in-memory mode and existing tests
+     * unchanged, reads legacy raw bytes); the server wires a KEYED one so a forged
+     * {@code votedFor} (recomputed CRC, no valid MAC) is refused on load.
+     */
+    private final IntegrityEnvelope integrity;
     private long currentTerm;
     private NodeId votedFor;
 
@@ -37,7 +48,25 @@ public final class DurableRaftState {
      * @param storage the durable storage backend
      */
     public DurableRaftState(Storage storage) {
+        this(storage, IntegrityEnvelope.keyless());
+    }
+
+    /**
+     * Creates a new DurableRaftState with an explicit at-rest integrity codec
+     * (PA-2021 / ADR-0042), loading any previously persisted state.
+     * <p>
+     * {@code raft.persistent_state} is an atomic-rename artifact (never torn), so a
+     * structurally-complete-but-MAC-invalid file under a keyed codec is
+     * unambiguously tamper and {@link #load()} fails loud — a forged {@code votedFor}
+     * must never load (it would violate Election Safety). A keyless codec accepts
+     * legacy raw (pre-envelope) state for back-compat.
+     *
+     * @param storage   the durable storage backend
+     * @param integrity the at-rest integrity codec (non-null)
+     */
+    public DurableRaftState(Storage storage, IntegrityEnvelope integrity) {
         this.storage = Objects.requireNonNull(storage, "storage");
+        this.integrity = Objects.requireNonNull(integrity, "integrity");
         load();
     }
 
@@ -129,18 +158,31 @@ public final class DurableRaftState {
         ByteBuffer buf = ByteBuffer.allocate(12);
         buf.putLong(term);
         buf.putInt(voted != null ? voted.id() : VOTED_FOR_NULL);
-        storage.put(STORAGE_KEY, buf.array());
+        // PA-2021 (ADR-0042): wrap the 12-byte payload in the at-rest integrity
+        // envelope before persisting.
+        storage.put(STORAGE_KEY, integrity.wrap(STATE_MAGIC, buf.array()));
         storage.sync();
     }
 
     private void load() {
         byte[] data = storage.get(STORAGE_KEY);
-        if (data == null || data.length < 12) {
+        // PA-2021 (ADR-0042): unwrapOrNull returns null ONLY for structurally-absent
+        // or too-short bytes (fresh node / first boot) — fresh init at term 0, as
+        // today. A structurally-complete-but-tampered envelope (keyed-MAC mismatch,
+        // CRC32C mismatch, rolled version, or algId=NONE downgrade under a key)
+        // THROWS IntegrityException, which propagates: a forged votedFor must not
+        // load (fail loud). A keyless codec also accepts legacy raw (pre-envelope)
+        // state via the null path.
+        byte[] payload = integrity.unwrapOrNull(STATE_MAGIC, data);
+        if (payload == null) {
+            payload = data; // keyless legacy raw bytes, or absent (handled below)
+        }
+        if (payload == null || payload.length < 12) {
             this.currentTerm = 0;
             this.votedFor = null;
             return;
         }
-        ByteBuffer buf = ByteBuffer.wrap(data);
+        ByteBuffer buf = ByteBuffer.wrap(payload);
         this.currentTerm = buf.getLong();
         int votedForId = buf.getInt();
         this.votedFor = (votedForId == VOTED_FOR_NULL) ? null : NodeId.of(votedForId);
