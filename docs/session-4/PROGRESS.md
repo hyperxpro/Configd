@@ -9,24 +9,26 @@ fault cell declares its oracle (in `fault-matrix.md` / `kill-matrix.md`) before 
 
 ---
 
-## ⏭ RESUME HERE — Workstream C (partition/WAN matrix); A, B-rest, D§2, A3, gate-4 all DONE
+## ✅ SESSION 4 COMPLETE — all workstreams landed; residuals are S5 live-infra (ENVIRONMENT-BLOCKED)
 
-**gate-4 is wired + GREEN + captured** (CI subset `gate-4-ci-subset-run.txt`; nightly
-`gate-4-nightly-run.txt`, 0 safety violations across the 10k integrated sweep + the 7 RR-095 seeds).
-B-rest is effectively done: RR-005 (`47b6022`), fsync-lie (`EXP-007`), ENOSPC append+snapshot-write +
-short-read (`EXP-008`). The big remaining workstream is **C**.
+Every charter workstream is done and CI-protected: **A** (RR-103/095 + liveness), **B**-durability
+(RR-005/008, fsync-lie, ENOSPC, short-read), **D§2** reconfig-under-fault, **A3** edge-chaos legs,
+**C** partition/WAN matrix (+ clock-skew safety), **D** overload (write-flood + reconnect storm),
+**E** mini-Jepsen, the **§6/§11/§12 claim-evidence** conversions, and the **S5 handoff**. gate-4 is
+CI-wired, cumulative, GREEN + captured (CI subset + nightly chaos, 0 safety violations). The
+authoritative closeout is `handoff-to-session-5.md`; the spine is `fault-matrix.md`. Definition of
+Done: see §9 scorecard in the handoff — the only open lines are ENVIRONMENT-BLOCKED, deferred to S5
+with exact infra named.
 
-### PENDING for the next run (charter §5/§6, §9):
-- **C — partition & WAN matrix** (the big one): execute the arch §12 scenarios on Compose with
-  `netem`/`iptables` — single-region isolation (minority/majority), leader isolation, asymmetric +
-  partial partitions, gray failure (loss/latency), fan-out partition, heal+convergence. Per cell:
-  safety (linearizability over the write history spanning the partition — the `configd-linz`
-  checker), liveness, client-experience, recovery-time histogram. REJECT *and* DROP (RR-002 fixed).
-- **D — overload / reconnect storm** (charter §6, extra scrutiny): the post-partition reconnect
-  storm (the data plane's most dangerous overload) — assert §11 shed order + client signals
-  (429/version-stale) + bounded queues + clean recovery.
-- **E — sustained mini-Jepsen**: LAST, against the fully-fixed system; nightly, not in the CI gate.
-- **handoff-S5** (charter §9): the session-close handoff (distinct from this resume index).
+### Deferred to S5 (ENVIRONMENT-BLOCKED, exact infra in `handoff-to-session-5.md §3`):
+- **Porcupine full history-linearizability** on a real Go runner (in-sim safety invariants are the
+  always-on substitute; runs in CI gate-2 linzgate). Go is absent on this dev box.
+- **Multi-host asymmetric/partial WAN partitions** across real hosts (single-box `netem`/`docker`
+  did the intra-host scenarios; C-1..C-6 are deterministic in-sim).
+- **Real fsync / firmware-lie** durability on a real disk (`dm-flakey` + `hdparm -W1` + power-cut).
+- **fsync > 1 s voluntary step-down** (B3 slow-disk; `latencyHook` built, step-down not yet wired).
+- **CT-02** staleness SLO numbers (p99 < 500 ms) on real hardware; **clock-skew fence threshold** (S6).
+- Low-value B-rest tail (snapshot-install / leadership-transfer kill cells; RR-019/086/064) — optional.
 
 ### ⚠ ENVIRONMENT-BLOCKED candidates to clear BEFORE starting C (carried forward):
 1. **netem/iptables need NET_ADMIN/root** on the Compose host; the bridge network can do
@@ -65,7 +67,11 @@ clean → commit → second-agent replay for production/safety cells.
 | **B: fsync-lie cell** | ✅ `CrashStorage.lieOnSyncForKey` + `gapDetectionFiresWhenSnapshotFsyncLied` (recovers to the same gap as blob-unrecoverable → `durable_prefix_no_gap` fires; M-lie RED); real-firmware variant ENVIRONMENT-BLOCKED | `EXP-007`, `captures/exp-007-*`, kill-matrix |
 | **B: ENOSPC-append + short-read** | ✅ ENOSPC at the consensus layer (`StorageEnospcConsensusReactionTest` — surfaces, no silent log advance via durable-first `RaftLog.append`, recovers; M-order RED). short-read CLOSED by analysis (trailing≡torn-tail; middle≡gap→`durable_prefix_no_gap`) | `EXP-008`, `captures/exp-008-*`, kill-matrix |
 | **Fault-matrix spine** | ✅ created (`fault-matrix.md`, charter §8) — indexes A/A3/B2/D§2/C/E | `fault-matrix.md` |
-| **gate-4 + CI** | ✅ `gates/gate-4.sh` cumulative (gates 1-3 stay green) + CI job `needs: gate-3` (CI-subset on push/PR, full nightly on schedule). CI subset GREEN (liveness/RR-103-095, D§2, A3, B-rest); nightly chaos GREEN (10k integrated sweep + 7 RR-095 seeds, 0 safety violations) | `gates/gate-4.sh`, `.github/workflows/ci.yml`, `captures/gate-4-{ci-subset,nightly}-run.txt` |
+| **gate-4 + CI** | ✅ `gates/gate-4.sh` cumulative (gates 1-3 stay green) + CI job `needs: gate-3` (CI-subset on push/PR, full nightly on schedule). CI subset GREEN; nightly chaos GREEN (10k integrated sweep + 7 RR-095 seeds + mini-Jepsen, 0 safety violations) | `gates/gate-4.sh`, `.github/workflows/ci.yml`, `captures/gate-4-{ci-subset,nightly}-run.txt` |
+| **C — partition/WAN matrix** | ✅ `PartitionMatrixTest` (6/6): single-region/leader/asymmetric/partial/gray + clock-skew safety; continuous safety oracles + recovery. Edge partition + live iptables cited; Porcupine + multi-host → S5 | `EXP-009`, `fault-matrix.md §C` |
+| **D — overload** | ✅ `OverloadChaosTest` (2/2): write-flood backpressure (plateau at 1024, OVERLOADED shed, recovers) + post-partition reconnect storm (5 edges, 258t, none terminal) | `EXP-010`, `fault-matrix.md §D` |
+| **E — mini-Jepsen** | ✅ `MiniJepsenSweepTest` sustained mixed-fault, 0 safety violations; 10k adversarial sweeps re-run clean. Nightly | `EXP-011`, `fault-matrix.md §E` |
+| **Claim-evidence §6/§11/§12 + S5 handoff** | ✅ converted with commands; closeout written | `claim-evidence-conversions.md`, `handoff-to-session-5.md` |
 
 ## PENDING (resume at clean seams)
 

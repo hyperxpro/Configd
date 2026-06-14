@@ -152,7 +152,10 @@ step_nightly() {
   fi
   run_tests nightly-edge configd-testkit "EdgeIntegratedNightlySweepTest" -Dconfigd.edge.nightly=true
   run_tests nightly-rr095 configd-testkit "Rr095StallSeedsIntegratedRerunTest" -Dconfigd.rr095.rerun=true
-  echo "GATE-4 nightly: OK (integrated edge 10k sweep + RR-095 integrated rerun, 0 safety violations)"
+  # E — sustained mini-Jepsen (mixed-fault, long horizon) against the fully-fixed system.
+  run_tests nightly-jepsen configd-testkit "MiniJepsenSweepTest" \
+    -Dconfigd.minijepsen.seeds=16 -Dconfigd.minijepsen.horizon=20000
+  echo "GATE-4 nightly: OK (integrated edge 10k sweep + RR-095 integrated rerun + mini-Jepsen, 0 safety violations)"
 }
 
 main() {
