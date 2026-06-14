@@ -224,6 +224,24 @@ public final class PropagationProbe {
         return globalHistogram.getTotalCount() == 0 ? 0L : globalHistogram.getMaxValue();
     }
 
+    /**
+     * Exact count of recorded samples whose staleness is {@code >= valueMs}, across all
+     * observers. This is the methodology §3a/F1 "tail-bin sample count": a p999/p9999 backed
+     * by only a handful of samples at/above its value is low-confidence, and this is how a
+     * report states that count honestly rather than guessing it. Counts the closed interval
+     * {@code [valueMs, HIGHEST_TRACKABLE_MILLIS]} on the HdrHistogram.
+     *
+     * @param valueMs the staleness threshold in ms (inclusive)
+     * @return the number of recorded samples at or above {@code valueMs}
+     */
+    public synchronized long globalCountAtOrAbove(long valueMs) {
+        if (globalHistogram.getTotalCount() == 0) {
+            return 0L;
+        }
+        long lo = Math.max(0L, Math.min(valueMs, HIGHEST_TRACKABLE_MILLIS));
+        return globalHistogram.getCountBetweenValues(lo, HIGHEST_TRACKABLE_MILLIS);
+    }
+
     // -----------------------------------------------------------------------
     // Reporting
     // -----------------------------------------------------------------------
