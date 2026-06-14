@@ -110,32 +110,81 @@ final class ConfigHandlerAuthTest {
     // ------------------------------------------------------------------
 
     @Test
-    void getWithNoTokenIsDenied() throws Exception {
+    void getWithNoTokenIsUnauthenticated() throws Exception {
+        // S7/D-1 (corrected semantics): a MISSING credential is AUTHENTICATION,
+        // not authorization — RFC 7235 + charter §7 require 401 (was 403 pre-S7),
+        // with a WWW-Authenticate: Bearer challenge.
         int port = start(authInterceptor(), aclService());
         HttpResponse<String> resp = send(port, "GET", "/v1/config/app/feature", null, null);
-        assertEquals(403, resp.statusCode(), "a missing bearer token must be denied (authenticate(null) -> Denied)");
+        assertEquals(401, resp.statusCode(), "a missing bearer token must be 401 (authenticate(null) -> Denied)");
+        assertEquals("Bearer", resp.headers().firstValue("WWW-Authenticate").orElse(null),
+                "a 401 MUST carry a WWW-Authenticate: Bearer challenge (RFC 7235 §3.1)");
         assertNotEquals("on", resp.body(), "no value may be served without authentication");
     }
 
     @Test
-    void getWithInvalidTokenIsDenied() throws Exception {
+    void getWithInvalidTokenIsUnauthenticated() throws Exception {
+        // S7/D-1: an INVALID credential is still authentication failure -> 401.
         int port = start(authInterceptor(), aclService());
         HttpResponse<String> resp = send(port, "GET", "/v1/config/app/feature", "bogus", null);
-        assertEquals(403, resp.statusCode(), "an unknown token must be denied");
-        assertTrue(resp.body().contains("Authentication denied"));
+        assertEquals(401, resp.statusCode(), "an unknown token must be 401");
+        assertEquals("Bearer", resp.headers().firstValue("WWW-Authenticate").orElse(null));
+        assertTrue(resp.body().contains("authentication required"),
+                "the 401 body must say authentication is required: " + resp.body());
     }
 
     @Test
-    void getWithMalformedAuthorizationHeaderIsDenied() throws Exception {
+    void getWithMalformedAuthorizationHeaderIsUnauthenticated() throws Exception {
+        // S7/D-1: a non-"Bearer " header leaves token null -> authenticate(null)
+        // -> Denied -> 401 (not 403).
         int port = start(authInterceptor(), aclService());
-        // A non-"Bearer " header leaves token null -> authenticate(null) -> Denied.
-        HttpResponse<String> resp = send(port, "GET", "/v1/config/app/feature", null, null);
         HttpRequest req = HttpRequest.newBuilder()
                 .uri(URI.create("http://127.0.0.1:" + port + "/v1/config/app/feature"))
                 .header("Authorization", "Basic Zm9vOmJhcg==") // not Bearer
                 .GET().build();
         HttpResponse<String> basic = client.send(req, HttpResponse.BodyHandlers.ofString());
-        assertEquals(403, basic.statusCode(), "a non-Bearer Authorization header must not authenticate");
+        assertEquals(401, basic.statusCode(), "a non-Bearer Authorization header must not authenticate (401)");
+        assertEquals("Bearer", basic.headers().firstValue("WWW-Authenticate").orElse(null));
+    }
+
+    // ------------------------------------------------------------------
+    // S7/D-1: mutating calls (PUT/DELETE) must ALSO return 401 (not 403)
+    // for missing/malformed/invalid credentials. Each is its own attack.
+    // ------------------------------------------------------------------
+
+    @Test
+    void putWithNoTokenIsUnauthenticated() throws Exception {
+        int port = start(authInterceptor(), aclService());
+        HttpResponse<String> resp = send(port, "PUT", "/v1/config/app/feature", null, "off");
+        assertEquals(401, resp.statusCode(), "an unauthenticated PUT must be 401");
+        assertEquals("Bearer", resp.headers().firstValue("WWW-Authenticate").orElse(null));
+    }
+
+    @Test
+    void deleteWithNoTokenIsUnauthenticated() throws Exception {
+        int port = start(authInterceptor(), aclService());
+        HttpResponse<String> resp = send(port, "DELETE", "/v1/config/app/feature", null, null);
+        assertEquals(401, resp.statusCode(), "an unauthenticated DELETE must be 401");
+        assertEquals("Bearer", resp.headers().firstValue("WWW-Authenticate").orElse(null));
+    }
+
+    @Test
+    void putWithMalformedAuthorizationHeaderIsUnauthenticated() throws Exception {
+        int port = start(authInterceptor(), aclService());
+        // A "Bearer "-less header leaves the token null -> 401.
+        HttpRequest req = HttpRequest.newBuilder()
+                .uri(URI.create("http://127.0.0.1:" + port + "/v1/config/app/feature"))
+                .header("Authorization", "Basic Zm9vOmJhcg==")
+                .PUT(HttpRequest.BodyPublishers.ofString("off")).build();
+        HttpResponse<String> resp = client.send(req, HttpResponse.BodyHandlers.ofString());
+        assertEquals(401, resp.statusCode(), "a non-Bearer PUT must not authenticate (401)");
+    }
+
+    @Test
+    void putWithInvalidTokenIsUnauthenticated() throws Exception {
+        int port = start(authInterceptor(), aclService());
+        HttpResponse<String> resp = send(port, "PUT", "/v1/config/app/feature", "bogus", "off");
+        assertEquals(401, resp.statusCode(), "a PUT with an unknown token must be 401");
     }
 
     // ------------------------------------------------------------------
@@ -185,6 +234,40 @@ final class ConfigHandlerAuthTest {
 
         HttpResponse<String> put = send(port, "PUT", "/v1/config/locked/secret", "good-writer", "x");
         assertEquals(403, put.statusCode(), "even the writer has no grant on locked/");
+    }
+
+    // ------------------------------------------------------------------
+    // S7/D-4: privilege-escalation coverage. An authenticated caller must NOT
+    // be able to escalate a READ grant into a WRITE/DELETE, nor reach a key
+    // outside its granted prefix. Each is a 403 (authenticated, unauthorized) —
+    // never a 401, and never a success. NOTE: there is NO HTTP membership or
+    // restore endpoint (membership = Raft proposeConfigChange; restore =
+    // ops/scripts/restore-snapshot.sh), so privilege control for those lives at
+    // the Raft/CLI layer, not here — there is no endpoint to attack.
+    // ------------------------------------------------------------------
+
+    @Test
+    void readScopedPrincipalCannotEscalateToWrite() throws Exception {
+        int port = start(authInterceptor(), aclService());
+        // reader has READ on app/ but NOT WRITE: a PUT is an escalation attempt -> 403.
+        HttpResponse<String> put = send(port, "PUT", "/v1/config/app/feature", "good-reader", "off");
+        assertEquals(403, put.statusCode(), "read-scoped principal must not escalate to WRITE");
+    }
+
+    @Test
+    void readScopedPrincipalCannotEscalateToDelete() throws Exception {
+        int port = start(authInterceptor(), aclService());
+        // DELETE requires WRITE; the reader has none -> 403 (not 401, not success).
+        HttpResponse<String> del = send(port, "DELETE", "/v1/config/app/feature", "good-reader", null);
+        assertEquals(403, del.statusCode(), "read-scoped principal must not escalate to DELETE");
+    }
+
+    @Test
+    void writerCannotCrossIntoAnUngrantedPrefixOnDelete() throws Exception {
+        int port = start(authInterceptor(), aclService());
+        // writer has WRITE on app/ but NO grant on locked/: a cross-prefix DELETE -> 403.
+        HttpResponse<String> del = send(port, "DELETE", "/v1/config/locked/secret", "good-writer", null);
+        assertEquals(403, del.statusCode(), "a writer must not cross into an ungranted prefix on DELETE");
     }
 
     @Test

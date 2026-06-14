@@ -112,9 +112,10 @@ public final class ConfigClient {
                     }
                     return new OpResult(Op.Status.FAIL, value, call, System.nanoTime()); // definite Lost/NotLeader
                 }
-                if (code == 400 || code == 403 || code == 429) {
+                if (code == 400 || code == 401 || code == 403 || code == 429) {
                     // Definite rejections the server contract guarantees never committed
-                    // (validation 400, auth 403, backpressure-before-propose 429).
+                    // (validation 400, authn 401 / authz 403 — both rejected before the
+                    // proposer is reached, backpressure-before-propose 429).
                     return new OpResult(Op.Status.FAIL, value, call, System.nanoTime());
                 }
                 // Any other 5xx (or unrecognized status) is INDETERMINATE on the write

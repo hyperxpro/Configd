@@ -1,11 +1,13 @@
 package io.configd.server;
 
 import io.configd.api.AclService;
+import io.configd.api.AuditLog;
 import io.configd.api.AuthInterceptor;
 import io.configd.api.ConfigReadService;
 import io.configd.api.ConfigWriteService;
 import io.configd.api.HealthService;
 import io.configd.api.RateLimiter;
+import io.configd.api.ReplayGuard;
 import io.configd.common.Clock;
 import io.configd.common.ConfigScope;
 import io.configd.common.NodeId;
@@ -198,6 +200,10 @@ public final class ConfigdServer {
         // K_integrity derived from the cluster signing key — fail-closed: a tampered
         // artifact is refused on recovery. Built from keyStore below.
         io.configd.common.IntegrityEnvelope raftIntegrity;
+        // S7/D-2 upgrade: the audit-log chain MAC key K_audit, derived from the
+        // SAME cluster signing key as the Raft at-rest key but DOMAIN-SEPARATED by
+        // a distinct HKDF info string so the two derived keys are independent.
+        javax.crypto.SecretKey auditLogKey;
         try {
             Path keyFile = config.signingKeyFile() != null
                     ? config.signingKeyFile()
@@ -205,6 +211,7 @@ public final class ConfigdServer {
             SigningKeyStore keyStore = SigningKeyStore.loadOrCreate(keyFile);
             configSigner = new ConfigSigner(keyStore.keyPair());
             raftIntegrity = deriveRaftIntegrityEnvelope(keyStore, keyFile, dataDir);
+            auditLogKey = deriveAuditLogKey(keyStore);
         } catch (Exception e) {
             throw new RuntimeException("Failed to load or create Ed25519 signing key", e);
         }
@@ -622,12 +629,35 @@ public final class ConfigdServer {
         StrongReadPolicy strongReadPolicy = new StrongReadPolicy(config.strongReadPrefixes());
         System.out.println("  Strong reads : " + strongReadPolicy.prefixes()
                 + " (fail-closed linearizable, ADR-0030 INV-1)");
+
+        // S7/D-2: tamper-evident security audit log. Enabled whenever auth is on
+        // (the audit trail only has subjects to record once there are principals).
+        // KEYED HMAC-SHA256 chain under K_audit (derived above), so a file-rewriting
+        // attacker (threat A2/T3) cannot forge a consistent chain. Backed by the
+        // durable, append+CRC Storage; bounded to AuditLog.DEFAULT_MAX_RECORDS.
+        AuditLog auditLog = (authInterceptor != null) ? new AuditLog(storage, clock, auditLogKey) : null;
+        if (auditLog != null) {
+            System.out.println("  Audit log    : security-audit (KEYED HMAC-SHA256 chain, append-only, cap "
+                    + AuditLog.DEFAULT_MAX_RECORDS + ")");
+        }
+        // S7/D-3: replay protection. OPT-IN (default OFF for pre-production
+        // back-compat); enabled via -Dconfigd.replay.enabled=true so no new CLI/
+        // ServerConfig surface is added. Defends only against PASSIVE
+        // capture-and-replay; a token holder can still mint fresh requests
+        // (recommend per-request HMAC content signing for S8).
+        ReplayGuard replayGuard = null;
+        if (Boolean.getBoolean("configd.replay.enabled")) {
+            replayGuard = new ReplayGuard(clock);
+            System.out.println("  Replay guard : ON (window " + ReplayGuard.DEFAULT_WINDOW_MS
+                    + "ms, nonce cap " + ReplayGuard.DEFAULT_MAX_NONCES + ")");
+        }
+
         HttpApiServer httpApiServer;
         try {
             httpApiServer = new HttpApiServer(
                     config.apiPort(), sslContext, healthService, prometheusExporter,
                     configStore, writeService, readService, authInterceptor, aclService,
-                    strongReadPolicy, () -> raftNode.leaderId());
+                    strongReadPolicy, () -> raftNode.leaderId(), auditLog, replayGuard);
             httpApiServer.start();
         } catch (Exception e) {
             throw new RuntimeException("Failed to start HTTP API server on port " + config.apiPort(), e);
@@ -856,6 +886,34 @@ public final class ConfigdServer {
                     new Object[]{keyFile.toAbsolutePath(), dataDir.toAbsolutePath()});
         }
         return integrity;
+    }
+
+    /**
+     * S7/D-2: derives the audit-log chain MAC key {@code K_audit} from the cluster
+     * signing key using the SAME HKDF construction as
+     * {@link #deriveRaftIntegrityEnvelope} but with a DISTINCT {@code info} string
+     * — {@code "configd/audit-log-integrity/v1"} vs the Raft
+     * {@code "configd/raft-at-rest-integrity/v2"} — so the two derived keys are
+     * domain-separated and independent (compromise/analysis of one does not yield
+     * the other). Same IKM (signing private-key encoding) and salt (keyId bytes).
+     * Residual: an attacker who holds the cluster signing key can recompute
+     * {@code K_audit} and forge the chain — the same fence as PA-2021 §5.1 (the
+     * co-location warning is emitted once by {@code deriveRaftIntegrityEnvelope}).
+     *
+     * @param keyStore the loaded cluster signing key store
+     * @return the HMAC-SHA256 audit-log key
+     */
+    private static javax.crypto.SecretKey deriveAuditLogKey(SigningKeyStore keyStore) {
+        byte[] ikm = keyStore.keyPair().getPrivate().getEncoded();
+        java.util.UUID keyId = keyStore.keyId();
+        byte[] salt = java.nio.ByteBuffer.allocate(16)
+                .putLong(keyId.getMostSignificantBits())
+                .putLong(keyId.getLeastSignificantBits())
+                .array();
+        byte[] info = "configd/audit-log-integrity/v1"
+                .getBytes(java.nio.charset.StandardCharsets.UTF_8);
+        byte[] k = io.configd.common.Hkdf.deriveKey(ikm, salt, info, 32);
+        return new javax.crypto.spec.SecretKeySpec(k, "HmacSHA256");
     }
 
     /** True if {@code keyFile} resolves to a path within {@code dataDir} (D-1 co-location check). */

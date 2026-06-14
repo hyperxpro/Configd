@@ -126,9 +126,9 @@ attack test is written and currently RED (pre-fix) or not yet written.
 | B-RESOURCE | malformed / oversized / truncated / length-lie → bounded reject, no crash/OOM/hang/unbounded-alloc | `FrameCodecFuzzTest`, `EdgeFrameCodecFuzzTest` (23 props, resource oracle); read-loop bounded-alloc proven | **VERIFIED** |
 | B-RESOURCE | ceiling enforced (not just documented) | fuzz tests assert layered caps (config-value 1 MiB / Raft frame 16 MiB) reject-before-alloc | **VERIFIED** — ⚠ F-S7-FUZZ-2: "1 MB" charter wording is layered; → S8 decision |
 | B-RESOURCE | slowloris / connection-flood → bounded resources | `InboundReadDeadlineFuzzTest` (mechanism pinned) | ⚠ **F-S7-FUZZ-1 (HIGH)** — no inbound read deadline ⇒ FD exhaustion; fix + e2e red/green → S7.5 (D-5) |
-| B-API | unauthenticated mutating call → 401 | _(D)_ | PENDING |
-| B-API | read-scoped credential attempts write/membership → 403 | _(D)_ | PENDING |
-| B-API | replayed authenticated mutating request → rejected | _(D)_ | PENDING |
-| B-API | every mutating op produces a tamper-evident audit record | _(D)_ | PENDING |
+| B-API | unauthenticated mutating call → 401 | `ConfigHandlerAuthTest` (PUT/DELETE no-token/bad-token/malformed → 401) | **VERIFIED** |
+| B-API | read-scoped credential attempts write → 403 (no HTTP membership endpoint — Raft/CLI layer) | `ConfigHandlerAuthTest` (reader→PUT/DELETE→403, cross-prefix→403) | **VERIFIED** |
+| B-API | replayed authenticated mutating request → rejected | `ConfigHandlerReplayTest` (verbatim replay→409), `ReplayGuardTest` | **VERIFIED** — passive-replay only; content-signing → S8 |
+| B-API | every mutating op produces a tamper-evident audit record | `AuditLogTest` (keyed-HMAC; `keyedChainDefeatsAttackerWhoRechainsTheWholeLogWithoutTheKey`), `ConfigHandlerAuditTest` | **VERIFIED** — residual: T0 key-holder (same fence as B-DISK) |
 | B-BUILD | no unresolved exploitable high/critical CVE; SBOM; repro; no secret | _(E)_ | PENDING |
 ```

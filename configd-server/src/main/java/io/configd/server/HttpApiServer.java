@@ -6,10 +6,12 @@ import com.sun.net.httpserver.HttpServer;
 import com.sun.net.httpserver.HttpsConfigurator;
 import com.sun.net.httpserver.HttpsServer;
 import io.configd.api.AclService;
+import io.configd.api.AuditLog;
 import io.configd.api.AuthInterceptor;
 import io.configd.api.ConfigReadService;
 import io.configd.api.ConfigWriteService;
 import io.configd.api.HealthService;
+import io.configd.api.ReplayGuard;
 import io.configd.common.ConfigScope;
 import io.configd.common.NodeId;
 import io.configd.observability.MetricsRegistry;
@@ -71,6 +73,31 @@ public final class HttpApiServer {
                          AclService aclService,
                          StrongReadPolicy strongReadPolicy,
                          Supplier<NodeId> leaderHintSupplier) throws IOException {
+        this(port, sslContext, healthService, prometheusExporter, configStore, writeService,
+                readService, authInterceptor, aclService, strongReadPolicy, leaderHintSupplier,
+                /* auditLog */ null, /* replayGuard */ null);
+    }
+
+    /**
+     * Full constructor adding the S7 security controls. Both are optional:
+     *
+     * @param auditLog     tamper-evident audit log; may be null to disable auditing
+     * @param replayGuard  replay protection; may be null (default off — opt-in
+     *                     for pre-production back-compat, charter D-3)
+     */
+    public HttpApiServer(int port,
+                         SSLContext sslContext,
+                         HealthService healthService,
+                         PrometheusExporter prometheusExporter,
+                         VersionedConfigStore configStore,
+                         ConfigWriteService writeService,
+                         ConfigReadService readService,
+                         AuthInterceptor authInterceptor,
+                         AclService aclService,
+                         StrongReadPolicy strongReadPolicy,
+                         Supplier<NodeId> leaderHintSupplier,
+                         AuditLog auditLog,
+                         ReplayGuard replayGuard) throws IOException {
         if (sslContext != null) {
             HttpsServer httpsServer = HttpsServer.create(new InetSocketAddress(port), 0);
             httpsServer.setHttpsConfigurator(new HttpsConfigurator(sslContext));
@@ -90,7 +117,8 @@ public final class HttpApiServer {
         server.createContext("/v1/config/", new ConfigHandler(
                 configStore, writeService, readService, authInterceptor, aclService,
                 Objects.requireNonNull(strongReadPolicy, "strongReadPolicy must not be null"),
-                Objects.requireNonNull(leaderHintSupplier, "leaderHintSupplier must not be null")));
+                Objects.requireNonNull(leaderHintSupplier, "leaderHintSupplier must not be null"),
+                auditLog, replayGuard));
 
         server.setExecutor(Executors.newVirtualThreadPerTaskExecutor());
     }
@@ -208,6 +236,8 @@ public final class HttpApiServer {
         private final AclService aclService;
         private final StrongReadPolicy strongReadPolicy;
         private final Supplier<NodeId> leaderHintSupplier;
+        private final AuditLog auditLog;       // nullable: auditing disabled when null
+        private final ReplayGuard replayGuard; // nullable: replay protection off when null
 
         ConfigHandler(VersionedConfigStore configStore,
                       ConfigWriteService writeService,
@@ -215,7 +245,9 @@ public final class HttpApiServer {
                       AuthInterceptor authInterceptor,
                       AclService aclService,
                       StrongReadPolicy strongReadPolicy,
-                      Supplier<NodeId> leaderHintSupplier) {
+                      Supplier<NodeId> leaderHintSupplier,
+                      AuditLog auditLog,
+                      ReplayGuard replayGuard) {
             this.configStore = configStore;
             this.writeService = writeService;
             this.readService = readService;
@@ -223,6 +255,8 @@ public final class HttpApiServer {
             this.aclService = aclService;
             this.strongReadPolicy = strongReadPolicy;
             this.leaderHintSupplier = leaderHintSupplier;
+            this.auditLog = auditLog;
+            this.replayGuard = replayGuard;
         }
 
         @Override
@@ -246,9 +280,14 @@ public final class HttpApiServer {
 
         private void handleGet(HttpExchange exchange, String key) throws IOException {
             // Auth check for reads
-            String authError = checkAuth(exchange, key, AclService.Permission.READ);
-            if (authError != null) {
-                sendResponse(exchange, 403, authError);
+            AuthCheck authCheck = checkAuth(exchange, key, AclService.Permission.READ);
+            if (authCheck.decision() != AuthDecision.OK) {
+                // A read AUTH FAILURE (401/403) is security-relevant and audited;
+                // a successful read is NOT a mutating attempt and is not audited
+                // (auditing every read would be a volume/DoS concern, charter §10.3).
+                audit(authCheck.principal(), "GET", key,
+                        "denied: " + authCheck.decision() + " (" + authCheck.reason() + ")");
+                sendAuthDenial(exchange, authCheck);
                 return;
             }
 
@@ -341,31 +380,48 @@ public final class HttpApiServer {
 
         private void handlePut(HttpExchange exchange, String key) throws IOException {
             // Auth check for writes
-            String authError = checkAuth(exchange, key, AclService.Permission.WRITE);
-            if (authError != null) {
-                sendResponse(exchange, 403, authError);
+            AuthCheck authCheck = checkAuth(exchange, key, AclService.Permission.WRITE);
+            if (authCheck.decision() != AuthDecision.OK) {
+                // Audit the denied mutating attempt (401/403) before answering.
+                audit(authCheck.principal(), "PUT", key,
+                        "denied: " + authCheck.decision() + " (" + authCheck.reason() + ")");
+                sendAuthDenial(exchange, authCheck);
+                return;
+            }
+
+            // Replay protection (opt-in) for an authenticated mutating request.
+            if (replayRejected(exchange, authCheck.principal(), "PUT", key)) {
                 return;
             }
 
             byte[] body = exchange.getRequestBody().readAllBytes();
             if (body.length == 0) {
+                audit(authCheck.principal(), "PUT", key, "rejected: empty body");
                 sendResponse(exchange, 400, "Request body must not be empty");
                 return;
             }
 
             ConfigWriteService.WriteResult result = writeService.put(key, body, ConfigScope.GLOBAL);
+            audit(authCheck.principal(), "PUT", key, auditOutcome(result));
             sendWriteResult(exchange, result);
         }
 
         private void handleDelete(HttpExchange exchange, String key) throws IOException {
             // Auth check for deletes
-            String authError = checkAuth(exchange, key, AclService.Permission.WRITE);
-            if (authError != null) {
-                sendResponse(exchange, 403, authError);
+            AuthCheck authCheck = checkAuth(exchange, key, AclService.Permission.WRITE);
+            if (authCheck.decision() != AuthDecision.OK) {
+                audit(authCheck.principal(), "DELETE", key,
+                        "denied: " + authCheck.decision() + " (" + authCheck.reason() + ")");
+                sendAuthDenial(exchange, authCheck);
+                return;
+            }
+
+            if (replayRejected(exchange, authCheck.principal(), "DELETE", key)) {
                 return;
             }
 
             ConfigWriteService.WriteResult result = writeService.delete(key, ConfigScope.GLOBAL);
+            audit(authCheck.principal(), "DELETE", key, auditOutcome(result));
             sendWriteResult(exchange, result);
         }
 
@@ -419,12 +475,74 @@ public final class HttpApiServer {
         }
 
         /**
-         * Checks authentication and ACL for the request.
-         * Returns null if access is allowed, or an error message if denied.
+         * The outcome of the {@link #checkAuth} gate. Distinguishes the two
+         * failure classes so the handler can map them to the correct HTTP
+         * status (charter §7, RFC 7235): an <em>unauthenticated</em> caller
+         * (no/blank/malformed/invalid credential) gets <b>401</b> with a
+         * {@code WWW-Authenticate: Bearer} challenge; an
+         * <em>authenticated-but-unauthorized</em> caller gets <b>403</b>.
          */
-        private String checkAuth(HttpExchange exchange, String key, AclService.Permission permission) {
+        private enum AuthDecision { OK, UNAUTHENTICATED, FORBIDDEN }
+
+        /**
+         * The result of the auth gate: a {@link AuthDecision}, the resolved
+         * {@code principal} (non-null when the caller authenticated, even if then
+         * forbidden; null when unauthenticated), and a human-readable {@code reason}
+         * for the denial body. Never carries the credential — only the decision,
+         * the principal, and a safe reason string.
+         */
+        private record AuthCheck(AuthDecision decision, String principal, String reason) {
+            static AuthCheck ok(String principal) {
+                return new AuthCheck(AuthDecision.OK, principal, null);
+            }
+            static AuthCheck unauthenticated(String reason) {
+                return new AuthCheck(AuthDecision.UNAUTHENTICATED, null, reason);
+            }
+            static AuthCheck forbidden(String principal, String reason) {
+                return new AuthCheck(AuthDecision.FORBIDDEN, principal, reason);
+            }
+        }
+
+        /**
+         * Emits the correct HTTP denial for a non-OK {@link AuthCheck} and returns
+         * {@code true} when the request has been answered (the caller must stop).
+         * Returns {@code false} only for {@link AuthDecision#OK}.
+         * <ul>
+         *   <li>{@code UNAUTHENTICATED} → 401 + {@code WWW-Authenticate: Bearer}
+         *       (RFC 7235 §3.1: a 401 MUST carry a challenge).</li>
+         *   <li>{@code FORBIDDEN} → 403 (authenticated, but the ACL denies the op).</li>
+         * </ul>
+         */
+        private boolean sendAuthDenial(HttpExchange exchange, AuthCheck check) throws IOException {
+            switch (check.decision()) {
+                case OK -> {
+                    return false;
+                }
+                case UNAUTHENTICATED -> {
+                    exchange.getResponseHeaders().set("WWW-Authenticate", "Bearer");
+                    sendResponse(exchange, 401, "Unauthorized: " + check.reason());
+                    return true;
+                }
+                case FORBIDDEN -> {
+                    sendResponse(exchange, 403, check.reason());
+                    return true;
+                }
+                default -> throw new AssertionError("unreachable auth decision: " + check.decision());
+            }
+        }
+
+        /**
+         * Checks authentication and ACL for the request, returning a typed
+         * {@link AuthCheck}. Authentication failures (missing/blank/malformed/
+         * invalid credential — surfaced by {@link AuthInterceptor.AuthResult.Denied})
+         * map to {@link AuthDecision#UNAUTHENTICATED} (→ 401); an authenticated
+         * caller whose principal is not permitted by the ACL maps to
+         * {@link AuthDecision#FORBIDDEN} (→ 403). When auth is not configured the
+         * gate is open ({@link AuthCheck#OK}).
+         */
+        private AuthCheck checkAuth(HttpExchange exchange, String key, AclService.Permission permission) {
             if (authInterceptor == null) {
-                return null; // auth not configured
+                return AuthCheck.ok("-"); // auth not configured: no resolved principal
             }
 
             String authHeader = exchange.getRequestHeaders().getFirst("Authorization");
@@ -435,16 +553,83 @@ public final class HttpApiServer {
 
             AuthInterceptor.AuthResult authResult = authInterceptor.authenticate(token);
             if (authResult instanceof AuthInterceptor.AuthResult.Denied denied) {
-                return "Authentication denied: " + denied.reason();
+                // No/blank/malformed/invalid credential: this is AUTHENTICATION,
+                // not authorization — 401 (not 403). Never echo the token.
+                return AuthCheck.unauthenticated("authentication required: " + denied.reason());
             }
+
+            String principal = (authResult instanceof AuthInterceptor.AuthResult.Authenticated authed)
+                    ? authed.principal() : "-";
 
             if (aclService != null && authResult instanceof AuthInterceptor.AuthResult.Authenticated authed) {
                 if (!aclService.isAllowed(authed.principal(), key, permission)) {
-                    return "Access denied: insufficient permissions for key '" + key + "'";
+                    // Authenticated but the principal lacks the permission: 403.
+                    return AuthCheck.forbidden(authed.principal(),
+                            "Access denied: insufficient permissions for key '" + key + "'");
                 }
             }
 
-            return null;
+            return AuthCheck.ok(principal);
+        }
+
+        /**
+         * Records a mutating attempt (or its denial) in the audit log if one is
+         * configured. The actor is the resolved principal, or {@code "-"} when the
+         * caller is unauthenticated. NEVER receives a credential — only the
+         * principal. A persistence failure propagates (fail-loud): for a
+         * tamper-evident security control, an inability to record an event is
+         * itself security-relevant and must not be silently dropped.
+         */
+        private void audit(String actor, String action, String key, String outcome) {
+            if (auditLog != null) {
+                auditLog.record(actor == null ? "-" : actor, action, key, outcome);
+            }
+        }
+
+        /** Maps a {@link ConfigWriteService.WriteResult} to a short audit outcome string. */
+        private static String auditOutcome(ConfigWriteService.WriteResult result) {
+            return switch (result) {
+                case ConfigWriteService.WriteResult.Committed c -> "committed seq=" + c.seq();
+                case ConfigWriteService.WriteResult.NotLeader ignored -> "failed: not-leader";
+                case ConfigWriteService.WriteResult.Lost ignored -> "failed: lost-leadership";
+                case ConfigWriteService.WriteResult.Indeterminate ignored -> "indeterminate";
+                case ConfigWriteService.WriteResult.ValidationFailed vf -> "rejected: " + vf.reason();
+                case ConfigWriteService.WriteResult.Overloaded ignored -> "rejected: overloaded";
+            };
+        }
+
+        /**
+         * Applies the replay guard (if enabled) to an already-authenticated
+         * mutating request. Returns {@code true} (and answers the exchange) when
+         * the request is rejected; {@code false} when accepted or the guard is off.
+         * A stale/future stamp or missing headers → 401 (an unauthenticatable
+         * request); a replayed nonce → 409 Conflict.
+         */
+        private boolean replayRejected(HttpExchange exchange, String actor, String action, String key)
+                throws IOException {
+            if (replayGuard == null) {
+                return false; // opt-in: default off
+            }
+            String ts = exchange.getRequestHeaders().getFirst(ReplayGuard.TIMESTAMP_HEADER);
+            String nonce = exchange.getRequestHeaders().getFirst(ReplayGuard.NONCE_HEADER);
+            ReplayGuard.Decision decision = replayGuard.check(ts, nonce);
+            switch (decision) {
+                case ACCEPTED -> {
+                    return false;
+                }
+                case STALE, MALFORMED -> {
+                    audit(actor, action, key, "denied: replay-window (" + decision + ")");
+                    exchange.getResponseHeaders().set("WWW-Authenticate", "Bearer");
+                    sendResponse(exchange, 401, "Unauthorized: stale/future or missing replay headers");
+                    return true;
+                }
+                case REPLAY -> {
+                    audit(actor, action, key, "denied: replay");
+                    sendResponse(exchange, 409, "Conflict: replayed request (nonce already seen)");
+                    return true;
+                }
+                default -> throw new AssertionError("unreachable replay decision: " + decision);
+            }
         }
     }
 

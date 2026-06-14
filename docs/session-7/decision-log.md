@@ -82,6 +82,27 @@ items folded in by the lead before commit** (each with a new locking test in `In
 
 ---
 
+## D-6 (TECH) — Audit log must be a KEYED HMAC chain, not a keyless hash chain
+
+**Question.** Workstream D's first audit-log cut used a keyless SHA-256 hash chain. Is that
+"tamper-evident" enough for charter §7 ("an attacker who can edit the audit log defeats it")?
+
+**Resolution (lead-directed correctness fix).** No — a keyless hash chain is defeated by the
+threat-model attacker **A2** (who can edit the log file): with no secret, they recompute every
+`recordHash` and `verifyPersisted()` passes. Upgraded to a **keyed HMAC-SHA-256 chain**
+(`recordHash = HMAC(K_audit, prevHash || canonical)`), `K_audit` HKDF-derived from the cluster signing
+key with a **domain-separated** info string (`"configd/audit-log-integrity/v1"`, distinct from PA-2021's
+raft key) — no new key material, directly realizing the charter's "ties to PA-2021's integrity theme."
+Keyless mode retained for unit tests/back-compat (evidence-against-careless-edits only). Proven by
+`AuditLogTest#keyedChainDefeatsAttackerWhoRechainsTheWholeLogWithoutTheKey` (attacker re-chains the
+WHOLE log without the key → still detected under the real key; same bytes verify true keyless —
+demonstrating the gap the key closes); mutation-revert (ignore the key) turns exactly the two
+key-distinguishing tests RED. Residual (honest fence): a T0 key-holder defeats it — same fence as
+PA-2021 §5.1; S8 signing-key relocation covers `K_integrity` + `K_audit` together. Verified by lead:
+control-plane-api 73/73, AuditLogTest 11/11, ConfigHandler{Auth,Replay,Audit}Test 15/4/2, server 156/156.
+
+---
+
 ## D-5 (SCOPE) — Slowloris/FD-exhaustion (F-S7-FUZZ-1): document + S7.5, not fixed in S7
 
 **Question.** Wire fuzzing (Workstream C) found a real availability gap: inbound sockets set no read
