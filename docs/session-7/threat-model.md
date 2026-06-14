@@ -130,5 +130,9 @@ attack test is written and currently RED (pre-fix) or not yet written.
 | B-API | read-scoped credential attempts write → 403 (no HTTP membership endpoint — Raft/CLI layer) | `ConfigHandlerAuthTest` (reader→PUT/DELETE→403, cross-prefix→403) | **VERIFIED** |
 | B-API | replayed authenticated mutating request → rejected | `ConfigHandlerReplayTest` (verbatim replay→409), `ReplayGuardTest` | **VERIFIED** — passive-replay only; content-signing → S8 |
 | B-API | every mutating op produces a tamper-evident audit record | `AuditLogTest` (keyed-HMAC; `keyedChainDefeatsAttackerWhoRechainsTheWholeLogWithoutTheKey`), `ConfigHandlerAuditTest` | **VERIFIED** — residual: T0 key-holder (same fence as B-DISK) |
-| B-BUILD | no unresolved exploitable high/critical CVE; SBOM; repro; no secret | _(E)_ | PENDING |
+| B-BUILD | build reproducibility | 31 jars byte-identical across two clean builds after `project.build.outputTimestamp` | **VERIFIED** |
+| B-BUILD | SBOM present | CycloneDX `docs/session-7/sbom/bom.json` (37 components); regen+diff lane → gate-7 | **VERIFIED** |
+| B-BUILD | runbook/script commands don't echo credentials | `ops/runbooks/*` + `ops/scripts/*` audited — clean (no `set -x`/echo of secrets) | **VERIFIED** |
+| B-BUILD | no unresolved exploitable high/critical CVE | `-Pcve-scan` profile (dependency-check, fail@CVSS≥7) wired | ⚠ **ENV-BLOCKED** — NVD needs `NVD_API_KEY` + cache; runs in gate-7 nightly (network) → S7.5 manifest |
+| B-BUILD | no secret in repo/history | `.gitleaks.toml` present; local sanity-grep clean | ⚠ **ENV-BLOCKED** — gitleaks not installed locally; wired into CI in Seam 6 → S7.5 manifest |
 ```
