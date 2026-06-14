@@ -53,6 +53,15 @@ Every §0.1 target is classified into one of three states, and the classificatio
 | Write throughput 10k/s sustained, 100k/s burst | **Fully local** mechanism (in-process / single-host) — drive it, hold it, report concurrent latency. | Per-region cluster capacity at fleet scale; real saturation needs production-class hosts. |
 | Read path: 0 alloc, no locks, no CAS loops | **Fully local** — JMH `-prof gc` (alloc) + async-profiler/`-prof perfnorm` (locks). | none — this is an in-process invariant, fully provable here. |
 
+**Empirical refinement (Workstream B, 2026-06-14 — this table is a-priori; measurement may move a
+row).** The throughput row above classified 10k/s as "fully local mechanism — drive it, hold it." B
+showed that is true only for the **in-process consensus mechanism** (RaftCommitBenchmark ~815k
+commits/s CPU); a **real end-to-end sustained 10k/s** cannot be hosted on the 2-vCPU box (3 co-located
+node JVMs starve the Raft heartbeat at ~150 commits/s → leadership step-down). So that row splits:
+mechanism CPU-throughput **LOCAL-VERIFIED**; end-to-end sustained rate **ENV-BLOCKED → manifest M-9**.
+This is the honesty rule working as intended — an a-priori "local" classification corrected by what the
+box actually does, not defended.
+
 **Rule:** a result doc states, for each number, exactly one of:
 - `LOCAL-VERIFIED` — measured here, the target is in-process / single-host, no caveat beyond §0.
 - `LOCAL-VERIFIED (local component) + ENV-BLOCKED (WAN/scale component) → manifest item N` — the split

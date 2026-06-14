@@ -133,6 +133,43 @@
   policy** (alert/fence wiring), owned by Session 6 operability — listed here for completeness so the
   pre-prod gap is whole. Not costed as an S5 measurement item.
 
+## M-9 — Write throughput 10k/s sustained & 100k/s burst (end-to-end)  (surfaced by: Workstream B, charter §6)
+
+- **Claim.** 10k writes/s sustained, 100k/s burst (§0.1).
+- **Why local can't prove it (EMPIRICAL — Workstream B, supersedes the a-priori "fully local"
+  classification).** The 2-vCPU box hosting a real 3-node cluster (3 server JVMs + the load driver, all
+  contending for 2 vCPUs) saturates at **~125–172 commits/s**; beyond ~8 in-flight writes the write
+  threads starve the Raft heartbeat and the leader steps down (CheckQuorum → HTTP 503). 10k/s is ~60–80×
+  the box's end-to-end ceiling. This is a **host-capacity** limit, NOT a design ceiling: the consensus
+  *mechanism* itself processes writes far above 10k/s — `RaftCommitBenchmark` measures ~815k commits/s
+  in-memory (single group, no real threads / HTTP / fsync), the CPU cost per commit being ~1.2 µs. So
+  the mechanism is **LOCAL-VERIFIED** (CPU headroom for 10k/s is trivial); the **end-to-end sustained
+  rate on a real cluster** is what the box cannot host.
+- **Exact infra.** A cluster with **dedicated cores per node** (not 3 JVMs on 2 vCPU): 3–5 × **c6i.2xlarge**
+  (8 vCPU, one Raft node per host) + 1 load-driver host (c6i.2xlarge). Reuses the **M-1** cluster; the only
+  addition is the dedicated driver host. ~**+1 instance** beyond M-1.
+- **Indicative cost.** Folds into M-1; +1 × c6i.2xlarge @ ~$0.34/h ≈ **+$1–2**.
+- **Waiting harness.** The committed `perf/wsB-live-write.sh` + `OpenLoopWriteDriver` (open-loop,
+  CO-corrected, self-calibrating per methodology §3b/F4) pointed at the dedicated-core cluster; drive
+  10k/s, hold, report HdrHistogram latency-at-rate; drive 100k/s for the burst saturation/shed.
+- **Status.** ENV-BLOCKED (end-to-end sustained rate). Consensus-mechanism CPU-throughput LOCAL-VERIFIED.
+
+## M-10 — Architected 429/503 backpressure ladder at its thresholds  (surfaced by: Workstream B/D, charter §8/§11)
+
+- **Claim.** §11's backpressure ladder fires correctly: 429 at Raft queue > 1000, 503 at apply-lag > 5000,
+  with the documented hysteresis (queue < 500 / lag < 1000).
+- **Why local can't prove it.** Workstream B's 100k/s burst showed the 2-vCPU box **collapses leadership
+  (CheckQuorum 503 from CPU starvation) BEFORE the architected 429/queue-1024 path is ever reached**
+  (99.6% shed at generator backpressure, 0×429). The ladder's thresholds can't be exercised end-to-end
+  where leadership dies first.
+- **Exact infra.** The **M-9** dedicated-core cluster (so the box does not starve leadership before the
+  queue fills). No new instances.
+- **Indicative cost.** Folds into M-9/M-1 (~$0 marginal).
+- **Waiting harness.** The `OpenLoopWriteDriver` driven past the queue-1024 threshold on dedicated cores,
+  asserting the 429→503 shed order + hysteresis (Workstream D's §11 threshold assertions).
+- **Status.** ENV-BLOCKED. The queue bound EXISTS in code (`maxPendingProposals=1024`, `RaftConfig.of:183`)
+  and the doc-vs-code mismatch (§11 says "1000") is a Workstream-D finding; exercising the ladder is blocked.
+
 ---
 
 ## What is NOT on this list (and why)
@@ -140,10 +177,9 @@
 - **The 24 h soak** runs ON the local box — it is a *duration* commitment, not an infra-blocked one, so
   it is executed (Workstream E), not deferred. A *production-representative* soak (real fleet, NUMA,
   real WAN) would inherit M-1/M-2/M-4; the local soak is real-duration on reference hardware and labeled
-  as such (`methodology.md §0`).
-- **Throughput 10k/s sustained & 100k/s burst** are measured locally (single-host mechanism); only
-  per-region *cluster-scale* capacity at production fleet size is infra-bound, and is a sizing exercise
-  on the M-1 cluster, not a separate blocker.
+  as such (`methodology.md §0`). **(Caveat from Workstream B:** a *sustained-load* soak on this box is
+  bounded to ~150 commits/s per M-9 — the soak runs at a box-sustainable rate, not the SLO rate, and
+  says so.)
 
 ## Total indicative cost of clearing the entire pre-prod gap
 
