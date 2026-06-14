@@ -407,8 +407,14 @@ public final class HttpApiServer {
                                 "Commit unconfirmed within deadline; outcome unknown; safe to retry or re-read");
                 case ConfigWriteService.WriteResult.ValidationFailed vf ->
                         sendResponse(exchange, 400, "Validation failed: " + vf.reason());
-                case ConfigWriteService.WriteResult.Overloaded _ ->
-                        sendResponse(exchange, 429, "Overloaded");
+                case ConfigWriteService.WriteResult.Overloaded _ -> {
+                    // S6/D-1 (RR-110): the §11 write-overload contract — a bounded-queue 429 with a
+                    // Retry-After backoff signal. The reject itself is counted by
+                    // write_rejected_overloaded at the raftProposer site (the emitted, tested series
+                    // behind the "sustained 429 rate" alert).
+                    exchange.getResponseHeaders().set("Retry-After", "1");
+                    sendResponse(exchange, 429, "Overloaded");
+                }
             }
         }
 

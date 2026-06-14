@@ -128,6 +128,9 @@ public final class ConfigdServer {
     private final HyParViewOverlay hyParViewOverlay;
     private final SubscriptionManager subscriptionManager;
     private final RolloutController rolloutController;
+    /** S6/WS-A: the live /metrics exporter — exposed via {@link #scrapeMetrics()} so a contract
+     *  test can assert the running server emits the SLO series with real data (not zero). */
+    private final io.configd.observability.PrometheusExporter prometheusExporter;
 
     private ConfigdServer(ServerConfig config, MultiRaftDriver driver,
                           ConfigStateMachine stateMachine,
@@ -143,7 +146,8 @@ public final class ConfigdServer {
                           PlumtreeNode plumtreeNode,
                           HyParViewOverlay hyParViewOverlay,
                           SubscriptionManager subscriptionManager,
-                          RolloutController rolloutController) {
+                          RolloutController rolloutController,
+                          io.configd.observability.PrometheusExporter prometheusExporter) {
         this.config = config;
         this.driver = driver;
         this.stateMachine = stateMachine;
@@ -160,6 +164,7 @@ public final class ConfigdServer {
         this.hyParViewOverlay = hyParViewOverlay;
         this.subscriptionManager = subscriptionManager;
         this.rolloutController = rolloutController;
+        this.prometheusExporter = prometheusExporter;
     }
 
     /**
@@ -218,8 +223,25 @@ public final class ConfigdServer {
         ConfigStateMachine.InvariantChecker smInvariantChecker = invariantMonitor::check;
         RaftNode.InvariantChecker raftInvariantChecker = invariantMonitor::check;
 
+        // S6/WS-A: build ConfigdMetrics HERE (before the state machine) so the SLO series are
+        // actually RECORDED, not merely registered-at-zero (the S1 "9 SLO metrics hardwired to
+        // zero" defect, which was still live: every record/increment handle was dead and the
+        // raft-pending gauge was literally () -> 0L).
+        //   - the apply path feeds it via ServerStateMachineMetrics (apply_seconds + snapshot ctrs);
+        //   - the raft pending-apply gauge reads `pendingApplyEntries`, an AtomicLong published on
+        //     the tick thread (RaftLog.commitIndex/lastApplied are non-volatile plain longs touched
+        //     only on the tick thread — R-01 — so the scrape thread must read a published snapshot);
+        //   - write_commit_* + the overload-reject counter are recorded at the raftProposer site;
+        //   - raft_elections is incremented on the tick thread by positive currentTerm() deltas.
+        // (RR-008/H-009 still use this same handle for the inbound + tick-loop throwable counters.)
+        java.util.concurrent.atomic.AtomicLong pendingApplyEntries =
+                new java.util.concurrent.atomic.AtomicLong(0L);
+        ConfigdMetrics configdMetrics =
+                new ConfigdMetrics(metricsRegistry, pendingApplyEntries::get);
+
         ConfigStateMachine stateMachine =
-                new ConfigStateMachine(configStore, clock, smInvariantChecker, configSigner);
+                new ConfigStateMachine(configStore, clock, smInvariantChecker, configSigner,
+                        new ServerStateMachineMetrics(configdMetrics));
 
         // Initialize Raft with durable WAL storage.
         // RR-006: pass the real scheduler tick period (TICK_PERIOD_MS) so the
@@ -323,13 +345,11 @@ public final class ConfigdServer {
             return t;
         });
 
-        // RR-008 (S4): the inbound-routing handler needs the metrics handle so a
-        // Throwable escaping driver.routeMessage (e.g. a disk write failing during
-        // applyCommitted -> apply on a follower) is surfaced as a counter + SEVERE log
-        // rather than swallowed by the executor (mute zombie). Build it here, before the
-        // handler is registered (it only needs metricsRegistry, available above). Eager
-        // construction also populates the SLO counter families for the first scrape.
-        ConfigdMetrics configdMetrics = new ConfigdMetrics(metricsRegistry, () -> 0L);
+        // RR-008 (S4): the inbound-routing handler needs the `configdMetrics` handle (built
+        // earlier, before the state machine — S6/WS-A) so a Throwable escaping
+        // driver.routeMessage (e.g. a disk write failing during applyCommitted -> apply on a
+        // follower) is surfaced as a counter + SEVERE log rather than swallowed by the executor
+        // (mute zombie). The handle is passed to the inbound handler registration below.
 
         // Register inbound message handler on TCP transport.
         // R-01: marshal inbound routing onto the single tick executor so
@@ -363,6 +383,8 @@ public final class ConfigdServer {
         Compactor compactor = new Compactor();
         WatchService watchService = new WatchService(clock);
         SubscriptionManager subscriptionManager = new SubscriptionManager();
+        // S6/WS-A: subscribed-prefix capacity gauge (sampled snapshot; benign-race size() read).
+        configdMetrics.bindSubscriptionPrefixGauge(subscriptionManager::prefixCount);
         RolloutController rolloutController = new RolloutController(clock);
         PlumtreeNode plumtreeNode = new PlumtreeNode(config.nodeId(), 10_000, 100);
         HyParViewOverlay hyParViewOverlay = new HyParViewOverlay(
@@ -474,7 +496,8 @@ public final class ConfigdServer {
         // thread blocks on one end-to-end WRITE_COMMIT_TIMEOUT_MS deadline and gets a
         // commit-confirmed answer (Committed/Lost/NotLeader/Indeterminate/Overloaded).
         ConfigWriteService.RaftProposer proposer =
-                raftProposer(driver, DEFAULT_RAFT_GROUP, tickExecutor, WRITE_COMMIT_TIMEOUT_MS);
+                raftProposer(driver, DEFAULT_RAFT_GROUP, tickExecutor, WRITE_COMMIT_TIMEOUT_MS,
+                        configdMetrics);
         // F-0054: default write rate limit = 10_000/s globally. Docs in
         // ADR-0017 and performance.md reflect this value; a startup line
         // prints the effective rate so operators can audit at boot.
@@ -574,8 +597,13 @@ public final class ConfigdServer {
         // ---------------------------------------------------------------
         // Start HTTP API server
         // ---------------------------------------------------------------
+        // S6/WS-A: pass ConfigdMetrics.histogramSchedules() so the SLO histograms render
+        // `_bucket{le=...}` lines (write_commit/apply/propagation) — the exact series the
+        // burn-rate alerts query. Without the schedules the exporter emits quantile lines instead
+        // and the alert bucket series are empty (a blind-dashboard defect that survived F5/H-001).
         io.configd.observability.PrometheusExporter prometheusExporter =
-                new io.configd.observability.PrometheusExporter(metricsRegistry);
+                new io.configd.observability.PrometheusExporter(
+                        metricsRegistry, ConfigdMetrics.histogramSchedules());
         // RR-020 / ADR-0030 INV-1: strong-read (GLOBAL/security) key class is
         // config-driven via --strong-read-prefixes (default "secure/"); those
         // keys are served fail-closed linearizable, with raftNode.leaderId() as
@@ -646,12 +674,30 @@ public final class ConfigdServer {
                 tickExecutor, readDispatchExecutor, tlsReloadExecutor,
                 httpApiServer, tcpTransport, fanOutServer,
                 watchService, fanOutBuffer, compactor, plumtreeNode, hyParViewOverlay,
-                subscriptionManager, rolloutController);
+                subscriptionManager, rolloutController, prometheusExporter);
 
         final int[] tickCount = {0};
+        // S6/WS-A: tracks the highest term observed locally so the elections counter advances by
+        // the positive delta each tick (a term bump == an election / leadership change). Read on
+        // the tick thread only — safe against the non-volatile RaftNode.currentTerm() field.
+        final long[] lastSeenTerm = {0L};
         tickExecutor.scheduleAtFixedRate(() -> {
             try {
                 driver.tick();
+                // S6/WS-A: publish the apply backlog (committed-not-applied) for the
+                // raft_pending_apply_entries gauge and advance the election counter. Both read the
+                // group's RaftNode on the tick thread (R-01) — the only thread allowed to touch the
+                // non-volatile RaftLog commit/apply indices and currentTerm.
+                io.configd.raft.RaftNode tickNode = driver.getGroup(DEFAULT_RAFT_GROUP);
+                if (tickNode != null) {
+                    io.configd.raft.RaftLog tnLog = tickNode.log();
+                    pendingApplyEntries.set(Math.max(0L, tnLog.commitIndex() - tnLog.lastApplied()));
+                    long term = tickNode.currentTerm();
+                    if (term > lastSeenTerm[0]) {
+                        configdMetrics.raftElections().increment(term - lastSeenTerm[0]);
+                        lastSeenTerm[0] = term;
+                    }
+                }
                 // RR-005: trigger Raft-LOG compaction by applied-span threshold so the WAL is
                 // bounded (this was unreachable in the wired server). Cheap O(groups) check each
                 // tick; a group only snapshots when over the threshold, via the RR-003
@@ -883,7 +929,24 @@ public final class ConfigdServer {
     static ConfigWriteService.RaftProposer raftProposer(
             MultiRaftDriver driver, int groupId,
             java.util.concurrent.Executor raftExecutor, long writeCommitTimeoutMs) {
+        // Test-convenience overload: records into a throwaway ConfigdMetrics; the production boot
+        // path always passes the server's real handle. Kept so the existing marshalling/commit
+        // regression tests need not thread a metrics fixture through every call site.
+        return raftProposer(driver, groupId, raftExecutor, writeCommitTimeoutMs,
+                new ConfigdMetrics(new MetricsRegistry(), () -> 0L));
+    }
+
+    /** Production proposer (S6/WS-A): same commit-confirmed semantics as the overload above, plus
+     *  end-to-end write-commit metric recording into {@code metrics} (D-2). */
+    static ConfigWriteService.RaftProposer raftProposer(
+            MultiRaftDriver driver, int groupId,
+            java.util.concurrent.Executor raftExecutor, long writeCommitTimeoutMs,
+            ConfigdMetrics metrics) {
         return (scope, command) -> {
+            // S6/WS-A: end-to-end write-commit latency is measured HERE (HTTP write thread, OFF
+            // the R-01 tick hot path) from request entry to outcome — the true "write commit p99"
+            // SLO signal (S5: ~16 ms), NOT the apply duration. Recorded via recordWriteOutcome.
+            long t0 = System.nanoTime();
             java.util.concurrent.CompletableFuture<ConfigWriteService.ProposeCommitResult> f =
                     new java.util.concurrent.CompletableFuture<>();
             // Captured inside the marshalled task so the timeout path can cancel
@@ -927,7 +990,10 @@ public final class ConfigdServer {
                 }
             });
             try {
-                return f.get(writeCommitTimeoutMs, TimeUnit.MILLISECONDS);
+                ConfigWriteService.ProposeCommitResult result =
+                        f.get(writeCommitTimeoutMs, TimeUnit.MILLISECONDS);
+                recordWriteOutcome(metrics, result, System.nanoTime() - t0);
+                return result;
             } catch (java.util.concurrent.TimeoutException e) {
                 // Deadline expired with the outcome unknown. Cancel the abandoned
                 // one-shot callback on the tick thread so its map entry cannot leak
@@ -943,9 +1009,11 @@ public final class ConfigdServer {
                         }
                     });
                 }
+                metrics.writeCommitFailed().increment();
                 return new ConfigWriteService.ProposeCommitResult.Indeterminate();
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
+                metrics.writeCommitFailed().increment();
                 return new ConfigWriteService.ProposeCommitResult.Indeterminate();
             } catch (java.util.concurrent.ExecutionException e) {
                 Throwable cause = e.getCause();
@@ -955,6 +1023,31 @@ public final class ConfigdServer {
                 throw new RuntimeException("propose failed", cause);
             }
         };
+    }
+
+    /**
+     * S6/WS-A — records the end-to-end write outcome on the HTTP write thread. Latency is recorded
+     * ONLY for a confirmed commit (a failure/redirect would skew the latency histogram); the
+     * counters partition outcomes for the control-plane availability SLO (failed/(failed+total))
+     * and the sustained-429-rate alert (write_rejected_overloaded, per D-1/D-2).
+     */
+    private static void recordWriteOutcome(ConfigdMetrics metrics,
+            ConfigWriteService.ProposeCommitResult result, long elapsedNanos) {
+        switch (result) {
+            case ConfigWriteService.ProposeCommitResult.Committed c -> {
+                metrics.writeCommitSeconds().record(elapsedNanos);
+                metrics.writeCommitTotal().increment();
+            }
+            case ConfigWriteService.ProposeCommitResult.Overloaded o ->
+                    metrics.writeRejectedOverloaded().increment();
+            case ConfigWriteService.ProposeCommitResult.Lost l ->
+                    metrics.writeCommitFailed().increment();
+            case ConfigWriteService.ProposeCommitResult.Indeterminate i ->
+                    metrics.writeCommitFailed().increment();
+            // NotLeader is a pre-append redirect (retry elsewhere), not a failed commit attempt.
+            case ConfigWriteService.ProposeCommitResult.NotLeader n -> { }
+            default -> { }
+        }
     }
 
     private static void shutdownExecutor(ScheduledExecutorService exec, String name, int timeoutSec) {
@@ -1027,6 +1120,16 @@ public final class ConfigdServer {
     /** The actual bound HTTP API port (resolves an ephemeral {@code --api-port 0}). */
     public int apiPort() {
         return httpApiServer.port();
+    }
+
+    /**
+     * S6/WS-A: renders the current Prometheus exposition text (identical content to the live
+     * {@code /metrics} endpoint, via the same exporter wired with the SLO histogram schedules).
+     * Exposed so a contract test can assert the running server emits the SLO series with REAL data
+     * — closing the S1 "metrics hardwired to zero" defect at the integration boundary.
+     */
+    String scrapeMetrics() {
+        return prometheusExporter.export();
     }
 
     /**

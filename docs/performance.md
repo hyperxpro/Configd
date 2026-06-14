@@ -205,14 +205,20 @@ HAMT with 32-way branching and 5 bits per level:
 
 ### Overload behavior per path
 
+> **Amended (S6, RR-110 / Decision Log D-1):** relabeled to the as-built reality. The apply-lag-503
+> and ReadIndex-queue-429 paths were over-specified and are not built (RELABEL on the merits); the
+> write 429 path is real and now carries `Retry-After: 1` backed by an emitted, tested counter
+> (`configd_write_rejected_overloaded_total`). See `architecture.md §11` for the full table and the
+> superseded original. This closes the §4 CONTRADICTED row below.
+
 | Path | Trigger | Action | Client Signal | Recovery |
 |---|---|---|---|---|
-| Write | Raft queue > 1000 entries | Reject writes | HTTP 429 + Retry-After: 1 | Accept when queue < 500 (hysteresis) |
-| Write | Apply lag > 5000 entries | Reject + alert | HTTP 503 | Accept when lag < 1000 |
-| Read (edge) | N/A (lock-free, always fast) | N/A | N/A | N/A |
-| Read (control plane) | ReadIndex queue > 100 | Reject linearizable | HTTP 429, suggest stale | Accept when queue < 50 |
+| Write | Uncommitted proposals ≥ 1024 (`maxPendingProposals`) | Reject writes (bounds memory) | HTTP 429 + `Retry-After: 1` | Accept once uncommitted < 1024 (single hard bound) |
+| Write (apply backlog) | `commitIndex − lastApplied` rising | Observability only: `raft_pending_apply_entries` gauge + warn alert (no 503 shed) | — | — |
+| Read (edge) | N/A (lock-free, always fast) | Never shed | X-Configd-Stale while STALE+ | Always served |
+| Read (control plane, linearizable) | Leadership unconfirmed | Fail closed (no queue-depth shed) | HTTP 503 + X-Leader-Hint | Retry / read at edge |
 | Fan-out | Output buffer > 80% | Slow consumer warning | X-Configd-Stale header | Normal when buffer < 50% |
-| Fan-out | Output buffer 100% | Disconnect slow consumer | Reconnect required | Re-bootstrap via catch-up |
+| Fan-out | Output buffer 100% | Demote to catch-up | Reconnect / re-bootstrap | Catch-up protocol |
 
 ### Load Shedding Order (least important first)
 1. Stale reads from distant regions (redirect closer)

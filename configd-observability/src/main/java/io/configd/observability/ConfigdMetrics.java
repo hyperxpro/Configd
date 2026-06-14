@@ -47,6 +47,27 @@ public final class ConfigdMetrics {
     public static final String NAME_SNAPSHOT_INSTALL_FAILED = "configd.snapshot.install.failed";
     public static final String NAME_SNAPSHOT_REBUILD = "configd.snapshot.rebuild";
     /**
+     * S6/D-1 (RR-110) — write-overload reject counter. Backs the `Retry-After: 1`
+     * 429 path ({@code HttpApiServer}) with an emitted, tested series so the
+     * "sustained 429 rate" alert (S5 handoff §1) queries something real. Incremented
+     * on the HTTP write thread inside the {@code raftProposer} when a propose is
+     * rejected with {@code OVERLOADED} (the bounded-queue 1024 shed).
+     */
+    public static final String NAME_WRITE_REJECTED_OVERLOADED = "configd.write.rejected.overloaded";
+    /**
+     * S6/D-4 — Raft election/term-churn counter (dashboard "leader churn" panel).
+     * Incremented on the tick thread by the positive delta of {@code currentTerm()}
+     * across ticks; a term bump corresponds to a real election / leadership change.
+     */
+    public static final String NAME_RAFT_ELECTIONS = "configd.raft.elections";
+    /**
+     * S6/D-4 — subscribed-prefix capacity gauge (dashboard "subscribed prefixes"
+     * panel). Late-bound via {@link #bindSubscriptionPrefixGauge} to
+     * {@code SubscriptionManager.prefixCount()} (a sampled snapshot; benign-race
+     * {@code size()} read, standard gauge semantics).
+     */
+    public static final String NAME_SUBSCRIPTION_PREFIX_COUNT = "configd.subscription.prefix.count";
+    /**
      * H-009 (iter-2) — base name for the tick-loop unhandled-throwable
      * counter family. The actual Prometheus series carries a {@code class}
      * label pseudo-encoded into the registry name ({@code base.<bucket>})
@@ -69,6 +90,8 @@ public final class ConfigdMetrics {
     private final MetricsRegistry.Histogram propagationDelaySeconds;
     private final MetricsRegistry.Counter snapshotInstallFailed;
     private final MetricsRegistry.Counter snapshotRebuild;
+    private final MetricsRegistry.Counter writeRejectedOverloaded;
+    private final MetricsRegistry.Counter raftElections;
 
     /**
      * Eagerly registers all SLO metrics in {@code registry}. The optional
@@ -85,6 +108,8 @@ public final class ConfigdMetrics {
         this.edgeReadTotal = registry.counter(NAME_EDGE_READ_TOTAL);
         this.snapshotInstallFailed = registry.counter(NAME_SNAPSHOT_INSTALL_FAILED);
         this.snapshotRebuild = registry.counter(NAME_SNAPSHOT_REBUILD);
+        this.writeRejectedOverloaded = registry.counter(NAME_WRITE_REJECTED_OVERLOADED);
+        this.raftElections = registry.counter(NAME_RAFT_ELECTIONS);
 
         // Histograms — eager creation so PrometheusExporter emits the
         // # TYPE histogram banner with le=+Inf even before any sample.
@@ -108,6 +133,14 @@ public final class ConfigdMetrics {
         registry.gauge(NAME_RAFT_PENDING_APPLY, supplier);
     }
 
+    /** Late-binds the subscribed-prefix capacity gauge (S6/D-4). The supplier is a
+     *  sampled snapshot (e.g. {@code SubscriptionManager.prefixCount()}); a benign
+     *  data race on a plain {@code size()} read is acceptable gauge semantics. */
+    public void bindSubscriptionPrefixGauge(LongSupplier supplier) {
+        Objects.requireNonNull(supplier, "supplier must not be null");
+        registry.gauge(NAME_SUBSCRIPTION_PREFIX_COUNT, supplier);
+    }
+
     public MetricsRegistry registry() { return registry; }
     public MetricsRegistry.Counter writeCommitTotal() { return writeCommitTotal; }
     public MetricsRegistry.Counter writeCommitFailed() { return writeCommitFailed; }
@@ -118,6 +151,8 @@ public final class ConfigdMetrics {
     public MetricsRegistry.Histogram propagationDelaySeconds() { return propagationDelaySeconds; }
     public MetricsRegistry.Counter snapshotInstallFailed() { return snapshotInstallFailed; }
     public MetricsRegistry.Counter snapshotRebuild() { return snapshotRebuild; }
+    public MetricsRegistry.Counter writeRejectedOverloaded() { return writeRejectedOverloaded; }
+    public MetricsRegistry.Counter raftElections() { return raftElections; }
 
     /**
      * H-009 (iter-2) — increments the tick-loop unhandled-throwable counter
@@ -180,6 +215,19 @@ public final class ConfigdMetrics {
      * Latency schedule for write-commit / apply paths (covers le="0.150"
      * referenced by the WriteCommitFastBurn / SlowBurn alerts).
      */
+    /**
+     * S6/WS-A — the histogram schedule(s) the EDGE process must publish so its served
+     * {@code configd_edge_read_seconds} histogram renders the same {@code le} buckets the edge-read
+     * burn-rate alert queries ({@code le="0.001"} / {@code le="0.005"}). The edge registers the
+     * histogram in its OWN registry (it is a separate process and does not load this control-plane
+     * instance); this exposes the canonical bucket schedule so both processes agree on the buckets.
+     */
+    public static Map<String, PrometheusExporter.BucketSchedule> edgeProcessHistogramSchedules() {
+        Map<String, PrometheusExporter.BucketSchedule> map = new LinkedHashMap<>();
+        map.put(NAME_EDGE_READ_SECONDS, edgeReadSecondsSchedule());
+        return Collections.unmodifiableMap(map);
+    }
+
     private static PrometheusExporter.BucketSchedule latencySecondsSchedule() {
         LinkedHashMap<String, Long> m = new LinkedHashMap<>();
         m.put("0.005", 5_000_000L);

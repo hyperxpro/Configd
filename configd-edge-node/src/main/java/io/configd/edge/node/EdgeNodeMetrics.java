@@ -75,6 +75,8 @@ final class EdgeNodeMetrics {
     private final MetricsRegistry.Counter stalenessViolations;
     private final MetricsRegistry.Counter rebootstrapTriggered;
     private final MetricsRegistry.Counter implausible;
+    /** S6/WS-A: edge read-serving latency histogram ({@code configd_edge_read_seconds}). */
+    private final MetricsRegistry.Histogram readLatency;
 
     /** Gauge backing for cursor lag (written on the session thread, read by the exporter). */
     private final AtomicLong cursorLag = new AtomicLong(0);
@@ -109,6 +111,15 @@ final class EdgeNodeMetrics {
         // CT-08: the part-(a) StalenessTracker counter, wired into the process registry.
         this.implausible = registry.counter(StalenessTracker.IMPLAUSIBLE_METRIC);
         registry.gauge("edge.cursor_lag", cursorLag::get);
+        // S6/WS-A: eager so configd_edge_read_seconds exists on the first scrape (RR-013). The
+        // matching bucket schedule is published to the exporter in EdgeNodeMain via
+        // ConfigdMetrics.edgeProcessHistogramSchedules() so the le buckets match the edge-read alert.
+        this.readLatency = registry.histogram(io.configd.observability.ConfigdMetrics.NAME_EDGE_READ_SECONDS);
+    }
+
+    /** S6/WS-A: records one edge read-serving latency sample ({@code configd_edge_read_seconds}). */
+    void recordReadLatency(long nanos) {
+        readLatency.record(nanos);
     }
 
     /** The CT-08 implausible-frontier counter to hand to {@link EdgeClientCore}'s constructor. */

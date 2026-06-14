@@ -434,24 +434,42 @@ sequenceDiagram
 
 ## 11. Backpressure & Overload Policy
 
-### Per-Path Policy
+> **Amended (S6 operability, RR-110 / Decision Log D-1 — as-built reconciliation, on the merits):**
+> the original per-path ladder below over-specified controls this architecture does not implement and
+> (per the merits analysis) does not need. An `opus` arbiter argued both sides per clause; the verdict
+> was 3 RELABEL + 1 narrow IMPLEMENT. The **as-built reality** is the table immediately below; the
+> original ladder is retained struck-through for the audit trail. Every signal an alert now fires on
+> (the 429 / the `raft_pending_apply_entries` gauge) is a correct, emitted, tested series.
+
+### Per-Path Policy (as-built)
 
 | Path | Trigger | Action | Client Signal | Recovery |
 |---|---|---|---|---|
-| **Write** | Raft queue > 1000 entries | Reject new writes | HTTP 429 + `Retry-After: 1` | Accept when queue < 500 (hysteresis) |
-| **Write** | Raft apply lag > 5000 entries | Reject new writes + alert | HTTP 503 | Accept when lag < 1000 |
-| **Read (edge)** | N/A (lock-free) | N/A | N/A | N/A (always fast) |
-| **Read (control plane)** | ReadIndex queue > 100 | Reject linearizable reads; suggest stale | HTTP 429 | Accept when queue < 50 |
-| **Fan-out** | Output buffer > 80% per child | Slow consumer warning | `X-Configd-Stale: true` on edge responses | Normal when buffer < 50% |
-| **Fan-out** | Output buffer 100% per child | Disconnect slow consumer | Edge reconnection required | Re-bootstrap via catch-up |
+| **Write** | Uncommitted proposals ≥ `maxPendingProposals` (**1024**, `RaftConfig`) | Reject new writes (bounds leader memory) | HTTP **429** + `Retry-After: 1` (S6) — counted by `configd_write_rejected_overloaded_total` | Accept once uncommitted < 1024 (single hard bound, level-triggered; no separate low-water) |
+| **Write (apply backlog)** | `commitIndex − lastApplied` rising | **Observability only** — `raft_pending_apply_entries` gauge + `ConfigdRaftPipelineSaturation` *warn* alert (> 5000). **No 503 shed** (an apply stall back-pressures commit, so the 1024 write bound already sheds via 429) | — | — |
+| **Read (edge)** | N/A (lock-free local HAMT) | **Never shed** | `X-Configd-Stale: true` while STALE+ | Always served |
+| **Read (control plane, linearizable)** | Leadership/ReadIndex unconfirmed | **Fail closed** (no queue-depth shed; CP linearizable reads are rare by design) | HTTP **503** (`X-Leader-Hint`) | Retry / read at edge |
+| **Fan-out** | Output buffer > 80% per child | Slow-consumer warning (`edge_fanout_slow_consumer_warnings_total`) | `X-Configd-Stale: true` | Normal when buffer < 50% |
+| **Fan-out** | Output buffer 100% per child (or ack-lag past threshold) | Demote to catch-up (snapshot + resume) | Edge reconnection / re-bootstrap | Catch-up protocol |
 
-### Load Shedding Order
-When system is overloaded, shed in this order (least important first):
-1. Stale reads from distant regions (redirect to closer edge)
-2. Low-priority write requests (based on producer priority)
-3. Linearizable read requests (suggest stale reads)
-4. Normal write requests (429 with backoff)
-5. **Never shed:** Edge read serving from local HAMT (always served, lock-free)
+### Load Shedding Order (observed / emergent — NOT an enforced scheduler)
+There is no priority scheduler (producer-priority / region-distance / read-class are not inputs to any
+shed decision). The ordering below is the *emergent* behaviour of independent mechanisms:
+1. Control-plane linearizable reads fail closed (503) when leadership is unconfirmed.
+2. Normal writes are shed with 429 + `Retry-After` once the 1024 proposal bound is hit.
+3. **Never shed:** edge read serving from the local HAMT (lock-free; always served).
+
+<details><summary>Original ladder (superseded by RR-110 / D-1 — kept for audit)</summary>
+
+| Path | Trigger | Action | Client Signal | Recovery |
+|---|---|---|---|---|
+| ~~Write~~ | ~~Raft queue > 1000 entries~~ | ~~Reject new writes~~ | ~~HTTP 429 + `Retry-After: 1`~~ | ~~Accept when queue < 500 (hysteresis)~~ |
+| ~~Write~~ | ~~Raft apply lag > 5000 entries~~ | ~~Reject new writes + alert~~ | ~~HTTP 503~~ | ~~Accept when lag < 1000~~ |
+| ~~Read (control plane)~~ | ~~ReadIndex queue > 100~~ | ~~Reject linearizable reads; suggest stale~~ | ~~HTTP 429~~ | ~~Accept when queue < 50~~ |
+
+~~Load-shed order: stale distant reads → low-priority writes → linearizable reads → normal writes →
+never edge reads.~~
+</details>
 
 ---
 

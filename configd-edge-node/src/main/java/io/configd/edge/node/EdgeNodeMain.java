@@ -153,8 +153,12 @@ public final class EdgeNodeMain {
 
         EdgeHttpServer httpServer;
         try {
+            // S6/WS-A: publish the edge-read histogram bucket schedule so configd_edge_read_seconds
+            // renders the le buckets (0.001 / 0.005) the edge-read burn-rate alert queries.
             httpServer = new EdgeHttpServer(config.apiPort(), core, StrongReadKeyClass.DEFAULT,
-                    new PrometheusExporter(registry), metrics);
+                    new PrometheusExporter(registry,
+                            io.configd.observability.ConfigdMetrics.edgeProcessHistogramSchedules()),
+                    metrics);
         } catch (IOException e) {
             throw new RuntimeException(
                     "Failed to start edge HTTP server on port " + config.apiPort(), e);

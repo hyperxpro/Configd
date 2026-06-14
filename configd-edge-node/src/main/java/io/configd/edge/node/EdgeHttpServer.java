@@ -150,82 +150,91 @@ public final class EdgeHttpServer {
             }
             String key = path.substring(CONFIG_PREFIX.length());
             metrics.onRead();
-
-            // CT-03: the staleness header is the client's signal on EVERY read while
-            // STALE+ (the data is still served unless cursor-behind/strong-read refuses).
-            boolean stale = core.stalenessState().ordinal()
-                    >= StalenessTracker.State.STALE.ordinal();
-            if (stale) {
-                exchange.getResponseHeaders().set(HDR_STALE, "true");
-            }
-
-            // CT-37 store-and-never-serve: fail closed BEFORE the store is consulted.
-            if (strongReadKeyClass.isStrongReadKey(key)) {
-                metrics.onReadRefused(EdgeNodeMetrics.REASON_STRONG_READ);
-                exchange.getResponseHeaders().set(HDR_FAIL_CLOSED, "strong-read");
-                sendText(exchange, 503,
-                        "Fail-closed: strong-read key '" + key + "' is never served from "
-                                + "bounded-stale edge state (RR-020 / ADR-0038); use the "
-                                + "control plane's linearizable read path");
-                return;
-            }
-
-            // ADR-0040 §2 (the negative-caching descope's premise): WITHIN the subscribed
-            // slice a store miss IS authoritative non-existence; OUTSIDE it the read is
-            // refused with a DISTINCT reason before the store is consulted — never an
-            // ambiguous 404 a client could mistake for non-existence.
-            if (!core.servesKey(key)) {
-                metrics.onReadRefused(EdgeNodeMetrics.REASON_NOT_SUBSCRIBED);
-                exchange.getResponseHeaders().set(HDR_REFUSED, "not-subscribed");
-                sendText(exchange, 404,
-                        "Refused: key '" + key + "' is outside this edge's subscribed "
-                                + "prefixes (ADR-0038 storage filter); this edge holds no "
-                                + "authoritative answer for it");
-                return;
-            }
-
-            long cursorVersion = parseCursor(exchange);
-            if (cursorVersion < 0 && cursorVersion != NO_CURSOR) {
-                sendText(exchange, 400, "Invalid " + HDR_CURSOR + " header");
-                return;
-            }
-
-            // Snapshot the local version BEFORE the read so the !found classification
-            // below is sound: localVersion >= cursor implies the read's snapshot also
-            // satisfied the cursor (the store version is monotonic), so a miss is a true
-            // not-found. localVersion < cursor classifies the miss as a refusal; if the
-            // store advanced mid-flight a retry simply succeeds — refusal is the safe side.
-            long localVersion = core.currentVersion();
-            ReadResult result = (cursorVersion == NO_CURSOR)
-                    ? core.get(key)
-                    : core.get(key, new VersionCursor(cursorVersion, 0L));
-
-            if (result.found()) {
-                // Every read returns its cursor (charter C2): the version to carry forward.
-                exchange.getResponseHeaders().set(HDR_CURSOR, String.valueOf(core.currentVersion()));
-                exchange.getResponseHeaders().set(HDR_VERSION, String.valueOf(result.version()));
-                exchange.getResponseHeaders().set("Content-Type", "application/octet-stream");
-                byte[] value = result.value();
-                exchange.sendResponseHeaders(200, value.length);
-                try (OutputStream os = exchange.getResponseBody()) {
-                    os.write(value);
+            // S6/WS-A: measure edge read-serving latency (configd_edge_read_seconds) at the HTTP
+            // boundary in a finally so EVERY exit path is sampled — NOT the lock-free
+            // EdgeClientCore.read() that the gate-5 0-B/op / 1.60 µs JMH benchmark guards. This
+            // handler already allocates (HttpExchange, response bytes), so the two nanoTime calls +
+            // bucket increment cannot regress gate-5 (re-verified by re-running gate-5).
+            long readStart = System.nanoTime();
+            try {
+                // CT-03: the staleness header is the client's signal on EVERY read while
+                // STALE+ (the data is still served unless cursor-behind/strong-read refuses).
+                boolean stale = core.stalenessState().ordinal()
+                        >= StalenessTracker.State.STALE.ordinal();
+                if (stale) {
+                    exchange.getResponseHeaders().set(HDR_STALE, "true");
                 }
-                return;
-            }
 
-            exchange.getResponseHeaders().set(HDR_CURSOR, String.valueOf(localVersion));
-            if (cursorVersion != NO_CURSOR && cursorVersion > localVersion) {
-                // The contract §3 consistent-refusal semantics (ADR-0035/ADR-0039, CT-12):
-                // NEVER serve stale on a cursor-behind read — uniform across steady state,
-                // catch-up, and failover. The monitor-wired store already recorded INV-M1.
-                metrics.onReadRefused(EdgeNodeMetrics.REASON_CURSOR_BEHIND);
-                exchange.getResponseHeaders().set(HDR_REFUSED, "cursor-behind");
-                sendText(exchange, 404,
-                        "Refused: edge at version " + localVersion + " is behind cursor "
-                                + cursorVersion + " (retry or fail over; never served stale)");
-                return;
+                // CT-37 store-and-never-serve: fail closed BEFORE the store is consulted.
+                if (strongReadKeyClass.isStrongReadKey(key)) {
+                    metrics.onReadRefused(EdgeNodeMetrics.REASON_STRONG_READ);
+                    exchange.getResponseHeaders().set(HDR_FAIL_CLOSED, "strong-read");
+                    sendText(exchange, 503,
+                            "Fail-closed: strong-read key '" + key + "' is never served from "
+                                    + "bounded-stale edge state (RR-020 / ADR-0038); use the "
+                                    + "control plane's linearizable read path");
+                    return;
+                }
+
+                // ADR-0040 §2 (the negative-caching descope's premise): WITHIN the subscribed
+                // slice a store miss IS authoritative non-existence; OUTSIDE it the read is
+                // refused with a DISTINCT reason before the store is consulted — never an
+                // ambiguous 404 a client could mistake for non-existence.
+                if (!core.servesKey(key)) {
+                    metrics.onReadRefused(EdgeNodeMetrics.REASON_NOT_SUBSCRIBED);
+                    exchange.getResponseHeaders().set(HDR_REFUSED, "not-subscribed");
+                    sendText(exchange, 404,
+                            "Refused: key '" + key + "' is outside this edge's subscribed "
+                                    + "prefixes (ADR-0038 storage filter); this edge holds no "
+                                    + "authoritative answer for it");
+                    return;
+                }
+
+                long cursorVersion = parseCursor(exchange);
+                if (cursorVersion < 0 && cursorVersion != NO_CURSOR) {
+                    sendText(exchange, 400, "Invalid " + HDR_CURSOR + " header");
+                    return;
+                }
+
+                // Snapshot the local version BEFORE the read so the !found classification
+                // below is sound: localVersion >= cursor implies the read's snapshot also
+                // satisfied the cursor (the store version is monotonic), so a miss is a true
+                // not-found. localVersion < cursor classifies the miss as a refusal; if the
+                // store advanced mid-flight a retry simply succeeds — refusal is the safe side.
+                long localVersion = core.currentVersion();
+                ReadResult result = (cursorVersion == NO_CURSOR)
+                        ? core.get(key)
+                        : core.get(key, new VersionCursor(cursorVersion, 0L));
+
+                if (result.found()) {
+                    // Every read returns its cursor (charter C2): the version to carry forward.
+                    exchange.getResponseHeaders().set(HDR_CURSOR, String.valueOf(core.currentVersion()));
+                    exchange.getResponseHeaders().set(HDR_VERSION, String.valueOf(result.version()));
+                    exchange.getResponseHeaders().set("Content-Type", "application/octet-stream");
+                    byte[] value = result.value();
+                    exchange.sendResponseHeaders(200, value.length);
+                    try (OutputStream os = exchange.getResponseBody()) {
+                        os.write(value);
+                    }
+                    return;
+                }
+
+                exchange.getResponseHeaders().set(HDR_CURSOR, String.valueOf(localVersion));
+                if (cursorVersion != NO_CURSOR && cursorVersion > localVersion) {
+                    // The contract §3 consistent-refusal semantics (ADR-0035/ADR-0039, CT-12):
+                    // NEVER serve stale on a cursor-behind read — uniform across steady state,
+                    // catch-up, and failover. The monitor-wired store already recorded INV-M1.
+                    metrics.onReadRefused(EdgeNodeMetrics.REASON_CURSOR_BEHIND);
+                    exchange.getResponseHeaders().set(HDR_REFUSED, "cursor-behind");
+                    sendText(exchange, 404,
+                            "Refused: edge at version " + localVersion + " is behind cursor "
+                                    + cursorVersion + " (retry or fail over; never served stale)");
+                    return;
+                }
+                sendText(exchange, 404, "Not Found");
+            } finally {
+                metrics.recordReadLatency(System.nanoTime() - readStart);
             }
-            sendText(exchange, 404, "Not Found");
         }
 
         /** Sentinel for "no cursor header supplied". */

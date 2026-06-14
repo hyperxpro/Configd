@@ -114,6 +114,24 @@ class EdgeHttpServerTest {
     }
 
     @Test
+    void servedReadRecordsLatencyHistogram() throws Exception {
+        // S6/WS-A: the edge read-serving path must record configd_edge_read_seconds at the HTTP
+        // boundary so the "edge read p99" dashboard panel + burn-rate alert have real data (the
+        // series was registered-but-never-recorded before this session). Scrape with the edge
+        // histogram schedule so the le buckets the alert queries render.
+        apply(1, "svc/a", "v1");
+        assertEquals(200, get("/v1/config/svc/a").statusCode());
+        String scrape = new io.configd.observability.PrometheusExporter(registry,
+                io.configd.observability.ConfigdMetrics.edgeProcessHistogramSchedules()).export();
+        assertTrue(scrape.contains("configd_edge_read_seconds_bucket{le=\"0.001\"}"),
+                "the le=0.001 bucket the edge-read burn-rate alert queries must be emitted:\n" + scrape);
+        java.util.regex.Matcher m = java.util.regex.Pattern
+                .compile("(?m)^configd_edge_read_seconds_count\\s+(\\S+)").matcher(scrape);
+        assertTrue(m.find() && Double.parseDouble(m.group(1)) >= 1.0,
+                "a served read must record a configd_edge_read_seconds sample:\n" + scrape);
+    }
+
+    @Test
     void cursorAtCurrentVersionIsServed() throws Exception {
         apply(1, "svc/a", "v1");
         HttpResponse<String> resp = get("/v1/config/svc/a", EdgeHttpServer.HDR_CURSOR, "1");
