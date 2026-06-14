@@ -14,9 +14,11 @@ HAMT) but config writes are failing.
 > are `/health/live`, `/health/ready`, `/metrics`, and `/v1/config/<key>`.
 > There is **no** `/admin/*` or `/raft/status` endpoint. Leader identity is
 > read from the `X-Leader-Hint` response header (a non-leader write returns
-> `503` + that header). Membership changes are done by changing the StatefulSet
-> + `--peers` and letting joint consensus reconfigure — there is no add/remove
-> RPC.
+> `503` + that header). There is **no** operator-triggerable add/remove-server
+> RPC (`proposeMembershipChange` is unwired): a node reset keeps its StatefulSet
+> ordinal (= node-id) so membership is unchanged; a permanent topology change
+> rebuilds via [restore-from-snapshot.md](restore-from-snapshot.md) /
+> [disaster-recovery.md](disaster-recovery.md).
 
 ## Symptom
 
@@ -76,18 +78,21 @@ HAMT) but config writes are failing.
    Restore connectivity / failed voters first; partitioned voters rejoin
    automatically via AppendEntries / InstallSnapshot once reachable. If the
    region is permanently gone, escalate to
-   [disaster-recovery.md](disaster-recovery.md) for a controlled membership
-   change (StatefulSet + `--peers` edit, committed via joint consensus on the
-   surviving majority).
-3. **Minority "leader" after a partition:** joint consensus prevents true
+   [disaster-recovery.md](disaster-recovery.md) to rebuild capacity — there is
+   no operator-triggerable membership-change RPC; redeploy a node into the
+   surviving region (it rejoins at its existing node-id) or restore a fresh
+   cluster from a snapshot.
+3. **Minority "leader" after a partition:** Raft quorum prevents true
    split brain — a minority leader cannot commit, so its writes already fail
    quorum. Force it to restart into the majority partition:
    ```sh
    kubectl -n configd delete pod <minority-pod>
    ```
 4. **Leader present but wedged (no commits, term flat):** step it down by
-   recycling so re-election picks a healthy voter; the PDB ensures only the
-   leader is evicted:
+   deleting only the named leader pod so re-election picks a healthy voter (a
+   direct `delete pod` removes exactly that pod; the PodDisruptionBudget
+   `maxUnavailable: 1` bounds concurrent disruptions so a second voter is not
+   taken down with it):
    ```sh
    kubectl -n configd delete pod <leader>
    ```

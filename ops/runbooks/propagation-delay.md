@@ -42,7 +42,7 @@ Open `Configd Data Plane` (`ops/dashboards/configd-data-plane.json`).
 3. **Fleet-wide case.** Check the leader-side fan-out:
    ```sh
    kubectl -n configd exec <cp> -- curl -sf http://localhost:8080/metrics | \
-     grep -E '^edge_fanout_(queue_depth|connected_subscribers|demotions_(total|ack_lag_total))'
+     grep -E '^edge_fanout_(queue_depth|connected_subscribers|demotions_)'
    ```
    - `edge_fanout_queue_depth` elevated + demotions climbing → many slow
      consumers; this is often a **catch-up storm** →

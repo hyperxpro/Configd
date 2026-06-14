@@ -39,8 +39,11 @@ is **no** `/admin/*`, `/raft/status`, or `raftctl` CLI — earlier drafts that
 referenced them have been reconciled. Operator signals are: the
 `X-Leader-Hint` response header (a non-leader write returns `503` + this
 header), the `X-Config-Version` / `X-Configd-Cursor` headers, the `/metrics`
-series, and `kubectl` for pod/PVC/StatefulSet actions. Membership changes go
-through the StatefulSet + `--peers` (joint consensus), not an RPC.
+series, and `kubectl` for pod/PVC/StatefulSet actions. There is **no**
+operator-triggerable add/remove-server RPC (`proposeMembershipChange` is
+unwired): a node reset keeps its StatefulSet ordinal (= node-id), so membership
+is unchanged; a permanent topology change rebuilds via restore-from-snapshot /
+disaster-recovery.
 
 ## Convention (S6 strict format)
 

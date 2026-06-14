@@ -148,3 +148,45 @@ deletion would needlessly drop real operational signal:
   which is standard gauge semantics for a capacity panel).
 
 Both are asserted non-zero in `MetricsWiringContractTest.gaugesAndElectionsCounterAreNotHardwiredToZero`.
+
+## D-5 (TECH) — JVM/process runtime metrics: wire a binder rather than ship phantom panels
+
+**Question.** The charter's runtime dashboard board (GC/heap/FD/threads) and the leak alerts need
+JVM/process series. None were emitted (no binder; S5 measured them with external `jstat`/`/proc`).
+Ship the board on phantom series (the S1 defect), or wire real ones?
+
+**Resolution (lead).** Added `JvmMetrics` (java.lang.management gauges: heap used/max, threads, open
+FDs, GC time/count) bound in BOTH processes. Contained (~50 lines, scrape-time MXBean reads, off the
+hot path), and it makes the runtime board + the FD/thread/heap leak alerts query REAL, contract-proven
+series. Hard Rule 1 respected (no panel on a non-emitted series).
+
+## D-6 (SCOPE) — Runbook execution-validation: validate the fault+recovery mechanism; mark live-threshold injectors PENDING honestly
+
+**Decision (conservative default, logged).** Every runbook's FAULT and RECOVERY MECHANISM is validated
+by an EXECUTED harness/test (OverloadChaosTest, StorageEnospcConsensusReactionTest, GameDayDrillTest,
+MetricsWiringContractTest, BackupRestoreRoundTripTest, the e2e-compose phases, the wedge-family tests —
+all green; `runbooks-validation.md`). For four alerts no harness drives the live system *across the
+threshold* (edge-read p99, raft backlog>5000, snapshot ≥3-fail/15m, resource-leak — emergent or
+needs production-scale load). Rather than fabricate an injector or silently claim validation, those are
+marked PENDING: the alert RULE is proven to fire/quiet on the threshold value by promtool and the
+mechanism is tested; the live-threshold drill is deferred to S7.5 / the M-items. Honest over complete.
+
+## D-7 (SCOPE) — Rolling upgrade/rollback: prove the interop invariant + durable restart; defer the live cross-binary matrix
+
+**Decision (conservative default, logged).** A literal cross-version N↔N+1 mixed-cluster no-gap
+*measurement* needs a second release artifact; the repo is a single `0.1.0-SNAPSHOT`. So S6 proves the
+**interop invariant** instead — wire byte-stability within wire-version `0x01` (golden-fixture tests:
+any two builds at `0x01` are byte-identical, so old↔new interop holds by construction), plus durable
+no-write-loss restart and backup/restore state-equality, with the version-bump discipline gate-enforced
+(a wire change breaks the golden test → forces a `WIRE_VERSION` bump + the deferred Hello handshake +
+the `@Disabled` WAL/snapshot compat stubs). The live cross-binary fleet measurement is the first S7.5
+item once a v0.2 tag exists. Not claimed as load-validated (`deployment.md §3`).
+
+## D-8 (TECH) — Alert fires/quiet via pinned promtool, not an in-repo PromQL evaluator
+
+**Decision (lead).** The deployed alerts are PromQL rules; the faithful fires/quiet test is
+`promtool test rules` (Prometheus' own framework) with synthetic series. Re-implementing PromQL
+(`histogram_quantile`, `rate`, `increase`) in-repo would be error-prone and unfaithful. gate-6 fetches
+a pinned promtool (2.53.2) — a single static binary — and runs `check rules` + `test rules`. The
+in-house `BurnRateAlertEvaluator` (SloTracker) remains for in-process SLO tracking; it is not the
+deployed-rule test.

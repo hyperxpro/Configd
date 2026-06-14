@@ -40,7 +40,7 @@ Open the `Configd Data Plane` dashboard (`ops/dashboards/configd-data-plane.json
    and **"Edge re-bootstrap / reconnect"**. Scrape the CP fan-out series:
    ```sh
    kubectl -n configd exec <cp> -- curl -sf http://localhost:8080/metrics | \
-     grep -E '^edge_fanout_(connected_subscribers|queue_depth|demotions_(total|ack_lag_total))'
+     grep -E '^edge_fanout_(connected_subscribers|queue_depth|demotions_)'
    ```
 3. **Is the governor escalating (expected) or quarantining broadly (edges too
    slow to drain)?** Panels **"Slow-consumer state transitions"** and **"Edge

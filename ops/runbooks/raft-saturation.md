@@ -62,7 +62,9 @@ Open `Configd Control Plane` (`ops/dashboards/configd-control-plane.json`).
    namespace at the API gateway. Do **not** raise the apply-queue capacity —
    the bound is intentional back-pressure; lifting it just delays the symptom.
 2. **Apply backlog from a slow leader (GC / disk):** step the leader to a
-   less-loaded voter; the PDB ensures only the leader is evicted:
+   less-loaded voter by deleting only the named leader pod (a direct
+   `delete pod` removes exactly that pod; the PodDisruptionBudget
+   `maxUnavailable: 1` bounds concurrent disruptions to 1):
    ```sh
    kubectl -n configd delete pod <leader>
    ```

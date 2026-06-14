@@ -47,22 +47,27 @@ leaving the cluster one voter closer to losing quorum.
 2. **Disk full on the follower:** free its disk per
    [disk-full-fsync.md](disk-full-fsync.md), then let the retry succeed.
 3. **Stuck follower past the leader's retention** (must be re-seeded clean):
-   there is **no** add/remove-server admin RPC — membership changes go
-   through the StatefulSet + `--peers` and are committed by joint consensus on
-   the surviving quorum. Re-seed one voter at a time:
+   the follower keeps its StatefulSet ordinal (= its node-id), so cluster
+   **membership does not change** — there is no add/remove-server RPC and none
+   is needed. Wipe ONLY that follower's state and let the StatefulSet respawn
+   the SAME ordinal with empty state; it catches up via `InstallSnapshot`:
    ```sh
-   # 1. Scale the StatefulSet down so the failing follower terminates, and
-   #    redeploy the survivors with a smaller --peers list; the surviving
-   #    quorum commits the joint-consensus reconfiguration excluding it.
-   kubectl -n configd scale statefulset/configd --replicas=<N-1>
-   # 2. Wipe ONLY the failed follower's PVC (confirm the ordinal from the
-   #    leader logs first — wiping the wrong PV converts a warn into a page).
+   # 1. Confirm the failing follower's ordinal from the leader logs first
+   #    (wiping the wrong PV converts a warn into a page).
+   kubectl -n configd logs statefulset/configd | grep -iE 'install.?snapshot|nextIndex'
+   # 2. Delete ONLY that follower's pod AND its PVC. The StatefulSet recreates
+   #    the SAME ordinal (same node-id, same membership) with a fresh empty PVC.
+   kubectl -n configd delete pod configd-<ordinal>
    kubectl -n configd delete pvc data-configd-<ordinal>
-   # 3. Scale back up with the full --peers list; the fresh voter catches up
-   #    via InstallSnapshot from a clean state.
-   kubectl -n configd scale statefulset/configd --replicas=<N>
+   # 3. Wait for the respawn; the fresh voter catches up from a clean state via
+   #    InstallSnapshot. Membership never changed; quorum held throughout.
+   kubectl -n configd rollout status statefulset/configd
    ```
-   Never drop below quorum during this.
+   Never let more than one voter be down at once (quorum = floor(N/2)+1). A
+   genuine add/remove of a *different* node is NOT an operator path in this
+   release (`proposeMembershipChange` exists but has no wired trigger); a
+   permanent topology change goes through
+   [disaster-recovery.md](disaster-recovery.md).
 4. **Do not** lower log retention to "fix" the catch-up window — that trades a
    recoverable problem for an unrecoverable one. **Do not** bypass the
    snapshot checksum — it guarantees the TLA+-proven `SnapshotConsistency`
