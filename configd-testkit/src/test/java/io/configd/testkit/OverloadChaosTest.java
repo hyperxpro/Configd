@@ -6,6 +6,8 @@ import io.configd.raft.RaftNode;
 import io.configd.store.CommandCodec;
 
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -88,19 +90,47 @@ class OverloadChaosTest {
     // ------------------------------------------------------------------------
     @Test
     void postPartitionReconnectStorm_allEdgesRecoverToCurrent() {
-        final int CP = 3, EDGES = 5, WARMUP = 1_500;
+        // The S4 EXP-010 anchor point: 5 edges. (S5 D.3 extends this to a fleet-size
+        // distribution via reconnectStormRecoveryTicks below; this @Test keeps the
+        // original single-cell assertion as the regression anchor.)
+        long ticks = reconnectStormRecoveryTicks(5);
+        assertTrue(ticks > 0, "D-2: the 5-edge reconnect storm must recover");
+    }
+
+    // ------------------------------------------------------------------------
+    // D-2 (S5 D.3): reconnect-storm recovery distribution at fleet sizes {5,10,25,50}.
+    // Deterministic in-sim — leadership-stable (no live 2-vCPU ceiling), so it IS locally
+    // measurable. 1 tick ≈ 1 ms modeled. Each cell prints the canonical OVERLOAD line.
+    // ------------------------------------------------------------------------
+    @ParameterizedTest(name = "reconnect-storm fleet edges={0}")
+    @ValueSource(ints = {5, 10, 25, 50})
+    void postPartitionReconnectStorm_fleetSizeDistribution(int edges) {
+        long ticks = reconnectStormRecoveryTicks(edges);
+        assertTrue(ticks > 0,
+                "D.3: the " + edges + "-edge fleet must recover to CURRENT after the storm");
+    }
+
+    /**
+     * Runs one post-partition reconnect-storm cell with {@code edges} edges and returns the
+     * recovery tick count (heal-instant → whole-fleet-CURRENT). Asserts the same invariants as
+     * the S4 D-2 cell: every edge ends CURRENT and caught up to the authoritative version, and no
+     * edge is pushed TERMINAL. Prints the canonical
+     * {@code OVERLOAD: scenario=reconnect-storm edges=N recoveryTicks=M} line.
+     */
+    private static long reconnectStormRecoveryTicks(int edges) {
+        final int CP = 3, WARMUP = 1_500;
         C1StreamDriver driver = new C1StreamDriver();
-        EdgeFanOutSim sim = new EdgeFanOutSim(91L, CP, EDGES, WARMUP, false, driver,
+        EdgeFanOutSim sim = new EdgeFanOutSim(91L, CP, edges, WARMUP, false, driver,
                 new AdversarialSchedule.Intensity(0, 60, 0.0), EdgeInvariants.BOUND_MS);
         sim.run();
-        for (int e = 0; e < EDGES; e++) {
+        for (int e = 0; e < edges; e++) {
             assertEquals(StalenessTracker.State.CURRENT, sim.edges().get(e).staleness(),
                     "edge " + e + " must be CURRENT before the storm");
             sim.enableEdgeRecovery(e);
         }
 
         // The storm setup: cut the WHOLE fleet off and commit writes none of them can see.
-        for (int e = 0; e < EDGES; e++) {
+        for (int e = 0; e < edges; e++) {
             sim.partitionEdge(e);
         }
         int obs = sim.edges().get(0).subscribedCpNode();
@@ -110,7 +140,7 @@ class OverloadChaosTest {
 
         // Walk the WHOLE fleet to DISCONNECTED (logical-time ladder, no wall-clock sleeps).
         long start = sim.currentTime();
-        while (!allAtLeast(sim, EDGES, StalenessTracker.State.DISCONNECTED)) {
+        while (!allAtLeast(sim, edges, StalenessTracker.State.DISCONNECTED)) {
             if (sim.currentTime() - start > 60_000) {
                 fail("not all edges reached DISCONNECTED within 60s of sim time");
             }
@@ -120,14 +150,14 @@ class OverloadChaosTest {
         // THE STORM: heal the entire fleet at the SAME instant — every edge reconnects +
         // re-bootstraps at once (the catch-up thundering herd). All must recover to CURRENT.
         long target = sim.cpSim().store(obs).currentVersion();
-        for (int e = 0; e < EDGES; e++) {
+        for (int e = 0; e < edges; e++) {
             sim.healEdge(e);
         }
         long healAt = sim.currentTime();
         long recoveredAt = -1;
         for (int t = 0; t < 20_000; t++) {
             sim.tick();
-            if (allRecovered(sim, EDGES, target)) {
+            if (allRecovered(sim, edges, target)) {
                 recoveredAt = sim.currentTime();
                 break;
             }
@@ -135,7 +165,7 @@ class OverloadChaosTest {
         assertTrue(recoveredAt > 0,
                 "D-2: the whole fleet must recover to CURRENT after the simultaneous reconnect storm "
                         + "(no edge stuck stale-but-silent)");
-        for (int e = 0; e < EDGES; e++) {
+        for (int e = 0; e < edges; e++) {
             assertEquals(StalenessTracker.State.CURRENT, sim.edges().get(e).staleness(),
                     "edge " + e + " must be CURRENT after the storm");
             assertTrue(sim.edges().get(e).currentVersion() >= target,
@@ -143,8 +173,10 @@ class OverloadChaosTest {
         }
         assertTrue(sim.terminalFailures().isEmpty(),
                 "D-2: a reconnect storm must not push any edge TERMINAL (bounded, self-healing)");
-        System.out.println("OVERLOAD: scenario=reconnect-storm edges=" + EDGES
-                + " recoveryTicks=" + (recoveredAt - healAt) + " (all recovered, none terminal)");
+        long recoveryTicks = recoveredAt - healAt;
+        System.out.println("OVERLOAD: scenario=reconnect-storm edges=" + edges
+                + " recoveryTicks=" + recoveryTicks + " (all recovered, none terminal)");
+        return recoveryTicks;
     }
 
     // --- helpers ---

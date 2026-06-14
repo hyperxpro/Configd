@@ -53,11 +53,40 @@ S4's worst-case overload scenario — the post-partition reconnect storm — was
 this is the deterministic in-sim `OverloadChaosTest` (box-cheap, leadership-stable — no live-cluster CPU
 starvation), it is re-run at rising edge counts to produce the distribution:
 
-> **[PENDING — quick in-sim re-run, appended when the box frees from Workstream C.]** Re-run
-> `OverloadChaosTest` reconnect-storm cell at edge counts {5, 10, 25, 50} → recovery-tick distribution.
-> The S4 single point (258 ticks / 5 edges) is the anchor. (In-sim is deterministic and does not hit
-> the 2-vCPU live-cluster ceiling, so this distribution IS locally measurable, unlike the live
-> throughput in D.2.)
+**Method (S5).** A `@ParameterizedTest @ValueSource(ints={5,10,25,50})`
+(`OverloadChaosTest#postPartitionReconnectStorm_fleetSizeDistribution`) was added next to the S4 D-2
+cell. It shares the exact storm logic (`reconnectStormRecoveryTicks(edges)`): warm the fleet to
+CURRENT, partition the WHOLE fleet, commit 5 writes none can see, walk all edges to DISCONNECTED, then
+**heal the entire fleet at the same logical instant** and count ticks from heal → whole-fleet-CURRENT.
+Each cell re-asserts the S4 invariants (every edge ends CURRENT and caught up to the authoritative
+version; **no edge pushed TERMINAL**). Deterministic in-sim (`EdgeFanOutSim`, seed=91, CP=3,
+WARMUP=1500); **1 tick ≈ 1 ms modeled** (`recovery-bounds.md`).
+
+| Fleet size (edges) | Recovery ticks (≈ ms) | vs. 5-edge anchor | All CURRENT / none TERMINAL |
+|---|---|---|---|
+| **5** (S4 EXP-010 anchor) | **258** | — (reproduced exactly) | ✓ / ✓ |
+| 10 | 256 | −2 (−0.8%) | ✓ / ✓ |
+| 25 | 258 | 0 | ✓ / ✓ |
+| 50 | 261 | +3 (+1.2%) | ✓ / ✓ |
+
+**Finding (no defect).** Whole-fleet recovery time is **essentially flat — invariant in fleet size**
+across a 10× span (5 → 50 edges), 256–261 ticks, a ±3-tick spread (±1.2%). The catch-up "thundering
+herd" does **not** amplify with fleet size in this model: every edge re-bootstraps from its CP node's
+snapshot/replay source in parallel and the recovery latency is dominated by the per-edge
+reconnect→snapshot→apply→ack chain (the fixed ~258-tick path), not by contention among reconnecting
+edges. The small +3-tick drift at 50 edges is the only fleet-size signal, well within tick granularity.
+The S4 single point (258/5) is **reproduced exactly**, confirming the harness and the anchor.
+
+**Scope honesty.** This is the *in-sim* fan-out/recovery model (deterministic discrete-event, no
+wall-clock schedule → CO structurally absent, methodology §3b note in D.5). It is **leadership-stable**
+(the CP cluster is settled before the storm; no CheckQuorum step-down), so it is **NOT** subject to the
+live 2-vCPU ceiling that bounds D.2 / M-9 — which is exactly why this distribution IS locally
+measurable while the live 429/503 threshold ladder (D.2) is ENV-BLOCKED (M-10). The model does **not**
+include the real per-edge WAN reconnect RTT or snapshot-transfer bandwidth at scale; those would add a
+modeled term per the methodology RTT matrix (§2) for a production fleet and are not claimed here.
+
+Raw: `docs/session-5/captures/wsD-reconnect-fleet.txt`. Re-run:
+`flock /tmp/configd-mvn.lock ./mvnw -q -pl configd-testkit test -Dtest='OverloadChaosTest#postPartitionReconnectStorm_fleetSizeDistribution+postPartitionReconnectStorm_allEdgesRecoverToCurrent'`
 
 ## D.4 — Findings & disposition
 
