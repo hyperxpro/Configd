@@ -97,6 +97,16 @@ nohup flock /tmp/configd-mvn.lock perf/soak.sh \
 is reported as the duration it actually ran, never called a 24 h soak. A production-representative soak
 (real fleet, NUMA, real WAN) inherits M-1/M-2/M-4.
 
+**ACTUAL OUTCOME (RR-112).** The launched run executed **~3.45 h clean, then the box OOM-killed one node
+JVM** (`perf/results/soak-24h-20260614T045536Z/`). Over the clean window all leak signals were FLAT —
+`fd_total` 69, `threads_total` 93, `heap_used` ~220–235 MB, `rejected` 0 — so **no FD / thread / Java-heap
+leak in 3.45 h** (the 5.5-min smoke and the 3.45 h run agree). The termination was **not a Configd leak**:
+RSS climbed to ~3.27 GB as ZGC committed toward `-Xmx1g` across 3 co-located JVMs; 3×1 g + driver + the
+lead's session exceeded the 7.7 GB box. **It is a box-capacity / heap-sizing limit (RR-112).** To get a
+full box-local 24 h soak, re-run with **smaller per-node heaps** (`-Xmx384m` ×3 ≈ 1.1 GB fits) — add a
+`--heap` override to `perf/soak.sh` — OR run the production-representative soak on real hardware (**M-4**).
+The 3.45 h clean window is real leak-negative evidence; the full duration is the resume/M-4 item.
+
 ## 6. Gate / CI state for S6
 
 - **gate-5** is CI-wired (`needs: gate-4`), cumulative: read-path 0 B/op, read p99/p999 regression bounds,

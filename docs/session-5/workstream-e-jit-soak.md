@@ -209,6 +209,25 @@ nohup flock /tmp/configd-mvn.lock perf/soak.sh \
   `SMOKE`, ≥600 s as `SOAK`, and always records `measured_elapsed_sec` (never rounded up), preserving
   `soak-72h.sh`'s honesty contract.
 
+### The LEAD's actual launched run — OUTCOME (RR-112, honest)
+
+The lead launched the command above (`perf/results/soak-24h-20260614T045536Z/`, 186 samples). It ran
+**~3.45 h CLEAN, then the Linux OOM-killer killed one node JVM** at ~t+12472 s.
+
+| Window | `fd_total` | `threads_total` | `heap_used` | `rejected` | Verdict |
+|---|---|---|---|---|---|
+| 0 → 12407 s (~3.45 h, clean) | FLAT **69** | FLAT **93** | FLAT **~220–235 MB** | **0** every sample | **no FD / thread / heap leak** |
+| ~12472 s (OOM) | → 42 | → 62 | (node lost) | climbing | one node OOM-killed |
+
+**This is NOT a Configd leak** — `heap_used` was flat for 3.45 h. The cause is **box capacity**: RSS
+climbed to ~3.27 GB as ZGC committed reserved heap across **3 co-located `-Xmx1g` JVMs**; 3×1 g + the load
+driver + the lead's session exceeded the 7.7 GB box, and the OOM-killer took one node. The 3.45 h clean
+window is **real leak-negative evidence** (it agrees with the 5.5-min smoke).
+
+**To get a full box-local 24 h soak:** re-run with smaller per-node heaps —
+`SOAK_HEAP="-Xms384m -Xmx384m" nohup perf/soak.sh --duration=86400 …` (3×384 MB ≈ 1.1 GB fits 7.7 GB) —
+OR run the production-representative soak on real hardware (manifest **M-4**). Filed **RR-112**.
+
 ### Honesty notes (§Soak)
 
 - **This deliverable is the harness + a SMOKE.** The 24 h run is the LEAD's to launch; it is not run

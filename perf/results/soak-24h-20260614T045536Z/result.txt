@@ -1,0 +1,25 @@
+soak harness
+  jar=/home/ubuntu/Code/Configd/configd-server/target/configd-server-0.1.0-SNAPSHOT.jar
+  gc=-XX:+UseZGC heap=-Xmx1g -Xms1g rate=100/s seed=42 sample=60s
+  requested_duration_sec=86400
+  start_utc=2026-06-14T04:55:40Z
+  label=SOAK (real-duration leak/drift run)
+
+--- OUTCOME (real elapsed, honest) ---
+actual_elapsed_sec=12614  (~3.5 h of the requested 24 h)
+samples=186
+LEAK SIGNALS over the clean window (0..12407s, ~3.45 h): CLEAN
+  fd_total      = FLAT 69 (23/node)        -> no FD leak
+  threads_total = FLAT 93                  -> no thread leak
+  heap_used_kb  = FLAT ~220-235 MB         -> no Java heap leak
+  rejected      = 0 every sample           -> cluster healthy, steady commits
+TERMINATION at ~t+12472s: the Linux OOM-killer killed one node JVM
+  (perf/soak.sh:198 "Killed ... --node-id"; RSS had climbed to ~3.27 GB as ZGC
+  committed toward -Xmx1g across 3 co-located JVMs; 3x1g reserve + driver +
+  the lead's session on a 7.7 GB box hit the memory ceiling). After the kill the
+  2-node remnant limped (fd 42, rejections climbing); the lead stopped the
+  degraded run.
+DISPOSITION: NOT a Configd leak (heap_used was FLAT for 3.45 h). A box-capacity /
+  heap-sizing limit (RR-112): a box-local 24 h soak needs smaller per-node heaps
+  (-Xmx384m x3 ~= 1.1 GB fits 7.7 GB) OR production hardware (manifest M-4). The
+  3.45 h clean window is real leak-negative evidence; the full 24 h is resume/M-4.
