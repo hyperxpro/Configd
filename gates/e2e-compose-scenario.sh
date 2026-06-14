@@ -348,11 +348,17 @@ for p in "${WATCHER_PIDS[@]}"; do kill "$p" 2>/dev/null; wait "$p" 2>/dev/null; 
 WATCHER_PIDS=()
 # Min-samples is a NON-VACUITY guard (the watch was genuinely live), not a
 # correctness bar: on the 2-vCPU box with 7 JVMs a curl round-trip can take
-# seconds, and a FAST failover (a healthy outcome) shortens the window — 10
+# seconds, and a FAST failover (a healthy outcome) shortens the window — a few
 # samples across kill->re-elect->converge is live evidence without punishing
-# either the loaded box or a quick election.
+# either the loaded box or a quick election. The real correctness check is the
+# monotonicity awk in assert_monotonic, which is independent of this floor.
+# RR-111 (S5): the floor was 10 and FLAKED on a loaded GitHub runner (edge2
+# captured 9, CI run 27488810136) — no runtime src changed, so it was the
+# threshold, not a regression. Lowered to 5 (provably safe: loosening a
+# non-vacuity floor can only make the gate more tolerant, never hide a
+# monotonic-read violation). 5 samples is still unambiguous live evidence.
 for i in 1 2 3; do
-    assert_monotonic "$SCRATCH/watch-edge$i.log" 10 "edge$i failover window"
+    assert_monotonic "$SCRATCH/watch-edge$i.log" 5 "edge$i failover window"
 done
 pass "monotonic version watch: NO edge ever saw X-Configd-Cursor decrease across the failover"
 
