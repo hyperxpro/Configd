@@ -47,7 +47,7 @@ Every §0.1 target is classified into one of three states, and the classificatio
 
 | §0.1 target | Local component (VERIFIED here) | Cross-region / scale component (ENV-BLOCKED) |
 |---|---|---|
-| Read p99 < 1 ms / p999 < 5 ms (in-process) | **Fully local** — in-process read latency at 10^6 keys (HdrHistogram). | 10^9-key working set (won't fit in 7.7 GB) → documented extrapolation, flagged, not measured. |
+| Read p99 < 1 ms / p999 < 5 ms (in-process) | VERIFIED **only at the measured 10^6 working set** (in-process, HdrHistogram). | 10^9-key working set (won't fit in 7.7 GB) → documented extrapolation, flagged, not measured. **The headline target carries no key-count qualifier but production implies 10^9, so the headline is a split result (VERIFIED@10^6 + ENV-BLOCKED@10^9), not plain LOCAL-VERIFIED.** |
 | Write commit p99 < 150 ms cross-region | Local quorum-commit component (consensus + apply, no network). | + RTT(quorum) from §2 matrix → modeled total; real number needs multi-region hosts. |
 | Edge propagation p99 < 500 ms global | Local multi-edge fan-out staleness (Docker Compose), HdrHistogram. | + modeled WAN leg; real number needs cross-region edges. |
 | Write throughput 10k/s sustained, 100k/s burst | **Fully local** mechanism (in-process / single-host) — drive it, hold it, report concurrent latency. | Per-region cluster capacity at fleet scale; real saturation needs production-class hosts. |
@@ -83,16 +83,21 @@ standard public dataset used for capacity planning.
 | eu-west-1 ↔ eu-central-1 | 20 | EU regional Raft |
 | ap-northeast-1 ↔ ap-southeast-1 | 69 | AP regional Raft |
 
-**Source & status.** Values are representative medians consistent with the public AWS inter-region
-latency datasets at **cloudping.co** / **cloudping.info** (continuously-measured AWS region-to-region
-RTT) and AWS region documentation. They are a **declared model input**, NOT a measurement taken on
-our hardware: the box is single-region single-host. **Real region-pair RTTs (and their p99 tails,
+**Source & status.** Values are representative medians (snapshot **as of 2026-06-14**, review-architect
+F6) consistent with the public AWS inter-region latency datasets at **cloudping.co** / **cloudping.info**
+(continuously-measured AWS region-to-region RTT) and AWS region documentation. They are a **declared
+model input**, NOT a measurement taken on our hardware: the box is single-region single-host. **Real region-pair RTTs (and their p99 tails,
 which matter more than the median for a p99 commit target) are ENV-BLOCKED** — see
 `infrastructure-manifest.md` (multi-region hosts). The matrix is used uniformly; no cross-region
 number in Session 5 invents its own RTT.
 
 **Cross-region commit budget — the computation rule (applied uniformly).** For a write-commit p99
 model: `modeled_commit = local_commit_component + RTT(to the follower that completes the majority)`.
+This is a **lower bound** (review-architect F5): `local_commit_component` must include the serial
+leader-side terms — the 200 µs batch-window wait, proposal serialization, and any fsync — so the model
+does not undercut `performance.md §11`'s explicit "68 ms RTT + 32 ms overhead" (≈100 ms p99) and
+thereby look falsely optimistic. The RTT term assumes the in-flight round trip overlaps the local
+pipeline; the serial terms that do not overlap are kept in `local_commit_component`.
 For a 5-voter global group led from us-east-1 with followers {us-west-2 57, eu-west-1 68,
 ap-northeast-1 148, ap-southeast-1 220}, a majority of 5 is 3 = leader + 2 acks → commit gates on the
 **2nd-fastest** follower RTT = **68 ms** (one round trip; AppendEntries is leader→follower→leader).
@@ -128,6 +133,20 @@ There are two harness classes, and the correct CO treatment differs:
   "should" have happened. The hazard CO describes (a fixed request cadence whose skipped slots vanish)
   does not exist in a tight per-op service-time loop. This is stated explicitly so the claim is "CO is
   structurally absent for this harness," not "CO was ignored."
+- **Caveat — SampleTime sub-samples the tail (review-architect F1).** At sub-microsecond op times JMH
+  does not timestamp every invocation; it adaptively sub-samples to keep overhead low. p50/p99 are
+  well-populated, but **p999/p9999/max bins can be statistically thin**, and on the throttling 2-vCPU
+  box a single JIT-deopt/safepoint outlier (the very effect `performance.md`'s `hamt-p50` footnote
+  documents) can dominate p9999 with few samples behind it. Therefore: any p999/p9999 reported from
+  SampleTime **must state its tail-bin sample count**; a p9999 backed by fewer than ~100 tail samples
+  is reported **low-confidence**, not VERIFIED. Lift the measurement-iteration budget / sample density
+  until the tail is populated, or fall back to a §3b open-loop run for the tail.
+- **Scope — this is UNLOADED service time (review-architect F2).** SampleTime in a tight loop measures
+  per-op latency with a warm CPU, warm cache and no queueing. It is **not transferable** to read
+  latency *under concurrent write/fan-out load* (volatile-snapshot swap + cache-eviction interference).
+  The §0.1 read target is the in-process unloaded read, so this number satisfies it — but
+  read-under-write-load is a **separate** §3b open-loop measurement and the unloaded p99 is never cited
+  as the under-load p99.
 - Report the JMH **error band / CI** alongside the percentile so throttling on the 2-vCPU box shows up
   as variance. Pin `-f` (forks), `-wi`/`-w` (warmup) past steady state, `-prof gc`, `-prof perfnorm`.
 
@@ -135,6 +154,13 @@ There are two harness classes, and the correct CO treatment differs:
 
 These DO have an intended schedule (a target offered rate), so CO is a live hazard and must be
 corrected one of two ways — the harness names which:
+
+**Mandatory precondition (review-architect F4):** before any latency-at-rate number is trusted, the
+generator is **self-calibrated** — its maximum sustainable offered rate is measured in isolation
+(against a no-op / loopback sink) and must exceed the target rate with headroom. Otherwise generator
+saturation masquerades as system latency. A latency-at-rate result states the generator's calibrated
+ceiling; if the system pushes the generator to its own limit, the run is a generator-saturation
+finding, not a system-latency number.
 
 - **Open-loop, intended-time scheduling.** The generator issues each request at its *scheduled*
   send time `t_i = i / rate`, independent of when prior requests complete. Latency is measured as
@@ -199,7 +225,15 @@ the charter's "reproduced or marked CONTRADICTED" requirement:
 
 ## 6. Sign-off
 
-`review-architect` signs this off (methodology gate) before Workstreams A–E begin bulk measurement.
+**SIGNED OFF — `review-architect`, 2026-06-14: APPROVE-WITH-CHANGES, all changes folded in.**
+The independent methodology review ruled the coordinated-omission argument **SOUND-WITH-CAVEAT** (the
+JMH-SampleTime-CO-free claim is correct for a synchronous in-process read with no arrival schedule; the
+two caveats — sub-sampled tail bins F1, unloaded-service-time scope F2 — are now stated in §3a), and
+verified the quorum arithmetic (68 ms 5-voter / 57 ms 3-voter) and the honesty-split taxonomy. The four
+SHOULD-FIX items (F1 tail sample counts, F2 unloaded scope, F3 read headline = split-result, F4 generator
+self-calibration precondition) and two NITs (F5 commit formula lower-bound, F6 RTT capture date) are
+incorporated above. **Bulk measurement (Workstreams A–E) may proceed on this methodology.**
+
 Any later methodology dispute (e.g. "is this benchmark measuring coordinated omission?") is resolved
 by a fresh `opus` sub-agent and logged in the closeout Decision Log (charter §2, §4).
 
