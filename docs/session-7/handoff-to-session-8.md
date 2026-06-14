@@ -82,6 +82,12 @@ writer (A2)** but NOT a full-host compromise (the honest fence, threat-model §5
 - Carry-forwards from S6 still open (RR-108 contract-anchor refresh, RR-105 stale-owner re-triage,
   RR-112 box-local 24 h soak, the M-1…M-10 campaign) — unchanged by S7.
 
+> **Immutability check (for the next review-architect):** `main` is frozen at the S1 audit
+> (`2a08b6f`), so `git diff --stat main..HEAD` shows the entire S2–S7 lineage and looks like it
+> rewrites the world. Check S1–6 immutability against the **session commit range** (S7 =
+> `8b457fe..HEAD`), not against `main`. S7 modified only the shared CI files + S7 code; zero
+> `docs/session-1..6/`, `gates/gate-[1-6].sh`, or ADR-0001..0041 files were touched.
+
 ## 7. S8 (final session) go/no-go checklist seeded by S7
 - [ ] Close the D-1 BLOCKER: relocate the signing-key default outside the data dir; flip the at-rest
       posture to fail-closed by default.

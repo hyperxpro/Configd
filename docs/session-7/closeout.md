@@ -54,6 +54,25 @@ Each row's command runs the attack and asserts it is refused. Build deps first:
 - F-S7-FUZZ-1 slowloris (HIGH avail), F-S7-TLS-1 leaf-as-anchor expiry, F-S7-TLS-2 edge `/metrics`,
   replay-passive-only, global rate limiter, revocation, digest-pinned base images → S7.5/S8 (handoff §4–5).
 
+## 5. Review-architect sign-off (independent, charter §3/§12.1)
+
+A fresh `review-architect` (did not implement any S7 work) gave the final sign-off — **APPROVE, no
+blocking findings** — after reviewing the committed session, running gate-7, and empirically testing
+its non-vacuity. Confirmed: (1) **scope fence SIGNED** — honest and complete, the three found-but-
+deferred gaps (F-S7-FUZZ-1/TLS-1/TLS-2) are surfaced not buried; (2) **no new attack surface** — the
+new `IntegrityEnvelope`/`Hkdf`/`AuditLog`/`ReplayGuard` are bounded (anti-DoS), constant-time, and log
+no key/credential (grepped); the 401-vs-403 split adds no bypass; (3) **crypto flag complete** —
+nothing primitive self-certified; (4) **claim-evidence non-vacuous** — spot-checked
+`forgedInstalledSnapshotIsRefusedOnRecovery`, `keyedChainDefeatsAttackerWhoRechainsTheWholeLogWithoutTheKey`,
+and the WAL torn-vs-tamper cells as real attacks; ENV-BLOCKED items honestly marked; (5) **gate-7 real**
+— ran it (GREEN banner), and verified `assert_class_green` fails on rename/substring-collision/0-test/
+real-failure; (6) **immutability holds** — scoped to the S7 commit range (`8b457fe..HEAD`), zero
+`docs/session-1..6/`, `gates/gate-[1-6].sh`, or ADR-0001..0041 files modified; only the shared CI files
+(ci.yml gate-7 job, release.yml SBOM fix) and S7 code, with the `ConfigClient` 401 change confirmed as
+necessary, correct collateral (a 401'd write must be a definite rejection, not INDETERMINATE, for the
+linz oracle). Two non-blocking housekeeping items (threat-model header flip — done; immutability-vs-
+session-range note — added to the handoff) applied. Full verdict: agent `RA-signoff`.
+
 ## 4. Pointers
 Threat model + ledger: `threat-model.md`. Decisions: `decision-log.md`. Per-workstream:
 `transport-security.md`, `wire-fuzzing.md`, `api-security.md`, `supply-chain.md`. Construction:

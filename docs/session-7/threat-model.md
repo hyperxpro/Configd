@@ -1,6 +1,9 @@
 # Session 7 Threat Model — Configd Security & Supply Chain
 
-> **Status:** DRAFT pending `review-architect` scope-fence sign-off (charter §12.1).
+> **Status:** SIGNED — `review-architect` scope-fence sign-off granted 2026-06-14 (charter §12.1):
+> the §5 honest fence is correct and complete (neither over-claiming coverage nor hiding an in-scope
+> gap — the three found-but-deferred gaps F-S7-FUZZ-1/TLS-1/TLS-2 are surfaced, not buried). Verdict
+> in `closeout.md` §5.
 > **Prime directive (charter §2):** every control in this model is VERIFIED only by a
 > passing negative test that proves the attack fails — never by reading its configuration.
 > This document scopes *what* we verify and draws the honest fence (§2.5) around what we do not.
