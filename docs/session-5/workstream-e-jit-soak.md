@@ -122,3 +122,99 @@ C2-warm in ≈1 s — so the staleness gate (not a 60-s timer) is the right mech
   only the absolute floor moves with hardware.
 - **NUMA / CPU-pinning: ENV-BLOCKED, manifest M-4** — a 2-vCPU single-socket box has no NUMA topology;
   the pinned-vs-unpinned read-serving delta needs `m6i.metal` + `numactl`. Not on the warmup critical path.
+
+---
+
+## §Soak — real soak workload harness (wired + SMOKE-validated; long run NOT launched here)
+
+### What was wired (`perf/soak.sh`)
+
+`perf/soak-72h.sh` honored `--duration` but its workload was a **YELLOW stub** (no cluster wired — it
+just slept the duration). `perf/soak.sh` is the **REAL workload** that stub's "Phase 10 would wire this"
+comment promised. It does NOT touch `soak-72h.sh`'s duration contract (that script is unchanged); it is
+the standalone, duration-honoring soak workload:
+
+- **Real 3-node control-plane cluster** under **ZGC (ADR-0041)** — same launch shape as
+  `gates/smoke-multinode.sh` / `perf/wsB-live-write.sh` (neither modified), each node with `-Xlog:gc`
+  to its own log so cumulative GC is readable.
+- **Driven at a box-sustainable ~100 commits/s** via the Workstream B `OpenLoopWriteDriver atrate`
+  (open-loop, CO-corrected — methodology §3b). **NOT the 10k/s SLO** — that is ENV-BLOCKED (manifest
+  M-9; the box's sustainable end-to-end commit floor is ~136–172/s per `wsB-calibrate.txt`). A soak
+  detects **leaks and drift**, which are **rate-independent**; 100/s with headroom over the ~136/s
+  floor is the right sustainable soak rate. (Throughput is Workstream B's job, not the soak's.)
+- **A trend line every `--sample` seconds** (default 30 s) appended to `trend.csv`:
+  `ts_utc, elapsed_s, rss_total_kb (+per-node n1/n2/n3), heap_used_total_kb (jstat, ZGC-column-keyed),
+  fd_total (+per-node, from /proc/PID/fd), threads_total (/proc/PID/status), gc_cycles_total,
+  gc_cumsec_total (summed from each node's -Xlog:gc), commit_p50_us, commit_p99_us, committed,
+  rejected`. This is the leak/drift detector: heap creep, FD leak, thread leak, GC degradation, and
+  commit-latency drift each have a column.
+- **Self-reported leak verdict at closeout** (`result.txt`): RSS compared against a **post-warmup
+  baseline** (≥120 s in, so the ZGC heap-commit ramp toward `-Xms/-Xmx` is excluded — that ramp is not
+  a leak); FD/thread compared first-vs-last (those leak from t0). >10% RSS / >25% FD / >25% thread growth
+  trips an INVESTIGATE flag.
+
+### SMOKE result (5–6 min — THIS IS A SMOKE, NOT A SOAK)
+
+**Invocation:** `flock /tmp/configd-mvn.lock perf/soak.sh --duration=330 --rate=100 --sample=30
+--out=<dir>` (10 samples, 334 s measured). Raw: `docs/session-5/captures/wsE-soak-smoke.txt` (stdout
+trend lines + `result.txt` + `trend.csv`). The harness emitted a trend line every sample with all
+leak/drift columns; over the smoke window every leak signal is **flat — no leak**:
+
+- **FD count: DEAD FLAT (23/node, 69 total) across every sample** → **no FD leak.**
+- **Thread count: DEAD FLAT (93 total) across every sample** → **no thread leak.**
+- **jstat heap-used: flat post-warmup (~220–290 MB band, no upward trend)** → **no Java heap leak**
+  (this is the *definitive* heap-leak signal — a leak shows as monotonic live-heap growth, which is
+  absent: post-warmup 1st-half-median 221 MB → 2nd-half-median 235 MB, +6 %, well under the 25 % tripwire).
+- **RSS: ramps over the first ~170 s (ZGC committing heap toward `-Xms/-Xmx 1g` × 3 JVMs — a startup
+  ramp, NOT a leak), then plateaus dead-flat (~1.25 GB total) from t+203 s on** (post-warmup
+  1st-half-median 1.276 GB → 2nd-half-median 1.255 GB, i.e. *flat/slightly down*) → no leak signal.
+- **GC: cumulative cycle-time grows ~linearly with steady allocation**, no runaway acceleration.
+  **commit latency improves as the JVM warms** (p50 ~76 ms cold → ~7 ms warm; p99 tens of ms in steady
+  state — reference-hardware numbers on the throttling 2-vCPU box, not the SLO claim).
+
+**How the verdict avoids the warmup false-positive (and an earlier-run finding).** The ZGC heap-commit
+ramp + JIT warmup run **well past 170 s** on this throttling 2-vCPU box, so a naive first-vs-last or
+fixed-fraction baseline false-positives on startup. An earlier validation run also caught a **2-vCPU
+throttle window** (CPU-credit exhaustion → p99 spike to seconds + rejections) during which a leader
+node's *native* RSS expanded under ZGC's stalled-collector burst **while jstat heap-used stayed flat** —
+i.e. native-footprint / ZGC lazy-uncommit, **NOT a Java heap leak**. The shipped verdict handles both:
+it (a) **excludes a warmup floor** (`SOAK_WARMUP_FLOOR_SEC`, default 180 s) so the heap-commit ramp is
+never the baseline; (b) compares **post-warmup 1st-half-median vs 2nd-half-median** (a single throttle
+spike can't move a median); (c) treats **jstat heap-used as the definitive heap-leak signal** and only
+flags RSS growth as a leak if heap-used *also* grew (RSS-up-with-flat-heap = native/throttle, reported
+as such); and (d) on a **short smoke with < 4 post-warmup samples it makes the memory verdict
+OBSERVATIONAL, not asserted** — honestly stating a 5-min smoke cannot separate heap warmup from a slow
+leak (that is the long run's job). The CO-corrected driver records any throttle stall as inflated
+latency rather than hiding it.
+
+**A ~5.5 min smoke is NOT a soak** (methodology §4 rule 6) — it proves the harness emits the right
+trend lines and that nothing leaks in the smoke window. The asserted multi-hour leak/drift verdict
+needs the long run, which the LEAD launches.
+
+### The LEAD's long-run launch command (run from the main session so it outlives this agent)
+
+```
+nohup flock /tmp/configd-mvn.lock perf/soak.sh \
+  --duration=86400 --rate=100 --sample=60 \
+  --out=perf/results/soak-24h-$(date -u +%Y%m%dT%H%M%SZ) \
+  > perf/results/soak-24h.out 2>&1 &
+```
+- `--duration=86400` = 24 h. `--sample=60` = a trend line per minute (~1440 rows). ZGC is the default
+  (`SOAK_GC=-XX:+UseZGC`); heap default `-Xms1g -Xmx1g` (override via `SOAK_HEAP`).
+- Watch `trend.csv` for: RSS rising past the post-warmup plateau (heap leak), `fd_total` climbing (FD
+  leak), `threads_total` climbing (thread leak), `gc_cumsec_total` slope steepening (GC degradation),
+  or `commit_p99_us` drifting up over hours (latency drift). The closeout `result.txt` prints the
+  post-warmup-baseline RSS verdict + the FD/thread verdicts automatically.
+- **Do NOT shorten `--duration` and call the result a soak** — `result.txt` labels any run ≤600 s as
+  `SMOKE`, ≥600 s as `SOAK`, and always records `measured_elapsed_sec` (never rounded up), preserving
+  `soak-72h.sh`'s honesty contract.
+
+### Honesty notes (§Soak)
+
+- **This deliverable is the harness + a SMOKE.** The 24 h run is the LEAD's to launch; it is not run
+  here and no soak verdict is claimed from the smoke beyond "trends flat in the smoke window."
+- **Reference-hardware, single-host, single-region** (methodology §0). A *production-representative*
+  soak (real fleet, NUMA, real WAN) would inherit manifest M-1/M-2/M-4; this local soak is
+  real-duration on the reference box and is labeled as such.
+- **NUMA / CPU-pinning: ENV-BLOCKED, manifest M-4** (one line, per charter §9) — not on the soak's
+  leak/drift critical path.
