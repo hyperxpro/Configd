@@ -82,6 +82,9 @@ echo "[setup] launching 3-node cluster under $BASE (jar: $JAR)"
 for k in 1 2 3; do
   peers=$(echo "1 2 3" | tr ' ' '\n' | grep -v "^$k$" | paste -sd,)
   dd="$BASE/n$k"; mkdir -p "$dd"
+  # Dev RR-002 drill: co-located key on a single-host test box. Opt out of the D-1 fail-closed
+  # guard (prod mounts the key separately — see deploy/compose + ADR-0043).
+  CONFIGD_ALLOW_COLOCATED_SIGNING_KEY=true \
   java -Xmx256m --enable-preview -jar "$JAR" \
     --node-id "$k" --data-dir "$dd" --peers "$peers" \
     --bind-address 127.0.0.1 --bind-port $((RAFT_BASE + k)) \

@@ -133,6 +133,15 @@
                     <version>3.5.2</version>
                     <configuration>
                         <argLine>--enable-preview</argLine>
+                        <systemPropertyVariables>
+                            <!-- D-1 (S7.5): unit/integration tests boot servers with the co-located
+                                 default signing key (dataDir/signing-key.bin). The production
+                                 fail-closed guard (ConfigdServer.enforceSigningKeyNotColocated) would
+                                 refuse to start. Tests are a dev context, so opt out module-wide.
+                                 Production runs the shaded jar WITHOUT this property and gets
+                                 fail-closed; the dedicated negative test sets it false explicitly. -->
+                            <configd.security.allowColocatedSigningKey>true</configd.security.allowColocatedSigningKey>
+                        </systemPropertyVariables>
                     </configuration>
                 </plugin>
                 <plugin>

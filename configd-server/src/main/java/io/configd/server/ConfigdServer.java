@@ -212,6 +212,10 @@ public final class ConfigdServer {
             configSigner = new ConfigSigner(keyStore.keyPair());
             raftIntegrity = deriveRaftIntegrityEnvelope(keyStore, keyFile, dataDir);
             auditLogKey = deriveAuditLogKey(keyStore);
+        } catch (SecurityException se) {
+            // D-1 (P1) fail-closed: surface the co-location refusal with its clear, actionable
+            // message — do NOT wrap it as a generic "failed to load key" error.
+            throw se;
         } catch (Exception e) {
             throw new RuntimeException("Failed to load or create Ed25519 signing key", e);
         }
@@ -883,13 +887,13 @@ public final class ConfigdServer {
      * no new key-distribution channel is introduced (charter §10.3). The verify
      * side runs the identical derivation.
      * <p>
-     * <b>D-1 BLOCKER mitigation:</b> {@code K_integrity}'s secrecy depends on the
-     * signing key living OUTSIDE attacker-writable snapshot/WAL/backup storage. If
-     * the resolved {@code keyFile} is co-located inside {@code dataDir} (the insecure
-     * default, {@code dataDir.resolve("signing-key.bin")}), a T3/A2 writer who can
-     * tamper the artifacts can also read the key and recompute a valid MAC — Layer B
-     * is worthless. We emit a LOUD SEVERE warning here; relocating the default path
-     * is an S8 go/no-go item and is intentionally NOT changed in S7.
+     * <b>D-1 (P1) mitigation — FAIL-CLOSED (S7.5):</b> {@code K_integrity}'s secrecy depends on the
+     * signing key living OUTSIDE attacker-writable snapshot/WAL/backup storage. If the resolved
+     * {@code keyFile} is co-located inside {@code dataDir}, a T3/A2 writer who can tamper the
+     * artifacts can also read the key and recompute a valid MAC — Layer B is worthless.
+     * {@link #enforceSigningKeyNotColocated} therefore REFUSES TO START by default (the
+     * {@code configd.security.allowColocatedSigningKey} opt-out downgrades to a loud warning for
+     * dev/test/single-node only); production mounts the key on separate storage — see ADR-0043.
      *
      * @param keyStore the loaded cluster signing key store
      * @param keyFile  the resolved signing-key file path
@@ -898,6 +902,13 @@ public final class ConfigdServer {
      */
     private static io.configd.common.IntegrityEnvelope deriveRaftIntegrityEnvelope(
             SigningKeyStore keyStore, Path keyFile, Path dataDir) {
+        // D-1 (P1) FAIL-CLOSED: refuse to derive the at-rest integrity key from a signing key
+        // co-located inside the data dir it protects, BEFORE doing any crypto. Default = refuse to
+        // start; the dev/test/single-node opt-out (system property OR env var, the latter for CI /
+        // docker-compose where -D is awkward) downgrades to a loud warning.
+        boolean allowColocated = Boolean.getBoolean("configd.security.allowColocatedSigningKey")
+                || "true".equalsIgnoreCase(System.getenv("CONFIGD_ALLOW_COLOCATED_SIGNING_KEY"));
+        enforceSigningKeyNotColocated(keyFile, dataDir, allowColocated);
         byte[] ikm = keyStore.keyPair().getPrivate().getEncoded();
         java.util.UUID keyId = keyStore.keyId();
         byte[] salt = java.nio.ByteBuffer.allocate(16)
@@ -909,28 +920,58 @@ public final class ConfigdServer {
         byte[] k = io.configd.common.Hkdf.deriveKey(ikm, salt, info, 32);
         var integrity = new io.configd.common.IntegrityEnvelope(
                 new javax.crypto.spec.SecretKeySpec(k, "HmacSHA256"));
-
-        // D-1: warn loudly if the signing key is co-located with the artifacts it
-        // protects. Compare resolved absolute paths so a relative --signing-key-file
-        // pointing back into the data dir is still caught.
-        if (isInsideDataDir(keyFile, dataDir)) {
-            String banner = "************************************************************";
-            System.err.println("WARNING: " + banner);
-            System.err.println("WARNING: At-rest integrity key (PA-2021) is DERIVED FROM the cluster");
-            System.err.println("WARNING: signing key, which is CO-LOCATED inside the data directory:");
-            System.err.println("WARNING:   signing key : " + keyFile.toAbsolutePath());
-            System.err.println("WARNING:   data dir     : " + dataDir.toAbsolutePath());
-            System.err.println("WARNING: A storage-tampering adversary (threat A2/T3) can then ALSO read");
-            System.err.println("WARNING: the key and forge a valid MAC, defeating snapshot/WAL/state");
-            System.err.println("WARNING: integrity. Mount the signing key on SEPARATE storage (e.g.");
-            System.err.println("WARNING: /secrets/signing-key.bin:ro) for production.");
-            System.err.println("WARNING: " + banner);
-            LOG.log(Level.SEVERE,
-                    "PA-2021: integrity key co-located with protected artifacts (signingKey={0}, dataDir={1})"
-                            + " — production must mount the signing key on separate storage",
-                    new Object[]{keyFile.toAbsolutePath(), dataDir.toAbsolutePath()});
-        }
         return integrity;
+    }
+
+    /**
+     * D-1 (P1) FAIL-CLOSED guard (PA-2021). The at-rest integrity key {@code K_integrity} is
+     * HKDF-derived from the cluster signing key, so that signing key MUST NOT live inside the data
+     * directory holding the snapshot/WAL/state it protects: a storage-tampering / full-host adversary
+     * (threat A2/T3) who can write those artifacts could then ALSO read the co-located key and
+     * recompute a valid MAC, making the integrity layer worthless.
+     * <p>
+     * <b>Default behavior is to REFUSE TO START</b> ({@link SecurityException}). The fail-closed
+     * refusal IS the deliverable (charter §2). {@code allowColocated} — wired from the system property
+     * {@code configd.security.allowColocatedSigningKey} — downgrades this to a loud warning for
+     * dev/test/single-node ONLY; production must mount the signing key on separate storage
+     * (KMS/HSM/mounted secret, see ADR-0043) and leave the opt-out unset.
+     *
+     * @param keyFile        the resolved signing-key file path
+     * @param dataDir        the Raft data directory (where the protected artifacts live)
+     * @param allowColocated dev/test opt-out; when false (production default) co-location throws
+     * @throws SecurityException if the key is co-located inside the data dir and the opt-out is unset
+     */
+    static void enforceSigningKeyNotColocated(Path keyFile, Path dataDir, boolean allowColocated) {
+        if (!isInsideDataDir(keyFile, dataDir)) {
+            return; // key is on separate storage — the correct production layout
+        }
+        if (!allowColocated) {
+            throw new SecurityException(
+                    "D-1 fail-closed: the cluster signing key is CO-LOCATED inside the data directory"
+                            + " it protects (signingKey=" + keyFile.toAbsolutePath()
+                            + ", dataDir=" + dataDir.toAbsolutePath() + "). The PA-2021 at-rest"
+                            + " integrity key is derived from this signing key, so a storage-tampering"
+                            + " adversary could read it and forge a valid MAC, defeating snapshot/WAL/"
+                            + "state integrity. Mount the signing key on SEPARATE storage (e.g."
+                            + " --signing-key-file /secrets/signing-key.bin) for production; see"
+                            + " ADR-0043. For dev/test/single-node ONLY, set"
+                            + " -Dconfigd.security.allowColocatedSigningKey=true.");
+        }
+        // Opt-out explicitly set: proceed, but warn loudly that this layout is insecure.
+        String banner = "************************************************************";
+        System.err.println("WARNING: " + banner);
+        System.err.println("WARNING: At-rest integrity key (PA-2021) is DERIVED FROM the cluster signing");
+        System.err.println("WARNING: key, which is CO-LOCATED inside the data directory (INSECURE):");
+        System.err.println("WARNING:   signing key : " + keyFile.toAbsolutePath());
+        System.err.println("WARNING:   data dir    : " + dataDir.toAbsolutePath());
+        System.err.println("WARNING: Permitted only because configd.security.allowColocatedSigningKey=true.");
+        System.err.println("WARNING: A storage-tampering adversary (A2/T3) can read the key and forge a");
+        System.err.println("WARNING: valid MAC. Mount the signing key on SEPARATE storage for production.");
+        System.err.println("WARNING: " + banner);
+        LOG.log(Level.SEVERE,
+                "PA-2021: integrity key co-located with protected artifacts (signingKey={0}, dataDir={1})"
+                        + " — permitted only by the dev opt-out; production must mount the key separately",
+                new Object[]{keyFile.toAbsolutePath(), dataDir.toAbsolutePath()});
     }
 
     /**
