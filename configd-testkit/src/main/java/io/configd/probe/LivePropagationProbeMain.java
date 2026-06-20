@@ -98,6 +98,12 @@ public final class LivePropagationProbeMain {
     }
 
     public static void main(String[] args) throws Exception {
+        // This is a single-host DEV probe: it boots a throwaway ConfigdServer whose signing key is
+        // co-located in a /tmp data dir. Opt out of the D-1 fail-closed co-location guard (which
+        // refuses such a layout in production); harmless here, and the probe is never a prod path.
+        if (System.getProperty("configd.security.allowColocatedSigningKey") == null) {
+            System.setProperty("configd.security.allowColocatedSigningKey", "true");
+        }
         Options opts = Options.parse(args);
         switch (opts.mode) {
             case "boundary" -> System.exit(runBoundary(opts));
