@@ -1173,11 +1173,30 @@ public final class ConfigdServer {
             MultiRaftDriver driver, int groupId,
             java.util.concurrent.Executor raftExecutor, long writeCommitTimeoutMs,
             ConfigdMetrics metrics) {
+        // S7.5 admission control (§11): bound the proposals concurrently in-flight on the single tick
+        // executor so a sustained write flood cannot starve the periodic heartbeat — the PART 2 churn
+        // cause (heartbeat slips past the election timeout → leadership churn → 503 collapse, with the
+        // disk and CPU idle). Excess is shed as Overloaded (→ 429 + Retry-After) on the HTTP thread
+        // BEFORE the proposal ever reaches the executor, so the leader stays stable and throughput
+        // holds at the sustainable rate instead of inverting. Default 0 = OFF (opt-in / A-B via
+        // -Dconfigd.write.maxInflightProposals=N); the permit is held only for the bounded
+        // writeCommitTimeoutMs wait, so it bounds the executor backlog directly.
+        int maxInflightProposals = Integer.getInteger("configd.write.maxInflightProposals", 0);
+        java.util.concurrent.Semaphore admission =
+                maxInflightProposals > 0 ? new java.util.concurrent.Semaphore(maxInflightProposals) : null;
         return (scope, command) -> {
             // S6/WS-A: end-to-end write-commit latency is measured HERE (HTTP write thread, OFF
             // the R-01 tick hot path) from request entry to outcome — the true "write commit p99"
             // SLO signal (S5: ~16 ms), NOT the apply duration. Recorded via recordWriteOutcome.
             long t0 = System.nanoTime();
+            if (admission != null && !admission.tryAcquire()) {
+                // In-flight bound reached → graceful shed. This path creates NO tick-executor task,
+                // so the heartbeat is never queued behind a flood — the leader stays stable (§11).
+                ConfigWriteService.ProposeCommitResult shed =
+                        new ConfigWriteService.ProposeCommitResult.Overloaded();
+                recordWriteOutcome(metrics, shed, System.nanoTime() - t0);
+                return shed;
+            }
             java.util.concurrent.CompletableFuture<ConfigWriteService.ProposeCommitResult> f =
                     new java.util.concurrent.CompletableFuture<>();
             // Captured inside the marshalled task so the timeout path can cancel
@@ -1252,6 +1271,14 @@ public final class ConfigdServer {
                     throw re; // preserve validation exceptions (e.g. IllegalArgumentException)
                 }
                 throw new RuntimeException("propose failed", cause);
+            } finally {
+                // S7.5 admission control: release the permit when the HTTP thread finishes waiting
+                // (commit, loss, timeout, or error). Holding it only for the bounded
+                // writeCommitTimeoutMs wait is what bounds the executor backlog → keeps heartbeats
+                // timely. No-op when admission control is disabled (admission == null).
+                if (admission != null) {
+                    admission.release();
+                }
             }
         };
     }

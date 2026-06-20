@@ -144,6 +144,37 @@ tuning is therefore NOT the fix** — the leader must either shed load (admissio
 `429`) or do less per-proposal work (coalesce replication) so it can keep up AND heartbeat. This
 sharpens the §E recommendation: pursue admission control / replication coalescing, not timeout tuning.
 
+## G. Admission control — the §11 fix, VALIDATED (churn-collapse → graceful shed + 2× throughput)
+
+The §D root cause (executor backlog starves heartbeats) predicts the fix: bound the proposals
+concurrently in-flight on the tick executor and shed the excess as `429 + Retry-After` on the HTTP
+thread BEFORE they reach the executor. Implemented as a permit gate in the proposer
+(`-Dconfigd.write.maxInflightProposals=N`, default 0 = off). phase3 @ **2000/s offered** (a churning
+rate), group commit ON, `captures/throughput/part2/admission/`:
+
+| config | achieved/s | elections | HTTP codes (20 s) |
+|---|---|---|---|
+| **off** (no admission — PART 2 baseline) | 432 | **29** | 200=8966, **503=9784**, 504=379 |
+| **`maxInflightProposals=16`** | **864** | **1** | 200=17291, **429=22709**, 503=**0** |
+| `maxInflightProposals=32` | 667 | 4 | 200=13390, 429=26610, 503=**0** |
+| `maxInflightProposals=64` | 375 | 24 | 200=7521, 429=27928, 503=4551 |
+
+**At the knee (`=16`): the leader stays STABLE (1 election vs 29), throughput DOUBLES (864 vs 432),
+and the dominant outcome flips from `503 NotLeader` churn-collapse to clean `429 Overloaded`
+shedding (ZERO 503s)** — `configd_write_rejected_overloaded_total` confirms the 429 path
+(`HttpApiServer` already emits `Retry-After: 1`). This is the §11 documented-shed behavior the
+as-built system lacked, and it directly confirms the §D attribution: a shallow executor backlog keeps
+the heartbeat timely → no churn. Larger bounds regress (`=64` lets the backlog grow deep enough to
+starve heartbeats again, 503s return) — so the fix wants a SMALL bound. 864/s under a 2000/s flood
+even exceeds the ~800/s no-admission stable knee (a stable leader commits continuously instead of
+thrashing).
+
+**Status:** the mechanism is VALIDATED on this box (knee `=16`). It is kept **opt-in (default off)**:
+the optimal bound is capacity-/latency-dependent and this box is co-location-confounded (§D), so a
+default value should be tuned on dedicated hosts (a low bound that's ideal here would under-utilize a
+faster cluster; cf. M-9). Recommended next: enable-by-default with a dedicated-host-tuned (or adaptive)
+bound, and round out the full §11 ladder (recovery, the other shed paths) on top of this stable base.
+
 ## Method rails
 CO-corrected (intended-time) HdrHistogram on the driver; box spec + fsync baseline recorded once
 (`run-log.md`); per-phase iostat/mpstat/pidstat captured; before/after on THIS box via

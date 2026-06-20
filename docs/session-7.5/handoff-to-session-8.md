@@ -58,8 +58,12 @@ Chain of evidence (all on this box, all pushed):
   unchanged). Harness robustness: staggered shared-key launch, `S75_JVM_EXTRA`, uutils `tail` fix.
 
 ## PENDING (honest — NOT done this session; the long tail)
-1. **Admission-control / replication-coalescing throughput fix** (the §11 graceful-shed payoff above)
-   — characterized + recommended, NOT implemented. Highest-value next-step.
+1. **Admission control — IMPLEMENTED + VALIDATED** (`throughput-part2.md §G`,
+   `-Dconfigd.write.maxInflightProposals=N`). At the knee (=16) under a 2000/s flood: leader STABLE
+   (1 election vs 29), throughput DOUBLES (864 vs 432), failure flips from 503 churn to clean 429+
+   Retry-After (zero 503). Kept opt-in (default off) — the optimal bound is co-location-confounded;
+   REMAINING: enable-by-default with a dedicated-host-tuned/adaptive bound, and the replication-
+   coalescing lever (broadcast per tick) to push the knee higher.
 2. **Burst 100k/s characterization + the full §11 overload ladder** at real load (shed order, 429 +
    Retry-After, queue bounds, recovery) — PART 1 saw the 429 path fire (7,760×) but churn dominated;
    re-do after the admission-control fix.
