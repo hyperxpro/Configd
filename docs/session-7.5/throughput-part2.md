@@ -121,6 +121,29 @@ only the exact number is co-location-confounded.
      to cut per-proposal tick-thread work and push the knee higher.
   Each must be measured before/after on this box and must not regress RR-002 / the durability gates.
 
+## F. Election-timeout experiment — longer timeout does NOT help (negative result)
+
+Hypothesis: if the churn is just-too-aggressive failover, a longer election timeout (etcd default is
+1000 ms vs Configd's 150 ms) should reduce elections and raise throughput. Tested on the same binary
+(timeouts now operator-tunable via `-Dconfigd.raft.electionTimeoutMin/MaxMs`),
+`captures/throughput/part2/ladder-et/`:
+
+| config | offered/s | achieved/s | elections | dominant |
+|---|---|---|---|---|
+| control (election 150–300 ms) | 1200 | **749** | 14 | churn |
+| election 1000–1500 ms | 1200 | **396** | 8 | longer stalls |
+| election 1000–1500 ms | 2000 | 160 | 11 | |
+| election 1000–1500 ms | 4000 | 218 | 11 | |
+| election 1000–1500 ms | 8000 | 182 | 11 | |
+
+The longer timeout **reduced elections but HALVED throughput**. This confirms the root cause is genuine
+**leader saturation**, not aggressive failover: when the starved leader stalls, a longer timeout just
+makes followers wait longer before a new leader takes over, so nothing commits during the gap. The
+aggressive 150 ms timeout is actually *better* under this churn because it recovers quickly. **Timeout
+tuning is therefore NOT the fix** — the leader must either shed load (admission control → graceful
+`429`) or do less per-proposal work (coalesce replication) so it can keep up AND heartbeat. This
+sharpens the §E recommendation: pursue admission control / replication coalescing, not timeout tuning.
+
 ## Method rails
 CO-corrected (intended-time) HdrHistogram on the driver; box spec + fsync baseline recorded once
 (`run-log.md`); per-phase iostat/mpstat/pidstat captured; before/after on THIS box via

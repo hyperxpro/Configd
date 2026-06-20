@@ -1,0 +1,8 @@
+# Election-timeout experiment (group commit ON, same jar). heartbeat 50ms.
+# control = default election 150-300ms; ET = election 1000-1500ms
+config             rate/s   achieved/s   elections  status(200/503/504)
+control-150ms      1200     749          14         200=11540 503=6370
+et-1000ms          1200     396          8          200=6595 503=11233
+et-1000ms          2000     160          11         200=3501 503=21547 504=574
+et-1000ms          4000     218          11         200=3636 503=30671 504=190
+et-1000ms          8000     182          11         200=3497 503=50820 504=276

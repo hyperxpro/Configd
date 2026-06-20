@@ -265,7 +265,20 @@ public final class ConfigdServer {
         // heartbeat) are converted to the correct tick counts and realized at
         // runtime. Before this fix the ms values were consumed as raw tick
         // counts, inflating every interval 10x (re-election measured ~2.3s).
-        RaftConfig raftConfig = RaftConfig.of(config.nodeId(), config.peers(), TICK_PERIOD_MS);
+        // S7.5: Raft timing is operator-tunable via system properties (defaults = the documented
+        // 150/300/50 ms). PART 2 found the as-built ceiling is leadership-churn / heartbeat
+        // starvation under load, not fsync; a longer election timeout (etcd default is 1000 ms) and
+        // shorter heartbeat give more headroom for tick-thread scheduling jitter. Exposed so the
+        // tuning can be measured here and set by operators in production.
+        int electionMinMs = Integer.getInteger("configd.raft.electionTimeoutMinMs", 150);
+        int electionMaxMs = Integer.getInteger("configd.raft.electionTimeoutMaxMs", 300);
+        int heartbeatMs = Integer.getInteger("configd.raft.heartbeatIntervalMs", 50);
+        int maxInflight = Integer.getInteger("configd.raft.maxInflightAppends", 10);
+        RaftConfig raftConfig = new RaftConfig(config.nodeId(), config.peers(),
+                electionMinMs, electionMaxMs, heartbeatMs, 64, 256 * 1024, 1024, maxInflight,
+                TICK_PERIOD_MS);
+        System.out.println("  Raft timing  : election " + electionMinMs + "-" + electionMaxMs
+                + "ms, heartbeat " + heartbeatMs + "ms, maxInflightAppends " + maxInflight);
         // PA-2021: the keyed integrity envelope authenticates the snapshot blob and
         // WAL records written/recovered through this RaftLog.
         RaftLog raftLog = new RaftLog(storage, raftIntegrity);
