@@ -134,6 +134,19 @@ public final class ConfigWriteService {
     private final LeaderHintSupplier leaderHintSupplier;
 
     /**
+     * S7.5 per-principal rate limiting (Med residual): a factory for a fresh per-principal token
+     * bucket (null = the legacy single global limiter). Keyed by authenticated principal so one
+     * noisy/hostile tenant cannot consume the whole write budget and starve others. The gate stays
+     * BEFORE the Raft proposal (sheds at the edge, never enqueues onto the tick thread; RR-002-safe —
+     * a lock-free CAS on the HTTP request vthread).
+     */
+    private final java.util.function.Supplier<RateLimiter> perPrincipalLimiterFactory;
+    private final java.util.concurrent.ConcurrentHashMap<String, RateLimiter> principalLimiters =
+            new java.util.concurrent.ConcurrentHashMap<>();
+    /** Memory bound on distinct per-principal buckets; beyond it, principals share the global limiter. */
+    private static final int MAX_PRINCIPAL_LIMITERS = 10_000;
+
+    /**
      * Creates a write service.
      *
      * @param proposer           routes proposals to the correct Raft group and awaits commit
@@ -144,10 +157,7 @@ public final class ConfigWriteService {
     public ConfigWriteService(RaftProposer proposer, WriteValidator validator,
                                RateLimiter rateLimiter,
                                LeaderHintSupplier leaderHintSupplier) {
-        this.proposer = Objects.requireNonNull(proposer, "proposer must not be null");
-        this.validator = validator;
-        this.rateLimiter = rateLimiter;
-        this.leaderHintSupplier = leaderHintSupplier;
+        this(proposer, validator, rateLimiter, leaderHintSupplier, null);
     }
 
     /**
@@ -155,7 +165,24 @@ public final class ConfigWriteService {
      */
     public ConfigWriteService(RaftProposer proposer, WriteValidator validator,
                                RateLimiter rateLimiter) {
-        this(proposer, validator, rateLimiter, null);
+        this(proposer, validator, rateLimiter, null, null);
+    }
+
+    /**
+     * Creates a write service with PER-PRINCIPAL rate limiting (S7.5). {@code rateLimiter} is the
+     * global ceiling / fallback (and the limiter used by the no-principal {@code put}/{@code delete}
+     * overloads and once the per-principal map hits {@link #MAX_PRINCIPAL_LIMITERS});
+     * {@code perPrincipalLimiterFactory} mints a fresh bucket per authenticated principal so one
+     * tenant's flood cannot starve the others.
+     */
+    public ConfigWriteService(RaftProposer proposer, WriteValidator validator,
+                               RateLimiter rateLimiter, LeaderHintSupplier leaderHintSupplier,
+                               java.util.function.Supplier<RateLimiter> perPrincipalLimiterFactory) {
+        this.proposer = Objects.requireNonNull(proposer, "proposer must not be null");
+        this.validator = validator;
+        this.rateLimiter = rateLimiter;
+        this.leaderHintSupplier = leaderHintSupplier;
+        this.perPrincipalLimiterFactory = perPrincipalLimiterFactory;
     }
 
     /**
@@ -168,6 +195,18 @@ public final class ConfigWriteService {
      * @return the write result
      */
     public WriteResult put(String key, byte[] value, ConfigScope scope) {
+        return put(key, value, scope, null);
+    }
+
+    /**
+     * Per-principal-rate-limited put (S7.5). {@code principal} is the authenticated identity; its
+     * OWN token bucket is charged, so one tenant's flood cannot starve the others. A {@code null}/
+     * blank principal (or a service constructed without a per-principal factory) falls back to the
+     * global limiter — backward compatible.
+     *
+     * @param principal the authenticated principal whose rate budget to charge (may be null)
+     */
+    public WriteResult put(String key, byte[] value, ConfigScope scope, String principal) {
         Objects.requireNonNull(key, "key must not be null");
         Objects.requireNonNull(value, "value must not be null");
         Objects.requireNonNull(scope, "scope must not be null");
@@ -184,7 +223,7 @@ public final class ConfigWriteService {
             return new WriteResult.ValidationFailed("key must not be blank");
         }
 
-        if (rateLimiter != null && !rateLimiter.tryAcquire()) {
+        if (!acquire(principal)) {
             return new WriteResult.Overloaded();
         }
 
@@ -208,6 +247,11 @@ public final class ConfigWriteService {
      * @return the write result
      */
     public WriteResult delete(String key, ConfigScope scope) {
+        return delete(key, scope, null);
+    }
+
+    /** Per-principal-rate-limited delete (S7.5); see {@link #put(String, byte[], ConfigScope, String)}. */
+    public WriteResult delete(String key, ConfigScope scope, String principal) {
         Objects.requireNonNull(key, "key must not be null");
         Objects.requireNonNull(scope, "scope must not be null");
 
@@ -215,12 +259,37 @@ public final class ConfigWriteService {
             return new WriteResult.ValidationFailed("key must not be blank");
         }
 
-        if (rateLimiter != null && !rateLimiter.tryAcquire()) {
+        if (!acquire(principal)) {
             return new WriteResult.Overloaded();
         }
 
         byte[] command = encodeCommand((byte) 0x02, key, null);
         return mapOutcome(proposer.propose(scope, command));
+    }
+
+    /**
+     * Charges one permit against the caller's rate budget. With a per-principal factory configured and
+     * a non-blank principal, charges that principal's OWN bucket (created lazily, memory-bounded by
+     * {@link #MAX_PRINCIPAL_LIMITERS} — beyond which principals share the global limiter). Otherwise
+     * charges the global limiter (legacy behavior). Lock-free CAS on the HTTP request thread, BEFORE
+     * the Raft proposal (RR-002-safe).
+     *
+     * @return true if a permit was granted (proceed), false if the bucket is empty (shed Overloaded)
+     */
+    private boolean acquire(String principal) {
+        if (perPrincipalLimiterFactory == null || principal == null || principal.isBlank()) {
+            return rateLimiter == null || rateLimiter.tryAcquire();
+        }
+        RateLimiter limiter = principalLimiters.get(principal);
+        if (limiter == null) {
+            // Memory bound: an attacker spraying distinct principals cannot grow the map without
+            // bound — beyond the cap, new principals fall back to the shared global limiter.
+            if (principalLimiters.size() >= MAX_PRINCIPAL_LIMITERS) {
+                return rateLimiter == null || rateLimiter.tryAcquire();
+            }
+            limiter = principalLimiters.computeIfAbsent(principal, p -> perPrincipalLimiterFactory.get());
+        }
+        return limiter.tryAcquire();
     }
 
     /**

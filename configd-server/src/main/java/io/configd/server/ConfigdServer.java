@@ -572,8 +572,13 @@ public final class ConfigdServer {
         final int writeBurst = 10_000;
         RateLimiter rateLimiter = new RateLimiter(clock, writeRatePerSec, writeBurst);
         System.out.println("  Write rate   : " + writeRatePerSec + "/s (burst " + writeBurst + ")");
+        // S7.5 per-principal rate limiting: each authenticated principal gets its OWN token bucket
+        // (same params as the global), so one noisy/hostile tenant cannot consume the whole write
+        // budget and starve others. The global rateLimiter remains the fallback for unauthenticated /
+        // overflow requests. Gate stays before the Raft proposal (RR-002-safe).
         ConfigWriteService writeService = new ConfigWriteService(proposer, null, rateLimiter,
-                () -> raftNode.leaderId());
+                () -> raftNode.leaderId(),
+                () -> new RateLimiter(clock, writeRatePerSec, writeBurst));
 
         // (Tick / read-dispatch / TLS-reload executors are created earlier,
         // right after the multi-raft driver, so the inbound Raft handler can

@@ -401,7 +401,8 @@ public final class HttpApiServer {
                 return;
             }
 
-            ConfigWriteService.WriteResult result = writeService.put(key, body, ConfigScope.GLOBAL);
+            ConfigWriteService.WriteResult result =
+                    writeService.put(key, body, ConfigScope.GLOBAL, authCheck.principal()); // S7.5 per-principal limit
             audit(authCheck.principal(), "PUT", key, auditOutcome(result));
             sendWriteResult(exchange, result);
         }
@@ -420,7 +421,8 @@ public final class HttpApiServer {
                 return;
             }
 
-            ConfigWriteService.WriteResult result = writeService.delete(key, ConfigScope.GLOBAL);
+            ConfigWriteService.WriteResult result =
+                    writeService.delete(key, ConfigScope.GLOBAL, authCheck.principal()); // S7.5 per-principal limit
             audit(authCheck.principal(), "DELETE", key, auditOutcome(result));
             sendWriteResult(exchange, result);
         }
