@@ -181,3 +181,22 @@ node). **Recommended fix (next, this box):** (1) admission control → graceful 
 instead of `503` churn-collapse; (2) coalesce replication (broadcast per tick, not per propose) to
 push the knee higher. Both measured before/after, no RR-002 / durability-gate regression. Logged for
 retroactive veto.
+
+## §2 — D-1 (security P1) RESOLVED + checkpoint
+
+- **D-1 fail-closed shipped** (`enforceSigningKeyNotColocated`): co-located signing key → startup
+  REFUSED (`SecurityException`); dev/test opt-out via `-Dconfigd.security.allowColocatedSigningKey` /
+  env `CONFIGD_ALLOW_COLOCATED_SIGNING_KEY`. `D1FailClosedTest` 6/6; configd-server module 162/0.
+  Reclassified P1 in the readiness register; ADR-0043 documents the prod key-mgmt expectation;
+  realistic deploy layout (`deploy/compose`) already mounts the key separately (passes). Follow-up
+  (task #2): `SigningKeyStore.loadOrCreate` concurrent first-boot race.
+- **S4/S7 gate re-green:** D-1 is configd-server-only; the integrity/durability test classes are in
+  consensus-core (334/0, unaffected by D-1) + configd-server (162/0 incl. D1FailClosedTest). A full
+  gate-7 wrapper re-run (hermetic full-reactor rebuild — slow on this box) is running; result appended
+  when it completes.
+- **CHECKPOINT (conservative-default, clean PUSHED seam):** the two highest-value box-only items
+  (throughput headline + D-1) are DONE + pushed. `handoff-to-session-8.md` and `shrunken-manifest.md`
+  written with the honest DONE-vs-PENDING split. Long tail (admission-control fix, burst/§11 ladder,
+  latency WAN split, key-scale/GC, slowloris+residuals+synthetic-upgrade, threshold promotion, soak,
+  gate-7.5) is PENDING — see the handoff. Operator: all results pushed; terminate the spot box when
+  done (§16).
