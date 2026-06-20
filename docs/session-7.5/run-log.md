@@ -91,4 +91,9 @@ measured first, then group commit implemented, then re-measured.
 - [x] Commit-fsync model determined in code (per-entry, no group commit)
 - [x] Dependency-warming build green (`mvnw -T1C -DskipTests clean install`, 66 s, BUILD SUCCESS)
 - [x] gates 1–7 green on this box (fast CI mode; 14:24:57→14:39:05 UTC, ~14 min — see `bring-up-gates.md`)
-- [ ] data-dir-on-/mnt/nvme asserted at runtime (at first cluster start — headline)
+- [x] data-dir-on-/mnt/nvme asserted at runtime: `WAL=/mnt/nvme/run/s75-*/nN/raft-log.wal` on `/dev/nvme1n1` (harness `assert_data_on_nvme`, phase-2 validation 14:48 UTC)
+
+## §9 (preview) — unloaded local write-commit latency (M-1 local component)
+Phase-2 (200/s, 30s, 3-node, data on /mnt/nvme): 6000/6000 committed, 0 shed,
+**p50=2.58ms p90=3.27ms p99=5.51ms p999=29.1ms max=39.4ms** (CO-corrected, HdrHistogram).
+This is the `local_commit_component` for the WAN split; vs S5's ~16ms p99 on 2 vCPU.
