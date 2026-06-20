@@ -76,10 +76,13 @@ Chain of evidence (all on this box, all pushed):
    were a 100M bulk-LOAD artifact, not steady-state). Memory ~170 B/key → 100M ≈ 17 GB; **10⁹ ≈ 170 GB
    exceeds this box → M-5 (large-memory host)**; read-latency-at-10⁹ extrapolated sub-µs (labeled).
    REMAINING: the soak (§8, last).
-5. **S7 residuals / §10 — partly DONE:** slowloris (F-S7-FUZZ-1, HIGH) ✓ and per-principal rate
-   limiting (Med) ✓ (committed, negative tests green). REMAINING (logic, recon-blueprinted in
-   `deploy-security-recon.md`): leaf-anchor cert-expiry (Item 2, RFC 5280 §6.1), edge /metrics auth
-   (Item 4), active-replay rejection (Item 3), and the **synthetic N↔N+1 upgrade**.
+5. **S7 residuals / §10 — mostly DONE:** slowloris (F-S7-FUZZ-1, HIGH) ✓, per-principal rate limiting
+   (Med) ✓, edge /metrics scrape-token auth (F-S7-TLS-2, Low) ✓ — all committed with green negative
+   tests. REMAINING (recon-blueprinted in `deploy-security-recon.md`, both security-sensitive — do
+   carefully): **leaf-anchor cert-expiry** (Item 2, RFC 5280 §6.1 — wrap the trust manager to validate
+   `chain[0]` expiry, or move to a real CA topology) and **active-replay rejection** (Item 4 — the
+   ReplayGuard stops passive replay but a token-holder can mint fresh requests; needs per-request
+   signing). Plus the **synthetic N↔N+1 upgrade** (box-bound, soak-blocked).
 6. **Threshold promotion §11** — needs clean-box real-load conditions; **deferred while the soak holds
    the box** (would interfere). Do before terminating, or as a post-soak step.
 7. **Soak §8 — RUNNING** (`perf/results/soak-s75/`, 400/s stable, 2g heaps, on-demand box). Clean
