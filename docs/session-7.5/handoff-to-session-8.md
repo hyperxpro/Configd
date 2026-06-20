@@ -72,11 +72,13 @@ Chain of evidence (all on this box, all pushed):
 6. **Threshold promotion §11** — needs the real-load conditions (post-fix).
 7. **Soak §8** — NOT started (run at a STABLE rate ~500–600/s given the churn ceiling; label by
    achieved duration).
-8. **gate-7.5** (§12) — NOT wired/run. S4 (gate-4) + S7 (gate-7) re-green: the first cumulative gate-7
-   re-run FOUND a D-1 regression (the `LivePropagationProbeMain` dev probe boots a co-located-key
-   server and the fail-closed guard correctly refused it) — **FIXED** (probe opts out; see run-log
-   §13.6); all gate-4 own-module tests independently green. A clean cumulative gate-7 re-run is in
-   progress — confirm its result before declaring S4/S7 re-green and before wiring gate-7.5.
+8. **gate-7.5** (§12) — NOT wired/run yet (the new S7.5-specific cumulative gate is still to be
+   authored). BUT **S4 (gate-4) + S7 (gate-7) ARE re-greened**: the first cumulative gate-7 re-run
+   found a D-1 regression (the `LivePropagationProbeMain` dev probe boots a co-located-key server and
+   the fail-closed guard correctly refused it) — FIXED (probe opts out), and the **clean cumulative
+   gate-7 re-run is GREEN (gates 1–7, GATE7B_EXIT=0; `S4 cells still green`)** — §2 / §13.6 satisfied
+   (run-log §13.6). REMAINING: author + wire `gate-7.5` (D-1 fail-closed test, slowloris negative,
+   S7-residual negatives, synthetic upgrade, promoted-threshold tests) once those features land.
 9. **`SigningKeyStore.loadOrCreate` concurrent first-boot race** (found during bring-up; race-tolerant
    load + atomic write) — follow-up to D-1.
 

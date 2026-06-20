@@ -211,7 +211,11 @@ is the guard doing its job (refusing an insecure layout), not a false alarm. **F
 `main()` now sets the dev opt-out before booting (covers `--mode boundary` + `--mode edge`); verified
 the boundary probe boots and emits `PROBE-HISTOGRAM: scope=global`. The probe was the ONLY non-test
 `ConfigdServer.start` caller (JMH benches use bare `RaftNode`; compose mounts the key separately;
-smoke/rr-002 drills already opt out). Cumulative `gate-7` re-run launched after the fix; result here
-when it completes. All gate-4 own-module tests independently confirmed green (consensus-core 334/0,
+smoke/rr-002 drills already opt out). **Cumulative `gate-7` re-run after the fix = GREEN
+(GATE7B_EXIT=0):** gates 1–7 all pass — `GATE-5 ALL STEPS GREEN`, `GATE-6 GREEN`, `GATE-7 GREEN`, and
+explicitly `GATE-7 pa2021: OK (tamper+forge+downgrade refused; S4 cells still green)` + `GATE-7 mtls:
+OK`. **S4 durability + S7 integrity re-greened with all S7.5 changes — §2 / §13.6 satisfied.**
+(CVE-NVD / gitleaks / byte-repro stay ENV-BLOCKED on the CI nightly lane — pre-existing.)
+All gate-4 own-module tests independently confirmed green (consensus-core 334/0,
 replication-engine 23/0, distribution-service 20/0, edge-node 4/0, testkit overload/partition 12/0,
 configd-server 162/0).
