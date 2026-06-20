@@ -131,6 +131,53 @@ class EdgeHttpServerTest {
                 "a served read must record a configd_edge_read_seconds sample:\n" + scrape);
     }
 
+    // -----------------------------------------------------------------------
+    // F-S7-TLS-2: edge /metrics scrape-token auth (the AS-5 reconnaissance leak)
+    // -----------------------------------------------------------------------
+
+    @Test
+    void metricsScrapeTokenGatesUnauthenticatedScrape() throws Exception {
+        String prop = "configd.edge.metricsScrapeToken";
+        String saved = System.getProperty(prop);
+        EdgeHttpServer gated = null;
+        try {
+            System.setProperty(prop, "scrape-secret"); // read by the field initializer at construction
+            gated = new EdgeHttpServer(0, core, StrongReadKeyClass.DEFAULT,
+                    new PrometheusExporter(registry), metrics);
+            gated.start();
+            String g = "http://127.0.0.1:" + gated.port();
+
+            // No token → 401 (the staleness/reconnect/version reconnaissance leak is closed).
+            HttpResponse<String> noTok = http.send(HttpRequest.newBuilder()
+                    .uri(URI.create(g + "/metrics")).GET().build(), HttpResponse.BodyHandlers.ofString());
+            assertEquals(401, noTok.statusCode(), "edge /metrics must require the configured scrape token");
+            assertTrue(noTok.headers().firstValue("WWW-Authenticate").isPresent(),
+                    "a 401 must advertise Bearer auth");
+
+            // Wrong token → 401.
+            HttpResponse<String> wrong = http.send(HttpRequest.newBuilder()
+                    .uri(URI.create(g + "/metrics")).header("Authorization", "Bearer nope").GET().build(),
+                    HttpResponse.BodyHandlers.ofString());
+            assertEquals(401, wrong.statusCode(), "a wrong scrape token is refused");
+
+            // Correct token → 200 + the exposition.
+            HttpResponse<String> ok = http.send(HttpRequest.newBuilder()
+                    .uri(URI.create(g + "/metrics")).header("Authorization", "Bearer scrape-secret").GET().build(),
+                    HttpResponse.BodyHandlers.ofString());
+            assertEquals(200, ok.statusCode(), "the configured scrape token is accepted");
+        } finally {
+            if (gated != null) gated.stop(0);
+            if (saved == null) System.clearProperty(prop); else System.setProperty(prop, saved);
+        }
+    }
+
+    @Test
+    void metricsOpenWhenNoScrapeTokenConfigured() throws Exception {
+        // Backward compat: the @BeforeEach server was built with no token → /metrics stays open (200).
+        assertEquals(200, get("/metrics").statusCode(),
+                "with no scrape token configured, /metrics stays open (legacy / infra segmentation)");
+    }
+
     @Test
     void cursorAtCurrentVersionIsServed() throws Exception {
         apply(1, "svc/a", "v1");

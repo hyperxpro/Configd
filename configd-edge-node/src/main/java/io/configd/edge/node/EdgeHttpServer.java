@@ -82,6 +82,16 @@ public final class EdgeHttpServer {
     private final HttpServer server;
 
     /**
+     * F-S7-TLS-2 (edge {@code /metrics} exposure, Low): optional Bearer-token scrape secret for
+     * {@code GET /metrics}, mirroring the control-plane F-0055 gate. When set (system property
+     * {@code configd.edge.metricsScrapeToken}), an unauthenticated scrape is refused 401 — the edge
+     * Prometheus surface no longer leaks staleness/reconnect/version reconnaissance (threat AS-5) to
+     * anyone who can reach the port. Null = open (legacy; rely on infra segmentation instead). Served
+     * on the edge HTTP request vthread; the edge process runs no consensus, so RR-002 is N/A.
+     */
+    private final String metricsScrapeToken = System.getProperty("configd.edge.metricsScrapeToken");
+
+    /**
      * @param port               the bind port (0 = ephemeral; see {@link #port()})
      * @param core               the edge client core (lock-free read path + staleness)
      * @param strongReadKeyClass the CT-37 strong-read predicate (the same shared class the
@@ -101,7 +111,7 @@ public final class EdgeHttpServer {
         server.createContext(CONFIG_PREFIX, new ConfigReadHandler(core, strongReadKeyClass, metrics));
         server.createContext("/health/live", EdgeHttpServer::handleLive);
         server.createContext("/health/ready", exchange -> handleReady(exchange, core));
-        server.createContext("/metrics", exchange -> handleMetrics(exchange, exporter));
+        server.createContext("/metrics", exchange -> handleMetrics(exchange, exporter, metricsScrapeToken));
         server.setExecutor(Executors.newVirtualThreadPerTaskExecutor());
     }
 
@@ -278,11 +288,27 @@ public final class EdgeHttpServer {
                 "{\"ready\":" + ready + ",\"staleness\":\"" + state + "\"}");
     }
 
-    private static void handleMetrics(HttpExchange exchange, PrometheusExporter exporter)
+    private static void handleMetrics(HttpExchange exchange, PrometheusExporter exporter,
+                                      String scrapeToken)
             throws IOException {
         if (!"GET".equals(exchange.getRequestMethod())) {
             sendText(exchange, 405, "Method Not Allowed");
             return;
+        }
+        // F-S7-TLS-2: when a scrape token is configured, require a matching Bearer token (401 — this
+        // is authentication, not authorization; mirrors the control-plane F-0055 /metrics gate).
+        // Constant-time compare to avoid leaking the token via response timing.
+        if (scrapeToken != null) {
+            String authHeader = exchange.getRequestHeaders().getFirst("Authorization");
+            String presented = (authHeader != null && authHeader.startsWith("Bearer "))
+                    ? authHeader.substring("Bearer ".length()) : null;
+            if (presented == null || !java.security.MessageDigest.isEqual(
+                    presented.getBytes(StandardCharsets.UTF_8),
+                    scrapeToken.getBytes(StandardCharsets.UTF_8))) {
+                exchange.getResponseHeaders().set("WWW-Authenticate", "Bearer");
+                sendText(exchange, 401, "Unauthorized");
+                return;
+            }
         }
         byte[] body = exporter.export().getBytes(StandardCharsets.UTF_8);
         exchange.getResponseHeaders().set("Content-Type",
