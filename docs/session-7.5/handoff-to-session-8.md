@@ -63,8 +63,9 @@ Chain of evidence (all on this box, all pushed):
 2. **Burst 100k/s characterization + the full §11 overload ladder** at real load (shed order, 429 +
    Retry-After, queue bounds, recovery) — PART 1 saw the 429 path fire (7,760×) but churn dominated;
    re-do after the admission-control fix.
-3. **Latency §9:** local write-commit p99 = 5.51 ms (phase-2, captured) is the local component; the
-   WAN-modeled split (local + RTT matrix) + propagation/staleness split are NOT yet written.
+3. **Latency §9:** write-commit three-number split DONE (`latency-wan-split.md`: local 5.51 ms +
+   WAN 68 ms = **modeled ≈ 73.5 ms < 150 ms target, PENDING multi-box**). REMAINING: the propagation/
+   staleness M-2 split needs the S5 edge-probe re-run at scale (single-host-provable, not yet done).
 4. **Scale §8:** large key-count read p99 + memory; 10⁹ extrapolation; ZGC at large live set; soak.
 5. **Slowloris (F-S7-FUZZ-1) + S7 residuals** (leaf-anchor expiry, edge /metrics, active replay,
    per-principal rate limiting) + **synthetic N↔N+1 upgrade** — all logic, NOT started.
