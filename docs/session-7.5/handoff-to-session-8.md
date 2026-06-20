@@ -72,10 +72,11 @@ Chain of evidence (all on this box, all pushed):
 6. **Threshold promotion §11** — needs the real-load conditions (post-fix).
 7. **Soak §8** — NOT started (run at a STABLE rate ~500–600/s given the churn ceiling; label by
    achieved duration).
-8. **gate-7.5** (§12) — NOT wired/run. S4 (gate-4) + S7 (gate-7) re-green: D-1 is configd-server-only
-   and its 162 module tests pass incl. D1FailClosedTest; the consensus-core integrity/durability
-   classes (334/0) are unaffected by D-1; a full gate-7 wrapper re-run was launched (slow full-reactor
-   rebuild) — see run-log for its result.
+8. **gate-7.5** (§12) — NOT wired/run. S4 (gate-4) + S7 (gate-7) re-green: the first cumulative gate-7
+   re-run FOUND a D-1 regression (the `LivePropagationProbeMain` dev probe boots a co-located-key
+   server and the fail-closed guard correctly refused it) — **FIXED** (probe opts out; see run-log
+   §13.6); all gate-4 own-module tests independently green. A clean cumulative gate-7 re-run is in
+   progress — confirm its result before declaring S4/S7 re-green and before wiring gate-7.5.
 9. **`SigningKeyStore.loadOrCreate` concurrent first-boot race** (found during bring-up; race-tolerant
    load + atomic write) — follow-up to D-1.
 

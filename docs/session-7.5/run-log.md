@@ -200,3 +200,18 @@ retroactive veto.
   latency WAN split, key-scale/GC, slowloris+residuals+synthetic-upgrade, threshold promotion, soak,
   gate-7.5) is PENDING — see the handoff. Operator: all results pushed; terminate the spot box when
   done (§16).
+
+### §13.6 — D-1 gate regression FOUND + FIXED (the fail-closed guard worked as designed)
+The first cumulative `gate-7` re-run went RED — root cause: `gate-3`'s live-propagation probe runs
+`io.configd.probe.LivePropagationProbeMain` as a `java -cp` MAIN (not a surefire test → does NOT
+inherit the module-wide `allowColocatedSigningKey` opt-out). It boots a throwaway server with a
+co-located `/tmp` signing key, which the new D-1 fail-closed guard **correctly refused**
+(`SecurityException` at `ConfigdServer:952`) → probe crash → gate-3 → gate-4/5/6/7 cascade RED. This
+is the guard doing its job (refusing an insecure layout), not a false alarm. **Fix:** the probe's
+`main()` now sets the dev opt-out before booting (covers `--mode boundary` + `--mode edge`); verified
+the boundary probe boots and emits `PROBE-HISTOGRAM: scope=global`. The probe was the ONLY non-test
+`ConfigdServer.start` caller (JMH benches use bare `RaftNode`; compose mounts the key separately;
+smoke/rr-002 drills already opt out). Cumulative `gate-7` re-run launched after the fix; result here
+when it completes. All gate-4 own-module tests independently confirmed green (consensus-core 334/0,
+replication-engine 23/0, distribution-service 20/0, edge-node 4/0, testkit overload/partition 12/0,
+configd-server 162/0).
