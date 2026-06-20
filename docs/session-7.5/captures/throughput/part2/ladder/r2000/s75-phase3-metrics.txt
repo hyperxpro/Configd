@@ -1,0 +1,89 @@
+# TYPE fanout_buffer_dropped_total counter
+fanout_buffer_dropped_total 0
+# TYPE configd_snapshot_install_failed_total counter
+configd_snapshot_install_failed_total 0
+# TYPE configd_write_commit_failed_total counter
+configd_write_commit_failed_total 619
+# TYPE configd_edge_read_total counter
+configd_edge_read_total 0
+# TYPE propagation_lag_violation_total counter
+propagation_lag_violation_total 0
+# TYPE configd_write_rejected_overloaded_total counter
+configd_write_rejected_overloaded_total 0
+# TYPE configd_write_commit_total counter
+configd_write_commit_total 3184
+# TYPE configd_snapshot_rebuild_total counter
+configd_snapshot_rebuild_total 0
+# TYPE configd_raft_elections_total counter
+configd_raft_elections_total 28
+# TYPE jvm_gc_collections gauge
+jvm_gc_collections 6
+# TYPE jvm_heap_used_bytes gauge
+jvm_heap_used_bytes 660602880
+# TYPE jvm_gc_collection_millis gauge
+jvm_gc_collection_millis 20
+# TYPE configd_subscription_prefix_count gauge
+configd_subscription_prefix_count 0
+# TYPE process_open_fds gauge
+process_open_fds 37
+# TYPE jvm_threads_current gauge
+jvm_threads_current 29
+# TYPE jvm_heap_max_bytes gauge
+jvm_heap_max_bytes 4294967296
+# TYPE configd_raft_pending_apply_entries gauge
+configd_raft_pending_apply_entries 0
+# TYPE configd_edge_read_seconds histogram
+configd_edge_read_seconds_bucket{le="0.0001"} 0
+configd_edge_read_seconds_bucket{le="0.0005"} 0
+configd_edge_read_seconds_bucket{le="0.001"} 0
+configd_edge_read_seconds_bucket{le="0.0025"} 0
+configd_edge_read_seconds_bucket{le="0.005"} 0
+configd_edge_read_seconds_bucket{le="0.010"} 0
+configd_edge_read_seconds_bucket{le="0.025"} 0
+configd_edge_read_seconds_bucket{le="0.050"} 0
+configd_edge_read_seconds_bucket{le="0.100"} 0
+configd_edge_read_seconds_bucket{le="+Inf"} 0
+configd_edge_read_seconds_count 0
+# TYPE configd_propagation_delay_seconds histogram
+configd_propagation_delay_seconds_bucket{le="0.010"} 0
+configd_propagation_delay_seconds_bucket{le="0.025"} 0
+configd_propagation_delay_seconds_bucket{le="0.050"} 0
+configd_propagation_delay_seconds_bucket{le="0.100"} 0
+configd_propagation_delay_seconds_bucket{le="0.250"} 0
+configd_propagation_delay_seconds_bucket{le="0.500"} 0
+configd_propagation_delay_seconds_bucket{le="1.000"} 0
+configd_propagation_delay_seconds_bucket{le="2.500"} 0
+configd_propagation_delay_seconds_bucket{le="5.000"} 0
+configd_propagation_delay_seconds_bucket{le="10.000"} 0
+configd_propagation_delay_seconds_bucket{le="+Inf"} 0
+configd_propagation_delay_seconds_count 0
+# TYPE configd_apply_seconds histogram
+configd_apply_seconds_bucket{le="0.005"} 4096
+configd_apply_seconds_bucket{le="0.010"} 4096
+configd_apply_seconds_bucket{le="0.025"} 4096
+configd_apply_seconds_bucket{le="0.050"} 4096
+configd_apply_seconds_bucket{le="0.100"} 4096
+configd_apply_seconds_bucket{le="0.150"} 4096
+configd_apply_seconds_bucket{le="0.250"} 4096
+configd_apply_seconds_bucket{le="0.500"} 4096
+configd_apply_seconds_bucket{le="1.000"} 4096
+configd_apply_seconds_bucket{le="2.500"} 4096
+configd_apply_seconds_bucket{le="5.000"} 4096
+configd_apply_seconds_bucket{le="10.000"} 4096
+configd_apply_seconds_bucket{le="+Inf"} 8425
+configd_apply_seconds_count 8425
+# TYPE configd_write_commit_seconds histogram
+configd_write_commit_seconds_bucket{le="0.005"} 3
+configd_write_commit_seconds_bucket{le="0.010"} 15
+configd_write_commit_seconds_bucket{le="0.025"} 60
+configd_write_commit_seconds_bucket{le="0.050"} 130
+configd_write_commit_seconds_bucket{le="0.100"} 526
+configd_write_commit_seconds_bucket{le="0.150"} 903
+configd_write_commit_seconds_bucket{le="0.250"} 1916
+configd_write_commit_seconds_bucket{le="0.500"} 2725
+configd_write_commit_seconds_bucket{le="1.000"} 3120
+configd_write_commit_seconds_bucket{le="2.500"} 3184
+configd_write_commit_seconds_bucket{le="5.000"} 3184
+configd_write_commit_seconds_bucket{le="10.000"} 3184
+configd_write_commit_seconds_bucket{le="+Inf"} 3184
+configd_write_commit_seconds_count 3184

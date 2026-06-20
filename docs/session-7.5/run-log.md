@@ -148,3 +148,36 @@ persist-before-ACK preserved; channel lifecycle safe; leadership-churn/step-down
 `flushScheduled` stuck-true durability hazard). **Non-blocking residual (accepted):** add a
 deterministic regression test driving queued-flush-after-step-down to lock the `role != LEADER` gate
 in `maybeAdvanceCommitIndex` — added as a follow-up before the perf runs. Logged for retroactive veto.
+
+## §7.1 — Headline PART 2: MEASURED — fsync is FREE here; PART 1 attribution CORRECTED
+
+Full writeup: `throughput-part2.md`. **The headline result the box was provisioned to find:**
+
+- **Group commit does NOT lift the ceiling on this box** because **fsync is nearly free on this
+  instance-store NVMe** (`iostat`: `f/s`=0, `w_await`=0.03 ms — no volatile write cache to flush).
+  The group-commit sizing curve is FLAT (310–390 commit/s across every linger×maxBatch; the per-op
+  baseline on the same binary is 342). **PART 1's "fsync-per-op-bound (case a)" is hereby corrected.**
+- **The real as-built ceiling is leadership churn, not fsync.** Rate ladder (open-loop, group commit
+  ON): **stable to ~800 writes/s** (1 election, 0 failures, full achievement at 200/400/600/800),
+  **collapse at ~1000–1200/s** (15–34 elections/15 s, throughput inverts to ~400–600/s, dominant
+  `503 NotLeader`). CPU ~86 % idle, disk ~free throughout. **§7.0 attribution = case (c): the
+  single-threaded consensus path (R-01 tick executor) — broadcast-per-propose + apply + inbound all
+  on the one thread that also emits heartbeats; above ~800–1000/s the heartbeat slips past the
+  election timeout → self-reinforcing churn.** Transport `send` is non-blocking (RR-002), so it is
+  queue/scheduling latency on the single thread, not a blocking stall.
+- **10k/s is NOT met by the as-built system; it is heartbeat-starvation-bound at ~800–1000/s**, NOT
+  disk- or host-capacity-bound. Group commit is RETAINED (correct, verified SAFE, load-bearing on
+  real-fsync-cost media; a no-op win here only).
+- **Harness robustness fixes** (committed): staggered shared-key launch (works around the D-1
+  `loadOrCreate` first-boot race, task #2); `S75_JVM_EXTRA` hook for the sweep; uutils `tail -n 20`.
+
+### Decision Log — DL-7.5-02 (autonomy §3 / Prime Directive §4.2: honest re-attribution)
+**Decision:** correct PART 1's case-(a) fsync attribution to case-(c) single-thread consensus-path
+heartbeat starvation, on the strength of direct measurement (fsync-free `f/s`=0; flat group-commit
+sizing curve; rate-ladder elections-scale-with-load). **Co-location confound flagged:** 3 nodes +
+256-thread driver on 16 vCPU plausibly amplifies tick-thread scheduling latency; the QUALITATIVE
+cause is proven here, the PRECISE stable ceiling is a signed multi-box deferral (dedicated host per
+node). **Recommended fix (next, this box):** (1) admission control → graceful `429` shed per §11
+instead of `503` churn-collapse; (2) coalesce replication (broadcast per tick, not per propose) to
+push the knee higher. Both measured before/after, no RR-002 / durability-gate regression. Logged for
+retroactive veto.

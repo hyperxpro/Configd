@@ -8,6 +8,7 @@ gate-5/
 gate-6/
 gate-7/
 *.out
+*.runlog
 bringup-build.log
 tools-install.log
 jarbuild.log

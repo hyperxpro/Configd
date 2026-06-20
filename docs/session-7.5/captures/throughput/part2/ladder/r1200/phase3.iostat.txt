@@ -1,0 +1,65 @@
+Linux 7.0.0-1006-aws (ip-172-31-28-187) 	06/20/26 	_x86_64_	(16 CPU)
+
+Device            r/s     rkB/s   rrqm/s  %rrqm r_await rareq-sz     w/s     wkB/s   wrqm/s  %wrqm w_await wareq-sz     d/s     dkB/s   drqm/s  %drqm d_await dareq-sz     f/s f_await  aqu-sz  %util
+nvme1n1          0.37      2.43     0.00   0.42    0.21     6.51  659.61   7961.51   315.73  32.37    0.06    12.07    0.12 245007.18     0.00   0.00    0.60 2089491.84    0.00    0.00    0.04   1.72
+
+
+Device            r/s     rkB/s   rrqm/s  %rrqm r_await rareq-sz     w/s     wkB/s   wrqm/s  %wrqm w_await wareq-sz     d/s     dkB/s   drqm/s  %drqm d_await dareq-sz     f/s f_await  aqu-sz  %util
+nvme1n1          0.00      0.00     0.00   0.00    0.00     0.00  345.00   3124.00   351.00  50.43    0.04     9.06    0.00      0.00     0.00   0.00    0.00     0.00    0.00    0.00    0.01   1.60
+
+
+Device            r/s     rkB/s   rrqm/s  %rrqm r_await rareq-sz     w/s     wkB/s   wrqm/s  %wrqm w_await wareq-sz     d/s     dkB/s   drqm/s  %drqm d_await dareq-sz     f/s f_await  aqu-sz  %util
+nvme1n1          0.00      0.00     0.00   0.00    0.00     0.00  226.00   3404.00   397.00  63.72    0.04    15.06    0.00      0.00     0.00   0.00    0.00     0.00    0.00    0.00    0.01   1.00
+
+
+Device            r/s     rkB/s   rrqm/s  %rrqm r_await rareq-sz     w/s     wkB/s   wrqm/s  %wrqm w_await wareq-sz     d/s     dkB/s   drqm/s  %drqm d_await dareq-sz     f/s f_await  aqu-sz  %util
+nvme1n1          0.00      0.00     0.00   0.00    0.00     0.00 3595.00  23528.00  2208.00  38.05    0.03     6.54    0.00      0.00     0.00   0.00    0.00     0.00    0.00    0.00    0.11  10.50
+
+
+Device            r/s     rkB/s   rrqm/s  %rrqm r_await rareq-sz     w/s     wkB/s   wrqm/s  %wrqm w_await wareq-sz     d/s     dkB/s   drqm/s  %drqm d_await dareq-sz     f/s f_await  aqu-sz  %util
+nvme1n1          0.00      0.00     0.00   0.00    0.00     0.00  262.00   2520.00   282.00  51.84    0.03     9.62    0.00      0.00     0.00   0.00    0.00     0.00    0.00    0.00    0.01   0.90
+
+
+Device            r/s     rkB/s   rrqm/s  %rrqm r_await rareq-sz     w/s     wkB/s   wrqm/s  %wrqm w_await wareq-sz     d/s     dkB/s   drqm/s  %drqm d_await dareq-sz     f/s f_await  aqu-sz  %util
+nvme1n1          0.00      0.00     0.00   0.00    0.00     0.00 5177.00  32536.00  2861.00  35.59    0.03     6.28    0.00      0.00     0.00   0.00    0.00     0.00    0.00    0.00    0.15  15.40
+
+
+Device            r/s     rkB/s   rrqm/s  %rrqm r_await rareq-sz     w/s     wkB/s   wrqm/s  %wrqm w_await wareq-sz     d/s     dkB/s   drqm/s  %drqm d_await dareq-sz     f/s f_await  aqu-sz  %util
+nvme1n1          0.00      0.00     0.00   0.00    0.00     0.00 11314.00  71664.00  6510.00  36.52    0.03     6.33    0.00      0.00     0.00   0.00    0.00     0.00    0.00    0.00    0.33  34.20
+
+
+Device            r/s     rkB/s   rrqm/s  %rrqm r_await rareq-sz     w/s     wkB/s   wrqm/s  %wrqm w_await wareq-sz     d/s     dkB/s   drqm/s  %drqm d_await dareq-sz     f/s f_await  aqu-sz  %util
+nvme1n1          0.00      0.00     0.00   0.00    0.00     0.00  245.00   3184.00   355.00  59.17    0.04    13.00    0.00      0.00     0.00   0.00    0.00     0.00    0.00    0.00    0.01   1.20
+
+
+Device            r/s     rkB/s   rrqm/s  %rrqm r_await rareq-sz     w/s     wkB/s   wrqm/s  %wrqm w_await wareq-sz     d/s     dkB/s   drqm/s  %drqm d_await dareq-sz     f/s f_await  aqu-sz  %util
+nvme1n1          0.00      0.00     0.00   0.00    0.00     0.00  882.00   7984.00   944.00  51.70    0.04     9.05    0.00      0.00     0.00   0.00    0.00     0.00    0.00    0.00    0.03   4.00
+
+
+Device            r/s     rkB/s   rrqm/s  %rrqm r_await rareq-sz     w/s     wkB/s   wrqm/s  %wrqm w_await wareq-sz     d/s     dkB/s   drqm/s  %drqm d_await dareq-sz     f/s f_await  aqu-sz  %util
+nvme1n1          0.00      0.00     0.00   0.00    0.00     0.00 2915.00  20040.00  1889.00  39.32    0.03     6.87    0.00      0.00     0.00   0.00    0.00     0.00    0.00    0.00    0.09  14.70
+
+
+Device            r/s     rkB/s   rrqm/s  %rrqm r_await rareq-sz     w/s     wkB/s   wrqm/s  %wrqm w_await wareq-sz     d/s     dkB/s   drqm/s  %drqm d_await dareq-sz     f/s f_await  aqu-sz  %util
+nvme1n1          0.00      0.00     0.00   0.00    0.00     0.00 14104.00  86956.00  7541.00  34.84    0.03     6.17    0.00      0.00     0.00   0.00    0.00     0.00    0.00    0.00    0.40  42.70
+
+
+Device            r/s     rkB/s   rrqm/s  %rrqm r_await rareq-sz     w/s     wkB/s   wrqm/s  %wrqm w_await wareq-sz     d/s     dkB/s   drqm/s  %drqm d_await dareq-sz     f/s f_await  aqu-sz  %util
+nvme1n1          0.00      0.00     0.00   0.00    0.00     0.00 9939.00  63100.00  5648.00  36.24    0.03     6.35    0.00      0.00     0.00   0.00    0.00     0.00    0.00    0.00    0.28  27.70
+
+
+Device            r/s     rkB/s   rrqm/s  %rrqm r_await rareq-sz     w/s     wkB/s   wrqm/s  %wrqm w_await wareq-sz     d/s     dkB/s   drqm/s  %drqm d_await dareq-sz     f/s f_await  aqu-sz  %util
+nvme1n1          0.00      0.00     0.00   0.00    0.00     0.00  498.00   4544.00   553.00  52.62    0.03     9.12    0.00      0.00     0.00   0.00    0.00     0.00    0.00    0.00    0.02   1.50
+
+
+Device            r/s     rkB/s   rrqm/s  %rrqm r_await rareq-sz     w/s     wkB/s   wrqm/s  %wrqm w_await wareq-sz     d/s     dkB/s   drqm/s  %drqm d_await dareq-sz     f/s f_await  aqu-sz  %util
+nvme1n1          0.00      0.00     0.00   0.00    0.00     0.00  738.00   8216.00  1030.00  58.26    0.04    11.13    0.00      0.00     0.00   0.00    0.00     0.00    0.00    0.00    0.03   2.30
+
+
+Device            r/s     rkB/s   rrqm/s  %rrqm r_await rareq-sz     w/s     wkB/s   wrqm/s  %wrqm w_await wareq-sz     d/s     dkB/s   drqm/s  %drqm d_await dareq-sz     f/s f_await  aqu-sz  %util
+nvme1n1          0.00      0.00     0.00   0.00    0.00     0.00  238.00   3628.00   365.00  60.53    0.04    15.24    0.00      0.00     0.00   0.00    0.00     0.00    0.00    0.00    0.01   1.00
+
+
+Device            r/s     rkB/s   rrqm/s  %rrqm r_await rareq-sz     w/s     wkB/s   wrqm/s  %wrqm w_await wareq-sz     d/s     dkB/s   drqm/s  %drqm d_await dareq-sz     f/s f_await  aqu-sz  %util
+nvme1n1          0.00      0.00     0.00   0.00    0.00     0.00  609.00   5448.00   681.00  52.79    0.03     8.95    0.00      0.00     0.00   0.00    0.00     0.00    0.00    0.00    0.02   1.70
+
