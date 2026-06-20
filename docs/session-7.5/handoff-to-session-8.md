@@ -76,11 +76,15 @@ Chain of evidence (all on this box, all pushed):
    were a 100M bulk-LOAD artifact, not steady-state). Memory ~170 B/key → 100M ≈ 17 GB; **10⁹ ≈ 170 GB
    exceeds this box → M-5 (large-memory host)**; read-latency-at-10⁹ extrapolated sub-µs (labeled).
    REMAINING: the soak (§8, last).
-5. **Slowloris (F-S7-FUZZ-1) + S7 residuals** (leaf-anchor expiry, edge /metrics, active replay,
-   per-principal rate limiting) + **synthetic N↔N+1 upgrade** — all logic, NOT started.
-6. **Threshold promotion §11** — needs the real-load conditions (post-fix).
-7. **Soak §8** — NOT started (run at a STABLE rate ~500–600/s given the churn ceiling; label by
-   achieved duration).
+5. **S7 residuals / §10 — partly DONE:** slowloris (F-S7-FUZZ-1, HIGH) ✓ and per-principal rate
+   limiting (Med) ✓ (committed, negative tests green). REMAINING (logic, recon-blueprinted in
+   `deploy-security-recon.md`): leaf-anchor cert-expiry (Item 2, RFC 5280 §6.1), edge /metrics auth
+   (Item 4), active-replay rejection (Item 3), and the **synthetic N↔N+1 upgrade**.
+6. **Threshold promotion §11** — needs clean-box real-load conditions; **deferred while the soak holds
+   the box** (would interfere). Do before terminating, or as a post-soak step.
+7. **Soak §8 — RUNNING** (`perf/results/soak-s75/`, 400/s stable, 2g heaps, on-demand box). Clean
+   through ~10 min: RSS/FD/threads flat, 0 rejected, p50~2 ms — leak-negative so far. Trend pushed
+   continuously; achieved duration is whatever the box lives (honest, spot-/terminate-tolerant).
 8. **gate-7.5** (§12) — NOT wired/run yet (the new S7.5-specific cumulative gate is still to be
    authored). BUT **S4 (gate-4) + S7 (gate-7) ARE re-greened**: the first cumulative gate-7 re-run
    found a D-1 regression (the `LivePropagationProbeMain` dev probe boots a co-located-key server and
