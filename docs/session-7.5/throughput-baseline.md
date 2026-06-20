@@ -26,7 +26,8 @@ on the single tick/consensus executor** (`RaftNode.propose`→`log.append`→`Fi
 proposals marshalled onto the single tick thread, `ConfigdServer.java:510`). No group commit.
 
 **Evidence the disk is NOT the ceiling** (`captures/throughput/phase3.iostat.txt`, nvme1n1):
-- `%util` mostly **5–17%**, peaks <60% — the device is idle most of the time.
+- `%util` median **~14%** (q75 ~27%, peaks ~60%, one transient 80%) — the device is idle most of the
+  time (review-architect re-derived from the per-second samples).
 - `f/s ≈ 0`, `w/s` 1.8k–18k at ~35% merge, `w_await ≈ 0.03 ms` — the NVMe has massive headroom vs its
   ~8.3k–14.3k fdatasync/s ceiling (`run-log.md §6.1`).
 

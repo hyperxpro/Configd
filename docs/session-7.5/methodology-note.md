@@ -82,4 +82,4 @@ Box spec + harness invocation + HdrHistogram + CO method + fsync attribution rec
 extrapolations LABELED (never claimed measured); before/after on THIS box for any optimization.
 
 ---
-**review-architect sign-off:** ☐ PENDING (to be signed before §9 latency numbers are accepted).
+**review-architect sign-off:** ☑ SIGNED (review-architect, 2026-06-20)
