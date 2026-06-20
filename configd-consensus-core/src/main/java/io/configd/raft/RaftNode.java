@@ -134,6 +134,57 @@ public final class RaftNode {
     /** Hard cap on {@link #appliedSeqByIndex} retained without a pending registrant. */
     private static final int MAX_RETAINED_APPLIED_SEQ = 4096;
 
+    // ---- S7.5 group commit (leader durable-index gating + coalescing flush) ----
+    /**
+     * Highest log index force-synced to durable storage on THIS node while leader. The leader
+     * counts its own log toward a commit quorum (in {@link #maybeAdvanceCommitIndex}) ONLY up to
+     * this index: a buffered-but-unfsynced self-copy must never be the deciding vote, or a leader
+     * crash before the flush could lose an entry that was reported "committed" (Raft durability
+     * safety). Advanced by {@link #flushDurable()} after a group fsync and after the rare durable
+     * control-entry appends (no-op, config changes). Tick-thread only (R-01).
+     */
+    private long durableIndex = 0L;
+
+    /** True while a coalescing flush task is already scheduled — prevents redundant scheduling. */
+    private boolean flushScheduled = false;
+
+    /**
+     * Pluggable scheduler for the coalescing group-commit flush. The default runs the flush
+     * INLINE (synchronous per-append durability — unchanged semantics for tests and in-memory
+     * mode). The production server wires {@link #setGroupCommit} to dispatch the flush onto the
+     * single tick executor so concurrently-proposed entries coalesce into one fsync (PART 2
+     * headline: the fix for the per-op-fsync ceiling).
+     */
+    @FunctionalInterface
+    public interface FlushScheduler {
+        /** Schedule {@code flush} to run on the tick thread after {@code delayMicros} (0 = ASAP). */
+        void schedule(Runnable flush, long delayMicros);
+    }
+
+    private FlushScheduler flushScheduler = (flush, delayMicros) -> flush.run(); // INLINE default
+    private int groupCommitMaxBatch = Integer.MAX_VALUE; // entries per fsync cap (bounds latency)
+    private long groupCommitLingerMicros = 0L;           // linger to grow a batch (0 = no linger)
+
+    /**
+     * Enables asynchronous coalescing group commit (S7.5 PART 2). Called once at server wiring,
+     * before the node is started, with a {@code scheduler} that dispatches the flush onto the tick
+     * executor. {@code maxBatch} caps entries per fsync (bounds worst-case commit latency and the
+     * uncommitted backlog); {@code lingerMicros} optionally delays the flush to accumulate a larger
+     * batch — the throughput/latency knob swept for the sizing curve. With the default (INLINE)
+     * scheduler the node keeps the original synchronous per-append durability.
+     */
+    public void setGroupCommit(FlushScheduler scheduler, int maxBatch, long lingerMicros) {
+        this.flushScheduler = Objects.requireNonNull(scheduler, "scheduler");
+        if (maxBatch <= 0) {
+            throw new IllegalArgumentException("maxBatch must be positive: " + maxBatch);
+        }
+        if (lingerMicros < 0) {
+            throw new IllegalArgumentException("lingerMicros must be >= 0: " + lingerMicros);
+        }
+        this.groupCommitMaxBatch = maxBatch;
+        this.groupCommitLingerMicros = lingerMicros;
+    }
+
     /** A pending commit-outcome callback bound to a proposed {@code (index, term)}. */
     private record PendingCommit(long term, java.util.function.Consumer<CommitOutcome> callback) {}
 
@@ -326,6 +377,14 @@ public final class RaftNode {
             case FOLLOWER, CANDIDATE -> tickElection();
             case LEADER -> tickHeartbeat();
         }
+        // S7.5 group commit: cheap backstop — if any entry is still buffered unsynced and no flush
+        // is scheduled (e.g. a dropped scheduling, or the linger window slipping past a tick),
+        // schedule one now. The normal path always schedules from propose(); this only bounds the
+        // worst-case durability latency to a single tick. Guarded on LEADER (followers fsync inline
+        // in appendEntries); re-checks role since tickHeartbeat() above may have stepped us down.
+        if (role == RaftRole.LEADER && !flushScheduled && log.lastIndex() > durableIndex) {
+            scheduleFlush();
+        }
     }
 
     /**
@@ -397,13 +456,14 @@ public final class RaftNode {
         long newIndex = log.lastIndex() + 1;
         long entryTerm = currentTerm;
         LogEntry entry = new LogEntry(newIndex, entryTerm, command);
-        log.append(entry);
-        broadcastAppendEntries();
-        // Check if single-node cluster (commit immediately). On the single-node
-        // path this applies the entry inline before propose returns; any
-        // commit-outcome callback registered afterward resolves immediately via
-        // appliedSeqByIndex (see whenCommitOutcome).
-        maybeAdvanceCommitIndex();
+        log.appendNoSync(entry);   // buffer durably-pending; the coalescing flush fsyncs the batch
+        broadcastAppendEntries();  // replicate immediately — followers fsync before they ACK
+        // S7.5 group commit: this leader's own commit-vote for the entry is deferred until the
+        // coalescing flush force-syncs it (the durableIndex gate in maybeAdvanceCommitIndex). On
+        // the single-node path the INLINE default scheduler flushes inline so the entry still
+        // commits before propose() returns; a commit-outcome callback registered afterward
+        // resolves immediately via appliedSeqByIndex (see whenCommitOutcome).
+        scheduleFlush();
         return ProposeOutcome.accepted(newIndex, entryTerm);
     }
 
@@ -1003,7 +1063,8 @@ public final class RaftNode {
         byte[] configEntry = serializeConfigChange(jointConfig);
         long newIndex = log.lastIndex() + 1;
         LogEntry entry = new LogEntry(newIndex, currentTerm, configEntry);
-        log.append(entry);
+        log.append(entry);                 // durable control entry (appendNoSync + syncWal)
+        durableIndex = log.lastIndex();    // S7.5: synced — the leader may count it (gating)
 
         // Initialize tracking for any new peers added by this config change
         for (NodeId peer : clusterConfig.peersOf(config.nodeId())) {
@@ -1694,7 +1755,12 @@ public final class RaftNode {
         // Append a no-op entry to commit entries from prior terms (§5.4.2)
         // This no-op must commit before any config changes can be proposed
         long noopIndex = log.lastIndex() + 1;
-        log.append(LogEntry.noop(noopIndex, currentTerm));
+        log.append(LogEntry.noop(noopIndex, currentTerm)); // durable (appendNoSync + syncWal)
+        // S7.5 group commit: log.append() force-syncs the whole WAL, so the no-op AND every
+        // inherited entry (loaded from WAL / synced as a follower / any tail buffered in a prior
+        // leadership stint) is now durable. Seed durableIndex accordingly before the leader counts
+        // itself in any commit quorum.
+        durableIndex = log.lastIndex();
 
         broadcastAppendEntries();
         maybeAdvanceCommitIndex();
@@ -1840,7 +1906,14 @@ public final class RaftNode {
 
             // Build set of nodes that have replicated entry n
             replicated.clear();
-            replicated.add(config.nodeId()); // self
+            // S7.5 group-commit safety: count THIS leader toward the quorum for index n ONLY if
+            // n is durably fsynced locally (durableIndex). A buffered-but-unsynced self-copy must
+            // never be the deciding vote — a leader crash before the flush would otherwise lose an
+            // entry that quorum logic had marked committed. Followers already report matchIndex
+            // only after their own durable append (persist-before-ACK), so peers are always durable.
+            if (durableIndex >= n) {
+                replicated.add(config.nodeId()); // self (durable)
+            }
             for (NodeId peer : peers) {
                 if (matchIndex.getOrDefault(peer, 0L) >= n) {
                     replicated.add(peer);
@@ -1853,6 +1926,48 @@ public final class RaftNode {
                 break;
             }
         }
+    }
+
+    /**
+     * Schedules a coalescing group-commit flush for entries appended via
+     * {@link RaftLog#appendNoSync} but not yet force-synced. If the unsynced backlog has reached
+     * {@link #groupCommitMaxBatch}, flushes immediately (bounding latency and the uncommitted
+     * backlog); otherwise schedules a single flush (honoring the linger) unless one is already
+     * pending — so concurrently-proposed entries coalesce into ONE fsync. Tick-thread only.
+     */
+    private void scheduleFlush() {
+        long pending = log.lastIndex() - durableIndex;
+        if (pending <= 0) {
+            return; // nothing buffered (e.g. an INLINE flush already ran)
+        }
+        if (pending >= groupCommitMaxBatch) {
+            flushDurable(); // batch cap reached — flush now, bypass the linger
+            return;
+        }
+        if (flushScheduled) {
+            return; // a pending flush will cover this entry too
+        }
+        flushScheduled = true;
+        flushScheduler.schedule(this::flushDurable, groupCommitLingerMicros);
+    }
+
+    /**
+     * Force-syncs every entry buffered since the last sync (ONE fsync for the whole batch),
+     * advances {@link #durableIndex}, then re-evaluates the commit index now that the leader's own
+     * entries up to {@code lastIndex} are durable. Runs on the tick thread — inline via the default
+     * scheduler, or dispatched onto the single tick executor in production. Because the tick thread
+     * is single-threaded, no append can interleave the fsync, so {@code durableIndex == lastIndex}
+     * captured here is exact.
+     */
+    private void flushDurable() {
+        flushScheduled = false;
+        long target = log.lastIndex();
+        if (target <= durableIndex) {
+            return; // already durable — nothing to sync
+        }
+        log.syncWal();           // single fsync covers every appendNoSync since the last sync
+        durableIndex = target;   // the leader may now count itself up to here
+        maybeAdvanceCommitIndex();
     }
 
     /**
@@ -2012,7 +2127,8 @@ public final class RaftNode {
 
                 byte[] configEntry = serializeConfigChange(newConfig);
                 long newIndex = log.lastIndex() + 1;
-                log.append(new LogEntry(newIndex, currentTerm, configEntry));
+                log.append(new LogEntry(newIndex, currentTerm, configEntry)); // durable control entry
+                durableIndex = log.lastIndex(); // S7.5: synced — the leader may count it (gating)
                 broadcastAppendEntries();
                 maybeAdvanceCommitIndex();
 

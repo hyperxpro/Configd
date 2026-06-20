@@ -347,25 +347,57 @@ public final class RaftLog {
      * @throws IllegalArgumentException if the index is not sequential
      */
     public void append(LogEntry entry) {
+        appendNoSync(entry);
+        syncWal();
+    }
+
+    /**
+     * Appends a new entry to the in-memory log and the WAL <b>without</b> fsyncing it
+     * (S7.5 group commit). The entry is NOT durable until a subsequent {@link #syncWal()}
+     * returns; any caller that counts this entry toward Raft commitment — the leader's own
+     * match, or a follower's AppendEntries ACK — MUST call {@link #syncWal()} first. RaftNode
+     * gates its leader durable-index on this so a non-durable self-copy is never counted in a
+     * commit quorum. The entry's index must equal {@code lastIndex() + 1}.
+     *
+     * @throws IllegalArgumentException if the index is not sequential
+     */
+    public void appendNoSync(LogEntry entry) {
         long expectedIndex = lastIndex() + 1;
         if (entry.index() != expectedIndex) {
             throw new IllegalArgumentException(
                     "Expected index " + expectedIndex + " but got " + entry.index());
         }
         if (storage != null) {
-            storage.appendToLog(WAL_NAME, serializeEntry(entry));
+            storage.appendToLogNoSync(WAL_NAME, serializeEntry(entry));
         }
         entries.add(entry);
     }
 
     /**
-     * Appends multiple entries. Each entry must have sequential indices
-     * starting from lastIndex() + 1.
+     * Forces every entry appended via {@link #appendNoSync} since the last sync to durable
+     * storage. After this returns, all entries up to {@link #lastIndex()} are durable. No-op in
+     * the in-memory ({@code storage == null}) mode. One {@code syncLog} amortizes the fsync
+     * across the whole batch — the group-commit win over per-entry {@code force}.
+     */
+    public void syncWal() {
+        if (storage != null) {
+            storage.syncLog(WAL_NAME);
+        }
+    }
+
+    /**
+     * Appends multiple entries with a single fsync for the whole batch (group commit). Each
+     * entry must have sequential indices starting from lastIndex() + 1. On return, all appended
+     * entries are durable.
      */
     public void appendAll(List<LogEntry> newEntries) {
-        for (LogEntry entry : newEntries) {
-            append(entry);
+        if (newEntries.isEmpty()) {
+            return;
         }
+        for (LogEntry entry : newEntries) {
+            appendNoSync(entry);
+        }
+        syncWal();
     }
 
     /**
@@ -392,7 +424,12 @@ public final class RaftLog {
             }
         }
 
-        // Process each new entry
+        // Process each new entry. S7.5 group commit: buffer the appends and fsync ONCE for
+        // the whole RPC batch (appendNoSync + a single trailing syncWal) instead of one fsync
+        // per entry. Persist-before-ACK is preserved: syncWal() completes before this method
+        // returns, and the follower's AppendEntries response is sent only after it returns — so
+        // the matchIndex the follower reports is always already durable.
+        boolean appended = false;
         for (LogEntry newEntry : newEntries) {
             long idx = newEntry.index();
             if (idx <= snapshotIndex) {
@@ -402,13 +439,18 @@ public final class RaftLog {
             long existingTerm = termAt(idx);
             if (existingTerm == -1) {
                 // Entry beyond current log — append
-                append(newEntry);
+                appendNoSync(newEntry);
+                appended = true;
             } else if (existingTerm != newEntry.term()) {
-                // Conflict — truncate from this index and append
+                // Conflict — truncate from this index (durably rewrites the WAL) and append
                 truncateFrom(idx);
-                append(newEntry);
+                appendNoSync(newEntry);
+                appended = true;
             }
             // else: entry already in log with same term — skip (idempotent)
+        }
+        if (appended) {
+            syncWal(); // single durable barrier for the batch, before the ACK is sent
         }
         return true;
     }

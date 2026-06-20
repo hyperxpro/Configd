@@ -363,6 +363,38 @@ public final class ConfigdServer {
             return t;
         });
 
+        // ---------------------------------------------------------------
+        // S7.5 PART 2 — group commit. Dispatch the coalescing durability flush onto the SAME single
+        // tick executor (R-01: all RaftNode mutation stays on one thread). Entries proposed
+        // concurrently are appended no-sync (RaftNode.propose -> RaftLog.appendNoSync) and
+        // force-synced together by one flush task — amortizing the per-op force(true) that PART 1
+        // showed was serializing the consensus thread (heartbeat starvation -> election churn ->
+        // ~380 commits/s while the NVMe sat ~86% idle). Tunables (system properties) drive the
+        // sizing curve and an apples-to-apples before/after on THIS binary:
+        //   -Dconfigd.groupCommit.enabled=false -> keep synchronous per-op fsync (the PART 1 baseline)
+        //   -Dconfigd.groupCommit.maxBatch=N     -> cap entries per fsync (default 4096; bounds latency)
+        //   -Dconfigd.groupCommit.lingerMicros=T -> linger to grow the batch (default 0 = flush ASAP)
+        // ---------------------------------------------------------------
+        boolean groupCommitEnabled = Boolean.parseBoolean(
+                System.getProperty("configd.groupCommit.enabled", "true"));
+        if (groupCommitEnabled) {
+            int groupCommitMaxBatch = Integer.getInteger("configd.groupCommit.maxBatch", 4096);
+            long groupCommitLingerMicros = Long.getLong("configd.groupCommit.lingerMicros", 0L);
+            raftNode.setGroupCommit(
+                    (flush, delayMicros) -> {
+                        if (delayMicros <= 0) {
+                            tickExecutor.execute(flush);
+                        } else {
+                            tickExecutor.schedule(flush, delayMicros, TimeUnit.MICROSECONDS);
+                        }
+                    },
+                    groupCommitMaxBatch, groupCommitLingerMicros);
+            System.out.println("  Group commit : ENABLED (maxBatch=" + groupCommitMaxBatch
+                    + ", lingerMicros=" + groupCommitLingerMicros + ")");
+        } else {
+            System.out.println("  Group commit : DISABLED (synchronous per-op fsync — PART 1 baseline)");
+        }
+
         // RR-008 (S4): the inbound-routing handler needs the `configdMetrics` handle (built
         // earlier, before the state machine — S6/WS-A) so a Throwable escaping
         // driver.routeMessage (e.g. a disk write failing during applyCommitted -> apply on a

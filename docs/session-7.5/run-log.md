@@ -97,3 +97,54 @@ measured first, then group commit implemented, then re-measured.
 Phase-2 (200/s, 30s, 3-node, data on /mnt/nvme): 6000/6000 committed, 0 shed,
 **p50=2.58ms p90=3.27ms p99=5.51ms p999=29.1ms max=39.4ms** (CO-corrected, HdrHistogram).
 This is the `local_commit_component` for the WAN split; vs S5's ~16ms p99 on 2 vCPU.
+
+---
+
+## §7.1 — Headline PART 2: group commit IMPLEMENTED (the §7.0(a) fix), pre-measurement
+
+The PART 1 attribution (case **a**, implementation-bound: per-op `force(true)` on the single tick
+thread → heartbeat starvation → leadership churn → ~380 commits/s with the NVMe ~86% idle) mandated
+group commit. Implemented as **durable-index-gated coalescing group commit**:
+
+- **`RaftLog.appendNoSync` / `syncWal`** (`RaftLog.java`): buffer entries to the WAL without fsync,
+  then ONE `force(true)` per batch. `append()` = appendNoSync+syncWal (still durable). The follower
+  `appendEntries` now appends a whole RPC no-sync then one trailing `syncWal` **before the ACK is
+  sent** (persist-before-ACK preserved; one fsync/RPC instead of per entry).
+- **`FileStorage`** (`FileStorage.java`): kept-open append channel for the batched path
+  (`appendToLogNoSync`/`syncLog`); evicted on `truncateLog`/`renameLog` so compaction never writes a
+  stale FD. New `Storage.appendToLogNoSync`/`syncLog` are **default methods** (fall back to durable
+  `appendToLog`/`sync`) → zero blast radius for InMemory/test-wrapper storages.
+- **`RaftNode`** (`RaftNode.java`): new `durableIndex` (highest force-synced index while leader).
+  **THE safety edit — `maybeAdvanceCommitIndex` counts the leader's own vote for index `n` only if
+  `durableIndex >= n`** (was unconditional). `propose` = appendNoSync + broadcast + `scheduleFlush`
+  (no inline fsync/commit). A coalescing `flushDurable` runs on the SAME tick thread: syncWal →
+  durableIndex=lastIndex → maybeAdvanceCommitIndex. Control entries (no-op, config changes) use the
+  durable `append()` then set durableIndex. Tick backstop re-arms a missed flush.
+- **`ConfigdServer`** (`ConfigdServer.java`): dispatches the flush onto the existing `tickExecutor`
+  (R-01 single-writer preserved). System-property tunables for the sizing sweep + an apples-to-apples
+  before/after on the SAME binary: `-Dconfigd.groupCommit.enabled=false` reproduces the PART 1 per-op
+  baseline; `…maxBatch=N`, `…lingerMicros=T`.
+
+**Why correct (the Raft durability invariant):** an entry commits only when a quorum of nodes hold it
+**durably** — followers ACK only after their own `syncWal`; the leader counts itself only up to
+`durableIndex`. A leader crash before its flush cannot lose a committed entry, because commitment
+required a *durable* majority that excluded the leader's not-yet-synced copy. Replication to followers
+still happens immediately (pre-flush) → the leader's fsync overlaps follower persistence (better
+pipelining), but the leader's *vote* is gated on its own durability.
+
+### Verification (pre-measurement)
+- `configd-consensus-core` suite: **334 run, 0 fail, 0 error** (incl. `WalSyncCrashTest`,
+  `SnapshotCrashRecoveryTest` matrix, `ReconfigurationTest` restart-recovery, `WalRecordIntegrityTest`,
+  `RaftNodeReplicationUnitTest$CommitAdvance/$AppendEntriesFollower`).
+- `configd-common,configd-testkit,configd-server`: **20,218 run, 0 fail, 0 error** (incl.
+  `StorageEnospcConsensusReactionTest`, `MiniJepsenSweepTest`, `AdversarialSimTest`, `RaftSimulationTest`).
+
+### Decision Log — DL-7.5-01 (autonomy §3: technical/correctness, self-resolved, fresh sub-agent)
+**Decision:** implement durable-index-gated coalescing group commit (Design B: batch on the tick
+thread; reject the "safe in 3-node without gating" shortcut). **Independent adversarial review**
+(`redteam-auditor`, fresh agent) **VERDICT: SAFE** — all six attack questions answered with file:line
+evidence (no leader self-count of an un-fsynced index; no committed-entry loss on single crash;
+persist-before-ACK preserved; channel lifecycle safe; leadership-churn/step-down safe; no
+`flushScheduled` stuck-true durability hazard). **Non-blocking residual (accepted):** add a
+deterministic regression test driving queued-flush-after-step-down to lock the `role != LEADER` gate
+in `maybeAdvanceCommitIndex` — added as a follow-up before the perf runs. Logged for retroactive veto.

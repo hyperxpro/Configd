@@ -75,6 +75,37 @@ public interface Storage {
      */
     void sync();
 
+    /**
+     * Appends data to a named log <b>without</b> fsyncing — the batched (group-commit)
+     * counterpart of {@link #appendToLog}. The bytes are buffered/written but are NOT
+     * guaranteed durable until a subsequent {@link #syncLog(String)} (or {@link #sync()})
+     * returns. Callers MUST treat indices written via this method as non-durable until
+     * the matching {@code syncLog} completes (S7.5 group commit / Raft durable-index gating).
+     * <p>
+     * The default implementation falls back to the durable {@link #appendToLog} so that
+     * implementations which have not opted into batching (in-memory, test wrappers) remain
+     * correct — they simply fsync per entry as before. {@link FileStorage} overrides this to
+     * write through a kept-open channel and amortize the fsync across a batch.
+     *
+     * @param logName the log name
+     * @param data    the data to append (buffered, not yet durable)
+     */
+    default void appendToLogNoSync(String logName, byte[] data) {
+        appendToLog(logName, data);
+    }
+
+    /**
+     * Forces all bytes previously written to the named log via {@link #appendToLogNoSync}
+     * to durable storage. After this returns, every entry appended-no-sync to {@code logName}
+     * since the last sync is durable. The default delegates to {@link #sync()}; the durable
+     * fallback of {@link #appendToLogNoSync} makes that a no-op-correct pairing.
+     *
+     * @param logName the log name whose buffered appends to flush
+     */
+    default void syncLog(String logName) {
+        sync();
+    }
+
     // ========================================================================
     // Factory methods for standard implementations
     // ========================================================================

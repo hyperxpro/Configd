@@ -11,6 +11,7 @@ import java.nio.file.StandardOpenOption;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
+import java.util.Map;
 import java.util.zip.CRC32;
 
 /**
@@ -25,6 +26,31 @@ import java.util.zip.CRC32;
 public final class FileStorage implements Storage {
 
     private final Path directory;
+
+    /**
+     * S7.5 group commit: kept-open append channels for the batched WAL path
+     * ({@link #appendToLogNoSync} / {@link #syncLog}). Holding the channel open across a
+     * batch removes the per-entry open/close syscalls and lets one {@code force(true)}
+     * durably commit N appended entries. Keyed by log name (the WAL is one or two names in
+     * practice). Touched only from the single tick thread for the raft-log WAL, so a plain
+     * HashMap is sufficient; an explicit synchronized guard is added for defensiveness since
+     * {@link #truncateLog}/{@link #renameLog} may close a channel out from under a writer.
+     * <p>
+     * The durable single-append {@link #appendToLog} path is deliberately left untouched
+     * (open+write+force+close per call) so crash/fault-injection wrappers that delegate to it
+     * keep their exact, proven semantics — only callers that explicitly opt into the
+     * no-sync/sync pair use these channels.
+     */
+    private final Map<String, FileChannel> appendChannels = new java.util.concurrent.ConcurrentHashMap<>();
+
+    /**
+     * Log names whose backing file was freshly created by the batched path and therefore
+     * still need a one-time directory fsync (so the file's existence — not just its bytes —
+     * is durable) on the next {@link #syncLog}. Mirrors what {@link #put}'s {@link #sync()}
+     * does for the rename path.
+     */
+    private final java.util.Set<String> pendingDirSync =
+            java.util.concurrent.ConcurrentHashMap.newKeySet();
 
     /**
      * Creates a new FileStorage backed by the given directory.
@@ -113,6 +139,109 @@ public final class FileStorage implements Storage {
         }
     }
 
+    // ========================================================================
+    // S7.5 group commit: batched WAL append (no-sync) + explicit per-log fsync.
+    //
+    // Used ONLY by callers that explicitly opt in (RaftLog.appendNoSync / syncWal on the
+    // single tick thread). Holds the append channel open across the batch so one force(true)
+    // durably commits N entries — the fix for the per-op-fsync ceiling measured in PART 1.
+    // The durable single-append appendToLog() above is left byte-for-byte unchanged so
+    // crash/fault-injection wrappers that delegate to it keep their proven semantics.
+    //
+    // Thread model: the raft-log WAL is touched only by the tick thread (R-01). appendChannels
+    // is a ConcurrentHashMap purely as defensive instance-state safety (audit-log uses a
+    // different log name and never touches the batched path).
+    // ========================================================================
+
+    @Override
+    public void appendToLogNoSync(String logName, byte[] data) {
+        try {
+            FileChannel channel = appendChannel(logName);
+            ByteBuffer frame = frame(data);
+            while (frame.hasRemaining()) {
+                channel.write(frame);
+            }
+            // No force() here: durability is deferred to syncLog (group commit). The caller
+            // MUST NOT treat these bytes as durable until the matching syncLog returns.
+        } catch (IOException e) {
+            throw new UncheckedIOException("Failed to append (no-sync) to log: " + logName, e);
+        }
+    }
+
+    @Override
+    public void syncLog(String logName) {
+        FileChannel channel = appendChannels.get(logName);
+        if (channel == null) {
+            // Nothing buffered via the batched path (or it was just evicted by a
+            // truncate/rename). A directory sync satisfies the contract vacuously — there
+            // are no kept-open un-forced appends to flush.
+            sync();
+            return;
+        }
+        try {
+            channel.force(true); // one fsync (data + metadata) durably commits the whole batch
+            if (pendingDirSync.remove(logName)) {
+                // First durability point for a freshly created WAL file: fsync the directory
+                // too so the file's existence (not just its bytes) survives a crash.
+                sync();
+            }
+        } catch (IOException e) {
+            throw new UncheckedIOException("Failed to sync log: " + logName, e);
+        }
+    }
+
+    /**
+     * Returns the kept-open append channel for {@code logName}, opening and caching it on
+     * first use (CREATE|WRITE|APPEND, so every write lands at EOF).
+     */
+    private FileChannel appendChannel(String logName) throws IOException {
+        FileChannel channel = appendChannels.get(logName);
+        if (channel != null && channel.isOpen()) {
+            return channel;
+        }
+        Path file = directory.resolve(logName + ".wal");
+        boolean existedBefore = Files.exists(file);
+        channel = FileChannel.open(file,
+                StandardOpenOption.CREATE,
+                StandardOpenOption.WRITE,
+                StandardOpenOption.APPEND);
+        appendChannels.put(logName, channel);
+        if (!existedBefore) {
+            pendingDirSync.add(logName); // dir fsync on first syncLog (file-creation durability)
+        }
+        return channel;
+    }
+
+    /** Builds the framed WAL record: {@code [4-byte length][data][4-byte CRC32]}. */
+    private static ByteBuffer frame(byte[] data) {
+        CRC32 crc = new CRC32();
+        crc.update(data);
+        int crcValue = (int) crc.getValue();
+        ByteBuffer frame = ByteBuffer.allocate(4 + data.length + 4);
+        frame.putInt(data.length);
+        frame.put(data);
+        frame.putInt(crcValue);
+        frame.flip();
+        return frame;
+    }
+
+    /**
+     * Closes and evicts any kept-open append channel for {@code logName} (idempotent). Must be
+     * called before a truncate/rename replaces or removes the underlying file, so a subsequent
+     * append reopens the new inode rather than writing through a stale descriptor.
+     */
+    private void evictAppendChannel(String logName) {
+        FileChannel channel = appendChannels.remove(logName);
+        pendingDirSync.remove(logName);
+        if (channel != null) {
+            try {
+                channel.close();
+            } catch (IOException e) {
+                throw new UncheckedIOException("Failed to close append channel: " + logName, e);
+            }
+        }
+    }
+
     @Override
     public List<byte[]> readLog(String logName) {
         Path file = directory.resolve(logName + ".wal");
@@ -196,6 +325,9 @@ public final class FileStorage implements Storage {
 
     @Override
     public void truncateLog(String logName) {
+        // Close any kept-open batched-append channel first: it points at the file we are about
+        // to delete; a later append must reopen the fresh inode (S7.5 group commit).
+        evictAppendChannel(logName);
         Path file = directory.resolve(logName + ".wal");
         try {
             Files.deleteIfExists(file);
@@ -206,6 +338,10 @@ public final class FileStorage implements Storage {
 
     @Override
     public void renameLog(String fromLogName, String toLogName) {
+        // The rename replaces toLogName's inode (and consumes fromLogName); evict both kept-open
+        // channels so the next append reopens the correct, post-rename file (S7.5 group commit).
+        evictAppendChannel(fromLogName);
+        evictAppendChannel(toLogName);
         Path from = directory.resolve(fromLogName + ".wal");
         Path to = directory.resolve(toLogName + ".wal");
         try {
