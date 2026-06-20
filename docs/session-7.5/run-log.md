@@ -90,5 +90,5 @@ measured first, then group commit implemented, then re-measured.
 - [x] fsync baseline re-measured + reconciled with operator number
 - [x] Commit-fsync model determined in code (per-entry, no group commit)
 - [x] Dependency-warming build green (`mvnw -T1C -DskipTests clean install`, 66 s, BUILD SUCCESS)
-- [ ] data-dir-on-/mnt/nvme asserted at runtime (at first cluster start)
-- [ ] gates 1–7 green on this box
+- [x] gates 1–7 green on this box (fast CI mode; 14:24:57→14:39:05 UTC, ~14 min — see `bring-up-gates.md`)
+- [ ] data-dir-on-/mnt/nvme asserted at runtime (at first cluster start — headline)
