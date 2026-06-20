@@ -2,6 +2,8 @@
 target/
 build/
 *.bin
+# Gate tooling cache (gate-6 alerts downloads ~124 MB promtool here); regenerated, never committed
+.gate-tools/
 # jcstress (B6/RR-011) drops a results dump in CWD by default; never commit it
 jcstress-results-*.bin.gz
 *.class
