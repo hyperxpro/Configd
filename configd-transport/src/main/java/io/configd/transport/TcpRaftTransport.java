@@ -143,6 +143,30 @@ public final class TcpRaftTransport implements RaftTransport, AutoCloseable {
     /** Frames dropped because no connection was established (RR-002/RR-054 metric seam). */
     private final AtomicLong framesDropped = new AtomicLong();
 
+    /**
+     * F-S7-FUZZ-1 (slowloris / FD-exhaustion): inbound connections refused because the accepted
+     * live-set had already reached {@link #maxInboundConnections}. Metric seam for the negative test.
+     */
+    private final AtomicLong inboundConnectionsRefused = new AtomicLong();
+
+    /**
+     * F-S7-FUZZ-1: idle/slow-read deadline (ms) on accepted inbound sockets. A stalled/slow-drip peer
+     * then fails its {@code readInt()}/{@code readFully()} with {@link java.net.SocketTimeoutException}
+     * instead of parking a reader vthread and holding the FD forever. Default 15 s ≫ the ≤50 ms
+     * steady-state heartbeat interval, so a healthy peer never trips it; tunable via
+     * {@code -Dconfigd.raft.inboundReadTimeoutMs} (the test sets a short value).
+     */
+    private final int inboundReadTimeoutMs =
+            Integer.getInteger("configd.raft.inboundReadTimeoutMs", 15_000);
+
+    /**
+     * F-S7-FUZZ-1: max concurrent accepted inbound connections before the accept loop refuses (closes
+     * + counts) a new socket — bounds FD/vthread blast radius. Mirrors {@code FanOutServer}'s
+     * admission cap; tunable via {@code -Dconfigd.raft.maxInboundConnections} (default 1024).
+     */
+    private final int maxInboundConnections =
+            Integer.getInteger("configd.raft.maxInboundConnections", 1_024);
+
     private volatile ServerSocket serverSocket;
     private volatile RaftTransport.MessageHandler messageHandler;
 
@@ -308,10 +332,44 @@ public final class TcpRaftTransport implements RaftTransport, AutoCloseable {
 
     // ---- Server accept loop ----
 
+    /** Inbound connections refused because the accepted live-set hit {@link #maxInboundConnections}
+     *  (F-S7-FUZZ-1 metric / negative-test seam). Monotonic. */
+    public long inboundConnectionsRefused() {
+        return inboundConnectionsRefused.get();
+    }
+
+    /** Best-effort close of a refused / failed inbound socket (it is being discarded). */
+    private static void closeQuietly(Socket s) {
+        try {
+            s.close();
+        } catch (IOException ignored) {
+            // nothing to do
+        }
+    }
+
     private void acceptLoop() {
         while (running.get()) {
             try {
                 Socket clientSocket = serverSocket.accept();
+                // F-S7-FUZZ-1 (slowloris / FD-exhaustion): cap concurrent inbound connections BEFORE
+                // submitting a reader vthread, so a flood of half-open sockets cannot exhaust FDs /
+                // vthreads. The accept loop is single-threaded, so size()+add are race-free here
+                // (removes, on reader vthreads, only shrink the set → a stale-high size conservatively
+                // refuses, never over-admits). RR-002-safe: transport vthread, never configd-tick.
+                if (acceptedSockets.size() >= maxInboundConnections) {
+                    inboundConnectionsRefused.incrementAndGet();
+                    closeQuietly(clientSocket);
+                    continue;
+                }
+                // Bounded idle/slow-read deadline: a stalled peer's readInt/readFully then fails with
+                // SocketTimeoutException (handled below) instead of parking the reader + holding the
+                // FD forever. Read-idle (resets per read) so long-lived healthy connections are fine.
+                try {
+                    clientSocket.setSoTimeout(inboundReadTimeoutMs);
+                } catch (SocketException e) {
+                    closeQuietly(clientSocket);
+                    continue;
+                }
                 // Track accepted sockets so close() can unblock their reader and
                 // close them. A blocking readInt() is NOT interrupted by the
                 // executor's shutdownNow (classic socket I/O ignores interrupts);
@@ -404,6 +462,14 @@ public final class TcpRaftTransport implements RaftTransport, AutoCloseable {
             }
         } catch (EOFException e) {
             // Peer closed connection - normal during shutdown
+        } catch (java.net.SocketTimeoutException e) {
+            // F-S7-FUZZ-1: the inbound read idle-deadline tripped — a slow-drip / stalled peer. Drop
+            // the connection (the try-with-resources closes the socket → releases the reader vthread +
+            // FD). NOT a desync: the peer simply failed to make read progress within inboundReadTimeoutMs.
+            if (running.get()) {
+                System.err.println("Inbound read idle-timeout (" + inboundReadTimeoutMs
+                        + "ms slowloris guard); dropping connection");
+            }
         } catch (SocketException e) {
             if (running.get()) {
                 System.err.println("Inbound connection error: " + e.getMessage());
