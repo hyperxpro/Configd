@@ -1,0 +1,159 @@
+#!/usr/bin/env bash
+# =============================================================================
+# s75-throughput.sh — Session 7.5 real-hardware throughput + §7.0 fsync attribution
+# -----------------------------------------------------------------------------
+# Derived from perf/wsB-live-write.sh (S5, NOT modified) with the S7.5-mandatory
+# changes for the m6id.4xlarge real-hardware campaign:
+#
+#   (1) DATA + WAL ON /mnt/nvme (local instance-store NVMe), never the EBS root
+#       (charter §13.9). The S5 harness used /tmp (= EBS root here) — forbidden.
+#       The runtime WAL path is ASSERTED under /mnt/nvme before any phase runs.
+#   (2) Shared cluster signing key OUTSIDE every node data dir (--signing-key-file),
+#       so the harness works identically before and after the D-1 fail-closed fix.
+#   (3) Per-phase instrumentation: per-process CPU (pidstat) + device I/O incl.
+#       flush/s (iostat -x nvme1n1) sampled for the whole phase, for the §7.0
+#       attribution (fsync-IOPS-bound vs CPU-bound vs system-bound). fsyncs/sec is
+#       primarily derived from achieved_commit_rate (per-entry fsync is proven in
+#       code: RaftNode.propose->log.append->FileStorage.force(true), 1 fsync/entry);
+#       3 co-located nodes share ONE NVMe so device fsync demand ~= 3x commit rate.
+#   (4) Bigger heaps (default 4g/node, ZGC per ADR-0041) so GC is not a factor and
+#       16 vCPU is the only shared resource under test.
+#
+# Usage:  perf/s75-throughput.sh <calibrate|phase2|phase3|phase4|all> [outdir]
+# Env:    S75_BASE  (default /mnt/nvme/run/s75-<pid>)   S75_HEAP  S75_GC
+#         S75_RATE3 (sustained rate, default 10000)     S75_DUR3 (default 70)
+#         S75_RATE4 (burst rate,     default 100000)    S75_DUR4 (default 30)
+#         CONFIGD_JAR  (shaded server jar)              CONFIGD_BENCH (benchmarks.jar)
+# Requires: freshly-built shaded server jar + benchmarks.jar. Idempotent cleanup.
+# =============================================================================
+set -u
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+JAR="${CONFIGD_JAR:-$(ls "$ROOT"/configd-server/target/configd-server-*.jar 2>/dev/null | grep -v original- | head -1)}"
+BENCH="${CONFIGD_BENCH:-$ROOT/configd-testkit/target/benchmarks.jar}"
+BASE="${S75_BASE:-/mnt/nvme/run/s75-$$}"
+RAFT_BASE=9290
+API_BASE=8280
+PEERS_ADDR="1=127.0.0.1:9291,2=127.0.0.1:9292,3=127.0.0.1:9293"
+HEAP="${S75_HEAP:--Xmx4g -Xms4g}"
+GCFLAGS="${S75_GC:--XX:+UseZGC}"   # generational ZGC is the only ZGC in JDK 24+ (ADR-0041); -XX:+ZGenerational removed
+MODE="${1:-all}"
+OUT="${2:-$ROOT/docs/session-7.5/captures/throughput}"
+RATE3="${S75_RATE3:-10000}"; DUR3="${S75_DUR3:-70}"
+RATE4="${S75_RATE4:-100000}"; DUR4="${S75_DUR4:-30}"
+PIDS=(); SAMPLERS=()
+
+fail() { echo "S75 FAIL: $*" >&2; cleanup; exit 1; }
+cleanup() {
+  for pid in "${SAMPLERS[@]:-}"; do kill "$pid" 2>/dev/null; done
+  for pid in "${PIDS[@]:-}"; do kill -9 "$pid" 2>/dev/null; done
+  pkill -9 -f -- "--data-dir $BASE/" 2>/dev/null
+  rm -rf "$BASE" 2>/dev/null
+}
+trap cleanup EXIT
+[ -f "$JAR" ] || fail "shaded jar not found: $JAR (build: ./mvnw -pl configd-server -am package -DskipTests)"
+[ -f "$BENCH" ] || fail "benchmarks.jar not found: $BENCH (build: ./mvnw -pl configd-testkit -am package -DskipTests)"
+case "$BASE" in /mnt/nvme/*) : ;; *) fail "S75_BASE must be under /mnt/nvme (got $BASE) — charter §13.9" ;; esac
+mkdir -p "$BASE" "$OUT"
+SIGNKEY="$BASE/cluster-signing-key.bin"   # shared, OUTSIDE every node data dir (D-1-safe)
+
+api() { echo "127.0.0.1:$((API_BASE + $1))"; }
+nvme_dev() { df --output=source /mnt/nvme | tail -1 | xargs basename; }
+
+launch_cluster() {
+  echo "[s75] launching 3-node cluster ($GCFLAGS $HEAP) under $BASE (NVMe=$(nvme_dev))"
+  for k in 1 2 3; do
+    peers=$(echo "1 2 3" | tr ' ' '\n' | grep -v "^$k$" | paste -sd,)
+    dd="$BASE/n$k"; mkdir -p "$dd"
+    java $GCFLAGS $HEAP --enable-preview -jar "$JAR" \
+      --node-id "$k" --data-dir "$dd" --peers "$peers" \
+      --signing-key-file "$SIGNKEY" \
+      --bind-address 127.0.0.1 --bind-port $((RAFT_BASE + k)) \
+      --api-port $((API_BASE + k)) --peer-addresses "$PEERS_ADDR" \
+      > "$BASE/n$k.log" 2>&1 &
+    PIDS+=("$!")
+  done
+  local ready=0
+  for i in $(seq 1 60); do
+    local ok=0
+    for k in 1 2 3; do
+      code=$(curl -s -o /dev/null -w "%{http_code}" --max-time 1 "http://$(api $k)/health/ready" 2>/dev/null)
+      [ "$code" = "200" ] && ok=$((ok + 1))
+    done
+    [ "$ok" -eq 3 ] && { ready=1; break; }
+    sleep 0.5
+  done
+  [ "$ready" -eq 1 ] || { tail -20 "$BASE"/n*.log; fail "cluster not ready"; }
+  echo "[s75] all 3 nodes ready (pids: ${PIDS[*]})"
+}
+
+resolve_leader() {
+  for _try in $(seq 1 40); do
+    for k in 1 2 3; do
+      code=$(curl -s -o /dev/null -w "%{http_code}" --max-time 8 -X PUT -d probe \
+             "http://$(api $k)/v1/config/__s75_probe__" 2>/dev/null)
+      [ "$code" = "200" ] && { echo "$k"; return 0; }
+    done
+    sleep 0.5
+  done
+  return 1
+}
+
+# §13.9 / §6.2 runtime assertion: the actual WAL file must resolve under /mnt/nvme.
+assert_data_on_nvme() {
+  local wal; wal=$(find "$BASE" -name "*.wal" 2>/dev/null | head -1)
+  [ -n "$wal" ] || fail "no .wal file found under $BASE — cannot confirm data-on-NVMe"
+  local real; real=$(readlink -f "$wal")
+  case "$real" in
+    /mnt/nvme/*) echo "[s75] DATA-ON-NVMe CONFIRMED: WAL=$real (device $(df --output=source "$real" | tail -1))" | tee "$OUT/data-on-nvme.txt" ;;
+    *) fail "WAL resolves OFF /mnt/nvme: $real (charter §13.9 violation)" ;;
+  esac
+}
+
+# Start CPU + device-IO samplers for the next phase; stop with stop_samplers.
+start_samplers() {
+  local tag="$1"; local pidcsv; pidcsv=$(IFS=,; echo "${PIDS[*]}")
+  pidstat -h -u -p "$pidcsv" 1 > "$OUT/$tag.pidstat.txt" 2>/dev/null & SAMPLERS+=("$!")
+  iostat -x -d "$(nvme_dev)" 1 > "$OUT/$tag.iostat.txt" 2>/dev/null & SAMPLERS+=("$!")
+  mpstat -P ALL 1 > "$OUT/$tag.mpstat.txt" 2>/dev/null & SAMPLERS+=("$!")
+}
+stop_samplers() { for pid in "${SAMPLERS[@]:-}"; do kill "$pid" 2>/dev/null; done; SAMPLERS=(); }
+
+driver() { java $GCFLAGS -Xmx4g --enable-preview -cp "$BENCH" io.configd.bench.OpenLoopWriteDriver "$@" 2>&1 | grep -v "WARNING\|Unsafe\|sun.misc"; }
+
+run_phases() {
+  local L; L=$(resolve_leader) || fail "no leader"
+  assert_data_on_nvme
+  local NODEMAP="1=http://$(api 1),2=http://$(api 2),3=http://$(api 3)"
+  echo "[s75] initial leader = node $L; nodeMap=$NODEMAP"
+
+  if [ "$MODE" = "calibrate" ] || [ "$MODE" = "all" ]; then
+    echo "[s75] F4 calibration (closed-loop max sustainable commit rate)"
+    start_samplers calibrate
+    driver calibrate "$NODEMAP" 20 64 | tee "$OUT/s75-calibrate.txt"
+    stop_samplers
+  fi
+  if [ "$MODE" = "phase2" ] || [ "$MODE" = "all" ]; then
+    echo "[s75] Phase 2: low-rate unloaded commit latency (200/s, 30s) — local_commit_component"
+    start_samplers phase2
+    driver atrate "$NODEMAP" 200 30 64 256 | tee "$OUT/s75-phase2-lowrate.txt"
+    stop_samplers
+  fi
+  if [ "$MODE" = "phase3" ] || [ "$MODE" = "all" ]; then
+    echo "[s75] Phase 3: ${RATE3}/s sustained, ${DUR3}s (THE headline)"
+    start_samplers phase3
+    driver atrate "$NODEMAP" "$RATE3" "$DUR3" 256 512 | tee "$OUT/s75-phase3-${RATE3}.txt"
+    stop_samplers
+    curl -s --max-time 3 "http://$(api "$L")/metrics" 2>/dev/null > "$OUT/s75-phase3-metrics.txt"
+  fi
+  if [ "$MODE" = "phase4" ] || [ "$MODE" = "all" ]; then
+    echo "[s75] Phase 4: ${RATE4}/s burst, ${DUR4}s (saturation/shed)"
+    start_samplers phase4
+    driver atrate "$NODEMAP" "$RATE4" "$DUR4" 512 512 | tee "$OUT/s75-phase4-${RATE4}.txt"
+    stop_samplers
+    curl -s --max-time 3 "http://$(api "$L")/metrics" 2>/dev/null | grep -iE "pending|overload|queue|raft|apply|write|reject" | head -40 | tee "$OUT/s75-phase4-metrics.txt"
+  fi
+}
+
+launch_cluster
+run_phases
+echo "S75 DONE (mode=$MODE, base=$BASE)"
