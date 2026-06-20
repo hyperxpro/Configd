@@ -1,0 +1,40 @@
+# TYPE configd_write_commit_failed_total counter
+configd_write_commit_failed_total 1
+# TYPE configd_write_rejected_overloaded_total counter
+configd_write_rejected_overloaded_total 233930
+# TYPE configd_write_commit_total counter
+configd_write_commit_total 14187
+# TYPE configd_raft_elections_total counter
+configd_raft_elections_total 5
+# TYPE configd_raft_pending_apply_entries gauge
+configd_raft_pending_apply_entries 0
+# TYPE configd_apply_seconds histogram
+configd_apply_seconds_bucket{le="0.005"} 4096
+configd_apply_seconds_bucket{le="0.010"} 4096
+configd_apply_seconds_bucket{le="0.025"} 4096
+configd_apply_seconds_bucket{le="0.050"} 4096
+configd_apply_seconds_bucket{le="0.100"} 4096
+configd_apply_seconds_bucket{le="0.150"} 4096
+configd_apply_seconds_bucket{le="0.250"} 4096
+configd_apply_seconds_bucket{le="0.500"} 4096
+configd_apply_seconds_bucket{le="1.000"} 4096
+configd_apply_seconds_bucket{le="2.500"} 4096
+configd_apply_seconds_bucket{le="5.000"} 4096
+configd_apply_seconds_bucket{le="10.000"} 4096
+configd_apply_seconds_bucket{le="+Inf"} 14222
+configd_apply_seconds_count 14222
+# TYPE configd_write_commit_seconds histogram
+configd_write_commit_seconds_bucket{le="0.005"} 0
+configd_write_commit_seconds_bucket{le="0.010"} 0
+configd_write_commit_seconds_bucket{le="0.025"} 2310
+configd_write_commit_seconds_bucket{le="0.050"} 4068
+configd_write_commit_seconds_bucket{le="0.100"} 4096
+configd_write_commit_seconds_bucket{le="0.150"} 4096
+configd_write_commit_seconds_bucket{le="0.250"} 4096
+configd_write_commit_seconds_bucket{le="0.500"} 4096
+configd_write_commit_seconds_bucket{le="1.000"} 4096
+configd_write_commit_seconds_bucket{le="2.500"} 4096
+configd_write_commit_seconds_bucket{le="5.000"} 4096
+configd_write_commit_seconds_bucket{le="10.000"} 4096
+configd_write_commit_seconds_bucket{le="+Inf"} 14187
+configd_write_commit_seconds_count 14187

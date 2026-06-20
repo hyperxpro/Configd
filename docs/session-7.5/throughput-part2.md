@@ -175,6 +175,28 @@ default value should be tuned on dedicated hosts (a low bound that's ideal here 
 faster cluster; cf. M-9). Recommended next: enable-by-default with a dedicated-host-tuned (or adaptive)
 bound, and round out the full §11 ladder (recovery, the other shed paths) on top of this stable base.
 
+## H. Burst 100k/s + §11 ladder (M-10) — VERIFIED: graceful shed, not collapse
+
+phase4 burst, 100k/s offered for 25 s, group commit ON + admission control (=16),
+`captures/throughput/part2/burst/`:
+
+| metric | PART 1 burst (no admission) | **S7.5 burst (admission=16)** |
+|---|---|---|
+| achieved commit/s | 347 | **565** |
+| dominant shed | mixed `429`/`503` churn | **680,315× `429 Overloaded`** |
+| `503 NotLeader` | 72,978 (PART 1 phase4) | **1,297** |
+| elections (stability) | churn | **5** |
+
+**The §11 backpressure ladder fires correctly at real burst load (M-10 VERIFIED-at-scale):** offered
+100k/s, the cluster commits ~565/s and sheds the rest as **`429 Overloaded` + `Retry-After: 1`**
+(`configd_write_rejected_overloaded_total` = 233,930 server-side; the driver also self-backpressures),
+with the proposal backlog bounded by the admission cap. The leader stays available (5 elections, no
+churn-collapse) — the documented shed order + client signals fire, queues are bounded, and the node
+degrades gracefully under 100× its sustainable rate instead of inverting. This is the overload-ladder
+measurement S5 could not reach (the box collapsed leadership before the bound; RR-110/M-10). Recovery:
+the cluster survived the burst without collapse (5 elections); a dedicated post-burst low-rate
+recovery-to-CURRENT confirmation is a quick follow-up.
+
 ## Method rails
 CO-corrected (intended-time) HdrHistogram on the driver; box spec + fsync baseline recorded once
 (`run-log.md`); per-phase iostat/mpstat/pidstat captured; before/after on THIS box via

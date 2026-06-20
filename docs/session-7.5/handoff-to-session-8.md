@@ -64,9 +64,10 @@ Chain of evidence (all on this box, all pushed):
    Retry-After (zero 503). Kept opt-in (default off) — the optimal bound is co-location-confounded;
    REMAINING: enable-by-default with a dedicated-host-tuned/adaptive bound, and the replication-
    coalescing lever (broadcast per tick) to push the knee higher.
-2. **Burst 100k/s characterization + the full §11 overload ladder** at real load (shed order, 429 +
-   Retry-After, queue bounds, recovery) — PART 1 saw the 429 path fire (7,760×) but churn dominated;
-   re-do after the admission-control fix.
+2. **Burst 100k/s + §11 ladder — DONE (M-10 VERIFIED)** with admission control (`throughput-part2.md §H`):
+   100k/s offered → 565/s committed, 680k× `429 Overloaded`+Retry-After graceful shed, only 1,297× 503,
+   5 elections (no collapse). The documented shed order/signals/queue-bounds fire at real burst load.
+   REMAINING: a dedicated post-burst recovery-to-CURRENT confirmation (quick).
 3. **Latency §9:** write-commit three-number split DONE (`latency-wan-split.md`: local 5.51 ms +
    WAN 68 ms = **modeled ≈ 73.5 ms < 150 ms target, PENDING multi-box**). REMAINING: the propagation/
    staleness M-2 split needs the S5 edge-probe re-run at scale (single-host-provable, not yet done).
