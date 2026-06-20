@@ -70,7 +70,11 @@ Chain of evidence (all on this box, all pushed):
 3. **Latency §9:** write-commit three-number split DONE (`latency-wan-split.md`: local 5.51 ms +
    WAN 68 ms = **modeled ≈ 73.5 ms < 150 ms target, PENDING multi-box**). REMAINING: the propagation/
    staleness M-2 split needs the S5 edge-probe re-run at scale (single-host-provable, not yet done).
-4. **Scale §8:** large key-count read p99 + memory; 10⁹ extrapolation; ZGC at large live set; soak.
+4. **Scale §8 — read-path + GC DONE** (`scale-read-gc.md`): read stays sub-µs at 100M keys (getHit
+   483 ns, getMiss 12 ns), ~0–32 B/op constant in size, ZGC a non-event for reads (6 alloc-stalls
+   were a 100M bulk-LOAD artifact, not steady-state). Memory ~170 B/key → 100M ≈ 17 GB; **10⁹ ≈ 170 GB
+   exceeds this box → M-5 (large-memory host)**; read-latency-at-10⁹ extrapolated sub-µs (labeled).
+   REMAINING: the soak (§8, last).
 5. **Slowloris (F-S7-FUZZ-1) + S7 residuals** (leaf-anchor expiry, edge /metrics, active replay,
    per-principal rate limiting) + **synthetic N↔N+1 upgrade** — all logic, NOT started.
 6. **Threshold promotion §11** — needs the real-load conditions (post-fix).
