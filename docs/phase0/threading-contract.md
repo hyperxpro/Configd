@@ -326,9 +326,20 @@ an **M** boundary the harness must prove never leaks an inline `RaftNode` touch.
   alternative tears) + `RaftMonitorViewConcurrencyTest` (macro: coherent/monotonic/non-null/non-block
   under concurrent publish; the five accessors trip off-owner while `monitorView()`/S-set stay safe).
   Design: `docs/phase0-B/h3-monitor-view-design.md`.
-- **H-4 — co-tenant tick work** (watch / plumtree / propagation / compactor). Biggest one: when
-  Raft tick fans out, these lose their implicit thread. They need an explicit home and an O/M/S
-  re-classification against *their own* owner. The naive "owner-executor pool" design omits this.
+- **H-4 — co-tenant rehoming.** Two distinct concerns travel under this label:
+  - *(a) co-tenant tick work* (watch / plumtree / propagation / compactor): when Raft tick fans out,
+    these lose their implicit thread. **Resolved at M1 (D-015):** they hold no `RaftNode` reference
+    (verified — `configd-distribution-service`/`observability` don't even depend on
+    `configd-consensus-core`), so they ride owner[0] as singleton housekeeping; a dedicated
+    housekeeping executor is a cleanliness option, not a correctness requirement (deferred).
+  - *(b) group rehoming* — a group MOVING between owner threads (the Stage-2 brief's H-4; the analogue
+    of H-3): a cross-thread handoff of unsynchronised state with a double-ownership / lost-message /
+    torn-state hazard. **MECHANISM built at M2a (D-017), additive + dormant in production:** quiesce→
+    publish→adopt (`MultiRaftDriver.rehomeGroup`), re-bindable `ownerThread` via the HANDOFF sentinel,
+    check-and-bounce; the net catches the rehoming-race (re-proven non-vacuous). **H-4 NOT yet CLOSED:**
+    M2b must add the jcstress JMM no-double-ownership proof + the S2–S4 surface re-run WITH rehoming
+    injected (and the deferred `flushDurable`/quiesce + FlushScheduler-retarget + `abortHandoff`). Design:
+    `docs/phase0-B-stage2/m2-rehoming-handoff-design.md`; net-catch: `captures/m2-rehoming-net-catch.md`.
 - **H-5 — `groups` map** concurrent iteration vs. add/remove (§4.3).
 - **H-6 — bind timing.** Construction touches state on `main`; binding must happen on the owner
   executor's first task, never during the constructor.
