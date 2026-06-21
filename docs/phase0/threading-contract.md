@@ -249,6 +249,20 @@ gate config) with heartbeat/flush coalescing layered on.
 > FIRST task submitted to owner[0] (H-6). At N=1 this is exact R-01 cadence/FIFO; the per-owner
 > fan-out generalizes and the co-tenant riders (still on owner[0]) decompose to a housekeeping thread
 > at **Stage 2 (N>1)**.
+>
+> **As-built — Stage 2 M1 (per-owner tick generalization, `a3c5b7f`+`2666f01`):** the tick loop is now
+> `for i in [0,N): ownerByIndex(i).scheduleAtFixedRate(() -> { tickOwner(i); if(i==0){H-3 scrape};
+> maybeCompactOwner(i); if(i==0){riders + ~10s snapshot-compact} })`. Each owner[i] drives only its own
+> groups (`floorMod(gid,N)==i`), so `assertOwnerThread()` holds per group and a cross-group access trips
+> the **per-node** net — proven by `OwnerIsolationMultiOwnerTest` (N=3: clean run zero-fire + commitIndex
+> GROWTH on a group bound to every owner; group B's entry points on group A's REAL owner thread trip;
+> control shows on-owner access stays silent). The N=1 operation order is order-exact to Stage-1B.
+> **Revision of the earlier "decompose riders to a housekeeping thread" plan:** the co-tenant riders
+> (watch/plumtree/propagation/compactor) + the H-3 scrape STAY on owner[0] as singleton work — recon
+> (D-013) and the M1 red-team confirm they hold no `RaftNode` reference (`configd-distribution-service`/
+> `observability` don't even depend on `configd-consensus-core`), so owner[0] is a safe single home; a
+> dedicated housekeeping executor is a cleanliness option, not a correctness requirement (deferred).
+> Production stays single-group; the N>1 multi-group surface is test-only until Phase-1 sharding.
 
 ### 4.3 `groups` map safety
 
@@ -353,7 +367,10 @@ an **M** boundary the harness must prove never leaks an inline `RaftNode` touch.
 - [x] S2–S4 invariant surface re-runs green under the new threading **at N=1**: 2052-seed sim sweep +
       consistency/failover + `OwnerThreadSimIntegrationTest` (0 fail, 0 unintended `raft_owner_thread`),
       server suite 165/0, and the net RE-PROVEN to catch off-owner inbound under the pool
-      (`OwnerNetCatchesOffOwnerInboundTest`). The **multi-owner (N>1)** surface is Stage 2.
+      (`OwnerNetCatchesOffOwnerInboundTest`). **Stage 2 M1 (`a3c5b7f`+`2666f01`):** the **multi-owner
+      (N>1)** owner-isolation surface is now CLOSED — per-owner ticking generalized; the net re-proven
+      non-vacuous for the CROSS-GROUP class at N=3 (`OwnerIsolationMultiOwnerTest`); S2–S4 sim subset
+      174/0 + server 165/0 green. H-4 rehoming (M2) + coalesced heartbeats (M3) remain.
 
 **Workstream A (the verification net) is CLOSED.** The remaining unchecked boxes are Workstream B
 (the re-threading the net now guards).
