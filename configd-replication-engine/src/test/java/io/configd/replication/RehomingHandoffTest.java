@@ -251,6 +251,64 @@ class RehomingHandoffTest {
         assertTrue(pool.awaitTermination(10, TimeUnit.SECONDS));
     }
 
+    @Test
+    @Timeout(30)
+    void missedHopOnNeverRehomedGroup_stillFiresNet_withPoolSet() throws Exception {
+        OwnerExecutorPool pool = new OwnerExecutorPool(2);
+        CountingThrowingChecker checker = new CountingThrowingChecker();
+        MultiRaftDriver driver = new MultiRaftDriver(LOCAL, Clock.system());
+        driver.setOwnerPool(pool);                        // pool SET — the production wiring
+        RaftNode g = buildLeaderBoundTo(pool, 0, checker); // bound to owner0, NEVER rehomed
+        driver.addGroup(0, g);
+
+        // Red-team Defect 1 regression: a MISSED marshalling hop — routeMessage called DIRECTLY on a
+        // foreign (non-owner) thread, WITHOUT ownerExecutor(g).execute(...) — must STILL trip the net
+        // even though the owner pool is set. A never-rehomed group (every production group) must NOT
+        // auto-bounce, which would silently mask the missed hop. This is the §6.2 "test the tester"
+        // guarantee under the M2a check-and-bounce, and is the case the prior test left uncovered (its
+        // driver had no owner pool, so the bounce short-circuit never engaged).
+        java.util.concurrent.ExecutorService foreign = java.util.concurrent.Executors
+                .newSingleThreadExecutor(r -> new Thread(r, "foreign-missed-hop"));
+        try {
+            ExecutionException ee = assertThrows(ExecutionException.class,
+                    () -> foreign.submit(() -> driver.routeMessage(0,
+                            new RequestVoteRequest(0L, PHANTOM, 0L, 0L, true))).get(5, TimeUnit.SECONDS),
+                    "a missed hop on a never-rehomed group must trip the net even with the pool set");
+            assertOwnerThreadCause(ee);
+            assertTrue(checker.ownerFires.get() >= 1, "the net must have fired on the missed hop");
+        } finally {
+            foreign.shutdownNow();
+        }
+        pool.shutdown();
+        assertTrue(pool.awaitTermination(10, TimeUnit.SECONDS));
+    }
+
+    @Test
+    @Timeout(30)
+    void removeGroup_clearsRehomingState() throws Exception {
+        OwnerExecutorPool pool = new OwnerExecutorPool(2);
+        CountingThrowingChecker checker = new CountingThrowingChecker();
+        MultiRaftDriver driver = new MultiRaftDriver(LOCAL, Clock.system());
+        driver.setOwnerPool(pool);
+        RaftNode g = buildLeaderBoundTo(pool, 0, checker);
+        driver.addGroup(0, g);
+        driver.rehomeGroup(0, 1);
+        assertEquals(1, driver.currentOwnerIndex(0), "precondition: rehomed to owner1");
+
+        driver.removeGroup(0);
+        // Red-team Defect 2: a fresh group re-using the same id must start on its STATIC floorMod owner
+        // (0), not the leaked override (1). buildLeaderBoundTo binds the fresh node to floorMod owner0;
+        // if removeGroup leaked the override, currentOwnerIndex(0) would be 1 and the fresh node would be
+        // ticked off-owner.
+        RaftNode fresh = buildLeaderBoundTo(pool, 0, checker);
+        driver.addGroup(0, fresh);
+        assertEquals(0, driver.currentOwnerIndex(0),
+                "removeGroup must clear the groupOwner override so re-add starts on floorMod owner0");
+
+        pool.shutdown();
+        assertTrue(pool.awaitTermination(10, TimeUnit.SECONDS));
+    }
+
     private static void assertOwnerThreadCause(ExecutionException ee) {
         Throwable cause = ee.getCause();
         assertNotNull(cause, "expected the tripwire AssertionError as the cause");

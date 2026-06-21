@@ -112,6 +112,11 @@ public final class MultiRaftDriver {
         if (groups.remove(groupId) == null) {
             throw new IllegalArgumentException("Group not registered: " + groupId);
         }
+        // Stage 2 M2 (H-5): also drop any rehoming state so a later addGroup of the same id starts
+        // clean on the static floorMod owner — otherwise a stale groupOwner override / migrating mark
+        // would route the fresh node to the wrong owner (red-team Defect 2).
+        groupOwner.remove(groupId);
+        migrating.remove(groupId);
     }
 
     // ========================================================================
@@ -264,6 +269,10 @@ public final class MultiRaftDriver {
         if (p == null) {
             throw new IllegalStateException("owner pool not set — setOwnerPool() must run at wiring");
         }
+        if (targetOwnerIndex < 0 || targetOwnerIndex >= p.size()) {
+            throw new IllegalArgumentException("targetOwnerIndex " + targetOwnerIndex
+                    + " out of range [0," + p.size() + ") — pool has " + p.size() + " owner(s)");
+        }
         RaftNode node = groups.get(groupId);
         if (node == null) {
             throw new IllegalArgumentException("Group not registered: " + groupId);
@@ -314,12 +323,19 @@ public final class MultiRaftDriver {
             return; // absent group → drop (stale message for a removed/unknown group), as before
         }
         // Stage 2 M2 check-and-bounce: only the group's CURRENT owner touches the node. If the group is
-        // mid-handoff, or this thread is not its owner (stale routing after a rehome), RE-DISPATCH to the
-        // current owner instead of running handleMessage off-owner — no message lost (re-queued), none
-        // misrouted (only the owner touches the node), no spurious net fire. Inert at N=1 / no-rehome:
-        // the single owner is never migrating and boundToAnotherThread() is false on it, so this falls
-        // straight through to handleMessage exactly as before.
-        if (ownerPool != null && (migrating.contains(groupId) || node.boundToAnotherThread())) {
+        // mid-handoff, or it has been REHOMED and this thread is not its current owner (stale routing),
+        // RE-DISPATCH to the current owner instead of running handleMessage off-owner — no message lost
+        // (re-queued), none misrouted (only the owner touches the node).
+        //
+        // The bounce is gated on the group being REHOME-AFFECTED (migrating, or carrying a dynamic
+        // groupOwner override). A NEVER-REHOMED group — which is EVERY group in production (single-group,
+        // dormant rehoming) — never bounces, so a missed marshalling hop still runs handleMessage
+        // off-owner and the net FIRES (threading-contract §6.2 "test the tester" preserved; a bounce
+        // here would silently auto-correct a missed hop and mask the bug — red-team Defect 1). At N=1 /
+        // no-rehome this is identical to M1.
+        if (ownerPool != null
+                && (migrating.contains(groupId)
+                        || (groupOwner.containsKey(groupId) && node.boundToAnotherThread()))) {
             ownerExecutor(groupId).execute(() -> routeMessage(groupId, message));
             return;
         }
@@ -345,10 +361,15 @@ public final class MultiRaftDriver {
             return ProposeOutcome.rejected(ProposalResult.NOT_LEADER);
         }
         // Stage 2 M2: a propose returns its (index,term) synchronously (H-1), so it cannot be silently
-        // re-queued like routeMessage. If the group is mid-handoff or this thread is not its current
-        // owner (stale routing after a rehome), reject as NOT_LEADER — the caller's existing retry
-        // re-marshals onto the current owner. Inert at N=1 / no-rehome (single owner, never migrating).
-        if (ownerPool != null && (migrating.contains(groupId) || node.boundToAnotherThread())) {
+        // re-queued like routeMessage. If the group is mid-handoff or has been rehomed away from this
+        // thread, reject as NOT_LEADER — the external client retries (via the leader hint) and the retry
+        // re-marshals onto the current owner (there is no internal re-marshal; the wired proposer captures
+        // ownerExecutor(gid) once at wiring). Gated on rehome-affected (same as routeMessage) so a missed
+        // hop on a NEVER-rehomed group still reaches node.propose() off-owner and FIRES the net (§6.2).
+        // Inert at N=1 / no-rehome.
+        if (ownerPool != null
+                && (migrating.contains(groupId)
+                        || (groupOwner.containsKey(groupId) && node.boundToAnotherThread()))) {
             return ProposeOutcome.rejected(ProposalResult.NOT_LEADER);
         }
         return node.propose(command);
