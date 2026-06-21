@@ -808,62 +808,81 @@ public final class ConfigdServer {
         // the positive delta each tick (a term bump == an election / leadership change). Read from
         // the owner-published monitor snapshot (H-3), so it is safe off the group's owner thread.
         final long[] lastSeenTerm = {0L};
-        // Phase 0 B Stage 1B: schedule the consensus tick on owner[0] — the N=1 owner — instead of
-        // the deleted single `configd-tick` executor. tickOwner(0)/maybeCompactOwner(0,...) iterate
-        // exactly the groups bound to owner[0], so each node.tick()/maybeCompact() runs ON its group's
-        // owner thread (assertOwnerThread() holds — it is now ACTIVE in production after the H-6 bind).
-        // At N=1 a single owner ticks every group == the old R-01 driver.tick() loop, same cadence/FIFO.
-        // The H-3 scrape + the co-tenant riders (propagation/watch/plumtree/compactor) stay HERE in the
-        // lambda, riding owner[0] exactly as they rode the `configd-tick` thread under R-01 — they do
-        // NOT touch RaftNode state (verified, threading-contract §5 H-4). Decomposing them to a
-        // dedicated housekeeping thread is Stage 2; behavioural equivalence at N=1 is the goal here.
-        ownerPool.ownerByIndex(0).scheduleAtFixedRate(() -> {
-            try {
-                driver.tickOwner(0);
-                // S6/WS-A + H-3: publish the apply backlog (committed-not-applied) for the
-                // raft_pending_apply_entries gauge and advance the election counter. Both read the
-                // owner-published monitor snapshot (monitorView()) — NOT the live node. At N=1 this
-                // lambda runs ON owner[0] (the group's owner), so a direct read would be on-owner and
-                // legal; reading monitorView() is preserved unchanged (H-3 — it is the safe cross-owner
-                // read at N>1, when a group's owner is a different thread than owner[0]). monitorView()
-                // is one volatile load of an immutable, coherent snapshot (<= one tick stale). See
-                // docs/phase0-B/h3-monitor-view-design.md.
-                io.configd.raft.RaftNode tickNode = driver.getGroup(DEFAULT_RAFT_GROUP);
-                if (tickNode != null) {
-                    io.configd.raft.RaftMetrics view = tickNode.monitorView();
-                    pendingApplyEntries.set(Math.max(0L, view.commitIndex() - view.lastApplied()));
-                    long term = view.currentTerm();
-                    if (term > lastSeenTerm[0]) {
-                        configdMetrics.raftElections().increment(term - lastSeenTerm[0]);
-                        lastSeenTerm[0] = term;
-                    }
-                }
-                // RR-005: trigger Raft-LOG compaction by applied-span threshold so the WAL is
-                // bounded (this was unreachable in the wired server). Cheap O(groups) check each
-                // tick; a group only snapshots when over the threshold, via the RR-003
-                // persist-before-truncate path (durable_prefix_no_gap preserved). Per-owner at N=1 it
-                // is the same set of groups the old driver.maybeCompact(...) iterated.
-                driver.maybeCompactOwner(0, RAFT_LOG_COMPACTION_THRESHOLD);
-                propagationMonitor.checkAll();
-                watchService.tick();
-                plumtreeNode.tick();
+        // Phase 0 B Stage 2 (M1) — PER-OWNER tick generalization. Schedule a consensus tick on EVERY
+        // owner thread: owner[i] runs driver.tickOwner(i)/maybeCompactOwner(i,...), which iterate
+        // exactly the groups bound to owner[i] (ownerExecutor(gid) = pool[floorMod(gid, N)]). So each
+        // node.tick()/maybeCompact() runs ON its group's owner thread — R-01' holds per group, and the
+        // assertOwnerThread() net (ACTIVE in production after the H-6 bind) catches any cross-group
+        // access (a group's entry point invoked on the wrong owner). At N=1 the loop runs once for
+        // owner[0] and is behaviourally EXACT to the deleted Stage-1B single-owner schedule (same
+        // cadence/FIFO/work). At N>1 in production (single group 0, owned by owner[0] since 0 % N == 0)
+        // owners 1..N-1 tick zero groups (no-op) until Phase 1 sharding fans groups across them; the
+        // multi-group owner-isolation surface is proven by OwnerIsolationMultiOwnerTest. (Workstream C
+        // measures throughput on real hardware.)
+        //
+        // The SINGLETON housekeeping — the H-3 scrape of DEFAULT_RAFT_GROUP + the co-tenant riders
+        // (propagation/watch/plumtree/compactor) — must run EXACTLY ONCE per tick, so it rides
+        // owner[0] only (the owner == 0 branch), exactly as it did under Stage 1B. The riders do NOT
+        // touch any RaftNode (threading-contract §3.7/§5 H-4 recon), so owner[0] is a safe home; the
+        // scrape uses monitorView() (S-set, safe cross-owner). tickCount[0]/lastSeenTerm[0] are mutated
+        // only in this owner[0]-only branch on owner[0]'s single thread → no cross-owner sharing.
+        for (int ownerIdx = 0; ownerIdx < ownerPool.size(); ownerIdx++) {
+            final int owner = ownerIdx;
+            ownerPool.ownerByIndex(owner).scheduleAtFixedRate(() -> {
+                try {
+                    driver.tickOwner(owner);
 
-                // Compact snapshot history every ~10 seconds
-                tickCount[0]++;
-                if (tickCount[0] % COMPACTION_INTERVAL_TICKS == 0) {
-                    compactor.compact();
+                    if (owner == 0) {
+                        // S6/WS-A + H-3: publish the apply backlog (committed-not-applied) for the
+                        // raft_pending_apply_entries gauge and advance the election counter, both from
+                        // the owner-published monitor snapshot (monitorView() — one volatile load of an
+                        // immutable, coherent, <= one-tick-stale view; safe cross-owner). DEFAULT_RAFT_-
+                        // GROUP is owned by owner[0] (0 % N == 0) so this read is on-owner here. Kept
+                        // immediately after tickOwner(0) — which republished the view it reads — to be
+                        // ORDER-EXACT to the deleted Stage-1B schedule. See h3-monitor-view-design.md.
+                        io.configd.raft.RaftNode tickNode = driver.getGroup(DEFAULT_RAFT_GROUP);
+                        if (tickNode != null) {
+                            io.configd.raft.RaftMetrics view = tickNode.monitorView();
+                            pendingApplyEntries.set(Math.max(0L, view.commitIndex() - view.lastApplied()));
+                            long term = view.currentTerm();
+                            if (term > lastSeenTerm[0]) {
+                                configdMetrics.raftElections().increment(term - lastSeenTerm[0]);
+                                lastSeenTerm[0] = term;
+                            }
+                        }
+                    }
+
+                    // RR-005: threshold-gated Raft-LOG compaction for THIS owner's groups so the WAL
+                    // stays bounded (was unreachable in the wired server). Cheap O(groups-on-owner)
+                    // check each tick; a group only snapshots when over the threshold, via the RR-003
+                    // persist-before-truncate path (durable_prefix_no_gap preserved).
+                    driver.maybeCompactOwner(owner, RAFT_LOG_COMPACTION_THRESHOLD);
+
+                    if (owner == 0) {
+                        // Co-tenant riders (singleton; do NOT touch RaftNode — H-4 recon). Ride owner[0]
+                        // exactly as under Stage 1B (after maybeCompact, order-exact at N=1).
+                        propagationMonitor.checkAll();
+                        watchService.tick();
+                        plumtreeNode.tick();
+
+                        // Compact snapshot history every ~10 seconds.
+                        tickCount[0]++;
+                        if (tickCount[0] % COMPACTION_INTERVAL_TICKS == 0) {
+                            compactor.compact();
+                        }
+                    }
+                } catch (Throwable t) {
+                    // H-009 (iter-2): ScheduledExecutorService silently cancels future executions of
+                    // THIS owner's tick on an uncaught throwable. The tick loop drives consensus
+                    // (elections, heartbeats, replication) — if an owner's tick dies, the groups it
+                    // owns become zombies. Replace printStackTrace(System.err) — invisible to log
+                    // aggregation — with a structured SEVERE record AND a Prometheus counter increment
+                    // so SREs alert on (per-owner) tick-loop instability rather than discover it
+                    // post-mortem.
+                    handleTickLoopThrowable(t, configdMetrics);
                 }
-            } catch (Throwable t) {
-                // H-009 (iter-2): ScheduledExecutorService silently cancels future
-                // executions on uncaught exceptions. The tick loop drives consensus
-                // (elections, heartbeats, replication) — if it dies, the node
-                // becomes a zombie. Replace the historical printStackTrace(System.err)
-                // — invisible to centralized log aggregation — with a structured
-                // SEVERE record AND a Prometheus counter increment so SREs can
-                // alert on tick-loop instability rather than discover it post-mortem.
-                handleTickLoopThrowable(t, configdMetrics);
-            }
-        }, TICK_PERIOD_MS, TICK_PERIOD_MS, TimeUnit.MILLISECONDS);
+            }, TICK_PERIOD_MS, TICK_PERIOD_MS, TimeUnit.MILLISECONDS);
+        }
 
         // Schedule TLS certificate hot reload when TLS is enabled.
         //

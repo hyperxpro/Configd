@@ -804,7 +804,13 @@ class ConfigdServerTest {
     // RR-005 regression: the tick loop must trigger Raft-LOG compaction, else
     // compaction is unreachable in the wired server and the WAL grows forever.
     // Source-level guard (the find0050 pattern): a future refactor that drops the
-    // driver.maybeCompact(...) call is caught at CI time without a multi-hour soak.
+    // driver.maybeCompactOwner(...) call is caught at CI time without a multi-hour soak.
+    //
+    // Phase 0 B Stage 2 (M1): the call is now the PER-OWNER form driver.maybeCompactOwner(owner, ...)
+    // scheduled on each owner thread (Stage 1B already replaced the legacy driver.maybeCompact() with
+    // maybeCompactOwner(0, ...)). This anchor is re-pointed at the REAL call signature — the previous
+    // "driver.maybeCompact(" anchor was being satisfied by an incidental comment, not the wiring, so
+    // it was partly vacuous; matching "driver.maybeCompactOwner(owner," asserts the actual code call.
     // ========================================================================
 
     @Test
@@ -817,11 +823,12 @@ class ConfigdServerTest {
         }
         assertTrue(Files.exists(source), "ConfigdServer.java must exist at: " + source);
         String src = Files.readString(source);
-        assertTrue(src.contains("driver.maybeCompact("),
-                "RR-005: the tick loop must trigger Raft-log compaction via driver.maybeCompact(...). "
-                        + "Without it the only triggerSnapshot() caller is the circular "
-                        + "sendInstallSnapshot, so compaction is unreachable in the wired server and "
-                        + "the WAL grows for the life of the process (then crash-loops at the 2 GiB read cap).");
+        assertTrue(src.contains("driver.maybeCompactOwner(owner,"),
+                "RR-005: the per-owner tick loop must trigger Raft-log compaction via "
+                        + "driver.maybeCompactOwner(owner, ...). Without it the only triggerSnapshot() "
+                        + "caller is the circular sendInstallSnapshot, so compaction is unreachable in "
+                        + "the wired server and the WAL grows for the life of the process (then "
+                        + "crash-loops at the 2 GiB read cap).");
     }
 
     private static void runKeytool(String... command) throws Exception {
