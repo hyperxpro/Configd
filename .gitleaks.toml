@@ -35,6 +35,14 @@ regexes = [
     # word "key" / "token" but are documentation, not secrets.
     '''(?i)gh attestation verify''',
     '''(?i)cosign verify''',
+    # Test fixture — NOT a credential. EdgeStrongReadFailClosedTest pins a DUMMY "secure" payload to
+    # assert the edge fail-closes (503 + X-Fail-Closed) and never serves secure VALUE bytes; gitleaks'
+    # generic-api-key rule fires on the high-entropy string assigned to a var named SECRET_VALUE.
+    # "SECRET-armed-7f3a" is a hand-written test marker at
+    # configd-edge-node/src/test/java/io/configd/edge/node/EdgeStrongReadFailClosedTest.java:50.
+    # Allowlisted by EXACT VALUE (not by path) so any OTHER secret in that file is still caught, and
+    # so the history-scan finding (commit 37cf3c63) is suppressed where an inline comment cannot reach.
+    '''SECRET-armed-7f3a''',
 ]
 
 stopwords = [
