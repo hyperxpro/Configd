@@ -240,6 +240,16 @@ fan out by submitting per-group; `routeMessage`/`propose` target the group's own
 `configd-tick` executor is decomposed; `poolSize=1` reproduces today's behavior (the N=1 decision-
 gate config) with heartbeat/flush coalescing layered on.
 
+> **As-built — Stage 1B (R-01 DELETED @ N=1, `682cbcf`; pool added in Stage 1A `4a1e3da`):**
+> `OwnerExecutorPool(Integer.getInteger("configd.raft.ownerPoolSize", 1))`; the driver exposes
+> `ownerExecutor(gid)` + per-owner `tickOwner(i)`/`maybeCompactOwner(i)` and holds `groups` as a
+> `ConcurrentHashMap` (H-5). `ConfigdServer` removed the single `configd-tick` executor: the tick loop
+> runs `driver.tickOwner(0)` on owner[0]; the four marshalling hops (inbound / propose / read
+> double-hop / flush) target `driver.ownerExecutor(DEFAULT_RAFT_GROUP)`; `bindOwnerThread()` is the
+> FIRST task submitted to owner[0] (H-6). At N=1 this is exact R-01 cadence/FIFO; the per-owner
+> fan-out generalizes and the co-tenant riders (still on owner[0]) decompose to a housekeeping thread
+> at **Stage 2 (N>1)**.
+
 ### 4.3 `groups` map safety
 
 `MultiRaftDriver.groups` (plain `HashMap`, `:41`) is read by every owner thread once tick fans
@@ -333,12 +343,17 @@ an **M** boundary the harness must prove never leaks an inline `RaftNode` touch.
       same throwing checker as the in-node invariants — **20,001 seed-sweep + adversarial schedules
       green** (no spurious fire), and `OwnerThreadSimIntegrationTest` proves an injected
       off-drive-thread access fails the seed (§5.4).
-- [ ] Owner-executor pool wired; `poolSize=1` reproduces today's single-group behavior. *(Workstream B)*
-- [ ] H-1, H-2, H-4, H-5, H-6 each resolved behind a red/green stress test. *(Workstream B — Stage 1/2)*
-      **H-3 ✅ CLOSED** — `monitorView()` published snapshot + the five accessors guarded; jcstress
-      (`PublishedSnapshotNeverTears`) + macro (`RaftMonitorViewConcurrencyTest`) proof.
-- [ ] Full S2–S4 invariant surface re-runs green under the new **multi-owner** threading. *(Workstream B;
-      the single-owner surface is already green under the active tripwire — see the sim integration above.)*
+- [x] Owner-executor pool wired; `poolSize=1` reproduces today's single-group behavior. **(Stage 1B
+      `682cbcf` — R-01 deleted @ N=1; behaviourally exact-R-01; the net is now ACTIVE in production.)**
+- [~] H-1, H-2, H-4, H-5, H-6 — resolved at N=1: **H-1** ((index,term) captured inside the marshalled
+      task — preserved), **H-2** (read double-hop retargeted to the owner), **H-5** (`groups` →
+      `ConcurrentHashMap`, Stage 1A), **H-6** (`bindOwnerThread()` first task on owner[0]). **H-4**
+      (co-tenant rehoming) DEFERRED to Stage 2 — recon shows the riders don't touch `RaftNode` so they
+      ride owner[0] safely at N=1. **H-3 ✅ CLOSED** — `monitorView()` snapshot + five accessors guarded.
+- [x] S2–S4 invariant surface re-runs green under the new threading **at N=1**: 2052-seed sim sweep +
+      consistency/failover + `OwnerThreadSimIntegrationTest` (0 fail, 0 unintended `raft_owner_thread`),
+      server suite 165/0, and the net RE-PROVEN to catch off-owner inbound under the pool
+      (`OwnerNetCatchesOffOwnerInboundTest`). The **multi-owner (N>1)** surface is Stage 2.
 
 **Workstream A (the verification net) is CLOSED.** The remaining unchecked boxes are Workstream B
 (the re-threading the net now guards).
