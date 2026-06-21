@@ -230,8 +230,17 @@ public final class RaftNode {
     // Once bound, every OWNER-ONLY entry point asserts it runs on the owner thread; a violation
     // routes through the existing invariantChecker (throws in test/sim, metric+SEVERE in prod).
     // volatile so a foreign thread reliably observes the bound owner — else a violation could be
-    // missed (a false negative). Written once, on the owner thread, at bind.
+    // missed (a false negative). Written on the owner thread at bind; RE-BOUND across a Stage-2
+    // rehoming handoff (beginHandoff -> HANDOFF sentinel on the losing owner, adoptOwnerThread ->
+    // the gaining owner). The volatile + the driver's executor barriers order A's detach before B's
+    // adopt, so there is never a window where two real threads both equal ownerThread (no
+    // double-ownership). See docs/phase0-B-stage2/m2-rehoming-handoff-design.md.
     private volatile Thread ownerThread;
+
+    // Stage 2 M2 (rehoming): the "in-handoff, owned by nobody" sentinel. A Thread object that is
+    // never started, so it equals no running thread — while ownerThread==HANDOFF, EVERY guarded
+    // entry point fires for any real caller, so the ambiguous handoff window is fully net-covered.
+    private static final Thread HANDOFF = new Thread("raft-owner-handoff-sentinel");
 
     // ---- H-3: the owner-published monitoring snapshot (Workstream B; docs/phase0-B/h3-monitor-view-design.md) ----
     // The R-01 monitoring reads (currentTerm/log/...) were safe only because the metrics scrape ran
@@ -405,6 +414,51 @@ public final class RaftNode {
      */
     public void bindOwnerThread() {
         this.ownerThread = Thread.currentThread();
+    }
+
+    /**
+     * Stage 2 M2 — rehoming handoff, step "detach". Begins a co-tenant rehoming of this group: the
+     * CURRENT owner relinquishes the group by re-pointing {@link #ownerThread} at the {@link #HANDOFF}
+     * sentinel. MUST be called on the current owner thread (asserted) — only the owner may detach. After
+     * this, the group is "owned by nobody": every guarded entry point fires for any caller until a
+     * gaining owner calls {@link #adoptOwnerThread()}. Public wiring API (the driver's {@code
+     * rehomeGroup} calls it as a task on the losing owner). See the M2 design doc.
+     */
+    public void beginHandoff() {
+        assertOwnerThread();          // only the current owner may begin the handoff
+        this.ownerThread = HANDOFF;   // owned by nobody until adopt (volatile publish)
+    }
+
+    /**
+     * Stage 2 M2 — rehoming handoff, step "adopt". The GAINING owner takes ownership by binding
+     * {@link #ownerThread} to the calling (gaining-owner) thread. MUST run on the gaining owner thread,
+     * and only on a node currently mid-handoff ({@code ownerThread==HANDOFF}, asserted — a double-adopt
+     * or an adopt of a non-migrating node is a violation). Ordered AFTER the losing owner's {@link
+     * #beginHandoff()} by the driver's executor {@code .get()} barrier, which also publishes all of the
+     * losing owner's final state to this thread (no torn state). Public wiring API.
+     */
+    public void adoptOwnerThread() {
+        if (ownerThread != HANDOFF) {
+            invariantChecker.check("raft_owner_adopt", false,
+                    "adoptOwnerThread() on a node not mid-handoff: ownerThread="
+                            + (ownerThread == null ? "null" : ownerThread.getName())
+                            + " (expected the HANDOFF sentinel) — double-adopt or wrong-state rehome");
+        }
+        this.ownerThread = Thread.currentThread();
+    }
+
+    /**
+     * Stage 2 M2 — a NON-firing query (does not route through {@code invariantChecker}) used by the
+     * driver's check-and-bounce. True iff this node is bound to an owner that is NOT the current thread
+     * — a different owner, or the {@link #HANDOFF} sentinel mid-rehome. False if UNBOUND (legacy/test
+     * wiring, net inert) or owned by the current thread — in both of those cases marshalled work may run
+     * inline here. When true, the driver re-dispatches the work to the current owner instead of touching
+     * the node off-owner (no loss, no misroute, no fire). Distinct from {@link #assertOwnerThread()},
+     * which FIRES on mismatch.
+     */
+    public boolean boundToAnotherThread() {
+        Thread o = ownerThread;
+        return o != null && o != Thread.currentThread();
     }
 
     /**

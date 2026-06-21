@@ -51,6 +51,24 @@ public final class MultiRaftDriver {
     private volatile OwnerExecutorPool ownerPool;
 
     /**
+     * Stage 2 M2 (rehoming) — the DYNAMIC group→owner-index mapping; the authority for routing and tick
+     * eligibility. Empty by default: {@link #currentOwnerIndex} falls back to the static
+     * {@code floorMod(gid, N)}. A rehoming handoff atomically re-points a group here. A
+     * {@link ConcurrentHashMap} so owner + inbound threads read it while {@link #rehomeGroup} writes it.
+     * DORMANT in production (single-group is never rehomed); exercised by tests + a future Phase-1
+     * placement policy. See docs/phase0-B-stage2/m2-rehoming-handoff-design.md.
+     */
+    private final Map<Integer, Integer> groupOwner = new ConcurrentHashMap<>();
+
+    /**
+     * Stage 2 M2 (rehoming) — groups currently mid-handoff. While a group is here, {@link #tickOwner}/
+     * {@link #maybeCompactOwner} skip it and marshalled work re-dispatches (check-and-bounce), so no
+     * entry point runs on an ambiguous owner during the handoff window. Cleared once the gaining owner
+     * has adopted.
+     */
+    private final Set<Integer> migrating = ConcurrentHashMap.newKeySet();
+
+    /**
      * Creates a new MultiRaftDriver.
      *
      * @param localNode the identifier of this node in the cluster
@@ -159,7 +177,23 @@ public final class MultiRaftDriver {
         if (p == null) {
             throw new IllegalStateException("owner pool not set — setOwnerPool() must run at wiring");
         }
-        return p.ownerExecutor(groupId);
+        return p.ownerByIndex(currentOwnerIndex(groupId));
+    }
+
+    /**
+     * Stage 2 M2 — the CURRENT owner index for a group: the rehoming override if one exists, else the
+     * static {@code floorMod(gid, N)} default. The single source of truth for routing + tick eligibility.
+     * At N=1 / no-rehome there is no override, so this is exactly the M1 static mapping.
+     *
+     * @throws IllegalStateException if the owner pool has not been set
+     */
+    public int currentOwnerIndex(int groupId) {
+        OwnerExecutorPool p = ownerPool;
+        if (p == null) {
+            throw new IllegalStateException("owner pool not set — setOwnerPool() must run at wiring");
+        }
+        Integer override = groupOwner.get(groupId);
+        return override != null ? override : p.ownerIndexOf(groupId);
     }
 
     /**
@@ -174,7 +208,11 @@ public final class MultiRaftDriver {
             throw new IllegalStateException("owner pool not set — setOwnerPool() must run at wiring");
         }
         for (Map.Entry<Integer, RaftNode> e : groups.entrySet()) {
-            if (p.ownerIndexOf(e.getKey()) == ownerIndex) {
+            int g = e.getKey();
+            // Stage 2 M2: tick only the groups this owner CURRENTLY owns (rehoming-aware) and that are
+            // NOT mid-handoff (a migrating group is owned by nobody until adopt — skipping it keeps the
+            // ambiguous window tick-free). At N=1/no-rehome this is exactly p.ownerIndexOf(g)==ownerIndex.
+            if (currentOwnerIndex(g) == ownerIndex && !migrating.contains(g)) {
                 e.getValue().tick();
             }
         }
@@ -191,9 +229,71 @@ public final class MultiRaftDriver {
             throw new IllegalStateException("owner pool not set — setOwnerPool() must run at wiring");
         }
         for (Map.Entry<Integer, RaftNode> e : groups.entrySet()) {
-            if (p.ownerIndexOf(e.getKey()) == ownerIndex) {
+            int g = e.getKey();
+            // Stage 2 M2: same rehoming-aware + not-migrating filter as tickOwner.
+            if (currentOwnerIndex(g) == ownerIndex && !migrating.contains(g)) {
                 e.getValue().maybeCompact(appliedSinceSnapshotThreshold);
             }
+        }
+    }
+
+    /**
+     * Stage 2 M2 — rehome {@code groupId} from its current owner to {@code targetOwnerIndex} via the
+     * quiesce→publish→adopt handoff (docs/phase0-B-stage2/m2-rehoming-handoff-design.md). DORMANT in
+     * production (single-group is never rehomed); exercised by tests + a future Phase-1 placement policy.
+     *
+     * <p>Ordering — the executor {@code .get()} barriers give happens-before, so there is no torn state
+     * and no double-ownership window:
+     * <ol>
+     *   <li>mark the group migrating (tick + marshalled work now skip / bounce it);</li>
+     *   <li>on the LOSING owner's thread, in order: PUBLISH the routing flip ({@code groupOwner→target})
+     *       then DETACH ({@code node.beginHandoff()} → the HANDOFF sentinel);</li>
+     *   <li>on the GAINING owner's thread: ADOPT ({@code node.adoptOwnerThread()}), ordered after the
+     *       detach by the barrier — which also publishes all of the losing owner's final state here;</li>
+     *   <li>clear migrating (the gaining owner now ticks + serves the group).</li>
+     * </ol>
+     * If a step fails the group is left loudly broken (owned by the HANDOFF sentinel → every access
+     * fires) rather than silently corrupted; {@code migrating} is always cleared.
+     *
+     * @throws IllegalStateException    if the owner pool is not set, or a handoff step fails on an owner
+     * @throws IllegalArgumentException if the group is unknown or already on the target owner
+     * @throws InterruptedException     if interrupted while awaiting an owner-executor step
+     */
+    public void rehomeGroup(int groupId, int targetOwnerIndex) throws InterruptedException {
+        OwnerExecutorPool p = ownerPool;
+        if (p == null) {
+            throw new IllegalStateException("owner pool not set — setOwnerPool() must run at wiring");
+        }
+        RaftNode node = groups.get(groupId);
+        if (node == null) {
+            throw new IllegalArgumentException("Group not registered: " + groupId);
+        }
+        int from = currentOwnerIndex(groupId);
+        if (from == targetOwnerIndex) {
+            throw new IllegalArgumentException(
+                    "Group " + groupId + " is already owned by owner " + targetOwnerIndex);
+        }
+        migrating.add(groupId);
+        try {
+            // QUIESCE + PUBLISH + DETACH on the LOSING owner (serialized with its work for this group).
+            runOnOwnerAwait(p.ownerByIndex(from), () -> {
+                groupOwner.put(groupId, targetOwnerIndex); // PUBLISH the routing flip (on the losing owner)
+                node.beginHandoff();                        // DETACH: ownerThread → HANDOFF sentinel
+            });
+            // ADOPT on the GAINING owner (ordered after the detach by the await barrier above).
+            runOnOwnerAwait(p.ownerByIndex(targetOwnerIndex), node::adoptOwnerThread);
+        } finally {
+            migrating.remove(groupId); // reopen the group for ticking + marshalled work on the new owner
+        }
+    }
+
+    /** Runs {@code task} on {@code owner} and blocks until it completes, surfacing any failure. */
+    private static void runOnOwnerAwait(ScheduledExecutorService owner, Runnable task)
+            throws InterruptedException {
+        try {
+            owner.submit(task).get();
+        } catch (java.util.concurrent.ExecutionException e) {
+            throw new IllegalStateException("rehoming handoff step failed on an owner executor", e.getCause());
         }
     }
 
@@ -210,9 +310,20 @@ public final class MultiRaftDriver {
      */
     public void routeMessage(int groupId, RaftMessage message) {
         RaftNode node = groups.get(groupId);
-        if (node != null) {
-            node.handleMessage(message);
+        if (node == null) {
+            return; // absent group → drop (stale message for a removed/unknown group), as before
         }
+        // Stage 2 M2 check-and-bounce: only the group's CURRENT owner touches the node. If the group is
+        // mid-handoff, or this thread is not its owner (stale routing after a rehome), RE-DISPATCH to the
+        // current owner instead of running handleMessage off-owner — no message lost (re-queued), none
+        // misrouted (only the owner touches the node), no spurious net fire. Inert at N=1 / no-rehome:
+        // the single owner is never migrating and boundToAnotherThread() is false on it, so this falls
+        // straight through to handleMessage exactly as before.
+        if (ownerPool != null && (migrating.contains(groupId) || node.boundToAnotherThread())) {
+            ownerExecutor(groupId).execute(() -> routeMessage(groupId, message));
+            return;
+        }
+        node.handleMessage(message);
     }
 
     /**
@@ -231,6 +342,13 @@ public final class MultiRaftDriver {
     public ProposeOutcome propose(int groupId, byte[] command) {
         RaftNode node = groups.get(groupId);
         if (node == null) {
+            return ProposeOutcome.rejected(ProposalResult.NOT_LEADER);
+        }
+        // Stage 2 M2: a propose returns its (index,term) synchronously (H-1), so it cannot be silently
+        // re-queued like routeMessage. If the group is mid-handoff or this thread is not its current
+        // owner (stale routing after a rehome), reject as NOT_LEADER — the caller's existing retry
+        // re-marshals onto the current owner. Inert at N=1 / no-rehome (single owner, never migrating).
+        if (ownerPool != null && (migrating.contains(groupId) || node.boundToAnotherThread())) {
             return ProposeOutcome.rejected(ProposalResult.NOT_LEADER);
         }
         return node.propose(command);
