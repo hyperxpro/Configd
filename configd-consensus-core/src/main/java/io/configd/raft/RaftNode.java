@@ -233,6 +233,16 @@ public final class RaftNode {
     // missed (a false negative). Written once, on the owner thread, at bind.
     private volatile Thread ownerThread;
 
+    // ---- H-3: the owner-published monitoring snapshot (Workstream B; docs/phase0-B/h3-monitor-view-design.md) ----
+    // The R-01 monitoring reads (currentTerm/log/...) were safe only because the metrics scrape ran
+    // INLINE on the single tick thread. Once owners are bound and tick() fans out, that scrape runs
+    // off the group's owner — an unsynchronised read of non-volatile consensus state. Resolution: the
+    // owner publishes an immutable RaftMetrics snapshot via this single volatile reference at the end
+    // of every tick(); any thread reads it via monitorView() with one volatile load. Immutable record
+    // + volatile publish ⇒ a coherent, never-torn, never-partial, at-most-one-tick-stale view that
+    // never blocks the owner. Seeded in the constructor so a startup-racing scrape never sees null.
+    private volatile RaftMetrics monitorView;
+
     /**
      * Creates a new RaftNode with durable state persistence.
      * <p>
@@ -351,6 +361,11 @@ public final class RaftNode {
         recomputeConfigFromLog();
 
         resetElectionTimeout();
+
+        // H-3: seed the monitoring snapshot from the fully-recovered state so a scrape that races
+        // startup observes a coherent zero/recovered view, never null. Construction legitimately runs
+        // on the wiring thread and reads node state (same as the durable-recovery reads above).
+        this.monitorView = buildMetrics();
     }
 
     /**
@@ -435,6 +450,10 @@ public final class RaftNode {
         if (role == RaftRole.LEADER && !flushScheduled && log.lastIndex() > durableIndex) {
             scheduleFlush();
         }
+
+        // H-3: republish the monitoring snapshot at the end of every tick (owner thread). Bounds the
+        // monitor view's staleness to one tick interval; off-owner scrapes read it via monitorView().
+        publishMonitorView();
     }
 
     /**
@@ -1144,6 +1163,10 @@ public final class RaftNode {
      * Returns the current cluster configuration.
      */
     public ClusterConfig clusterConfig() {
+        // H-3: OWNER-THREAD-ONLY. ClusterConfig carries a lazy peersCache (HashMap) populated on first
+        // peersOf(), so an off-owner read races that cache regardless of field visibility. Monitors read
+        // the published view, not the live config. Guard inert until bindOwnerThread().
+        assertOwnerThread();
         return clusterConfig;
     }
 
@@ -1291,6 +1314,16 @@ public final class RaftNode {
      */
     public RaftMetrics metrics() {
         assertOwnerThread();
+        return buildMetrics();
+    }
+
+    /**
+     * Builds an immutable metrics snapshot from the current node state. Owner-thread-only (no guard):
+     * private, invoked from the guarded {@link #metrics()}, from {@link #publishMonitorView()} on the
+     * owner thread, and once from the constructor (the wiring thread, which legitimately reads node
+     * state) to seed {@link #monitorView}.
+     */
+    private RaftMetrics buildMetrics() {
         int replicationLagMax = 0;
         if (role == RaftRole.LEADER) {
             long lastIdx = log.lastIndex();
@@ -1316,15 +1349,43 @@ public final class RaftNode {
         );
     }
 
+    /**
+     * H-3: republish the owner-built monitoring snapshot through the single volatile reference.
+     * Owner-thread-only (called at the end of {@link #tick()}). One volatile store of an immutable
+     * record — never blocks the owner.
+     */
+    private void publishMonitorView() {
+        this.monitorView = buildMetrics();
+    }
+
+    /**
+     * H-3 SAFE-CROSS-THREAD monitoring read: returns the last owner-published immutable
+     * {@link RaftMetrics} snapshot. A single volatile load — it never tears, never observes a
+     * partially-updated structure, never blocks the owner, and is at most one tick interval stale.
+     * This is the ONLY supported way for a non-owner thread (Prometheus scrape, admin status) to read
+     * consensus monitoring state; the live accessors ({@link #currentTerm()}, {@link #log()}, …) are
+     * owner-thread-only and guarded. See docs/phase0-B/h3-monitor-view-design.md.
+     */
+    public RaftMetrics monitorView() {
+        return monitorView;
+    }
+
     // ---- Getters for state inspection (tests and monitoring) ----
 
     public RaftRole role() { return role; }
-    public long currentTerm() { return currentTerm; }
-    public NodeId votedFor() { return votedFor; }
     public NodeId leaderId() { return leaderId; }
-    public RaftLog log() { return log; }
     public NodeId nodeId() { return config.nodeId(); }
-    public NodeId transferTarget() { return transferTarget; }
+
+    // H-3: currentTerm/votedFor/log/transferTarget read NON-VOLATILE consensus state and are now
+    // OWNER-THREAD-ONLY. Off-owner monitoring must use monitorView() instead; these would otherwise be
+    // unsynchronised reads once owners are bound. The guard is inert until bindOwnerThread() (so
+    // existing single-threaded tests and the not-yet-bound production server are unaffected) and, once
+    // bound, trips raft_owner_thread on any off-owner read — converting the former H-3 blind spot into
+    // net-covered surface. See docs/phase0-B/h3-monitor-view-design.md.
+    public long currentTerm() { assertOwnerThread(); return currentTerm; }
+    public NodeId votedFor() { assertOwnerThread(); return votedFor; }
+    public RaftLog log() { assertOwnerThread(); return log; }
+    public NodeId transferTarget() { assertOwnerThread(); return transferTarget; }
 
     // ========================================================================
     // Timer logic

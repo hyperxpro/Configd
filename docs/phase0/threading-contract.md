@@ -120,10 +120,11 @@ hop (inbound/propose/read).
 | `isReadReady` / `completeRead` / `whenReadReady` | 641 / 715 / 736 | **O** | F-0010 callback maps are tick-thread-only. |
 | `whenCommitOutcome` / `cancelCommitOutcome` | 854 / 875 | **O** | RR-004 callback maps are tick-thread-only. |
 | `proposeConfigChange(voters)` | 1023 | **O** | |
-| `clusterConfig()` | 1084 | **O** | (Safe only during single-thread construction.) |
-| `metrics()` | 1230 | **O** | ⚠ **H-3**: reads non-volatile `nextIndex`/`matchIndex`/`currentTerm`. Safe today only because scraped inline on the tick thread (`ConfigdServer:786–795`). Any off-thread scrape is a violation. |
-| `role()` / `leaderId()` | 1258–1264 | **S** | `volatile`. |
-| `currentTerm()` / `votedFor()` / `log()` / `transferTarget()` | 1258–1264 | **O** | Non-volatile — owner thread only. |
+| `clusterConfig()` | 1146 | **O (now guarded)** | **H-3 CLOSED.** Owner-only; also unsafe off-owner via its lazy `peersCache` HashMap (§6 H-3). Monitors read `monitorView()`. |
+| `metrics()` | 1292 | **O** | Guarded; builds an immutable `RaftMetrics`. **H-3 CLOSED:** off-owner scrapes read `monitorView()`, never `metrics()` directly. |
+| `monitorView()` | (B) | **S — published** | ⭐ The owner-published immutable `RaftMetrics` snapshot (volatile ref, republished at end of `tick()`). The ONE safe cross-thread monitoring read — never tears/partial, never blocks the owner, ≤ 1 tick stale. |
+| `role()` / `leaderId()` / `nodeId()` | 1321–1326 | **S** | `volatile` / immutable. |
+| `currentTerm()` / `votedFor()` / `log()` / `transferTarget()` | 1322–1327 | **O (now guarded)** | **H-3 CLOSED.** Non-volatile — owner-thread-only, `assertOwnerThread()` added; monitors use `monitorView()`. |
 
 ### 3.3 Message handlers — all **O**, reachable only via `handleMessage` (O)
 
@@ -212,13 +213,15 @@ private void assertOwnerThread() {
 > (`transferLeadership`, `triggerSnapshot`, `isReadReady`, `completeRead`, `whenReadReady`,
 > `cancelCommitOutcome`, `proposeConfigChange`). Review-H2 is **CLOSED**.
 >
-> **Deliberately NOT guarded — the H-3 reader surface (Workstream B):** the read-only O accessors
+> **The H-3 reader surface — now CLOSED in Workstream B.** The read-only O accessors
 > `currentTerm()`, `votedFor()`, `log()`, `transferTarget()`, `clusterConfig()` (commented
-> "tests and monitoring") are the **H-3** off-owner-read hazard, whose resolution is a *published
-> metrics snapshot*, not a tripwire — guarding them now would conflate review-H2 (the mutator net)
-> with H-3 and could fire against today's legitimate on-owner monitoring call sites the moment B
-> binds. They are tracked as H-3 below, owned by Workstream B. The S set (`role()`, `leaderId()`,
-> `nodeId()`) stays unguarded by design (volatile / immutable).
+> "tests and monitoring") were the **H-3** off-owner-read hazard. A left them unguarded so they would
+> not fire against the then-legitimate on-tick-thread monitoring reads. B resolved H-3 with an
+> owner-published immutable snapshot (`monitorView()`), retargeted the one live reader
+> (`ConfigdServer` scrape) onto it, and **then guarded all five** with `assertOwnerThread()` — so the
+> former blind spot is now net-covered (any off-owner read trips `raft_owner_thread`). The S set
+> (`role()`, `leaderId()`, `nodeId()`) stays unguarded by design (volatile / immutable), joined by the
+> new published `monitorView()`. See §6 H-3 and `docs/phase0-B/h3-monitor-view-design.md`.
 
 - Call `assertOwnerThread()` at the **top of every O public entry point** in §3.2/§3.3
   (`tick`, `handleMessage`, `propose`, `readIndex`, `whenCommitOutcome`, `maybeCompact`,
@@ -284,10 +287,21 @@ an **M** boundary the harness must prove never leaks an inline `RaftNode` touch.
 - **H-2 — ReadIndex confirm path.** `readIndex()`/`whenReadReady` today hop read-dispatch→tick;
   retarget to the owner and prove the linearizable-read safety checks (`RaftNode.java:780–791`)
   still hold under concurrency.
-- **H-3 — metrics scrape reads non-volatile state.** `metrics()` reads `nextIndex`/`matchIndex`/
-  `currentTerm`. Safe only on the owner thread. Either keep scraping on-owner (snapshot into
-  volatile/immutable carriers) or make a published metrics snapshot. A Prometheus scrape thread
-  must never call `metrics()` directly.
+- **H-3 — monitoring reads of non-volatile state. ✅ CLOSED (Workstream B).** The five read-only
+  accessors (`currentTerm`/`votedFor`/`log`/`transferTarget`/`clusterConfig`) and `metrics()` read
+  non-volatile consensus state, safe under R-01 only because the scrape ran inline on the tick thread;
+  once owners bind and `tick()` fans out, that scrape runs off the group's owner.
+  **Mechanism:** the owner publishes an immutable `RaftMetrics` snapshot through one `volatile`
+  reference (`monitorView`) at the end of every `tick()`; any thread reads it via `monitorView()` with
+  a single volatile load — never tears, never partial, never blocks the owner, ≤ 1 tick stale. The one
+  live reader (`ConfigdServer` scrape) was retargeted onto `monitorView()`; `AdminService`'s
+  `ClusterStateProvider` (latent — unwired) is recorded to do the same. The five accessors were then
+  **guarded** (`assertOwnerThread()`), converting the blind spot into net-covered surface.
+  **Evidence:** `configd-jcstress` `RaftMonitorViewPublicationTest.PublishedSnapshotNeverTears` (JMM:
+  immutable-via-volatile never observed torn; `PerFieldPublishCanTear` control shows the naïve
+  alternative tears) + `RaftMonitorViewConcurrencyTest` (macro: coherent/monotonic/non-null/non-block
+  under concurrent publish; the five accessors trip off-owner while `monitorView()`/S-set stay safe).
+  Design: `docs/phase0-B/h3-monitor-view-design.md`.
 - **H-4 — co-tenant tick work** (watch / plumtree / propagation / compactor). Biggest one: when
   Raft tick fans out, these lose their implicit thread. They need an explicit home and an O/M/S
   re-classification against *their own* owner. The naive "owner-executor pool" design omits this.
@@ -303,8 +317,9 @@ an **M** boundary the harness must prove never leaks an inline `RaftNode` touch.
       (core 7: tick, handleMessage, propose, maybeCompact, readIndex, whenCommitOutcome, metrics;
       review-H2 7: transferLeadership, triggerSnapshot, isReadReady, completeRead, whenReadReady,
       cancelCommitOutcome, proposeConfigChange). Review-H2 CLOSED. The read-only O accessors
-      (currentTerm/votedFor/log/transferTarget/clusterConfig) are the **H-3** monitoring-read
-      hazard, resolved by a metrics snapshot in Workstream B — see §6 H-3 (not a tripwire gap).
+      (currentTerm/votedFor/log/transferTarget/clusterConfig) — formerly the **H-3** monitoring-read
+      hazard — are now ALSO guarded (Workstream B), with the owner-published `monitorView()` snapshot
+      as the safe cross-thread read. **H-3 CLOSED** — see §6 H-3 + `docs/phase0-B/h3-monitor-view-design.md`.
 - [x] Concurrent stress harness (`RaftNodeConcurrencyStressTest`) encodes obligations §5.1–§5.4 and
       is **proven to catch an injected off-owner-thread access across all 14 guarded entry points**
       (the off-owner fire-test covers the complete surface; captured red — see
@@ -319,7 +334,9 @@ an **M** boundary the harness must prove never leaks an inline `RaftNode` touch.
       green** (no spurious fire), and `OwnerThreadSimIntegrationTest` proves an injected
       off-drive-thread access fails the seed (§5.4).
 - [ ] Owner-executor pool wired; `poolSize=1` reproduces today's single-group behavior. *(Workstream B)*
-- [ ] H-1…H-6 each resolved behind a red/green stress test. *(Workstream B)*
+- [ ] H-1, H-2, H-4, H-5, H-6 each resolved behind a red/green stress test. *(Workstream B — Stage 1/2)*
+      **H-3 ✅ CLOSED** — `monitorView()` published snapshot + the five accessors guarded; jcstress
+      (`PublishedSnapshotNeverTears`) + macro (`RaftMonitorViewConcurrencyTest`) proof.
 - [ ] Full S2–S4 invariant surface re-runs green under the new **multi-owner** threading. *(Workstream B;
       the single-owner surface is already green under the active tripwire — see the sim integration above.)*
 

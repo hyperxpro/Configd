@@ -1,0 +1,195 @@
+package io.configd.raft;
+
+import io.configd.common.NodeId;
+import io.configd.common.Storage;
+import org.junit.jupiter.api.Test;
+
+import java.util.Set;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.atomic.AtomicReference;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+
+/**
+ * Phase 0 — Workstream B — H-3 macro proof (the monitoring-read hazard).
+ *
+ * <p>The A net deliberately does NOT cover the read-only monitoring accessors; H-3 closes them with
+ * an owner-published immutable snapshot ({@link RaftNode#monitorView()}). This test is the macro
+ * complement to the {@code configd-jcstress} {@code RaftMonitorViewPublicationTest} (which pins the
+ * JMM no-tear primitive). It proves, against a REAL {@link RaftNode} bound to an owner executor:
+ *
+ * <ol>
+ *   <li><b>{@link #monitorViewIsCoherentAndNeverBlocksUnderConcurrentPublish()}</b> — while the owner
+ *       thread advances consensus state (propose+tick, republishing the view every tick), a FOREIGN
+ *       thread spins on {@code monitorView()} and every observed snapshot is non-null, internally
+ *       coherent ({@code snapshotIndex <= lastApplied <= commitIndex <= lastLogIndex}) and monotonic
+ *       across reads (term and commitIndex never go backwards). No tear, no partial structure, no
+ *       block, no throw. Non-vacuous: commitIndex demonstrably advances and the reader observes many
+ *       distinct snapshots while racing the publisher.</li>
+ *   <li><b>{@link #h3AccessorsTripOffOwnerWhileMonitorViewAndSSetStaySafe()}</b> — the net extension:
+ *       the five formerly-unguarded H-3 accessors (currentTerm/votedFor/log/transferTarget/
+ *       clusterConfig) now TRIP {@code raft_owner_thread} when called off-owner, while the published
+ *       {@code monitorView()} and the volatile S-set (role/leaderId/nodeId) stay safe. This is the
+ *       former blind spot converted into net-covered surface.</li>
+ * </ol>
+ *
+ * @see RaftNodeConcurrencyStressTest the A net this complements
+ */
+class RaftMonitorViewConcurrencyTest {
+
+    private static final NodeId N1 = NodeId.of(1);
+
+    static final class NoOpTransport implements RaftTransport {
+        @Override public void send(NodeId target, RaftMessage message) { }
+    }
+
+    static final class NoOpStateMachine implements StateMachine {
+        @Override public long apply(long index, long term, byte[] command) { return StateMachine.NON_MUTATING; }
+        @Override public byte[] snapshot() { return new byte[0]; }
+        @Override public void restoreSnapshot(byte[] snapshot) { }
+    }
+
+    /** Throws on any in-node invariant OR the owner-thread tripwire (the sim's throwing-checker discipline). */
+    static final class ThrowingChecker implements RaftNode.InvariantChecker {
+        final AtomicReference<String> firstViolation = new AtomicReference<>();
+        @Override public void check(String name, boolean condition, String message) {
+            if (!condition) {
+                firstViolation.compareAndSet(null, name + ": " + message);
+                throw new AssertionError("INVARIANT '" + name + "' violated: " + message);
+            }
+        }
+    }
+
+    /** Single-node node, owner bound, driven to LEADER — all on the owner thread. */
+    private static RaftNode newSingleNodeLeaderBoundTo(ExecutorService owner, RaftNode.InvariantChecker checker)
+            throws Exception {
+        RaftConfig config = RaftConfig.of(N1, Set.of());
+        RaftNode node = new RaftNode(config, new RaftLog(), new NoOpTransport(),
+                new NoOpStateMachine(), new java.util.Random(42), Storage.inMemory(), checker);
+        owner.submit(() -> {
+            node.bindOwnerThread();
+            for (int i = 0; i < 301; i++) node.tick();
+            assertEquals(RaftRole.LEADER, node.role());
+        }).get();
+        return node;
+    }
+
+    @Test
+    void monitorViewIsCoherentAndNeverBlocksUnderConcurrentPublish() throws Exception {
+        ExecutorService owner = Executors.newSingleThreadExecutor(r -> new Thread(r, "raft-owner"));
+        ThrowingChecker checker = new ThrowingChecker();
+        RaftNode node = newSingleNodeLeaderBoundTo(owner, checker);
+
+        final AtomicBoolean running = new AtomicBoolean(true);
+        final AtomicReference<Throwable> failure = new AtomicReference<>();
+        final AtomicLong observed = new AtomicLong();
+        final AtomicLong distinctCommits = new AtomicLong();
+
+        // FOREIGN reader: spin on monitorView() off-owner; assert coherence + monotonicity on every read.
+        Thread reader = new Thread(() -> {
+            RaftMetrics prev = null;
+            long lastCommit = -1;
+            try {
+                while (running.get() && failure.get() == null) {
+                    RaftMetrics v = node.monitorView();          // single volatile load — must never block/throw
+                    assertNotNull(v, "monitorView() must never be null (seeded in the constructor)");
+                    assertNotNull(v.role(), "snapshot role must be non-null");
+                    assertEquals(N1, v.nodeId(), "snapshot nodeId must be stable");
+                    // Structural coherence of a single immutable snapshot — can only fail on a torn read.
+                    assertTrue(v.snapshotIndex() <= v.lastApplied(),
+                            "snapshotIndex>" + v.snapshotIndex() + " > lastApplied=" + v.lastApplied());
+                    assertTrue(v.lastApplied() <= v.commitIndex(),
+                            "lastApplied=" + v.lastApplied() + " > commitIndex=" + v.commitIndex());
+                    assertTrue(v.commitIndex() <= v.lastLogIndex(),
+                            "commitIndex=" + v.commitIndex() + " > lastLogIndex=" + v.lastLogIndex());
+                    // Monotonic across reads (no stale-beyond-contract: a published view never regresses).
+                    if (prev != null) {
+                        assertTrue(v.currentTerm() >= prev.currentTerm(),
+                                "currentTerm regressed " + prev.currentTerm() + " -> " + v.currentTerm());
+                        assertTrue(v.commitIndex() >= prev.commitIndex(),
+                                "commitIndex regressed " + prev.commitIndex() + " -> " + v.commitIndex());
+                    }
+                    if (v.commitIndex() != lastCommit) {
+                        lastCommit = v.commitIndex();
+                        distinctCommits.incrementAndGet();
+                    }
+                    prev = v;
+                    observed.incrementAndGet();
+                }
+            } catch (Throwable t) {
+                failure.compareAndSet(null, t);
+            }
+        }, "monitor-reader");
+        reader.start();
+
+        // OWNER: advance consensus state and republish the view every tick (publishMonitorView() at end of tick()).
+        final int cycles = 4000;
+        owner.submit(() -> {
+            for (int i = 0; i < cycles && failure.get() == null; i++) {
+                node.propose(new byte[]{(byte) i, (byte) (i >>> 8)});  // single-node: commits, advances commit/apply
+                node.tick();                                           // republishes monitorView()
+            }
+        }).get();
+
+        running.set(false);
+        reader.join(TimeUnit.SECONDS.toMillis(30));
+
+        owner.shutdown();
+        assertTrue(owner.awaitTermination(10, TimeUnit.SECONDS), "owner executor did not terminate");
+
+        if (failure.get() != null) {
+            throw new AssertionError("monitorView() observed an incoherent/torn snapshot or threw off-owner: "
+                    + (checker.firstViolation.get() == null ? "" : checker.firstViolation.get()), failure.get());
+        }
+        assertNull(checker.firstViolation.get(), "no tripwire/invariant should fire on the monitorView() path");
+        // Non-vacuity: the owner did real work AND the reader actually raced concurrent publication.
+        assertTrue(node.monitorView().commitIndex() > 0, "vacuous: commitIndex never advanced (no consensus work)");
+        assertTrue(observed.get() > 1000, "vacuous: foreign reader barely sampled (" + observed.get() + ")");
+        assertTrue(distinctCommits.get() > 1, "vacuous: reader did not observe the view changing under it ("
+                + distinctCommits.get() + " distinct commit values)");
+    }
+
+    @Test
+    void h3AccessorsTripOffOwnerWhileMonitorViewAndSSetStaySafe() throws Exception {
+        ExecutorService owner = Executors.newSingleThreadExecutor(r -> new Thread(r, "raft-owner"));
+        try {
+            ThrowingChecker checker = new ThrowingChecker();
+            RaftNode node = newSingleNodeLeaderBoundTo(owner, checker);
+
+            // Net extension: the five formerly-unguarded H-3 accessors now trip off-owner (this thread != owner).
+            assertTripsOffOwner(() -> node.currentTerm(), "currentTerm");
+            assertTripsOffOwner(() -> node.votedFor(), "votedFor");
+            assertTripsOffOwner(() -> node.log(), "log");
+            assertTripsOffOwner(() -> node.transferTarget(), "transferTarget");
+            assertTripsOffOwner(() -> node.clusterConfig(), "clusterConfig");
+
+            // The safe published view + the volatile S-set must NOT trip off-owner.
+            assertNotNull(node.monitorView(), "monitorView() is the safe cross-thread path — must not trip");
+            assertNotNull(node.role(), "role() is S-class volatile — must not trip");
+            node.leaderId();
+            assertEquals(N1, node.nodeId(), "nodeId() is immutable — must not trip");
+
+            assertTrue(checker.firstViolation.get() != null
+                            && checker.firstViolation.get().startsWith("raft_owner_thread"),
+                    "the off-owner accessor reads must have tripped raft_owner_thread; was: "
+                            + checker.firstViolation.get());
+        } finally {
+            owner.shutdownNow();
+        }
+    }
+
+    private static void assertTripsOffOwner(Runnable offOwnerRead, String which) {
+        AssertionError err = assertThrows(AssertionError.class, offOwnerRead::run,
+                "H-3 accessor " + which + "() read off-owner must trip the owner-thread tripwire");
+        assertTrue(err.getMessage().contains("raft_owner_thread"),
+                "expected raft_owner_thread from " + which + "(), got: " + err.getMessage());
+    }
+}

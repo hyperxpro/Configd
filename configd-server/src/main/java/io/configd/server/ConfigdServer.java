@@ -773,21 +773,24 @@ public final class ConfigdServer {
 
         final int[] tickCount = {0};
         // S6/WS-A: tracks the highest term observed locally so the elections counter advances by
-        // the positive delta each tick (a term bump == an election / leadership change). Read on
-        // the tick thread only — safe against the non-volatile RaftNode.currentTerm() field.
+        // the positive delta each tick (a term bump == an election / leadership change). Read from
+        // the owner-published monitor snapshot (H-3), so it is safe off the group's owner thread.
         final long[] lastSeenTerm = {0L};
         tickExecutor.scheduleAtFixedRate(() -> {
             try {
                 driver.tick();
-                // S6/WS-A: publish the apply backlog (committed-not-applied) for the
+                // S6/WS-A + H-3: publish the apply backlog (committed-not-applied) for the
                 // raft_pending_apply_entries gauge and advance the election counter. Both read the
-                // group's RaftNode on the tick thread (R-01) — the only thread allowed to touch the
-                // non-volatile RaftLog commit/apply indices and currentTerm.
+                // owner-published monitor snapshot (monitorView()) — NOT the live node: under the
+                // owner-executor pool this tickExecutor thread is no longer the group's owner, so a
+                // direct tickNode.log()/currentTerm() would be an off-owner read of non-volatile state.
+                // monitorView() is one volatile load of an immutable, coherent snapshot (<= one tick
+                // stale). See docs/phase0-B/h3-monitor-view-design.md.
                 io.configd.raft.RaftNode tickNode = driver.getGroup(DEFAULT_RAFT_GROUP);
                 if (tickNode != null) {
-                    io.configd.raft.RaftLog tnLog = tickNode.log();
-                    pendingApplyEntries.set(Math.max(0L, tnLog.commitIndex() - tnLog.lastApplied()));
-                    long term = tickNode.currentTerm();
+                    io.configd.raft.RaftMetrics view = tickNode.monitorView();
+                    pendingApplyEntries.set(Math.max(0L, view.commitIndex() - view.lastApplied()));
+                    long term = view.currentTerm();
                     if (term > lastSeenTerm[0]) {
                         configdMetrics.raftElections().increment(term - lastSeenTerm[0]);
                         lastSeenTerm[0] = term;
