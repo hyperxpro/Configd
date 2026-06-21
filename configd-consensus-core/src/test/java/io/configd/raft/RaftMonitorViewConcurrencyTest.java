@@ -4,6 +4,9 @@ import io.configd.common.NodeId;
 import io.configd.common.Storage;
 import org.junit.jupiter.api.Test;
 
+import java.lang.reflect.Field;
+import java.lang.reflect.Modifier;
+import java.lang.reflect.RecordComponent;
 import java.util.Set;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -183,6 +186,37 @@ class RaftMonitorViewConcurrencyTest {
                             + checker.firstViolation.get());
         } finally {
             owner.shutdownNow();
+        }
+    }
+
+    /**
+     * C1 (adversarial-review test-durability guard). The H-3 no-tear proof rests on TWO structural
+     * facts the concurrency/jcstress proofs cannot themselves protect (a single owner builds each
+     * snapshot atomically, so they pass even if these regress): {@code monitorView} is a {@code volatile}
+     * reference, and {@link RaftMetrics} is a deeply-immutable carrier. These assertions fail the instant
+     * either is lost — e.g. a refactor that drops {@code volatile} (an off-owner reader could then miss
+     * the publication) or adds a mutable/aliasable field to the snapshot (a monitor could observe
+     * post-publish mutation). See docs/phase0-B/h3-monitor-view-design.md and the adversarial review C1.
+     */
+    @Test
+    void monitorViewFieldStaysVolatile_elseTheNoTearProofIsVoid() throws Exception {
+        Field f = RaftNode.class.getDeclaredField("monitorView");
+        assertTrue(Modifier.isVolatile(f.getModifiers()),
+                "RaftNode.monitorView MUST stay volatile — without it an off-owner reader can miss the "
+                        + "publication and the H-3 visibility/no-tear proof is void.");
+        assertEquals(RaftMetrics.class, f.getType(),
+                "monitorView must publish the immutable RaftMetrics snapshot");
+    }
+
+    @Test
+    void raftMetricsStaysDeeplyImmutable_elseAPublishedSnapshotCanMutate() {
+        assertTrue(RaftMetrics.class.isRecord(), "RaftMetrics must stay a record (immutable carrier)");
+        for (RecordComponent rc : RaftMetrics.class.getRecordComponents()) {
+            Class<?> t = rc.getType();
+            boolean immutable = t.isPrimitive() || t.isEnum() || t == String.class || t == NodeId.class;
+            assertTrue(immutable, "RaftMetrics component '" + rc.getName() + "' is of type " + t.getName()
+                    + " — a mutable/aliasable type in the published snapshot would let a monitor observe "
+                    + "post-publish mutation (an H-3 tear). Only add genuinely-immutable types to the allowlist.");
         }
     }
 
