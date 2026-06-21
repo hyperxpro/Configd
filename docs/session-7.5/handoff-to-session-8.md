@@ -43,12 +43,23 @@ Chain of evidence (all on this box, all pushed):
 2. **Coalesce replication** — broadcast per *tick*, not per *propose* (analogous to group commit) to
    cut per-proposal tick-thread work and push the knee higher.
 
-## DONE + PUSHED this session
+## ❌ THE 10k/s WRITE-THROUGHPUT SLO IS NOT MET — P0 (RR-113)
+The single-Raft-group sustained write rate measured on real hardware is **~800–1,600/s, far below the
+advertised 10,000/s target** (M-9 / §0.1). Admission control (S7.5) fixes the FAILURE MODE only —
+graceful `429` shed instead of `503` churn-collapse, ~2× the under-overload rate — it does **NOT meet
+the target**. The S7.5 throughput **WORK** (group commit, corrected attribution, admission-control
+mitigation) is done; the **TARGET** is not, and the gap is tracked as **P0 RR-113** in the readiness
+register. **This must not be reported as "done."** The path to 10k/s is write-sharding across multiple
+Raft groups (and/or decoupling heartbeat/replication from the single consensus thread) — see RR-113.
+
+## DONE + PUSHED this session (WORK done — for the throughput SLO see the P0 above)
 - **Bring-up** (`bring-up-gates.md`, `run-log.md`): box spec, fsync baseline, data-on-NVMe asserted,
   gates 1–7 green on box (pre-campaign).
-- **Headline PART 2** (group commit + the honest re-attribution above): implemented, reviewed SAFE
-  (DL-7.5-01), measured, documented, pushed. `GroupCommitDurabilityTest` 2/2 locks the durable-index
-  gate. Group commit is tunable (`-Dconfigd.groupCommit.{enabled,maxBatch,lingerMicros}`).
+- **Throughput investigation + mitigation (work done; 10k/s SLO NOT met — P0 RR-113):** group commit
+  (durable-index-gated, reviewed SAFE DL-7.5-01, `GroupCommitDurabilityTest` 2/2) + the corrected §7.0
+  attribution (ceiling is single-thread-consensus churn ~800/s, NOT fsync — `iostat f/s`=0) +
+  admission-control mitigation (`-Dconfigd.write.maxInflightProposals`: graceful `429` shed, ~2×
+  under-overload, leader stable). All tunable via `-D`. **The 10,000/s target remains unmet (RR-113).**
 - **D-1 (security P1) RESOLVED** — fail-closed signing-key co-location guard
   (`ConfigdServer.enforceSigningKeyNotColocated` refuses to start when the signing key is inside the
   data dir; dev/test opt-out via property/env). `D1FailClosedTest` 6/6. Readiness register row added
@@ -82,17 +93,25 @@ Chain of evidence (all on this box, all pushed):
    carefully): **leaf-anchor cert-expiry** (Item 2, RFC 5280 §6.1 — wrap the trust manager to validate
    `chain[0]` expiry, or move to a real CA topology) and **active-replay rejection** (Item 4 — the
    ReplayGuard stops passive replay but a token-holder can mint fresh requests; needs per-request
-   signing). Plus the **synthetic N↔N+1 upgrade** (box-bound, soak-blocked).
-6. **Threshold promotion §11** — needs clean-box real-load conditions; **deferred while the soak holds
-   the box** (would interfere). Do before terminating, or as a post-soak step.
-7. **Soak §8 — RUNNING, PASSED 12 h CLEAN (halfway to 24 h)** (`perf/results/soak-s75/`, 400/s stable,
-   2g heaps, 64 GB box). Leak-negative throughout: FD 107 / threads 168 pinned at the t+31s baseline
-   (zero drift), RSS plateaued ~2.47 GB (slope settled to ~0–0.3 MB/h = ZGC/native noise, not a leak),
-   p50~2 ms, p99~3 ms, 0 rejected. **Passed t+12400 (3.45 h) — where the S5 soak OOM'd on the old
-   7.7 GB box (RR-112) — CLEAN, and now past 12 h. That OOM was box heap-sizing (3×1g → 3.27 GB hit
-   the 7.7 GB ceiling), NOT a Configd leak; RR-112's "needs smaller heaps OR real hardware" is
-   confirmed.** Trend pushed continuously; achieved duration is whatever the box lives (honest,
-   terminate-tolerant; full 24 h is duration-pending).
+   signing). Plus the **synthetic N↔N+1 upgrade** (build a v1-with-a-deliberate-wire-change variant,
+   run a mixed-version cluster on one host; HEAD = v1). **PENDING — NOT box-blocked: none of these
+   need special hardware** — they are pure logic / one local cluster, doable on any box (laptop/CI);
+   they were deferred only by session length + the soak occupying this box.
+6. **Threshold promotion §11** — drive each S6 PROPOSED threshold's condition, confirm it fires (true
+   positive) and stays quiet under normal load (no false positive), promote VALIDATED or correct-with-
+   delta. Needs a running cluster + driven load but on **ANY box** (these are behavioral thresholds,
+   not raw-perf) — **PENDING, NOT real-hardware-bound**; deferred here only because the soak occupied
+   this box. (Inherently-multi-region thresholds stay PROPOSED → multi-box.)
+7. **Soak §8 — CALLED at ~13 h CLEAN (this is a 13-HOUR soak, NOT 24 h; 24 h RECOMMENDED to fully close
+   §8)** (`perf/results/soak-s75/`, 400/s stable, 2g heaps, 64 GB box). Leak-negative over the full
+   ~13 h: FD 107 / threads 168 pinned at the t+31s baseline (zero drift), RSS plateaued ~2.47 GB
+   (settled slope ~0–0.3 MB/h = ZGC/native noise, not a leak), p50~2 ms, p99~3 ms, 0 rejected
+   throughout. Passed t+12400 (3.45 h) — where the S5 soak OOM'd on the old 7.7 GB box (RR-112) —
+   CLEAN, and past 12 h: that OOM was box heap-sizing (3×1g → 3.27 GB hit the 7.7 GB ceiling), NOT a
+   Configd leak; **RR-112 superseded**. The soak was stopped here only because the operator is tearing
+   down the box; **the achieved duration is honestly ~13 h, never claimed as 24 h.** To fully close §8,
+   re-run `perf/soak.sh --duration=86400` for a real 24 h on a right-sized box (**no special hardware
+   needed**). Trend at `perf/results/soak-s75/trend.csv`.
 8. **gate-7.5** (§12) — NOT wired/run yet (the new S7.5-specific cumulative gate is still to be
    authored). BUT **S4 (gate-4) + S7 (gate-7) ARE re-greened**: the first cumulative gate-7 re-run
    found a D-1 regression (the `LivePropagationProbeMain` dev probe boots a co-located-key server and

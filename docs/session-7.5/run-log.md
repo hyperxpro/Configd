@@ -219,3 +219,22 @@ OK`. **S4 durability + S7 integrity re-greened with all S7.5 changes — §2 / �
 All gate-4 own-module tests independently confirmed green (consensus-core 334/0,
 replication-engine 23/0, distribution-service 20/0, edge-node 4/0, testkit overload/partition 12/0,
 configd-server 162/0).
+
+## CLOSEOUT (teardown) — the honest scorecard
+
+- **10k/s write-throughput SLO is NOT met — filed as P0 RR-113.** The single-Raft-group sustained
+  rate is ~800–1,600/s; admission control mitigates the failure mode (graceful `429` shed, ~2× under
+  overload) but does NOT meet the target. The S7.5 throughput WORK is done; the TARGET is not. Path to
+  10k/s = write-sharding across multiple Raft groups (and/or decoupling heartbeat/replication from the
+  single consensus thread). **Not reported as "done."** (readiness-register RR-113 P0; throughput-part2.md)
+- **Soak CALLED at ~13 h CLEAN** (t+46962s) — leak-negative (FD/threads zero-drift, RSS plateaued
+  ~2.47 GB, 0 rejected), passed the 3.45 h RR-112 OOM point clean (RR-112 superseded). **Honest
+  duration: ~13 h, NOT 24 h** — a full 24 h on a right-sized box is recommended to close §8.
+- **Remaining tail is PENDING, NOT box-blocked** (needs no special hardware — any box): leaf-anchor
+  cert-expiry (Item 2), active-replay rejection (Item 4) [both security-sensitive], synthetic N↔N+1
+  upgrade, threshold promotion, gate-7.5 authoring, and the SigningKeyStore.loadOrCreate race follow-up.
+- DONE + pushed: group commit (reviewed SAFE) + corrected fsync attribution + admission-control
+  mitigation; D-1 P1 RESOLVED (gates 1–7 re-green); latency WAN split; scale §8 (read sub-µs @100M);
+  slowloris (HIGH); per-principal rate limit; edge /metrics auth; 13 h soak.
+- Operator: terminate the spot/on-demand instance from the console (verify terminated). The NVMe is
+  discarded on terminate — fine, everything is pushed. Final pushed commit hash is in the closeout reply.
