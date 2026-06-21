@@ -180,23 +180,35 @@ the contract surface the re-threading must re-home:
 Add to `RaftNode`, modeled exactly on `ConfigStateMachine.assertOwnerThread()` (`:271–286`):
 
 ```java
-private Thread ownerThread;   // bound once; never reassigned in v1 (static owner mapping)
+private volatile Thread ownerThread;   // bound once on the owner thread; never reassigned in v1
 
 /** Bind explicitly as the FIRST task on the owner executor (NOT during construction,
  *  which runs on the wiring thread and legitimately touches state). */
 void bindOwnerThread() { this.ownerThread = Thread.currentThread(); }
 
 private void assertOwnerThread() {
-    Thread cur = Thread.currentThread(), owner = ownerThread;
-    if (owner == null) { this.ownerThread = cur; return; }   // lazy fallback
+    Thread owner = ownerThread;
+    if (owner == null) return;          // INERT until explicitly bound — NOT lazy-bind: a
+                                        // pre-bind off-thread call must not capture a wrong owner
+    Thread cur = Thread.currentThread();
     if (owner != cur) {
-        metrics.onOwnerThreadViolation();
+        // No metrics call: RaftNode has no metrics sink (verified :240–364). The PROD
+        // InvariantChecker records the metric + SEVERE; the test/harness checker throws.
+        // One seam, both modes.
         invariantChecker.check("raft_owner_thread", false,
             "RaftNode entry off owner thread: bound '" + owner.getName()
             + "' but called from '" + cur.getName() + "' — R-01′ violated");
     }
 }
 ```
+
+> **As-built (increment 1):** `volatile ownerThread`; **inert until `bindOwnerThread()`** (no
+> lazy-bind, so production — not yet wired to bind — and existing single-threaded tests are
+> unaffected). Guards placed at the core O entry points `tick`, `handleMessage`, `propose`,
+> `maybeCompact`, `readIndex`, `whenCommitOutcome`, `metrics` (the last two are the H-3/H-1 +
+> compaction race vectors). Remaining O entry points (`transferLeadership`, `triggerSnapshot`,
+> `proposeConfigChange`, `completeRead`, `whenReadReady`, `cancelCommitOutcome`) are a tracked
+> follow-up within A.1.
 
 - Call `assertOwnerThread()` at the **top of every O public entry point** in §3.2/§3.3
   (`tick`, `handleMessage`, `propose`, `readIndex`, `whenCommitOutcome`, `maybeCompact`,
@@ -277,10 +289,14 @@ an **M** boundary the harness must prove never leaks an inline `RaftNode` touch.
 
 ## 7. Definition of "contract satisfied"
 
-- [ ] `assertOwnerThread()` present on `RaftNode`, called at every O public entry point.
+- [ ] `assertOwnerThread()` at EVERY O public entry point — **core 7 done** (tick, handleMessage,
+      propose, maybeCompact, readIndex, whenCommitOutcome, metrics); remaining O entry points
+      (transferLeadership, triggerSnapshot, proposeConfigChange, completeRead, whenReadReady,
+      cancelCommitOutcome) are a tracked A.1 follow-up.
 - [ ] Owner-executor pool wired; `poolSize=1` reproduces today's single-group behavior.
-- [ ] Concurrent stress harness encodes obligations §5.1–§5.4 and is **proven to catch an injected
-      off-owner-thread access** (captured red) before any Workstream B re-threading is blessed.
+- [x] Concurrent stress harness (`RaftNodeConcurrencyStressTest`) encodes obligations §5.1–§5.4 and
+      is **proven to catch an injected off-owner-thread access** (captured red — see
+      `captures/harness-catches-injected-race.md`) before any Workstream B re-threading is blessed.
 - [ ] H-1…H-6 each resolved behind a red/green stress test.
 - [ ] Full S2–S4 invariant surface (sim + linearizability + jcstress + chaos subset) re-runs green
       under the new threading.

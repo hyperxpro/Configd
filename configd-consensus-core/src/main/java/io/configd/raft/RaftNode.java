@@ -223,6 +223,16 @@ public final class RaftNode {
 
     private final InvariantChecker invariantChecker;
 
+    // ---- R-01' owner-thread tripwire (Phase 0 threading-contract enforcement) ----
+    // Mirrors ConfigStateMachine.assertOwnerThread (RR-029/W-1). INERT until an owner is
+    // explicitly bound via bindOwnerThread(): production is not yet wired to bind (Workstream B)
+    // and existing single-threaded tests never bind, so this is a zero-behaviour-change addition.
+    // Once bound, every OWNER-ONLY entry point asserts it runs on the owner thread; a violation
+    // routes through the existing invariantChecker (throws in test/sim, metric+SEVERE in prod).
+    // volatile so a foreign thread reliably observes the bound owner — else a violation could be
+    // missed (a false negative). Written once, on the owner thread, at bind.
+    private volatile Thread ownerThread;
+
     /**
      * Creates a new RaftNode with durable state persistence.
      * <p>
@@ -364,6 +374,41 @@ public final class RaftNode {
     }
 
     // ========================================================================
+    // R-01' owner-thread contract (the R-01 replacement; see docs/phase0/threading-contract.md)
+    // ========================================================================
+
+    /**
+     * Binds the calling thread as this group's single owner. MUST be invoked as the first task
+     * on the group's owner executor at wiring — NEVER during construction (the constructor runs
+     * on the wiring thread and legitimately touches state). Static for the life of the process
+     * (v1: no resharding). Until this is called the {@link #assertOwnerThread()} tripwire is inert,
+     * so production (not yet wired to bind) and existing single-threaded tests are unaffected.
+     */
+    void bindOwnerThread() {
+        this.ownerThread = Thread.currentThread();
+    }
+
+    /**
+     * R-01' tripwire: asserts the current thread is this group's bound owner. No-op until an owner
+     * is bound. A violation routes through the existing {@code invariantChecker} (throws in
+     * test/sim via a throwing checker; metric + SEVERE in production), exactly like the in-node
+     * safety invariants — so the concurrent stress harness can prove it catches an off-owner access.
+     */
+    private void assertOwnerThread() {
+        Thread owner = ownerThread;
+        if (owner == null) {
+            return; // inert until explicitly bound (Workstream B wiring / the stress harness)
+        }
+        Thread cur = Thread.currentThread();
+        if (owner != cur) {
+            invariantChecker.check("raft_owner_thread", false,
+                    "RaftNode entry off owner thread: bound to '" + owner.getName()
+                            + "' (id=" + owner.threadId() + ") but called from '" + cur.getName()
+                            + "' (id=" + cur.threadId() + ") — R-01' single-owner invariant violated");
+        }
+    }
+
+    // ========================================================================
     // Public API
     // ========================================================================
 
@@ -373,6 +418,7 @@ public final class RaftNode {
      * and heartbeat intervals (LEADER).
      */
     public void tick() {
+        assertOwnerThread();
         switch (role) {
             case FOLLOWER, CANDIDATE -> tickElection();
             case LEADER -> tickHeartbeat();
@@ -396,6 +442,7 @@ public final class RaftNode {
      * @param message one of the sealed Raft message types
      */
     public void handleMessage(RaftMessage message) {
+        assertOwnerThread();
         switch (message) {
             case AppendEntriesRequest req -> handleAppendEntries(req);
             case AppendEntriesResponse resp -> handleAppendEntriesResponse(resp);
@@ -420,6 +467,7 @@ public final class RaftNode {
      * @return the proposal outcome (accepted + position, or a rejection reason)
      */
     public ProposeOutcome propose(byte[] command) {
+        assertOwnerThread();
         if (command == null || command.length == 0) {
             throw new IllegalArgumentException(
                     "Command must not be null or empty (empty commands are reserved for no-op entries)");
@@ -566,6 +614,7 @@ public final class RaftNode {
      * @return true if a snapshot was taken
      */
     public boolean maybeCompact(long appliedSinceSnapshotThreshold) {
+        assertOwnerThread();
         if (log.lastApplied() - log.snapshotIndex() > appliedSinceSnapshotThreshold) {
             return triggerSnapshot();
         }
@@ -614,6 +663,7 @@ public final class RaftNode {
      * @return a read ID for tracking, or -1 if not leader
      */
     public long readIndex() {
+        assertOwnerThread();
         if (role != RaftRole.LEADER) {
             return -1;
         }
@@ -853,6 +903,7 @@ public final class RaftNode {
      */
     public void whenCommitOutcome(long index, long term,
                                   java.util.function.Consumer<CommitOutcome> callback) {
+        assertOwnerThread();
         Objects.requireNonNull(callback, "callback");
         CommitOutcome decided = decideCommitOutcome(index, term);
         if (decided != null) {
@@ -1228,6 +1279,7 @@ public final class RaftNode {
      * @return current metrics
      */
     public RaftMetrics metrics() {
+        assertOwnerThread();
         int replicationLagMax = 0;
         if (role == RaftRole.LEADER) {
             long lastIdx = log.lastIndex();
