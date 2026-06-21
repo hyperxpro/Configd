@@ -340,10 +340,16 @@ public final class TcpRaftTransport implements RaftTransport, AutoCloseable {
 
     /** Best-effort close of a refused / failed inbound socket (it is being discarded). */
     private static void closeQuietly(Socket s) {
-        try {
-            s.close();
-        } catch (IOException ignored) {
-            // nothing to do
+        // s is null for a PeerConnection whose handshake never completed (e.g. a
+        // rejected-cert connect, or a concurrent connect that lost the race): close()
+        // and the disconnect path call this with a null socket field. Mirror the
+        // AutoCloseable overload's null-tolerance — "quietly" must include null.
+        if (s != null) {
+            try {
+                s.close();
+            } catch (IOException ignored) {
+                // nothing to do
+            }
         }
     }
 
