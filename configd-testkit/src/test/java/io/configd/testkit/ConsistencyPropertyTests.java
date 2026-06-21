@@ -49,6 +49,9 @@ class ConsistencyPropertyTests {
         private final List<VersionedConfigStore> stores;
         private final int nodeCount;
 
+        /** R-01' owner binding is done once, on the first tick (the drive thread). */
+        private boolean ownersBound;
+
         ClusterHarness(long seed, int nodeCount) {
             this(seed, nodeCount, RaftNode.InvariantChecker.NOOP);
         }
@@ -120,10 +123,33 @@ class ConsistencyPropertyTests {
          * then tick every RaftNode.
          */
         void tick() {
+            bindOwnersIfNeeded();
             sim.tick();
             for (RaftNode node : nodes) {
                 node.tick();
             }
+        }
+
+        /**
+         * R-01' bind rule made executable in the sim: bind every node's owner to the single drive
+         * thread as the first action on that thread — NOT during construction (the constructor runs
+         * on the wiring thread and legitimately touches state). The simulation is single-threaded
+         * (R-01), so this thread owns every node; the {@code assertOwnerThread()} tripwire is now
+         * ACTIVE and routes any off-drive-thread {@link RaftNode} access through the wired
+         * {@link RaftNode.InvariantChecker} — a throwing checker (e.g. {@code SeedSweepTest}) fails
+         * the seed, {@code NOOP} stays silent. This puts {@code raft_owner_thread} on the continuous
+         * per-tick invariant surface alongside the in-node checks (threading-contract §5.4). Nodes
+         * are never reconstructed mid-run, so a one-time bind is complete; Workstream B's
+         * owner-executor pool extends this to genuinely distinct per-node owner threads.
+         */
+        private void bindOwnersIfNeeded() {
+            if (ownersBound) {
+                return;
+            }
+            for (RaftNode node : nodes) {
+                node.bindOwnerThread();
+            }
+            ownersBound = true;
         }
 
         /** Run the cluster for the given number of ticks. */

@@ -383,8 +383,12 @@ public final class RaftNode {
      * on the wiring thread and legitimately touches state). Static for the life of the process
      * (v1: no resharding). Until this is called the {@link #assertOwnerThread()} tripwire is inert,
      * so production (not yet wired to bind) and existing single-threaded tests are unaffected.
+     * <p>
+     * Public wiring API: invoked by the owner-executor wiring (Workstream B's {@code
+     * MultiRaftDriver}) and by the deterministic-simulation harness, which binds every node to its
+     * single drive thread so the tripwire is active across the randomized-schedule invariant surface.
      */
-    void bindOwnerThread() {
+    public void bindOwnerThread() {
         this.ownerThread = Thread.currentThread();
     }
 
@@ -523,6 +527,7 @@ public final class RaftNode {
      * @return true if the transfer was initiated
      */
     public boolean transferLeadership(NodeId target) {
+        assertOwnerThread();
         if (role != RaftRole.LEADER) {
             return false;
         }
@@ -553,6 +558,7 @@ public final class RaftNode {
      * @return true if a snapshot was taken
      */
     public boolean triggerSnapshot() {
+        assertOwnerThread();
         long appliedIndex = log.lastApplied();
         if (appliedIndex <= log.snapshotIndex()) {
             return false; // Nothing new to snapshot
@@ -689,6 +695,7 @@ public final class RaftNode {
      * @return true if the read can be served with linearizable guarantees
      */
     public boolean isReadReady(long readId) {
+        assertOwnerThread();
         // Re-verify leadership: a deposed leader must not serve reads.
         // This closes the TOCTOU window between heartbeat confirmation
         // and read serving (see FIND-0002).
@@ -763,6 +770,7 @@ public final class RaftNode {
      * @param readId the read ID to complete
      */
     public void completeRead(long readId) {
+        assertOwnerThread();
         readIndexState.complete(readId);
         readReadyCallbacks.remove(readId);
     }
@@ -784,6 +792,7 @@ public final class RaftNode {
      * @param callback the callback to invoke exactly once when ready
      */
     public void whenReadReady(long readId, Runnable callback) {
+        assertOwnerThread();
         Objects.requireNonNull(callback, "callback");
         if (isReadReady(readId)) {
             assertReadServeInvariants(readId);
@@ -924,6 +933,7 @@ public final class RaftNode {
      * @param index the proposed log index whose pending callback to drop
      */
     public void cancelCommitOutcome(long index) {
+        assertOwnerThread();
         commitOutcomeCallbacks.remove(index);
     }
 
@@ -1072,6 +1082,7 @@ public final class RaftNode {
      * @return true if the config change was accepted and appended to the log
      */
     public boolean proposeConfigChange(Set<NodeId> newVoters) {
+        assertOwnerThread();
         if (role != RaftRole.LEADER) {
             return false;
         }

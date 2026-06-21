@@ -19,7 +19,10 @@
 # The subset is the 6 RR-002 transport interleavings (the explicit must-cover
 # list) plus the decisive read-path races: FanOutBuffer wrap-around + lapped
 # eviction (RR-066), VersionedConfigStore torn-version + CF-31 aliased array
-# (RR-029), and HamtMap consistent-version structural sharing (RR-029).
+# (RR-029), HamtMap consistent-version structural sharing (RR-029), and the
+# Phase 0 R-01' owner-thread-guard publication (no false negative once a node is
+# in service). The UnboundGuardIsInertAndRaces companion is INTENTIONALLY
+# forbidden-hitting (like HarnessSelfTest.KnownRacyCounter) and excluded here.
 #
 # Exit 0 iff every selected test ran and reported zero FAILED/forbidden results.
 # Usage: run-curated-subset.sh [results-dir]
@@ -53,6 +56,7 @@ io.configd.jcstress.FanOutBufferReadSinceTest.LappedCursorBelowWindow
 io.configd.jcstress.VersionedConfigStoreReadTest.ConsistentVersionRead
 io.configd.jcstress.VersionedConfigStoreReadTest.AliasedArrayNoTear
 io.configd.jcstress.HamtMapStructuralSharingTest.ConsistentMapVersion
+io.configd.jcstress.RaftOwnerThreadGuardTest.OwnerGuardNoFalseNegativeInService
 EOF
 
 # jcstress -t takes a single regex; OR the exact names together (escape dots).

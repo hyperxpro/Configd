@@ -149,7 +149,7 @@ none is exposed as a new cross-thread entry by the re-threading.
 |---|---|---|---|
 | `scheduleFlush()` | 1938 | **O** | Called from tick/propose (owner). |
 | `flushDurable()` | 1962 | **O via FlushScheduler** | `FlushScheduler` INLINE default runs it on the caller thread (an owner thread → owner-safe in tests). Production must dispatch to `ownerExecutor(gid)`, **not** the single `tickExecutor`. See §4.4. |
-| `setGroupCommit(sched,…)` | 176 | wiring | Called once at construction; rewires the dispatch target. |
+| `setGroupCommit(sched,…)` | 176 | **wiring (pre-bind)** | The one public *mutator* deliberately NOT guarded: called exactly once during construction/wiring (`ConfigdServer:400`), before the owner is bound, so it is **out of the owner-thread contract** (the tripwire is inert pre-bind by design). Not a coverage hole — it never runs concurrently with consensus. |
 
 ### 3.6 `RaftLog` mutators — all **O**, reachable only from `RaftNode` (O)
 
@@ -202,13 +202,23 @@ private void assertOwnerThread() {
 }
 ```
 
-> **As-built (increment 1):** `volatile ownerThread`; **inert until `bindOwnerThread()`** (no
-> lazy-bind, so production — not yet wired to bind — and existing single-threaded tests are
-> unaffected). Guards placed at the core O entry points `tick`, `handleMessage`, `propose`,
-> `maybeCompact`, `readIndex`, `whenCommitOutcome`, `metrics` (the last two are the H-3/H-1 +
-> compaction race vectors). Remaining O entry points (`transferLeadership`, `triggerSnapshot`,
-> `proposeConfigChange`, `completeRead`, `whenReadReady`, `cancelCommitOutcome`) are a tracked
-> follow-up within A.1.
+> **As-built (increment 2 — Workstream A closeout):** `volatile ownerThread`; **inert until
+> `bindOwnerThread()`** (no lazy-bind, so production — not yet wired to bind — and existing
+> single-threaded tests are unaffected). `bindOwnerThread()` is now a **public** wiring API (the
+> owner-executor pool in Workstream B and the deterministic-sim harness both call it).
+> `assertOwnerThread()` now guards the **complete mutator/callback O entry-point surface — all 14**:
+> the core 7 (`tick`, `handleMessage`, `propose`, `maybeCompact`, `readIndex`, `whenCommitOutcome`,
+> `metrics` — the H-1/H-3 + compaction vectors) **plus the 7 review-H2 orphaned riders**
+> (`transferLeadership`, `triggerSnapshot`, `isReadReady`, `completeRead`, `whenReadReady`,
+> `cancelCommitOutcome`, `proposeConfigChange`). Review-H2 is **CLOSED**.
+>
+> **Deliberately NOT guarded — the H-3 reader surface (Workstream B):** the read-only O accessors
+> `currentTerm()`, `votedFor()`, `log()`, `transferTarget()`, `clusterConfig()` (commented
+> "tests and monitoring") are the **H-3** off-owner-read hazard, whose resolution is a *published
+> metrics snapshot*, not a tripwire — guarding them now would conflate review-H2 (the mutator net)
+> with H-3 and could fire against today's legitimate on-owner monitoring call sites the moment B
+> binds. They are tracked as H-3 below, owned by Workstream B. The S set (`role()`, `leaderId()`,
+> `nodeId()`) stays unguarded by design (volatile / immutable).
 
 - Call `assertOwnerThread()` at the **top of every O public entry point** in §3.2/§3.3
   (`tick`, `handleMessage`, `propose`, `readIndex`, `whenCommitOutcome`, `maybeCompact`,
@@ -289,16 +299,31 @@ an **M** boundary the harness must prove never leaks an inline `RaftNode` touch.
 
 ## 7. Definition of "contract satisfied"
 
-- [ ] `assertOwnerThread()` at EVERY O public entry point — **core 7 done** (tick, handleMessage,
-      propose, maybeCompact, readIndex, whenCommitOutcome, metrics); remaining O entry points
-      (transferLeadership, triggerSnapshot, proposeConfigChange, completeRead, whenReadReady,
-      cancelCommitOutcome) are a tracked A.1 follow-up.
-- [ ] Owner-executor pool wired; `poolSize=1` reproduces today's single-group behavior.
+- [x] `assertOwnerThread()` at EVERY **mutator/callback** O public entry point — **all 14 done**
+      (core 7: tick, handleMessage, propose, maybeCompact, readIndex, whenCommitOutcome, metrics;
+      review-H2 7: transferLeadership, triggerSnapshot, isReadReady, completeRead, whenReadReady,
+      cancelCommitOutcome, proposeConfigChange). Review-H2 CLOSED. The read-only O accessors
+      (currentTerm/votedFor/log/transferTarget/clusterConfig) are the **H-3** monitoring-read
+      hazard, resolved by a metrics snapshot in Workstream B — see §6 H-3 (not a tripwire gap).
 - [x] Concurrent stress harness (`RaftNodeConcurrencyStressTest`) encodes obligations §5.1–§5.4 and
-      is **proven to catch an injected off-owner-thread access** (captured red — see
+      is **proven to catch an injected off-owner-thread access across all 14 guarded entry points**
+      (the off-owner fire-test covers the complete surface; captured red — see
       `captures/harness-catches-injected-race.md`) before any Workstream B re-threading is blessed.
-- [ ] H-1…H-6 each resolved behind a red/green stress test.
-- [ ] Full S2–S4 invariant surface (sim + linearizability + jcstress + chaos subset) re-runs green
-      under the new threading.
+- [x] **JMM micro-race** (`configd-jcstress` `RaftOwnerThreadGuardTest`): the guard's `volatile`
+      publication has **no false negative once a node is in service** (gated/clean), and an *unbound*
+      guard genuinely **races to a lost update** (forbidden-hitting control, observed ≈34% — proving
+      binding is mandatory). Complements the macro harness with memory-model rigor.
+- [x] **Sim integration**: the tripwire is bound across the deterministic sim
+      (`ClusterHarness`/`AdversarialSim` bind each node's owner to the drive thread) and rides the
+      same throwing checker as the in-node invariants — **20,001 seed-sweep + adversarial schedules
+      green** (no spurious fire), and `OwnerThreadSimIntegrationTest` proves an injected
+      off-drive-thread access fails the seed (§5.4).
+- [ ] Owner-executor pool wired; `poolSize=1` reproduces today's single-group behavior. *(Workstream B)*
+- [ ] H-1…H-6 each resolved behind a red/green stress test. *(Workstream B)*
+- [ ] Full S2–S4 invariant surface re-runs green under the new **multi-owner** threading. *(Workstream B;
+      the single-owner surface is already green under the active tripwire — see the sim integration above.)*
+
+**Workstream A (the verification net) is CLOSED.** The remaining unchecked boxes are Workstream B
+(the re-threading the net now guards).
 
 *This contract is the spec. The harness is the enforcement. The captured red is the proof.*

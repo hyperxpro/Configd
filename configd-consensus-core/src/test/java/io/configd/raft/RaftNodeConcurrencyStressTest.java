@@ -178,19 +178,33 @@ class RaftNodeConcurrencyStressTest {
             ThrowingChecker checker = new ThrowingChecker();
             RaftNode node = newSingleNodeLeaderBoundTo(owner, checker);
 
-            // THE INJECTED RACE: invoke ALL 7 guarded OWNER-ONLY entry points directly from THIS
+            // THE INJECTED RACE: invoke ALL 14 guarded OWNER-ONLY entry points directly from THIS
             // (foreign) thread. assertOwnerThread() is the first statement of each, so the tripwire
             // fires before any state is touched — a deterministic catch, not a hoped-for corruption.
             // Covering every guarded entry point proves each guard actually FIRES (not merely that
-            // it is present) — closes the coverage-asymmetry gap (adversarial review H1).
+            // it is present) — closes the coverage-asymmetry gap (adversarial review H1) and the
+            // remaining-tick-only-mutators gap (review H2): the core 7 (tick / handleMessage /
+            // propose / maybeCompact / readIndex / whenCommitOutcome / metrics) PLUS the 7 mutators
+            // re-threading would touch (transferLeadership / triggerSnapshot / isReadReady /
+            // completeRead / whenReadReady / cancelCommitOutcome / proposeConfigChange). This is the
+            // complete R-01' mutator/callback entry-point surface of the threading contract.
             List<Runnable> offOwnerCalls = List.<Runnable>of(
+                    // --- core 7 (A.1/A.2) ---
                     () -> node.tick(),
                     () -> node.handleMessage(new RequestVoteRequest(0L, PHANTOM, 0L, 0L, true)),
                     () -> node.propose(new byte[]{1}),
                     () -> node.maybeCompact(16),
                     () -> node.readIndex(),
                     () -> node.whenCommitOutcome(1L, 1L, o -> { }),
-                    () -> node.metrics()
+                    () -> node.metrics(),
+                    // --- review-H2: the remaining tick-only mutators (the orphaned riders) ---
+                    () -> node.transferLeadership(PHANTOM),
+                    () -> node.triggerSnapshot(),
+                    () -> node.isReadReady(1L),
+                    () -> node.completeRead(1L),
+                    () -> node.whenReadReady(1L, () -> { }),
+                    () -> node.cancelCommitOutcome(1L),
+                    () -> node.proposeConfigChange(Set.of(N1))
             );
             for (Runnable offOwner : offOwnerCalls) {
                 AssertionError err = assertThrows(AssertionError.class, offOwner::run,

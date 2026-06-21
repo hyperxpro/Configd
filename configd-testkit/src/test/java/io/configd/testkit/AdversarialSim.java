@@ -60,6 +60,9 @@ final class AdversarialSim implements ClusterView {
     private int scheduleCursor;
     private int opCursor;
 
+    /** R-01' owner binding is done once, on the first tick (the drive thread). */
+    private boolean ownersBound;
+
     AdversarialSim(long seed, int nodeCount, int totalTicks) {
         this(seed, nodeCount, totalTicks, AdversarialSchedule.defaultIntensity(), null);
     }
@@ -210,6 +213,7 @@ final class AdversarialSim implements ClusterView {
         currentTimeMs += 1;
         tickIndex++;
 
+        bindOwnersIfNeeded();
         applyDueFaults();
         applyDueOps();
 
@@ -226,6 +230,26 @@ final class AdversarialSim implements ClusterView {
 
         // SAFETY: continuous invariant check, every tick, every seed.
         invariants.checkAll();
+    }
+
+    /**
+     * R-01' bind rule made executable in the adversarial sim: bind every node's owner to the single
+     * drive thread as the first action on that thread (NOT during construction). The sim is
+     * single-threaded, so this thread owns every node; the {@code assertOwnerThread()} tripwire is
+     * now ACTIVE and, via {@link #throwingChecker()} → {@link SimInvariants#throwingNodeChecker()},
+     * turns any off-drive-thread {@link RaftNode} access into a {@link SimInvariants.SafetyViolation}
+     * — failing the seed deterministically, so {@code raft_owner_thread} joins the in-node safety
+     * invariants checked under every adversarial schedule. Crash faults arm but do not rebuild node
+     * objects (see {@code applyDueFaults}), so a one-time bind is complete.
+     */
+    private void bindOwnersIfNeeded() {
+        if (ownersBound) {
+            return;
+        }
+        for (RaftNode node : nodes) {
+            node.bindOwnerThread();
+        }
+        ownersBound = true;
     }
 
     private void applyDueFaults() {
