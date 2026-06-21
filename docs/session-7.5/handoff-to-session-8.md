@@ -85,9 +85,13 @@ Chain of evidence (all on this box, all pushed):
    signing). Plus the **synthetic N↔N+1 upgrade** (box-bound, soak-blocked).
 6. **Threshold promotion §11** — needs clean-box real-load conditions; **deferred while the soak holds
    the box** (would interfere). Do before terminating, or as a post-soak step.
-7. **Soak §8 — RUNNING** (`perf/results/soak-s75/`, 400/s stable, 2g heaps, on-demand box). Clean
-   through ~10 min: RSS/FD/threads flat, 0 rejected, p50~2 ms — leak-negative so far. Trend pushed
-   continuously; achieved duration is whatever the box lives (honest, spot-/terminate-tolerant).
+7. **Soak §8 — RUNNING, PASSED 3.45 h CLEAN** (`perf/results/soak-s75/`, 400/s stable, 2g heaps, 64 GB
+   box). Leak-negative throughout: FD 107 / threads 168 pinned at the t+31s baseline, RSS flat ~2.46 GB
+   (slope ~0.5–1.6 MB/h = ZGC/native/WAL noise, not a leak), p50~2 ms, 0 rejected. **Crossed t+12534s
+   (~3.48 h) — past the t+12400 (3.45 h) point where the S5 soak OOM'd on the old 7.7 GB box (RR-112)
+   — CLEAN. That OOM was box heap-sizing (3×1g → 3.27 GB hit the 7.7 GB ceiling), NOT a Configd leak;
+   RR-112's "needs smaller heaps OR real hardware" is confirmed.** Trend pushed continuously; achieved
+   duration is whatever the box lives (honest, terminate-tolerant; full 24 h is duration-pending).
 8. **gate-7.5** (§12) — NOT wired/run yet (the new S7.5-specific cumulative gate is still to be
    authored). BUT **S4 (gate-4) + S7 (gate-7) ARE re-greened**: the first cumulative gate-7 re-run
    found a D-1 regression (the `LivePropagationProbeMain` dev probe boots a co-located-key server and
