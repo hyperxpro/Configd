@@ -30,6 +30,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
 
+import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
@@ -144,6 +145,15 @@ class OwnerIsolationMultiOwnerTest {
         // Setup ran entirely on the correct owners — the guard must be silent so far.
         assertEquals(0, checker.ownerFires.get(), "bind/elect on the correct owners must not fire");
 
+        // Non-vacuity BASELINE. After self-election each group has already committed its leader no-op
+        // (commitIndex == 1) — so "commitIndex > 0" alone would be satisfied by SETUP, not by the
+        // per-owner tick (a dead tickOwner() would still pass it). Capture the post-setup commitIndex
+        // here so the end assertion can require GROWTH driven by the per-owner tick during the run.
+        long[] baselineCommit = new long[n];
+        for (int owner = 0; owner < n; owner++) {
+            baselineCommit[owner] = nodes.get(owner).monitorView().commitIndex();
+        }
+
         final int producers = 6;
         final int itersPer = 600;
         ExecutorService producerPool = Executors.newFixedThreadPool(producers + 1);
@@ -218,13 +228,18 @@ class OwnerIsolationMultiOwnerTest {
                         + "pool — first: " + checker.firstViolation.get());
         assertNull(checker.firstViolation.get(), "no invariant/tripwire fire expected on the clean path");
 
-        // Non-vacuity: real consensus work happened, and on EVERY owner (not just owner[0]).
+        // Non-vacuity: real consensus work happened, and the per-owner tick ADVANCED consensus on
+        // EVERY owner during the run (not just owner[0], and not merely satisfied by setup). The
+        // commitIndex must have GROWN past the post-setup baseline on a group bound to each owner —
+        // a dead/mis-filtered tickOwner() would leave it at the baseline (red-team Finding 1).
         assertTrue(accepted.get() > 0, "vacuous — no proposals were accepted across any owner");
         for (int owner = 0; owner < n; owner++) {
             int gid = owner; // group 'owner' is bound to owner[owner] (floorMod(owner, n) == owner for owner < n)
-            assertTrue(nodes.get(gid).monitorView().commitIndex() > 0,
-                    "owner[" + owner + "] made no consensus progress (group " + gid
-                            + " commitIndex==0) — the per-owner tick is not driving this owner");
+            long now = nodes.get(gid).monitorView().commitIndex();
+            assertTrue(now > baselineCommit[owner],
+                    "owner[" + owner + "] did not ADVANCE consensus during the run (group " + gid
+                            + " commitIndex " + baselineCommit[owner] + " -> " + now + ") — the per-owner"
+                            + " tick is not driving this owner (a dead tickOwner() would leave it at baseline)");
         }
     }
 
@@ -283,5 +298,59 @@ class OwnerIsolationMultiOwnerTest {
 
         pool.shutdown();
         assertTrue(pool.awaitTermination(10, TimeUnit.SECONDS), "owner pool did not terminate");
+    }
+
+    /**
+     * Focused, deterministic proof that the per-owner tick FILTER is correct: tickOwner(i) /
+     * maybeCompactOwner(i) act on EXACTLY the groups bound to owner[i] and no others. Owners are NOT
+     * bound here (the net is inert), so the filter is driven directly from the test thread without
+     * threading — isolating "does the filter select the right groups" from "does it run on the right
+     * thread" (the concurrent test above proves the latter). A single-node group becomes LEADER only
+     * if it is actually ticked, so {@code role()} is the observable: ticking owner i must elect i's
+     * groups and leave the others FOLLOWER. (Red-team Finding 2: the filter previously had only the
+     * heavyweight concurrent test for coverage.)
+     */
+    @Test
+    @Timeout(30)
+    void tickOwnerFiltersToExactlyItsOwnGroups() {
+        final int n = 2;                 // owner0 = {0,2}, owner1 = {1,3}
+        final int[] gids = {0, 1, 2, 3};
+        OwnerExecutorPool pool = new OwnerExecutorPool(n);
+        MultiRaftDriver driver = new MultiRaftDriver(LOCAL, Clock.system());
+        driver.setOwnerPool(pool);
+        Map<Integer, RaftNode> nodes = new LinkedHashMap<>();
+        for (int gid : gids) {
+            // Unbound: assertOwnerThread() is inert, so driving tickOwner from the test thread is legal.
+            Storage storage = Storage.inMemory();
+            RaftNode node = new RaftNode(RaftConfig.of(LOCAL, Set.of()), new RaftLog(storage),
+                    new NoopTransport(), new NoopStateMachine(), new java.util.Random(42L + gid), storage);
+            driver.addGroup(gid, node);
+            nodes.put(gid, node);
+        }
+        try {
+            // Tick ONLY owner[0]: its groups (0,2) must elect; owner[1]'s groups (1,3) must NOT be ticked.
+            for (int i = 0; i < 400; i++) driver.tickOwner(0);
+            assertEquals(RaftRole.LEADER, nodes.get(0).role(), "group 0 (owner0) must be ticked by tickOwner(0)");
+            assertEquals(RaftRole.LEADER, nodes.get(2).role(), "group 2 (owner0) must be ticked by tickOwner(0)");
+            assertEquals(RaftRole.FOLLOWER, nodes.get(1).role(), "group 1 (owner1) must NOT be ticked by tickOwner(0)");
+            assertEquals(RaftRole.FOLLOWER, nodes.get(3).role(), "group 3 (owner1) must NOT be ticked by tickOwner(0)");
+
+            // Now tick owner[1]: its groups elect too — all four LEADER (each ticked by exactly its owner).
+            for (int i = 0; i < 400; i++) driver.tickOwner(1);
+            for (int gid : gids) {
+                assertEquals(RaftRole.LEADER, nodes.get(gid).role(),
+                        "group " + gid + " should be LEADER after its owner ticked");
+            }
+
+            // An owner index with NO groups bound to it is a clean no-op (does not throw, ticks nothing).
+            OwnerExecutorPool wide = new OwnerExecutorPool(8);
+            MultiRaftDriver d2 = new MultiRaftDriver(LOCAL, Clock.system());
+            d2.setOwnerPool(wide);
+            assertDoesNotThrow(() -> { d2.tickOwner(5); d2.maybeCompactOwner(5, 16L); },
+                    "tick/compact of an owner index with no groups must be a no-op");
+            wide.shutdown();
+        } finally {
+            pool.shutdown();
+        }
     }
 }
