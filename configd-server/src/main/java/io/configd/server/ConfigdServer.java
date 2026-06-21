@@ -37,6 +37,7 @@ import io.configd.raft.RaftTransport;
 import io.configd.raft.RaftMessage;
 import io.configd.raft.ProposeOutcome;
 import io.configd.replication.MultiRaftDriver;
+import io.configd.replication.OwnerExecutorPool;
 import io.configd.store.Compactor;
 import io.configd.store.ConfigDelta;
 import io.configd.store.ConfigSigner;
@@ -103,16 +104,23 @@ public final class ConfigdServer {
     private static final long WRITE_COMMIT_TIMEOUT_MS = 5_000;
 
     private final ServerConfig config;
-    // F-0023: three separate single-threaded executors prevent head-of-line
-    // blocking between consensus tick, read dispatch, and slow TLS reload.
+    // Phase 0 — Workstream B (Stage 1B): R-01 (the single `configd-tick` thread) is DELETED.
+    // Consensus now runs through the owner-executor pool — `ownerExecutor(gid) = pool[gid % N]` —
+    // so every OWNER-ONLY entry point of a group's RaftNode runs on that group's owner thread, and
+    // `bindOwnerThread()` activates the `assertOwnerThread()` net in production (a missed marshalling
+    // hop now trips `raft_owner_thread`). At N=1 (this stage, `configd.raft.ownerPoolSize`, default 1)
+    // a single owner thread does tick + co-tenant + marshalled work at the same cadence/FIFO as the
+    // old `configd-tick` thread — behaviourally exact R-01, minus the deleted single-thread assumption.
     //
-    //   tickExecutor         — consensus tick, watch tick, plumtree tick.
-    //                          Also owns ALL ReadIndexState mutations (F-0010).
-    //   readDispatchExecutor — HTTP read handler → tick thread marshalling;
-    //                          decouples HTTP threads from tick-loop bursts.
-    //   tlsReloadExecutor    — slow I/O (cert reload every 60s); its latency
-    //                          must NEVER delay tick or reads.
-    private final ScheduledExecutorService tickExecutor;
+    //   ownerPool            — N single-thread owner executors; consensus tick (per-owner), inbound
+    //                          handleMessage(), propose(), readIndex/flush all run on a group's owner.
+    //                          At N=1 also rides the co-tenant housekeeping (watch/plumtree/
+    //                          propagation/compactor) exactly as the old tick thread did.
+    //   readDispatchExecutor — HTTP read handler → owner-thread marshalling; decouples HTTP threads
+    //                          from owner-loop bursts (double-hop, H-2).
+    //   tlsReloadExecutor    — slow I/O (cert reload every 60s); its latency must NEVER delay an
+    //                          owner tick or reads.
+    private final OwnerExecutorPool ownerPool;
     private final ScheduledExecutorService readDispatchExecutor;
     private final ScheduledExecutorService tlsReloadExecutor;
     private final MultiRaftDriver driver;
@@ -136,7 +144,7 @@ public final class ConfigdServer {
 
     private ConfigdServer(ServerConfig config, MultiRaftDriver driver,
                           ConfigStateMachine stateMachine,
-                          ScheduledExecutorService tickExecutor,
+                          OwnerExecutorPool ownerPool,
                           ScheduledExecutorService readDispatchExecutor,
                           ScheduledExecutorService tlsReloadExecutor,
                           HttpApiServer httpApiServer,
@@ -153,7 +161,7 @@ public final class ConfigdServer {
         this.config = config;
         this.driver = driver;
         this.stateMachine = stateMachine;
-        this.tickExecutor = tickExecutor;
+        this.ownerPool = ownerPool;
         this.readDispatchExecutor = readDispatchExecutor;
         this.tlsReloadExecutor = tlsReloadExecutor;
         this.httpApiServer = httpApiServer;
@@ -348,27 +356,30 @@ public final class ConfigdServer {
         driver.addGroup(DEFAULT_RAFT_GROUP, raftNode);
 
         // ---------------------------------------------------------------
-        // F-0023 + R-01: Create three dedicated single-threaded executors
-        // HERE — before wiring the transport — so the inbound Raft handler
-        // can marshal onto the tick executor. They isolate three latency
-        // domains:
-        //   - tickExecutor: consensus progress (MUST NOT be blocked). This
-        //     single thread drives RaftNode.tick() AND inbound
-        //     RaftNode.handleMessage()/applyCommitted (R-01), so the
-        //     non-synchronized RaftNode is only ever touched by one thread.
-        //   - readDispatchExecutor: HTTP read handler marshalling
+        // Phase 0 — Workstream B (Stage 1B): the R-01 single-`configd-tick`-thread DELETION.
+        // Create the owner-executor pool HERE — before wiring the transport — so the inbound Raft
+        // handler can marshal onto the GROUP'S OWNER (`driver.ownerExecutor(gid)`), not a global
+        // alias. The pool replaces the old single `tickExecutor`:
+        //   - ownerPool (N owners, default N=1 via `configd.raft.ownerPoolSize`): each group binds to
+        //     `ownerExecutor(gid) = pool[gid % N]`; ALL of that group's OWNER-ONLY RaftNode work —
+        //     per-owner tick, inbound handleMessage(), propose(), readIndex/flush — runs on its owner
+        //     thread, so the unsynchronised RaftNode is still only ever touched by one thread PER
+        //     GROUP. `bindOwnerThread()` (below, first task on the owner) activates the
+        //     assertOwnerThread() net in production: a missed hop now trips `raft_owner_thread`.
+        //   - readDispatchExecutor: HTTP read handler marshalling (double-hop onto the owner, H-2)
         //   - tlsReloadExecutor: slow cert I/O
         //
-        // CRITICAL invariant (F-0010 + R-01): ALL RaftNode access — ticks,
-        // inbound messages, and ReadIndexState reads — happens ONLY on the
-        // tick thread. readDispatchExecutor and the inbound handler never
-        // touch the node directly; they marshal via `tickExecutor.execute(...)`.
+        // CRITICAL invariant (F-0010 + R-01′): ALL RaftNode access for a group — ticks, inbound
+        // messages, proposals, and ReadIndexState reads — happens ONLY on that group's owner thread.
+        // readDispatchExecutor and the inbound/propose handlers never touch the node directly; they
+        // marshal via `driver.ownerExecutor(gid).execute(...)`. At N=1 a single owner thread does all
+        // of it at the same cadence/FIFO as the deleted `configd-tick` thread (behaviourally exact).
         // ---------------------------------------------------------------
-        ScheduledExecutorService tickExecutor = Executors.newSingleThreadScheduledExecutor(r -> {
-            Thread t = new Thread(r, "configd-tick");
-            t.setDaemon(true);
-            return t;
-        });
+        OwnerExecutorPool ownerPool =
+                new OwnerExecutorPool(Integer.getInteger("configd.raft.ownerPoolSize", 1));
+        driver.setOwnerPool(ownerPool);
+        System.out.println("  Owner pool   : " + ownerPool.size()
+                + " owner thread(s) [Phase 0 B Stage 1B — R-01 deleted, consensus via ownerExecutor(gid)]");
         ScheduledExecutorService readDispatchExecutor = Executors.newSingleThreadScheduledExecutor(r -> {
             Thread t = new Thread(r, "configd-read-dispatch");
             t.setDaemon(true);
@@ -381,9 +392,10 @@ public final class ConfigdServer {
         });
 
         // ---------------------------------------------------------------
-        // S7.5 PART 2 — group commit. Dispatch the coalescing durability flush onto the SAME single
-        // tick executor (R-01: all RaftNode mutation stays on one thread). Entries proposed
-        // concurrently are appended no-sync (RaftNode.propose -> RaftLog.appendNoSync) and
+        // S7.5 PART 2 — group commit. Dispatch the coalescing durability flush onto the GROUP'S OWNER
+        // executor (R-01′: all of a group's RaftNode mutation stays on its one owner thread — Stage 1B
+        // retarget from the deleted single `tickExecutor` to `driver.ownerExecutor(gid)`). Entries
+        // proposed concurrently are appended no-sync (RaftNode.propose -> RaftLog.appendNoSync) and
         // force-synced together by one flush task — amortizing the per-op force(true) that PART 1
         // showed was serializing the consensus thread (heartbeat starvation -> election churn ->
         // ~380 commits/s while the NVMe sat ~86% idle). Tunables (system properties) drive the
@@ -392,6 +404,10 @@ public final class ConfigdServer {
         //   -Dconfigd.groupCommit.maxBatch=N     -> cap entries per fsync (default 4096; bounds latency)
         //   -Dconfigd.groupCommit.lingerMicros=T -> linger to grow the batch (default 0 = flush ASAP)
         // ---------------------------------------------------------------
+        // The owner executor for the default group — every marshalling hop below (flush, inbound,
+        // propose, read) targets THIS, expressed as ownerExecutor(gid), so the group's RaftNode is
+        // only ever touched on its bound owner thread (the assertOwnerThread() net backstops it).
+        ScheduledExecutorService defaultGroupOwner = driver.ownerExecutor(DEFAULT_RAFT_GROUP);
         boolean groupCommitEnabled = Boolean.parseBoolean(
                 System.getProperty("configd.groupCommit.enabled", "true"));
         if (groupCommitEnabled) {
@@ -400,9 +416,9 @@ public final class ConfigdServer {
             raftNode.setGroupCommit(
                     (flush, delayMicros) -> {
                         if (delayMicros <= 0) {
-                            tickExecutor.execute(flush);
+                            defaultGroupOwner.execute(flush);
                         } else {
-                            tickExecutor.schedule(flush, delayMicros, TimeUnit.MICROSECONDS);
+                            defaultGroupOwner.schedule(flush, delayMicros, TimeUnit.MICROSECONDS);
                         }
                     },
                     groupCommitMaxBatch, groupCommitLingerMicros);
@@ -418,16 +434,30 @@ public final class ConfigdServer {
         // follower) is surfaced as a counter + SEVERE log rather than swallowed by the executor
         // (mute zombie). The handle is passed to the inbound handler registration below.
 
+        // ---------------------------------------------------------------
+        // H-6 (Phase 0 B Stage 1B) — BIND THE OWNER. Submit raftNode.bindOwnerThread() as the FIRST
+        // task on the default group's owner executor, BEFORE the inbound handler is published (the
+        // transport accept loop below) and BEFORE the tick loop is scheduled (further down). Because
+        // the owner is a single-thread executor with FIFO ordering, this bind runs before any inbound
+        // routing / propose / tick task that is enqueued later — even an inbound message arriving the
+        // instant tcpTransport.start() returns marshals BEHIND this already-submitted bind. NEVER bind
+        // in the constructor (it runs on `main` and legitimately touches state during recovery).
+        // After this task runs, assertOwnerThread() is ACTIVE for this RaftNode: any off-owner entry
+        // trips `raft_owner_thread` (metric + SEVERE in prod, throw in sim) — the R-01′ net, live.
+        // (C2: the bind + the addGroup ConcurrentHashMap put give the happens-before edge that keeps
+        // monitorView() non-null for the off-owner scrape — H-5.)
+        defaultGroupOwner.execute(raftNode::bindOwnerThread);
+
         // Register inbound message handler on TCP transport.
-        // R-01: marshal inbound routing onto the single tick executor so
-        // node.handleMessage() (and applyCommitted -> stateMachine.apply)
-        // never runs concurrently with node.tick() on the non-synchronized
-        // RaftNode. Registration stays BEFORE start() so the handler is
-        // published before the accept loop begins.
+        // R-01′: marshal inbound routing onto the GROUP'S OWNER (driver.ownerExecutor(gid)) so
+        // node.handleMessage() (and applyCommitted -> stateMachine.apply) never runs concurrently
+        // with the per-owner tick on the non-synchronized RaftNode. Registration stays BEFORE start()
+        // so the handler is published (behind the bind task) before the accept loop begins.
         if (tcpTransport != null) {
             RaftTransportAdapter adapter = (RaftTransportAdapter) transport;
             adapter.registerInboundHandler(
-                    raftInboundHandler(driver, DEFAULT_RAFT_GROUP, tickExecutor, configdMetrics));
+                    raftInboundHandler(driver, DEFAULT_RAFT_GROUP,
+                            driver.ownerExecutor(DEFAULT_RAFT_GROUP), configdMetrics));
             try {
                 tcpTransport.start();
             } catch (Exception e) {
@@ -556,14 +586,16 @@ public final class ConfigdServer {
         // ---------------------------------------------------------------
         // Wire config write service
         // ---------------------------------------------------------------
-        // R-01: marshal proposals onto the single tick executor so node.propose()
-        // (log/term/commitIndex mutation + applyCommitted -> stateMachine.apply) never
-        // races node.tick() or the inbound handler. RR-004 / ADR-0033: the SAME
-        // marshalled task also registers the commit-outcome callback; the HTTP write
-        // thread blocks on one end-to-end WRITE_COMMIT_TIMEOUT_MS deadline and gets a
-        // commit-confirmed answer (Committed/Lost/NotLeader/Indeterminate/Overloaded).
+        // R-01′: marshal proposals onto the GROUP'S OWNER (driver.ownerExecutor(gid)) so node.propose()
+        // (log/term/commitIndex mutation + applyCommitted -> stateMachine.apply) never races the
+        // per-owner tick or the inbound handler. RR-004 / ADR-0033: the SAME marshalled task also
+        // registers the commit-outcome callback, capturing (index,term) INSIDE the task (H-1 — the
+        // synchronous result never crosses the marshalling boundary); the HTTP write thread blocks on
+        // one end-to-end WRITE_COMMIT_TIMEOUT_MS deadline and gets a commit-confirmed answer
+        // (Committed/Lost/NotLeader/Indeterminate/Overloaded).
         ConfigWriteService.RaftProposer proposer =
-                raftProposer(driver, DEFAULT_RAFT_GROUP, tickExecutor, WRITE_COMMIT_TIMEOUT_MS,
+                raftProposer(driver, DEFAULT_RAFT_GROUP,
+                        driver.ownerExecutor(DEFAULT_RAFT_GROUP), WRITE_COMMIT_TIMEOUT_MS,
                         configdMetrics);
         // F-0054: default write rate limit = 10_000/s globally. Docs in
         // ADR-0017 and performance.md reflect this value; a startup line
@@ -613,21 +645,21 @@ public final class ConfigdServer {
             // under stall from the previous polling loop).
             //
             // F-0023 fix: dispatch goes through readDispatchExecutor which
-            // marshals the tick-thread work — the HTTP thread never touches
+            // marshals the owner-thread work — the HTTP thread never touches
             // ReadIndexState directly.
             //
-            // The tick thread calls whenReadReady(readId, cb), which fires
-            // the callback as soon as the read transitions to ready or the
-            // node steps down. On timeout, we clean up via the tick thread.
+            // R-01′ (H-2): the read keeps its double-hop, but the inner hop now targets the GROUP'S
+            // OWNER (driver.ownerExecutor(gid)), not the deleted single tick executor. The owner calls
+            // whenReadReady(readId, cb), which fires the callback as soon as the read transitions to
+            // ready or the node steps down. On timeout, we clean up via the owner.
             java.util.concurrent.CompletableFuture<Boolean> resultFuture =
                     new java.util.concurrent.CompletableFuture<>();
-            // Shared slot so the timeout path can tell the tick thread which
-            // readId to clean up. Written only from the tick thread; read
-            // only after the timeout expires (guarded by a volatile via the
-            // AtomicLong memory-model semantics).
+            // Shared slot so the timeout path can tell the owner which readId to clean up. Written
+            // only from the owner thread; read only after the timeout expires (guarded by a volatile
+            // via the AtomicLong memory-model semantics).
             java.util.concurrent.atomic.AtomicLong readIdRef =
                     new java.util.concurrent.atomic.AtomicLong(Long.MIN_VALUE);
-            readDispatchExecutor.execute(() -> tickExecutor.execute(() -> {
+            readDispatchExecutor.execute(() -> defaultGroupOwner.execute(() -> {
                 try {
                     long readId = raftNode.readIndex();
                     if (readId < 0) {
@@ -637,7 +669,7 @@ public final class ConfigdServer {
                     readIdRef.set(readId);
                     // whenReadReady fires synchronously if already ready,
                     // otherwise registers a one-shot callback fired from
-                    // the tick thread after confirmPendingReads / apply.
+                    // the owner thread after confirmPendingReads / apply.
                     raftNode.whenReadReady(readId, () -> {
                         boolean ready = raftNode.isReadReady(readId);
                         raftNode.completeRead(readId);
@@ -655,12 +687,12 @@ public final class ConfigdServer {
             } catch (java.util.concurrent.ExecutionException e) {
                 return false;
             } catch (java.util.concurrent.TimeoutException e) {
-                // Abandon the read; dispatch cleanup to the tick thread so
-                // ReadIndexState mutation stays single-threaded (F-0010).
+                // Abandon the read; dispatch cleanup to the group's owner so
+                // ReadIndexState mutation stays single-owner-threaded (F-0010 / R-01′).
                 long readId = readIdRef.get();
                 if (readId != Long.MIN_VALUE) {
                     final long finalReadId = readId;
-                    tickExecutor.execute(() -> raftNode.completeRead(finalReadId));
+                    defaultGroupOwner.execute(() -> raftNode.completeRead(finalReadId));
                 }
                 return false;
             }
@@ -762,11 +794,11 @@ public final class ConfigdServer {
         }
 
         // ---------------------------------------------------------------
-        // Start tick loop on the dedicated tickExecutor (F-0023).
+        // Start the consensus tick loop on owner[0] (Phase 0 B Stage 1B — R-01 deleted).
         // ---------------------------------------------------------------
         ConfigdServer server = new ConfigdServer(
                 config, driver, stateMachine,
-                tickExecutor, readDispatchExecutor, tlsReloadExecutor,
+                ownerPool, readDispatchExecutor, tlsReloadExecutor,
                 httpApiServer, tcpTransport, fanOutServer,
                 watchService, fanOutBuffer, compactor, plumtreeNode, hyParViewOverlay,
                 subscriptionManager, rolloutController, prometheusExporter);
@@ -776,16 +808,26 @@ public final class ConfigdServer {
         // the positive delta each tick (a term bump == an election / leadership change). Read from
         // the owner-published monitor snapshot (H-3), so it is safe off the group's owner thread.
         final long[] lastSeenTerm = {0L};
-        tickExecutor.scheduleAtFixedRate(() -> {
+        // Phase 0 B Stage 1B: schedule the consensus tick on owner[0] — the N=1 owner — instead of
+        // the deleted single `configd-tick` executor. tickOwner(0)/maybeCompactOwner(0,...) iterate
+        // exactly the groups bound to owner[0], so each node.tick()/maybeCompact() runs ON its group's
+        // owner thread (assertOwnerThread() holds — it is now ACTIVE in production after the H-6 bind).
+        // At N=1 a single owner ticks every group == the old R-01 driver.tick() loop, same cadence/FIFO.
+        // The H-3 scrape + the co-tenant riders (propagation/watch/plumtree/compactor) stay HERE in the
+        // lambda, riding owner[0] exactly as they rode the `configd-tick` thread under R-01 — they do
+        // NOT touch RaftNode state (verified, threading-contract §5 H-4). Decomposing them to a
+        // dedicated housekeeping thread is Stage 2; behavioural equivalence at N=1 is the goal here.
+        ownerPool.ownerByIndex(0).scheduleAtFixedRate(() -> {
             try {
-                driver.tick();
+                driver.tickOwner(0);
                 // S6/WS-A + H-3: publish the apply backlog (committed-not-applied) for the
                 // raft_pending_apply_entries gauge and advance the election counter. Both read the
-                // owner-published monitor snapshot (monitorView()) — NOT the live node: under the
-                // owner-executor pool this tickExecutor thread is no longer the group's owner, so a
-                // direct tickNode.log()/currentTerm() would be an off-owner read of non-volatile state.
-                // monitorView() is one volatile load of an immutable, coherent snapshot (<= one tick
-                // stale). See docs/phase0-B/h3-monitor-view-design.md.
+                // owner-published monitor snapshot (monitorView()) — NOT the live node. At N=1 this
+                // lambda runs ON owner[0] (the group's owner), so a direct read would be on-owner and
+                // legal; reading monitorView() is preserved unchanged (H-3 — it is the safe cross-owner
+                // read at N>1, when a group's owner is a different thread than owner[0]). monitorView()
+                // is one volatile load of an immutable, coherent snapshot (<= one tick stale). See
+                // docs/phase0-B/h3-monitor-view-design.md.
                 io.configd.raft.RaftNode tickNode = driver.getGroup(DEFAULT_RAFT_GROUP);
                 if (tickNode != null) {
                     io.configd.raft.RaftMetrics view = tickNode.monitorView();
@@ -799,8 +841,9 @@ public final class ConfigdServer {
                 // RR-005: trigger Raft-LOG compaction by applied-span threshold so the WAL is
                 // bounded (this was unreachable in the wired server). Cheap O(groups) check each
                 // tick; a group only snapshots when over the threshold, via the RR-003
-                // persist-before-truncate path (durable_prefix_no_gap preserved).
-                driver.maybeCompact(RAFT_LOG_COMPACTION_THRESHOLD);
+                // persist-before-truncate path (durable_prefix_no_gap preserved). Per-owner at N=1 it
+                // is the same set of groups the old driver.maybeCompact(...) iterated.
+                driver.maybeCompactOwner(0, RAFT_LOG_COMPACTION_THRESHOLD);
                 propagationMonitor.checkAll();
                 watchService.tick();
                 plumtreeNode.tick();
@@ -848,17 +891,17 @@ public final class ConfigdServer {
     }
 
     /**
-     * Shuts down the server, stopping the HTTP API, tick loop, and releasing resources.
+     * Shuts down the server, stopping the HTTP API, owner pool, and releasing resources.
      * <p>
-     * F-0023: shutdown order matters. We must drain {@code readDispatchExecutor}
-     * FIRST so no new read tasks are marshalled onto the tick thread. Then we
-     * shut the {@code tickExecutor} (which also owns ReadIndexState) so any
-     * in-flight reads complete. Finally the {@code tlsReloadExecutor} is the
-     * slowest to drain and is stopped last.
+     * F-0023 / R-01′: shutdown order matters. We must drain {@code readDispatchExecutor}
+     * FIRST so no new read tasks are marshalled onto an owner thread. Then we shut the
+     * owner pool (each owner also owns its groups' ReadIndexState + per-owner tick) so any
+     * in-flight reads complete. Finally the {@code tlsReloadExecutor} is the slowest to
+     * drain and is stopped last.
      */
     public void shutdown() {
         // C1 edge endpoint FIRST: it is a pure consumer of the ADR-0034 readSince/replay
-        // seams, so closing it before the HTTP API / tick loop / Raft teardown lets edge
+        // seams, so closing it before the HTTP API / owner pool / Raft teardown lets edge
         // subscribers receive a clean SERVER_SHUTDOWN and stops any new readSince/replay
         // pulls against a store/consensus engine that is about to be torn down. (Order is
         // safe either way — the fan-out never touches the apply path — but closing it first
@@ -869,10 +912,14 @@ public final class ConfigdServer {
         if (httpApiServer != null) {
             httpApiServer.stop(2);
         }
-        // Stop accepting new read marshals first.
+        // Stop accepting new read marshals first (so nothing new is enqueued onto an owner).
         shutdownExecutor(readDispatchExecutor, "read-dispatch", 2);
-        // Then stop consensus tick (also drains pending read-index callbacks).
-        shutdownExecutor(tickExecutor, "tick", 5);
+        // Then stop the owner pool (each owner drains its per-owner tick + pending read-index /
+        // commit-outcome callbacks). Per-owner shutdown reuses the same shutdownNow()-on-timeout
+        // fallback as the other executors, preserving the prior single-`tickExecutor` semantics.
+        for (int i = 0; i < ownerPool.size(); i++) {
+            shutdownExecutor(ownerPool.ownerByIndex(i), "raft-owner-" + i, 5);
+        }
         // Slow I/O executor can be shut down last — it is independent.
         shutdownExecutor(tlsReloadExecutor, "tls-reload", 2);
         if (tcpTransport != null) {
