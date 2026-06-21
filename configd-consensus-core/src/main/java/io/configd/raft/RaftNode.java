@@ -417,6 +417,19 @@ public final class RaftNode {
     }
 
     /**
+     * Stage 2 M2 — rehoming handoff, step "quiesce". Run on the CURRENT (losing) owner thread BEFORE the
+     * routing flip + {@link #beginHandoff() detach}: force-syncs any entries buffered since the last sync
+     * so the gaining owner adopts a clean, fully-durable state (no torn / half-buffered log carried across
+     * the handoff). Owner-thread only — asserted here (the public-entry contract) and again inside
+     * {@link #flushDurable()}. Public wiring API (the driver's {@code rehomeGroup} submits it as a task on
+     * the losing owner). Inert at N=1 / no-rehome (no caller). See the M2 design doc §3 step 2.
+     */
+    public void quiesceForHandoff() {
+        assertOwnerThread();
+        flushDurable();
+    }
+
+    /**
      * Stage 2 M2 — rehoming handoff, step "detach". Begins a co-tenant rehoming of this group: the
      * CURRENT owner relinquishes the group by re-pointing {@link #ownerThread} at the {@link #HANDOFF}
      * sentinel. MUST be called on the current owner thread (asserted) — only the owner may detach. After
@@ -2138,6 +2151,13 @@ public final class RaftNode {
      * captured here is exact.
      */
     private void flushDurable() {
+        // Stage 2 M2 (FlushScheduler retarget): the production FlushScheduler dispatches this flush onto
+        // the group's owner executor. If a rehome moved the group AFTER the flush was scheduled, a stale
+        // dispatch would otherwise run here OFF the current owner — an unsynchronised touch of log /
+        // durableIndex / commit advancement. Guarding converts that into a net fire (throw in test/sim,
+        // metric + SEVERE in prod) instead of a SILENT race; on the correct owner (every production path —
+        // single-group, dormant rehoming) the call is on-owner and silent. See MultiRaftDriver.dispatchFlush.
+        assertOwnerThread();
         flushScheduled = false;
         long target = log.lastIndex();
         if (target <= durableIndex) {

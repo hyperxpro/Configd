@@ -414,13 +414,12 @@ public final class ConfigdServer {
             int groupCommitMaxBatch = Integer.getInteger("configd.groupCommit.maxBatch", 4096);
             long groupCommitLingerMicros = Long.getLong("configd.groupCommit.lingerMicros", 0L);
             raftNode.setGroupCommit(
-                    (flush, delayMicros) -> {
-                        if (delayMicros <= 0) {
-                            defaultGroupOwner.execute(flush);
-                        } else {
-                            defaultGroupOwner.schedule(flush, delayMicros, TimeUnit.MICROSECONDS);
-                        }
-                    },
+                    // Stage 2 M2 (FlushScheduler retarget): dispatch through the driver so the flush always
+                    // targets the group's CURRENT owner (rehoming-aware), not a captured executor that would
+                    // dispatch onto the OLD owner after a rehome (an off-owner touch of the unsynchronised
+                    // log). DORMANT in prod (single group never rehomes ⇒ always the static floorMod owner)
+                    // and behaviourally identical to the prior captured-executor dispatch at N=1.
+                    (flush, delayMicros) -> driver.dispatchFlush(DEFAULT_RAFT_GROUP, flush, delayMicros),
                     groupCommitMaxBatch, groupCommitLingerMicros);
             System.out.println("  Group commit : ENABLED (maxBatch=" + groupCommitMaxBatch
                     + ", lingerMicros=" + groupCommitLingerMicros + ")");

@@ -13,6 +13,7 @@ import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.TimeUnit;
 
 /**
  * Manages multiple Raft groups on a single node. Each tick advances all
@@ -251,14 +252,20 @@ public final class MultiRaftDriver {
      * and no double-ownership window:
      * <ol>
      *   <li>mark the group migrating (tick + marshalled work now skip / bounce it);</li>
-     *   <li>on the LOSING owner's thread, in order: PUBLISH the routing flip ({@code groupOwner→target})
-     *       then DETACH ({@code node.beginHandoff()} → the HANDOFF sentinel);</li>
+     *   <li>on the LOSING owner's thread, in order: QUIESCE ({@code node.quiesceForHandoff()} —
+     *       force-sync buffered entries so the gaining owner adopts a clean, durable state), PUBLISH the
+     *       routing flip ({@code groupOwner→target}), then DETACH ({@code node.beginHandoff()} → the
+     *       HANDOFF sentinel);</li>
      *   <li>on the GAINING owner's thread: ADOPT ({@code node.adoptOwnerThread()}), ordered after the
      *       detach by the barrier — which also publishes all of the losing owner's final state here;</li>
      *   <li>clear migrating (the gaining owner now ticks + serves the group).</li>
      * </ol>
-     * If a step fails the group is left loudly broken (owned by the HANDOFF sentinel → every access
-     * fires) rather than silently corrupted; {@code migrating} is always cleared.
+     * If the GAINING owner cannot adopt (e.g. its executor is unavailable) after the losing owner has
+     * detached, the handoff is rolled back to the losing owner ({@link #abortHandoff}): routing is
+     * restored to its exact pre-rehome state and the losing owner re-adopts, so the group resumes on its
+     * original owner with no torn state and no lost message. Only if the LOSING owner is ALSO unavailable
+     * does the group stay loudly wedged on the HANDOFF sentinel (every access fires) — never silently
+     * mis-owned. {@code migrating} is always cleared.
      *
      * @throws IllegalStateException    if the owner pool is not set, or a handoff step fails on an owner
      * @throws IllegalArgumentException if the group is unknown or already on the target owner
@@ -277,23 +284,58 @@ public final class MultiRaftDriver {
         if (node == null) {
             throw new IllegalArgumentException("Group not registered: " + groupId);
         }
-        int from = currentOwnerIndex(groupId);
+        Integer priorOverride = groupOwner.get(groupId); // null ⇒ the group was on its static floorMod owner
+        int from = priorOverride != null ? priorOverride : p.ownerIndexOf(groupId);
         if (from == targetOwnerIndex) {
             throw new IllegalArgumentException(
                     "Group " + groupId + " is already owned by owner " + targetOwnerIndex);
         }
         migrating.add(groupId);
+        boolean detached = false; // the losing owner has published+detached but the gaining owner has not adopted
         try {
             // QUIESCE + PUBLISH + DETACH on the LOSING owner (serialized with its work for this group).
             runOnOwnerAwait(p.ownerByIndex(from), () -> {
+                node.quiesceForHandoff();                  // QUIESCE: force-sync so B adopts a durable state
                 groupOwner.put(groupId, targetOwnerIndex); // PUBLISH the routing flip (on the losing owner)
                 node.beginHandoff();                        // DETACH: ownerThread → HANDOFF sentinel
             });
+            detached = true;
             // ADOPT on the GAINING owner (ordered after the detach by the await barrier above).
             runOnOwnerAwait(p.ownerByIndex(targetOwnerIndex), node::adoptOwnerThread);
+            detached = false; // adopt succeeded — handoff complete, nothing to roll back
+        } catch (RuntimeException | InterruptedException e) {
+            if (detached) {
+                // The losing owner detached but the gaining owner could not adopt — roll back to A.
+                try {
+                    abortHandoff(groupId, from, priorOverride, node, p);
+                } catch (RuntimeException | InterruptedException abortFailed) {
+                    e.addSuppressed(abortFailed); // A also unavailable — group stays wedged on HANDOFF (loud)
+                }
+            }
+            throw e;
         } finally {
-            migrating.remove(groupId); // reopen the group for ticking + marshalled work on the new owner
+            migrating.remove(groupId); // reopen the group for ticking + marshalled work on the current owner
         }
+    }
+
+    /**
+     * Stage 2 M2 — roll a partial handoff back to the losing owner (see {@link #rehomeGroup}). The losing
+     * owner has detached ({@code ownerThread==HANDOFF}) and routing was published to the target, but the
+     * gaining owner never adopted. Restore routing to its EXACT pre-rehome state ({@code priorOverride},
+     * or no override if the group was on its static owner) and re-bind the losing owner via
+     * {@code adoptOwnerThread()} (legal because {@code ownerThread} is still the HANDOFF sentinel). Runs
+     * while {@code migrating} is still set, so no tick / marshalled work touches the node during rollback.
+     * The losing owner's state is intact and durable (it quiesced before detaching, and the gaining owner
+     * never touched it) ⇒ no torn state, no lost message.
+     */
+    private void abortHandoff(int groupId, int fromOwnerIndex, Integer priorOverride, RaftNode node,
+                              OwnerExecutorPool p) throws InterruptedException {
+        if (priorOverride != null) {
+            groupOwner.put(groupId, priorOverride); // restore the prior rehoming override
+        } else {
+            groupOwner.remove(groupId);             // group was on its static owner — leave no override
+        }
+        runOnOwnerAwait(p.ownerByIndex(fromOwnerIndex), node::adoptOwnerThread); // HANDOFF → losing owner
     }
 
     /** Runs {@code task} on {@code owner} and blocks until it completes, surfacing any failure. */
@@ -373,6 +415,58 @@ public final class MultiRaftDriver {
             return ProposeOutcome.rejected(ProposalResult.NOT_LEADER);
         }
         return node.propose(command);
+    }
+
+    /**
+     * Stage 2 M2 — marshal a coalescing group-commit flush onto the group's CURRENT owner. Wired by the
+     * production server as the {@link RaftNode.FlushScheduler} (replacing a closure that CAPTURED the owner
+     * executor once, which would dispatch onto the OLD owner after a rehome). The owner is re-resolved
+     * here via {@link #ownerExecutor} (rehoming-aware) and, when the task runs, {@link #runFlushOnCurrentOwner}
+     * applies the same check-and-bounce as {@link #routeMessage}: a flush scheduled before a rehome lands on
+     * the NEW owner, and never runs on an ambiguous owner mid-handoff. The flush ({@code RaftNode.flushDurable})
+     * is owner-guarded, so any residual off-owner dispatch FIRES rather than silently racing.
+     * <p>DORMANT in production (single group is never rehomed ⇒ the current owner is always the static
+     * floorMod owner) and inert at N=1. If the owner pool is not set (legacy/test wiring), the flush runs
+     * inline on the caller — exactly the pre-pool behaviour.
+     *
+     * @param groupId     the group whose buffered entries to flush
+     * @param flush       the flush task (the group's {@code RaftNode::flushDurable} reference)
+     * @param delayMicros linger delay before the flush (0 = ASAP)
+     */
+    public void dispatchFlush(int groupId, Runnable flush, long delayMicros) {
+        ScheduledExecutorService owner;
+        try {
+            owner = ownerExecutor(groupId); // current owner (rehoming-aware via currentOwnerIndex)
+        } catch (IllegalStateException noPool) {
+            flush.run(); // legacy/test wiring without a pool — run inline on the caller, as before
+            return;
+        }
+        Runnable task = () -> runFlushOnCurrentOwner(groupId, flush);
+        if (delayMicros <= 0) {
+            owner.execute(task);
+        } else {
+            owner.schedule(task, delayMicros, TimeUnit.MICROSECONDS);
+        }
+    }
+
+    /**
+     * The body of a dispatched flush, run ON an owner thread: check-and-bounce, then flush. If the group is
+     * mid-handoff, or has been rehomed away from the executing owner (stale dispatch), RE-DISPATCH to the
+     * current owner instead of flushing off-owner — mirroring {@link #routeMessage}. Otherwise run the flush
+     * (on the current owner ⇒ {@code RaftNode.flushDurable}'s guard is silent). A removed group drops the
+     * stale flush (nothing to sync).
+     */
+    private void runFlushOnCurrentOwner(int groupId, Runnable flush) {
+        RaftNode node = groups.get(groupId);
+        if (node == null) {
+            return; // group removed — drop the stale flush
+        }
+        if (migrating.contains(groupId)
+                || (groupOwner.containsKey(groupId) && node.boundToAnotherThread())) {
+            ownerExecutor(groupId).execute(() -> runFlushOnCurrentOwner(groupId, flush));
+            return;
+        }
+        flush.run(); // RaftNode.flushDurable() on the current owner (guarded; on-owner ⇒ silent)
     }
 
     // ========================================================================
