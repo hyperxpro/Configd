@@ -8,19 +8,21 @@ import io.configd.raft.RaftMessage;
 import io.configd.raft.RaftNode;
 
 import java.util.Collections;
-import java.util.HashMap;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ScheduledExecutorService;
 
 /**
  * Manages multiple Raft groups on a single node. Each tick advances all
  * groups. Messages from the transport are routed to the correct group.
  * <p>
- * Design: a single I/O thread calls {@link #tick()} which iterates all
- * groups. This is the CockroachDB "store" pattern — one I/O thread per
- * node, not per Raft group (ADR-0009). The driver itself holds no locks
- * and must be accessed from a single thread only.
+ * Design: historically a single I/O thread called {@link #tick()} which iterated all groups (R-01).
+ * Phase 0 Workstream B adds the owner-executor pool: {@link #tickOwner(int)} ticks the groups bound
+ * to one owner thread (per-owner scheduling) and {@link #ownerExecutor(int)} gives each group's owner
+ * for marshalling. The {@code groups} map is a {@link ConcurrentHashMap} so owner threads and the
+ * inbound path read it concurrently with infrequent add/remove (H-5).
  * <p>
  * Groups are identified by integer group IDs. Each group ID maps to
  * exactly one {@link RaftNode}. Adding or removing groups is expected
@@ -41,6 +43,14 @@ public final class MultiRaftDriver {
     private final Map<Integer, RaftNode> groups;
 
     /**
+     * Phase 0 — Workstream B — the owner-executor pool. Null in legacy/test wiring (which drives
+     * {@link #tick()} on a single thread); set by the server via {@link #setOwnerPool} to enable
+     * per-owner ticking ({@link #tickOwner}) and owner-targeted marshalling ({@link #ownerExecutor}).
+     * Volatile: published by the wiring thread, read by every owner + inbound thread.
+     */
+    private volatile OwnerExecutorPool ownerPool;
+
+    /**
      * Creates a new MultiRaftDriver.
      *
      * @param localNode the identifier of this node in the cluster
@@ -50,7 +60,7 @@ public final class MultiRaftDriver {
     public MultiRaftDriver(NodeId localNode, Clock clock) {
         this.localNode = Objects.requireNonNull(localNode, "localNode");
         this.clock = Objects.requireNonNull(clock, "clock");
-        this.groups = new HashMap<>();
+        this.groups = new ConcurrentHashMap<>();
     }
 
     // ========================================================================
@@ -117,6 +127,73 @@ public final class MultiRaftDriver {
     public void maybeCompact(long appliedSinceSnapshotThreshold) {
         for (RaftNode node : groups.values()) {
             node.maybeCompact(appliedSinceSnapshotThreshold);
+        }
+    }
+
+    // ========================================================================
+    // Owner-executor pool (Phase 0 Workstream B) — per-owner ticking + marshalling
+    // ========================================================================
+
+    /**
+     * Binds the owner-executor pool. Called once by the server at wiring, before any owner is
+     * scheduled. After this, {@link #tickOwner}/{@link #ownerExecutor} are usable; the legacy
+     * {@link #tick()}/{@link #maybeCompact} remain for single-threaded test wiring.
+     */
+    public void setOwnerPool(OwnerExecutorPool pool) {
+        this.ownerPool = Objects.requireNonNull(pool, "pool");
+    }
+
+    /** The owner-executor pool, or null if not set (legacy/test wiring). */
+    public OwnerExecutorPool ownerPool() {
+        return ownerPool;
+    }
+
+    /**
+     * The owner executor for a group — the ONLY executor on which that group's {@link RaftNode} may
+     * run. Inbound/propose/read/flush marshal their {@code RaftNode} work onto this.
+     *
+     * @throws IllegalStateException if the owner pool has not been set
+     */
+    public ScheduledExecutorService ownerExecutor(int groupId) {
+        OwnerExecutorPool p = ownerPool;
+        if (p == null) {
+            throw new IllegalStateException("owner pool not set — setOwnerPool() must run at wiring");
+        }
+        return p.ownerExecutor(groupId);
+    }
+
+    /**
+     * Per-owner consensus tick: ticks every group bound to {@code ownerIndex}. MUST be invoked ON that
+     * owner's thread (the per-owner scheduled task), so each {@code node.tick()} runs on its group's
+     * owner thread — preserving R-01′ (the {@code assertOwnerThread()} net asserts it). At N=1 a single
+     * owner ticks every group, exactly reproducing the R-01 {@link #tick()} loop.
+     */
+    public void tickOwner(int ownerIndex) {
+        OwnerExecutorPool p = ownerPool;
+        if (p == null) {
+            throw new IllegalStateException("owner pool not set — setOwnerPool() must run at wiring");
+        }
+        for (Map.Entry<Integer, RaftNode> e : groups.entrySet()) {
+            if (p.ownerIndexOf(e.getKey()) == ownerIndex) {
+                e.getValue().tick();
+            }
+        }
+    }
+
+    /**
+     * Per-owner threshold-gated Raft-log compaction: {@link RaftNode#maybeCompact(long)} for every
+     * group bound to {@code ownerIndex}. MUST run on that owner's thread (same contract as
+     * {@link #tickOwner}).
+     */
+    public void maybeCompactOwner(int ownerIndex, long appliedSinceSnapshotThreshold) {
+        OwnerExecutorPool p = ownerPool;
+        if (p == null) {
+            throw new IllegalStateException("owner pool not set — setOwnerPool() must run at wiring");
+        }
+        for (Map.Entry<Integer, RaftNode> e : groups.entrySet()) {
+            if (p.ownerIndexOf(e.getKey()) == ownerIndex) {
+                e.getValue().maybeCompact(appliedSinceSnapshotThreshold);
+            }
         }
     }
 
