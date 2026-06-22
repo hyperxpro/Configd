@@ -297,7 +297,18 @@ an **M** boundary the harness must prove never leaks an inline `RaftNode` touch.
 4. **Invariants hold under concurrent drive.** All 9 in-node checks (`RaftNode.java:683–702`) + the
    4 cross-node (`SimInvariants`) green while tick + inbound + propose + commit-callback +
    flush + compaction + ReadIndex + metric-read race.
-5. **Coalesced-heartbeat property** (Workstream B): heartbeat traffic flat in group count.
+5. **Coalesced-heartbeat property** (Workstream B — ✅ DONE, Stage 2 M3): heartbeat traffic flat in
+   group count. **As-built:** a per-group `CoalescingRaftTransport` decorator buffers each group's empty
+   AppendEntries (its heartbeat) into the owner's `HeartbeatCoalescer` during the tick window; `tickOwner`
+   drains one message per peer at tick end (1 group ⇒ a plain AppendEntries, wire unchanged at N=1; >1 ⇒ a
+   `CoalescedHeartbeat`, demuxed by `routeCoalescedHeartbeat`). Proven: (1) **cost flat in N** — one message
+   per peer per tick independent of group count, un-coalesced baseline scales with G
+   (`HeartbeatCoalescingTest`); (2) **no spurious election** under idle / low / sustained load with
+   coalescing active, the broken-drain test-the-testers (DROP / DELAY-past-timeout / single-peer) all churn
+   (`CoalescedHeartbeatLivenessTest`, + the 20,001-seed `SeedSweepTest` green WITH coalescing wired into the
+   sim); (3) **correctness preserved** — demux delivers per-group liveness, the full S2–S4 surface
+   re-closes. RaftNode UNTOUCHED. Addresses RR-113 heartbeat starvation; the THROUGHPUT NUMBER is
+   Workstream C on hardware, not claimed here. D-020/D-021; `docs/phase0-B-stage2-m3/`.
 
 ---
 

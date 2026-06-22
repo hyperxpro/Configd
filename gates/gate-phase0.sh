@@ -22,6 +22,13 @@
 #   (c) H-4 no-double-ownership at the JMM level (jcstress
 #       RehomingDoubleOwnershipTest, run at -m quick where the broken control
 #       reliably fails) + the owner-guard + monitor-view publication proofs.
+#   (c2) M3 COALESCED HEARTBEATS (RR-113 de-regression): heartbeat cost flat in
+#       group count — one coalesced message per peer per tick independent of G,
+#       un-coalesced baseline scales with G, + the demux round-trip
+#       (HeartbeatCoalescingTest); no spurious election under idle/low/sustained
+#       load WITH coalescing, broken-drain test-the-testers all churn
+#       (CoalescedHeartbeatLivenessTest). The sim (step d) runs the 20,001-seed
+#       sweep WITH coalescing wired — that green IS the S2–S4 surface coalesced.
 #   (d) the S2–S4 invariant surface WITH rehoming injected: tens of thousands of
 #       handoffs under concurrent multi-owner load, zero off-owner fires, groups
 #       keep committing (RehomingInjectedSweepTest); AND the deterministic
@@ -117,6 +124,21 @@ SWEEP="$LOGDIR/sweep.txt"
 run_tests sweep "RehomingInjectedSweepTest" "$SWEEP"
 assert_class_green "$SWEEP" "RehomingInjectedSweepTest"
 echo "gate-phase0 sweep: OK"
+
+# --- (c2) M3 coalesced heartbeats: cost-flat-in-N + demux + no-spurious-election under load -----
+# Wiring the dormant HeartbeatCoalescer (RR-113 de-regression: heartbeat cost flat in group count).
+# HeartbeatCoalescingTest: one coalesced message per peer per tick independent of G (the un-coalesced
+# baseline scales with G — test-the-tester) + the routeCoalescedHeartbeat demux round-trip + neuter.
+# CoalescedHeartbeatLivenessTest: no spurious election under idle/low/sustained load WITH coalescing,
+# and the broken-drain test-the-testers (DROP / DELAY-past-timeout / single-peer) all churn. The
+# deterministic sim (step d) additionally runs the full 20,001-seed sweep WITH coalescing wired into
+# the harness — so SeedSweepTest green there IS the S2–S4 surface with coalescing active.
+echo "gate-phase0 coalesce: M3 cost-flat-in-N + demux + no-spurious-election under load..."
+COAL="$LOGDIR/coalesce.txt"
+run_tests coalesce "HeartbeatCoalescingTest,CoalescedHeartbeatLivenessTest" "$COAL"
+assert_class_green "$COAL" "HeartbeatCoalescingTest"        # cost-flat-in-N + demux (M3 S2)
+assert_class_green "$COAL" "CoalescedHeartbeatLivenessTest" # no-spurious-election under load (M3 S3)
+echo "gate-phase0 coalesce: OK"
 
 # --- (d) the deterministic S2–S4 sim (no regression from the re-threading) -----
 if [ "${GATE_PHASE0_SKIP_SIM:-0}" = "1" ]; then
