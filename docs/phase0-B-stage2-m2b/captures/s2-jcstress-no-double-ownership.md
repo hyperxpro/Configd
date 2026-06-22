@@ -64,12 +64,27 @@ never hits the FALSE-NEGATIVE `2` (0.00%), AND "guard FIRED — foreign observed
 was intercepted" (`0`) is observed at **2.65%–3.70%** (e.g. 770,371) — the off-owner caller genuinely
 saw B in service and the guard fired; the remainder is the pre-service inert window (`1`).
 
-## Gate integration
+## Four-way verification (independent)
 
-`run-curated-subset.sh` adds `CleanHandoffNoDoubleOwnership` + `PostAdoptGuardNoFalseNegative` to the
-curated list; `BrokenHandoffDoubleOwnership` stays EXCLUDED (forbidden-hitting control, committed as the
-non-vacuity proof). Curated subset (sanity mode, gate config): **15 tests, 210 planned, 210 passed, 0
-failed**.
+An independent four-way verifier reproduced all three results (`-m quick`) and confirmed the proof
+**SOUND, FAITHFUL, and NON-VACUOUS**: the `@State` fields are a VERBATIM mirror of `RaftNode`'s
+`ownerThread` + `HANDOFF`; the volatile-acquire-on-HANDOFF barrier is JLS-faithful and edge-equivalent
+to the executor `.get()` (JLS 17.4.4/17.4.5 — synchronizes-with makes ALL of A's prior writes visible,
+not weaker, and not hiding-stronger); the overlap detector has NO blind spot (proven: by the total
+synchronization order a genuine overlap cannot have BOTH witnesses read false — and a barrier-intact
+mid-crit overlap probe was still CAUGHT at 27%); the control is FAIR (drops exactly the barrier edge).
+It could not construct an ordering where double-ownership slips through.
+
+## Gate integration — the rehoming proofs run at `-m quick`, NOT sanity
+
+The verifier found that the gate's default `-m sanity` (1+1 fork, ~56 samples) is too weak for THIS
+rare race: the BROKEN control FALSE-PASSED under sanity in **~20% of runs** (`captures/jcstress/
+control-sanity-flaky.txt`) — so a sanity clean-pass cannot catch a double-ownership regression. Fixed:
+`run-curated-subset.sh` runs the bulk at `-m sanity` (fast smoke for the frequent races) but the two
+rehoming proofs (`CleanHandoffNoDoubleOwnership` + `PostAdoptGuardNoFalseNegative`) at **`-m quick`**,
+where the broken control reliably FAILS — so the clean pass carries weight. `BrokenHandoffDoubleOwnership`
+stays EXCLUDED (forbidden-hitting control). The H-4 closure evidence is the committed `-m quick`
+captures, not the gate smoke.
 
 ## What this closes
 

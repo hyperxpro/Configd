@@ -1,0 +1,24 @@
+# BrokenHandoffDoubleOwnership under -m sanity is FLAKY (false-passes) — WHY the gate runs the
+# rehoming proofs at -m quick instead. The double-ownership race is ~0.05-1%; sanity (~56 samples)
+# often lands ZERO forbidden samples, so even the BROKEN control survives. 15 runs, JDK25/2-vCPU:
+
+run 1: [FAILED]  (1, 1        1 forbidden) — caught the race
+run 2: [FAILED]  (1, 1        1 forbidden) — caught the race
+run 3: PASSED (exit 0) — FALSE PASS, zero forbidden samples landed
+run 4: [FAILED]  (1, 1        1 forbidden) — caught the race
+run 5: PASSED (exit 0) — FALSE PASS, zero forbidden samples landed
+run 6: [FAILED]  (1, 1        1 forbidden) — caught the race
+run 7: [FAILED]  (1, 1        1 forbidden) — caught the race
+run 8: [FAILED]  (1, 1        1 forbidden) — caught the race
+run 9: [FAILED]  (1, 1        1 forbidden) — caught the race
+run 10: [FAILED]  (1, 1        1 forbidden) — caught the race
+run 11: PASSED (exit 0) — FALSE PASS, zero forbidden samples landed
+run 12: [FAILED]  (1, 1        1 forbidden) — caught the race
+run 13: [FAILED]  (1, 1        1 forbidden) — caught the race
+run 14: PASSED (exit 0) — FALSE PASS, zero forbidden samples landed
+run 15: [FAILED]  (1, 1        1 forbidden) — caught the race
+
+SUMMARY: 11/15 caught the race ([FAILED]), 4/15 FALSE-PASSED under sanity.
+=> a sanity clean-pass cannot certify no-double-ownership; the gate runs these proofs at -m quick,
+   where the broken control reliably FAILS (0.05-1% over millions of samples). Closure evidence is
+   the -m quick capture (control-broken-handoff-FORBIDDEN.txt + clean-handoff-distribution.txt).

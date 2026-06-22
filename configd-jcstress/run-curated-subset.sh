@@ -65,37 +65,62 @@ io.configd.jcstress.VersionedConfigStoreReadTest.AliasedArrayNoTear
 io.configd.jcstress.HamtMapStructuralSharingTest.ConsistentMapVersion
 io.configd.jcstress.RaftOwnerThreadGuardTest.OwnerGuardNoFalseNegativeInService
 io.configd.jcstress.RaftMonitorViewPublicationTest.PublishedSnapshotNeverTears
+EOF
+
+# The M2b H-4 rehoming no-double-ownership proofs run at -m quick, NOT sanity. The double-ownership
+# race is RARE (~0.05-1% even with millions of samples); sanity mode (~56 samples) false-passes even
+# the BROKEN control ~20% of runs (verified — see captures/jcstress/control-sanity-flaky.txt), so a
+# sanity clean-pass cannot catch a double-ownership regression. -m quick reliably FAILS the broken
+# control, so the clean pass here carries real weight. (The closure evidence is the operator-grade
+# capture in docs/phase0-B-stage2-m2b/captures/jcstress/.)
+read -r -d '' REHOMING_TESTS <<'EOF' || true
 io.configd.jcstress.RehomingDoubleOwnershipTest.CleanHandoffNoDoubleOwnership
 io.configd.jcstress.RehomingDoubleOwnershipTest.PostAdoptGuardNoFalseNegative
 EOF
 
 # jcstress -t takes a single regex; OR the exact names together (escape dots).
 REGEX="$(echo "$TESTS" | sed 's/\./\\./g' | paste -sd'|' -)"
+REHOMING_REGEX="$(echo "$REHOMING_TESTS" | sed 's/\./\\./g' | paste -sd'|' -)"
 
-echo "jcstress curated subset: $(echo "$TESTS" | grep -c .) tests, sanity mode, ${CPUS} CPUs"
+# A clean jcstress run exits 0 AND reports zero failed results. Be defensive: fail the gate on a
+# non-zero exit, any [FAILED] marker, or a non-zero failed/error count. Called DIRECTLY (not in $())
+# so its exit propagates to the gate.
+check_run() { # $1=label $2=logfile $3=rc
+  local label="$1" log="$2" rc="$3"
+  if [ "$rc" -ne 0 ]; then
+    echo "jcstress curated subset ($label): jcstress exited $rc"; tail -20 "$log"; exit 1
+  fi
+  if grep -qE '\[FAILED\]' "$log"; then
+    echo "jcstress curated subset ($label): a test reported [FAILED] (forbidden outcome observed)"
+    grep -E '\[FAILED\]' "$log"; exit 1
+  fi
+  if grep -qE 'failed, [1-9][0-9]* (soft|hard) err' "$log" || grep -qE '[1-9][0-9]* failed,' "$log"; then
+    echo "jcstress curated subset ($label): non-zero failed/error count"
+    grep -E 'passed,.*failed' "$log" | tail -1; exit 1
+  fi
+}
+
+echo "jcstress curated subset: $(echo "$TESTS" | grep -c .) tests sanity + $(echo "$REHOMING_TESTS" | grep -c .) rehoming tests quick, ${CPUS} CPUs"
 echo "results: $RESULTS"
 
-LOG="$RESULTS/run.log"
+# (1) the bulk at -m sanity — a fast smoke for the frequent races.
+LOG="$RESULTS/run-sanity.log"
 set +e
-java -jar "$JAR" -t "($REGEX)" -m sanity -c "$CPUS" -r "$RESULTS" > "$LOG" 2>&1
+java -jar "$JAR" -t "($REGEX)" -m sanity -c "$CPUS" -r "$RESULTS/sanity" > "$LOG" 2>&1
 rc=$?
 set -e
+check_run sanity "$LOG" "$rc"
 
-# A clean jcstress run exits 0 AND reports zero failed results. Be defensive:
-# fail the gate on a non-zero exit, on any [FAILED] marker, or on a non-zero
-# "failed" count in the planned/passed/failed summary.
-if [ "$rc" -ne 0 ]; then
-  echo "jcstress curated subset: jcstress exited $rc"; tail -20 "$LOG"; exit 1
-fi
-if grep -qE '\[FAILED\]' "$LOG"; then
-  echo "jcstress curated subset: a test reported [FAILED] (forbidden outcome observed)"
-  grep -E '\[FAILED\]' "$LOG"; exit 1
-fi
-if grep -qE 'failed, [1-9][0-9]* (soft|hard) err' "$LOG" || grep -qE '[1-9][0-9]* failed,' "$LOG"; then
-  echo "jcstress curated subset: non-zero failed/error count"
-  grep -E 'passed,.*failed' "$LOG" | tail -1; exit 1
-fi
+# (2) the M2b rehoming no-double-ownership proofs at -m quick — so a double-ownership regression is
+# RELIABLY caught (sanity false-passes even the broken control ~20% of runs; see the comment above).
+QLOG="$RESULTS/run-rehoming-quick.log"
+set +e
+java -jar "$JAR" -t "($REHOMING_REGEX)" -m quick -c "$CPUS" -r "$RESULTS/rehoming" > "$QLOG" 2>&1
+qrc=$?
+set -e
+check_run rehoming-quick "$QLOG" "$qrc"
 
-passed="$(grep -E 'passed,.*failed' "$LOG" | tail -1 || true)"
-echo "jcstress curated subset: OK — $passed"
+sanity_passed="$(grep -E 'passed,.*failed' "$LOG" | tail -1 || true)"
+quick_passed="$(grep -E 'passed,.*failed' "$QLOG" | tail -1 || true)"
+echo "jcstress curated subset: OK — sanity[$sanity_passed] rehoming-quick[$quick_passed]"
 exit 0
