@@ -235,9 +235,27 @@ class RehomingInjectedSweepTest {
                 "OWNER ISOLATION VIOLATED under rehoming — a group entry point ran off its current owner; first: "
                         + checker.firstViolation.get());
 
-        // DRAIN — settle every group back onto its static owner, then propose + tick it there so each group
-        // provably commits PAST its baseline (robust non-vacuity: a group that had wedged or stopped
-        // committing across the rehomes would fail to advance here), and the monitorView reflects it.
+        // PRE-DRAIN liveness (SELF-SUFFICIENT — does not rely on the drain): the injector is stopped and the
+        // barriers are uninterruptible, so no group is left migrating. Tick each group ONCE on its current
+        // owner (refresh monitorView; NO propose) and assert it committed PAST its baseline DURING the
+        // concurrent rehoming phase — proving consensus progressed ACROSS the rehomes, not only in the drain.
+        // A group wedged mid-sweep would either have FIRED the net (caught above) or show no pre-drain growth
+        // here. (S3 verifier hardening.)
+        long minPreDrain = Long.MAX_VALUE;
+        for (int k = 0; k < gids.length; k++) {
+            int gid = gids[k];
+            final int owner = driver.currentOwnerIndex(gid);
+            pool.ownerByIndex(owner).submit(() -> driver.tickOwner(owner)).get(10, TimeUnit.SECONDS);
+            long pre = nodes.get(gid).monitorView().commitIndex();
+            assertTrue(pre > baseline[k],
+                    "group " + gid + " did not commit across the concurrent rehoming phase (pre-drain commitIndex "
+                            + baseline[k] + " -> " + pre + ") — it may have stalled/wedged mid-sweep");
+            minPreDrain = Math.min(minPreDrain, pre - baseline[k]);
+        }
+        assertEquals(0, checker.ownerFires.get(), "the pre-drain liveness tick must not fire");
+
+        // DRAIN — settle every group back onto its static owner, then propose + tick it there (clean shutdown +
+        // a post-settle confirmation that the group still serves on its static owner after the sweep).
         for (int gid : gids) {
             int target = pool.ownerIndexOf(gid);
             if (driver.currentOwnerIndex(gid) != target) {
@@ -265,8 +283,8 @@ class RehomingInjectedSweepTest {
             totalGrowth += now - baseline[k];
         }
         System.out.println("[S3 sweep seed=" + seed + "] rehomes=" + rehomes.get() + " accepted=" + accepted.get()
-                + " commitGrowth(min=" + minGrowth + " total=" + totalGrowth + " over " + gids.length + " groups)"
-                + " ownerFires=" + checker.ownerFires.get());
+                + " preDrainGrowth(min=" + minPreDrain + ") commitGrowth(min=" + minGrowth + " total=" + totalGrowth
+                + " over " + gids.length + " groups) ownerFires=" + checker.ownerFires.get());
 
         pool.shutdown();
         assertTrue(pool.awaitTermination(15, TimeUnit.SECONDS), "owner pool did not terminate");
