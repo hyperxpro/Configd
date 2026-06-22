@@ -121,12 +121,29 @@ class EdgeHttpServerTest {
         // histogram schedule so the le buckets the alert queries render.
         apply(1, "svc/a", "v1");
         assertEquals(200, get("/v1/config/svc/a").statusCode());
-        String scrape = new io.configd.observability.PrometheusExporter(registry,
-                io.configd.observability.ConfigdMetrics.edgeProcessHistogramSchedules()).export();
+        // DEFLAKE (pre-existing main flake the CI nightly surfaced — RR-107 "CI sees what fast local
+        // runs do not"): EdgeHttpServer records configd_edge_read_seconds in a finally that runs AFTER
+        // the response body is flushed (so the sample includes the full handler latency — intentional),
+        // so a served read records its sample slightly AFTER the client's GET returns. A single immediate
+        // scrape races that server-side finally and intermittently saw count==0 on a loaded CI runner.
+        // Poll the scrape until the sample lands; the 2 s bound still fails loudly (with the scrape body)
+        // if it never records, so this hides no real regression.
+        java.util.regex.Pattern countPat = java.util.regex.Pattern
+                .compile("(?m)^configd_edge_read_seconds_count\\s+(\\S+)");
+        long deadlineNanos = System.nanoTime() + java.time.Duration.ofSeconds(2).toNanos();
+        String scrape;
+        while (true) {
+            scrape = new io.configd.observability.PrometheusExporter(registry,
+                    io.configd.observability.ConfigdMetrics.edgeProcessHistogramSchedules()).export();
+            java.util.regex.Matcher c = countPat.matcher(scrape);
+            if ((c.find() && Double.parseDouble(c.group(1)) >= 1.0) || System.nanoTime() >= deadlineNanos) {
+                break;
+            }
+            Thread.sleep(5);
+        }
         assertTrue(scrape.contains("configd_edge_read_seconds_bucket{le=\"0.001\"}"),
                 "the le=0.001 bucket the edge-read burn-rate alert queries must be emitted:\n" + scrape);
-        java.util.regex.Matcher m = java.util.regex.Pattern
-                .compile("(?m)^configd_edge_read_seconds_count\\s+(\\S+)").matcher(scrape);
+        java.util.regex.Matcher m = countPat.matcher(scrape);
         assertTrue(m.find() && Double.parseDouble(m.group(1)) >= 1.0,
                 "a served read must record a configd_edge_read_seconds sample:\n" + scrape);
     }
