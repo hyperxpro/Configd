@@ -408,8 +408,11 @@ public final class ConfigdServer {
                     }
                 }
             });
+            // Resolve the CURRENT owner's coalescer on each record (rehoming-aware; at N=1 this is always
+            // owner 0). A fixed binding would, after a Phase-1 rehome, record into the OLD owner's
+            // coalescer — a cross-thread write the new owner never drains (D-020 review A2).
             coalescingTransport.bindCoalescer(
-                    driver.heartbeatCoalescer(driver.currentOwnerIndex(DEFAULT_RAFT_GROUP)));
+                    () -> driver.heartbeatCoalescer(driver.currentOwnerIndex(DEFAULT_RAFT_GROUP)));
         }
         ScheduledExecutorService readDispatchExecutor = Executors.newSingleThreadScheduledExecutor(r -> {
             Thread t = new Thread(r, "configd-read-dispatch");

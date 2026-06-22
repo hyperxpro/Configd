@@ -57,6 +57,24 @@ class ConsistencyPropertyTests {
         private final List<HeartbeatCoalescer> coalescers;
         private final int nodeCount;
 
+        /**
+         * Stage 2 M3 S3 — heartbeat-drain fault injection (test-the-tester). {@link #NONE} is the real
+         * coalescing drain. {@link #DROP} models a broken coalescer that loses coalesced heartbeats (they
+         * are drained from the buffer but never sent); {@link #DELAY} sends them {@code hbFaultDelayMs}
+         * later (modelling a coalescing window that holds a heartbeat past the election timeout). Either
+         * fault MUST drive election churn — that is what proves the no-spurious-election sweep is
+         * non-vacuous (a correct drain stays green; a broken one goes RED).
+         */
+        enum HeartbeatFault { NONE, DROP, DELAY }
+        private HeartbeatFault hbFault = HeartbeatFault.NONE;
+        private long hbFaultDelayMs = 0;
+        /** When non-null with {@link HeartbeatFault#DROP}, drop heartbeats only to THIS peer (the single-
+         *  peer / partial-aggregate starvation fault, red-team D); null drops to all peers. */
+        private NodeId hbDropVictim = null;
+        /** Per-node count of PreVote requests sent — the starvation signal: a follower denied heartbeats
+         *  times out and churns PreVotes (which PreVote shields from becoming a spurious election). */
+        private int[] preVotesSent;
+
         /** R-01' owner binding is done once, on the first tick (the drive thread). */
         private boolean ownersBound;
 
@@ -81,6 +99,7 @@ class ConsistencyPropertyTests {
             this.stateMachines = new ArrayList<>();
             this.stores = new ArrayList<>();
             this.coalescers = new ArrayList<>();
+            this.preVotesSent = new int[nodeCount];
 
             for (int i = 0; i < nodeCount; i++) {
                 NodeId nodeId = NodeId.of(i);
@@ -98,11 +117,17 @@ class ConsistencyPropertyTests {
                 // node the drain emits a plain AppendEntries (the base path is byte-identical), but the
                 // record→drain pipeline is genuinely exercised every tick — a broken drain (drop/delay)
                 // would slip the election timeout and the no-spurious-election sweeps would go RED.
-                RaftTransport baseTransport = (target, message) ->
-                        sim.network().send(nodeId, target, message, sim.clock().currentTimeMillis());
+                final int nodeIndex = i;
+                RaftTransport baseTransport = (target, message) -> {
+                    // S3 starvation signal: count PreVote requests this node emits (red-team D).
+                    if (message instanceof RequestVoteRequest rv && rv.preVote()) {
+                        preVotesSent[nodeIndex]++;
+                    }
+                    sim.network().send(nodeId, target, message, sim.clock().currentTimeMillis());
+                };
                 HeartbeatCoalescer coalescer = new HeartbeatCoalescer();
                 CoalescingRaftTransport transport = new CoalescingRaftTransport(baseTransport, 0);
-                transport.bindCoalescer(coalescer);
+                transport.bindCoalescer(() -> coalescer); // one group per node ⇒ a constant resolver
 
                 // RR-010: derive the per-node election RNG from the master
                 // simulation seed (not entropy) so the same seed reproduces the
@@ -164,14 +189,42 @@ class ConsistencyPropertyTests {
          * on the new trajectory — not the identical prior schedule. D-020 review, finding 1.)
          */
         private void drainHeartbeats(int i, HeartbeatCoalescer hc) {
+            Map<NodeId, Map<Integer, AppendEntriesRequest>> drained = hc.drainAndEndTick();
             NodeId from = NodeId.of(i);
             long now = sim.clock().currentTimeMillis();
-            for (Map.Entry<NodeId, Map<Integer, AppendEntriesRequest>> peerEntry
-                    : hc.drainAndEndTick().entrySet()) {
+            // DELAY models a coalescing window that holds a heartbeat: SimulatedNetwork delivers at
+            // (passedTime + latency), so a future timestamp pushes delivery past the election timeout.
+            long sendAt = (hbFault == HeartbeatFault.DELAY) ? now + hbFaultDelayMs : now;
+            for (Map.Entry<NodeId, Map<Integer, AppendEntriesRequest>> peerEntry : drained.entrySet()) {
+                NodeId peer = peerEntry.getKey();
+                if (hbFault == HeartbeatFault.DROP
+                        && (hbDropVictim == null || hbDropVictim.equals(peer))) {
+                    continue; // drop this peer's coalesced heartbeats (all peers, or just the victim)
+                }
                 for (AppendEntriesRequest hb : peerEntry.getValue().values()) {
-                    sim.network().send(from, peerEntry.getKey(), hb, now);
+                    sim.network().send(from, peer, hb, sendAt);
                 }
             }
+        }
+
+        /** Stage 2 M3 S3: inject an ALL-peers heartbeat-drain fault. delayMs ignored unless DELAY. */
+        void injectHeartbeatFault(HeartbeatFault fault, long delayMs) {
+            this.hbFault = fault;
+            this.hbFaultDelayMs = delayMs;
+            this.hbDropVictim = null;
+        }
+
+        /** Stage 2 M3 S3 (red-team D): drop coalesced heartbeats only to {@code victim} (partial-aggregate
+         *  starvation), leaving every other peer served — the per-peer failure a real coalescer is most
+         *  likely to get wrong. */
+        void dropHeartbeatsToPeer(NodeId victim) {
+            this.hbFault = HeartbeatFault.DROP;
+            this.hbDropVictim = victim;
+        }
+
+        /** PreVote requests sent by node {@code i} so far (the per-peer starvation signal). */
+        int preVotesSent(int i) {
+            return preVotesSent[i];
         }
 
         /**

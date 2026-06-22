@@ -125,7 +125,7 @@ class HeartbeatCoalescingTest {
             List<CoalescingRaftTransport> groups = new ArrayList<>();
             for (int gid = 0; gid < g; gid++) {
                 CoalescingRaftTransport dec = new CoalescingRaftTransport(delegate, gid);
-                dec.bindCoalescer(hc);
+                dec.bindCoalescer(() -> hc);
                 groups.add(dec);
             }
 
@@ -158,7 +158,7 @@ class HeartbeatCoalescingTest {
             RecordingTransport delegate = new RecordingTransport();
             for (int gid = 0; gid < g; gid++) {
                 CoalescingRaftTransport dec = new CoalescingRaftTransport(delegate, gid);
-                dec.bindCoalescer(hc);
+                dec.bindCoalescer(() -> hc);
                 dec.send(PEER_A, emptyHeartbeat(1)); // not collecting → straight through
                 dec.send(PEER_B, emptyHeartbeat(1));
             }
@@ -176,7 +176,7 @@ class HeartbeatCoalescingTest {
         HeartbeatCoalescer hc = new HeartbeatCoalescer();
         RecordingTransport delegate = new RecordingTransport();
         CoalescingRaftTransport dec = new CoalescingRaftTransport(delegate, 0);
-        dec.bindCoalescer(hc);
+        dec.bindCoalescer(() -> hc);
 
         // (1) OUT of window: even an empty heartbeat passes straight through (H-1 — never delayed).
         dec.send(PEER_A, emptyHeartbeat(1));

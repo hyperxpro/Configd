@@ -82,10 +82,15 @@ finally { coalescer(i).endTickAndDrain(sender(i)); }               // H-2: a mid
 - **exactly 1 group** → `delegate.send(peer, theAe)` — a NORMAL `AppendEntriesRequest`, pass-through;
 - **>1 group** → `delegate.send(peer, new CoalescedHeartbeat(localNode, [(g,ae)...]))`.
 
-Migrating / non-owned groups never `tick()` ⇒ never record ⇒ correctly not heartbeated this tick (the
-rehoming interaction is benign; the drain is pure I/O to the delegate and never re-enters a `RaftNode`).
-Each peer-send is exception-isolated (one peer failing must not starve the others — mirrors
-`sendAppendEntries`'s existing `try/catch`).
+Migrating / non-owned groups never `tick()` ⇒ never record ⇒ correctly not heartbeated this tick. The
+decorator resolves the CURRENT owner's coalescer on each record (a `Supplier` bound at wiring, not a
+fixed reference — D-020 review A2), so after a group rehomes its heartbeats land in the NEW owner's
+coalescer (the one that owner drains), never the old owner's; record and drain stay on one owner thread
+(no cross-thread write on the non-synchronised buffer). The drain is pure I/O to the delegate and never
+re-enters a `RaftNode`. Each peer-send is exception-isolated (one peer failing must not starve the others
+— mirrors `sendAppendEntries`'s existing `try/catch`). NB the combined coalescing×ACTIVE-rehoming surface
+is still a Phase-1 re-verification item per D-016 (production is N=1 / no rehome); the dynamic resolver
+makes the mechanism rehoming-correct, but a live placement policy re-runs the proofs.
 
 ## 5. The wire — UNCHANGED at N=1 (production)
 
