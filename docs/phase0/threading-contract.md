@@ -334,12 +334,30 @@ an **M** boundary the harness must prove never leaks an inline `RaftNode` touch.
     housekeeping executor is a cleanliness option, not a correctness requirement (deferred).
   - *(b) group rehoming* — a group MOVING between owner threads (the Stage-2 brief's H-4; the analogue
     of H-3): a cross-thread handoff of unsynchronised state with a double-ownership / lost-message /
-    torn-state hazard. **MECHANISM built at M2a (D-017), additive + dormant in production:** quiesce→
-    publish→adopt (`MultiRaftDriver.rehomeGroup`), re-bindable `ownerThread` via the HANDOFF sentinel,
-    check-and-bounce; the net catches the rehoming-race (re-proven non-vacuous). **H-4 NOT yet CLOSED:**
-    M2b must add the jcstress JMM no-double-ownership proof + the S2–S4 surface re-run WITH rehoming
-    injected (and the deferred `flushDurable`/quiesce + FlushScheduler-retarget + `abortHandoff`). Design:
-    `docs/phase0-B-stage2/m2-rehoming-handoff-design.md`; net-catch: `captures/m2-rehoming-net-catch.md`.
+    torn-state hazard. **✅ CLOSED (Stage 2 M2a + M2b — D-016/D-017/D-018/D-019).**
+    **Mechanism (additive + DORMANT in production, inert at N=1):** quiesce→publish→adopt
+    (`MultiRaftDriver.rehomeGroup`) — the losing owner force-syncs (`quiesceForHandoff`), PUBLISHES the
+    routing flip (`groupOwner→target`) and DETACHES (`beginHandoff` → the never-started `HANDOFF`
+    sentinel); the gaining owner ADOPTS (`adoptOwnerThread`), ordered after the detach by the coordinator's
+    **UNINTERRUPTIBLE** executor `.get()` barriers; marshalled work (inbound/propose/flush) uses
+    check-and-bounce; a failed handoff rolls back to the losing owner (`abortHandoff`) or stays LOUDLY
+    wedged on HANDOFF (never silently mis-owned); the production flush is retargeted through
+    `dispatchFlush` and `flushDurable` is owner-guarded; a wedged group's inbound/flush FIRE once (loud),
+    never livelock (`isDetached`). **All three failure modes proven impossible under concurrent fault:**
+    (1) *no double-ownership* — the JMM jcstress proof `RehomingDoubleOwnershipTest` (one volatile
+    `ownerThread` + the detach→adopt barrier; FORBIDDEN unreachable across ~116M samples; the broken
+    control hits it at 0.05–1% — non-vacuous) + 0 off-owner fires across tens of thousands of injected
+    rehomes (`RehomingInjectedSweepTest`, 54 seeds); (2) *no lost/misrouted message* — check-and-bounce
+    re-queues (never drops); the missed-hop detector still fires for never-rehomed groups (M2a Defect-1,
+    preserved); commits keep flowing across rehomes; (3) *no torn state* — `quiesceForHandoff` force-syncs
+    before detach + the `.get()` barriers publish A's final state; groups stay durable + commit across
+    handoffs. **Net non-vacuous across all four violation classes** (off-owner / cross-group /
+    rehoming-race / double-ownership), each demonstrated RED on a deliberate violation.
+    **⚠ D-016 ACTIVATION CAVEAT:** the mechanism ships DORMANT and these are dormant-state proofs —
+    **Phase 1 MUST re-verify the rehoming mechanism when it is ACTUALLY ACTIVATED by a placement policy**
+    (the dormant-state proofs do not transfer to live use). Design:
+    `docs/phase0-B-stage2/m2-rehoming-handoff-design.md`; evidence: `docs/phase0-B-stage2-m2b/captures/`
+    (`s1-submechanisms-net-catch.md`, `s2-jcstress-no-double-ownership.md`, `s3-rehoming-injected-sweep.md`).
 - **H-5 — `groups` map** concurrent iteration vs. add/remove (§4.3).
 - **H-6 — bind timing.** Construction touches state on `main`; binding must happen on the owner
   executor's first task, never during the constructor.
@@ -370,11 +388,14 @@ an **M** boundary the harness must prove never leaks an inline `RaftNode` touch.
       off-drive-thread access fails the seed (§5.4).
 - [x] Owner-executor pool wired; `poolSize=1` reproduces today's single-group behavior. **(Stage 1B
       `682cbcf` — R-01 deleted @ N=1; behaviourally exact-R-01; the net is now ACTIVE in production.)**
-- [~] H-1, H-2, H-4, H-5, H-6 — resolved at N=1: **H-1** ((index,term) captured inside the marshalled
+- [x] H-1, H-2, H-4, H-5, H-6 — resolved: **H-1** ((index,term) captured inside the marshalled
       task — preserved), **H-2** (read double-hop retargeted to the owner), **H-5** (`groups` →
-      `ConcurrentHashMap`, Stage 1A), **H-6** (`bindOwnerThread()` first task on owner[0]). **H-4**
-      (co-tenant rehoming) DEFERRED to Stage 2 — recon shows the riders don't touch `RaftNode` so they
-      ride owner[0] safely at N=1. **H-3 ✅ CLOSED** — `monitorView()` snapshot + five accessors guarded.
+      `ConcurrentHashMap`, Stage 1A), **H-6** (`bindOwnerThread()` first task on owner[0]). **H-4 ✅ CLOSED
+      at Stage 2** — (a) co-tenant riders ride owner[0] safely (M1/D-015); (b) GROUP REHOMING — the
+      quiesce→publish→adopt mechanism (M2a) + the M2b proofs (jcstress JMM no-double-ownership +
+      rehoming-injected S2–S4 sweep + the deferred sub-mechanisms) close all three failure modes; DORMANT
+      in prod, Phase-1 re-verifies on activation (§6 H-4; D-016/D-017/D-018/D-019). **H-3 ✅ CLOSED** —
+      `monitorView()` snapshot + five accessors guarded.
 - [x] S2–S4 invariant surface re-runs green under the new threading **at N=1**: 2052-seed sim sweep +
       consistency/failover + `OwnerThreadSimIntegrationTest` (0 fail, 0 unintended `raft_owner_thread`),
       server suite 165/0, and the net RE-PROVEN to catch off-owner inbound under the pool

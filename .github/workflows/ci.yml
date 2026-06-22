@@ -433,6 +433,52 @@ jobs:
           path: ${{ runner.temp }}/gate7-logs
           retention-days: 7
 
+  gate-phase0:
+    # Phase 0 Workstream B cumulative gate (gates/gate-phase0.sh) — the R-01 re-threading
+    # (single tick thread → one owner thread per group) + the H-4 group-rehoming hazard closure.
+    # REQUIRES gates 1..7 green (each runs as its own job, so this sets GATE_PHASE0_SKIP_GATE7=1 —
+    # cumulative coverage via the job dependency, like every prior gate). Proves: the owner net is
+    # non-vacuous at N>1 (a cross-group access on a real foreign owner trips the per-node net); the
+    # H-4 rehoming MECHANISM (quiesce→publish→adopt + check-and-bounce + the deferred sub-mechanisms +
+    # the red-team/replay robustness fixes); H-4 no-double-ownership at the JMM level (jcstress, the
+    # rehoming proofs run at -m quick where the broken control reliably fails); and the S2–S4 invariant
+    # surface WITH rehoming injected (zero off-owner fires across tens of thousands of handoffs, groups
+    # keep committing). The heavy 20,001-seed deterministic sim runs on the NIGHTLY path (skipped on
+    # push/PR for speed; cumulatively covered by gate-1's failover smoke + gate-2's seed sweep).
+    needs: gate-7
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 25
+        uses: actions/setup-java@v4
+        with:
+          java-version: '25'
+          distribution: 'corretto'
+          cache: maven
+
+      - name: Run gate-phase0 (push/PR — 20k sim skipped for speed, run nightly)
+        if: github.event_name != 'schedule' && github.event.inputs.run_full_nightly != 'true'
+        run: GATE_PHASE0_SKIP_GATE7=1 GATE_PHASE0_SKIP_SIM=1 bash gates/gate-phase0.sh
+        env:
+          GATE_PHASE0_LOG_DIR: ${{ runner.temp }}/gate-phase0-logs
+        timeout-minutes: 45
+
+      - name: Run gate-phase0 FULL (nightly — incl. the 20,001-seed deterministic sim)
+        if: github.event_name == 'schedule' || github.event.inputs.run_full_nightly == 'true'
+        run: GATE_PHASE0_SKIP_GATE7=1 bash gates/gate-phase0.sh
+        env:
+          GATE_PHASE0_LOG_DIR: ${{ runner.temp }}/gate-phase0-logs
+        timeout-minutes: 60
+
+      - name: Upload gate-phase0 step logs
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: gate-phase0-logs
+          path: ${{ runner.temp }}/gate-phase0-logs
+          retention-days: 7
+
   wire-compat:
     # ADR-0029 §8.10 fixture-bump guardrail.
     # Fails the build if GoldenFixtures.java changed without a matching bump
