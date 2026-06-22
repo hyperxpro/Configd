@@ -9,6 +9,7 @@ import io.configd.raft.RaftMessage;
 import io.configd.raft.RaftNode;
 import io.configd.raft.RaftRole;
 import io.configd.raft.RaftTransport;
+import io.configd.raft.RequestVoteRequest;
 import io.configd.raft.StateMachine;
 
 import org.junit.jupiter.api.Test;
@@ -53,6 +54,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class RehomingRobustnessTest {
 
     private static final NodeId LOCAL = NodeId.of(1);
+    private static final NodeId PHANTOM = NodeId.of(2);
 
     private static final class NoopTransport implements RaftTransport {
         @Override public void send(NodeId target, RaftMessage message) { }
@@ -205,6 +207,48 @@ class RehomingRobustnessTest {
                 "the dispatched flush on a wedged group must LAND exactly once (not livelock, not run repeatedly)");
 
         // owner1 must be idle/responsive (not pegged by a self-replenishing queue).
+        AtomicInteger probe = new AtomicInteger();
+        pool.ownerByIndex(1).submit(probe::incrementAndGet).get(5, TimeUnit.SECONDS);
+        assertEquals(1, probe.get(), "owner1 must service new work promptly (not livelocked)");
+
+        onOwner(pool, 1, g::adoptOwnerThread); // clear the wedge for a clean shutdown
+        pool.shutdown();
+        pool.awaitTermination(10, TimeUnit.SECONDS);
+    }
+
+    // =============================================================================================
+    // FINDING 2 (symmetric — replay SHOULD-FIX) — routeMessage on a HANDOFF-wedged group must NOT
+    // livelock either. Same bounce pathology as the flush path; the fix gates the bounce on !isDetached
+    // so a wedged-group inbound message falls through to handleMessage and the net FIRES once (loud),
+    // rather than re-dispatching forever (CPU burn + the message never delivered).
+    // =============================================================================================
+    @Test
+    @Timeout(30)
+    void routeMessage_onWedgedGroup_firesOnceDoesNotLivelock() throws Exception {
+        OwnerExecutorPool pool = new OwnerExecutorPool(2);
+        CountingThrowingChecker checker = new CountingThrowingChecker();
+        MultiRaftDriver driver = new MultiRaftDriver(LOCAL, Clock.system());
+        driver.setOwnerPool(pool);
+        RaftNode g = buildLeaderBoundTo(pool, 0, checker);
+        driver.addGroup(0, g);
+
+        // Deterministic wedge: rehome 0->1, then detach on owner1 without adopting (ownerThread=HANDOFF).
+        driver.rehomeGroup(0, 1);
+        onOwner(pool, 1, g::beginHandoff);
+
+        // An inbound message routed on the wedged group's current owner (owner1) must FIRE the net once
+        // (handleMessage off the HANDOFF sentinel) — not spin re-dispatching forever.
+        var ee = assertThrows(java.util.concurrent.ExecutionException.class,
+                () -> pool.ownerByIndex(1).submit(
+                                () -> driver.routeMessage(0, new RequestVoteRequest(0L, PHANTOM, 0L, 0L, true)))
+                        .get(5, TimeUnit.SECONDS),
+                "routeMessage on a wedged group must fire (not livelock)");
+        Throwable cause = ee.getCause();
+        assertTrue(cause != null && cause.getMessage() != null && cause.getMessage().contains("raft_owner_thread"),
+                "expected raft_owner_thread, got: " + (cause == null ? "null" : cause.getMessage()));
+        assertEquals(1, checker.ownerFires.get(), "the net must have fired exactly once (no re-dispatch spin)");
+
+        // owner1 is responsive (not pegged by a self-replenishing queue).
         AtomicInteger probe = new AtomicInteger();
         pool.ownerByIndex(1).submit(probe::incrementAndGet).get(5, TimeUnit.SECONDS);
         assertEquals(1, probe.get(), "owner1 must service new work promptly (not livelocked)");

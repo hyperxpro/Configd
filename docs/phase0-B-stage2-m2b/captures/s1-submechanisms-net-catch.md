@@ -87,7 +87,28 @@ Both fixed and proven red/green with adopted (red-team-authored, adapted) regres
   lands / livelock); restore → green.
 - `quiesceThrowsMidRehome_leavesGroupCleanOnLosingOwner` — confirmation (green pre- and post-fix).
 
-Post-fix green: consensus-core **342/0**, replication-engine (incl. RehomingRobustnessTest 3/3,
-RehomingSubMechanismsTest 4/4, RehomingHandoffTest 7/7) **0 fail**, server **165/0**. Net non-vacuity
-and the M2a missed-hop detector unaffected (the fixes touch `runOnOwnerAwait`/`runFlushOnCurrentOwner`/
-`isDetached`, never `assertOwnerThread`). Second-agent replay: pending before the S1 checkpoint.
+Post-fix green: consensus-core **342/0**, replication-engine **0 fail**, server **165/0**. Net
+non-vacuity and the M2a missed-hop detector unaffected (the fixes touch `runOnOwnerAwait`/
+`runFlushOnCurrentOwner`/`isDetached`, never `assertOwnerThread`).
+
+## Second-agent replay → one SHOULD-FIX (routeMessage symmetric livelock), folded in
+
+An independent second-agent **replayed** `a78e662`: reproduced green (consensus-core 342/0,
+replication-engine 137/0, server 165/0), replayed BOTH fixes red/green (neuter→RED→restore→green) and
+the owner-net non-vacuity (4 catch tests RED on a neutered guard), and adversarially scrutinised the
+fixes — **SOUND, no new P0/safety defect**: the uninterruptible await honours the interrupt exactly once
+and cannot deadlock (owner steps are bounded + lock-free); the `isDetached` gate does not livelock a
+wedged group nor wrongly drop a legitimate settled-rehome stale bounce.
+
+It found ONE pre-existing **SHOULD-FIX (P2)**: `routeMessage`'s bounce had the SAME wedged-group
+re-dispatch pathology as Finding 2 (the fix had been applied to `runFlushOnCurrentOwner` but not the
+symmetric inbound path) — a wedged group spins the owner thread (~745ms CPU / 800ms, message never
+delivered; liveness-only, no safety breach). **Folded in** (commit follows): the identical
+`&& !node.isDetached()` gate on `routeMessage`, so a wedged-group inbound message falls through to
+`handleMessage` and the net FIRES once (loud) — coherent with the flush path. Regression
+`RehomingRobustnessTest#routeMessage_onWedgedGroup_firesOnceDoesNotLivelock` (neuter→RED→restore→green);
+`propose` needs no change (it returns NOT_LEADER immediately — clean failure, no spin). Post-fix:
+consensus-core 342/0, replication-engine **138/0** (RehomingRobustnessTest 4/4), RehomingHandoffTest 7/7.
+
+S1 is then a clean, fully-four-way-verified seam: mechanism + the deferred sub-mechanisms + every
+red-team / replay finding closed red/green, net non-vacuous across all classes, prod paths inert at N=1.

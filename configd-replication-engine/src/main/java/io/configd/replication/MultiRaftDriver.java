@@ -401,9 +401,16 @@ public final class MultiRaftDriver {
         // off-owner and the net FIRES (threading-contract §6.2 "test the tester" preserved; a bounce
         // here would silently auto-correct a missed hop and mask the bug — red-team Defect 1). At N=1 /
         // no-rehome this is identical to M1.
+        //
+        // {@code !node.isDetached()} (symmetric with runFlushOnCurrentOwner — replay SHOULD-FIX): do NOT
+        // bounce a group WEDGED on the HANDOFF sentinel (an abandoned handoff / the rare double-fault, not
+        // migrating). No real owner will ever run it, so re-dispatching would LIVELOCK the owner thread
+        // (CPU burn + the message never delivered). Fall through so handleMessage's guard FIRES once (loud)
+        // — "loudly wedged", consistent with the flush path. (A transient settled rehome has a REAL new
+        // owner ⇒ isDetached()==false ⇒ the stale-routing bounce still lands there.)
         if (ownerPool != null
                 && (migrating.contains(groupId)
-                        || (groupOwner.containsKey(groupId) && node.boundToAnotherThread()))) {
+                        || (groupOwner.containsKey(groupId) && node.boundToAnotherThread() && !node.isDetached()))) {
             ownerExecutor(groupId).execute(() -> routeMessage(groupId, message));
             return;
         }
