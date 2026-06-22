@@ -12,6 +12,7 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.Future;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 
@@ -267,11 +268,14 @@ public final class MultiRaftDriver {
      * does the group stay loudly wedged on the HANDOFF sentinel (every access fires) — never silently
      * mis-owned. {@code migrating} is always cleared.
      *
+     * <p>The handoff is UNINTERRUPTIBLE (red-team Finding 1): an interrupt does not abandon it mid-flight
+     * (which would let a queued owner task publish/detach AFTER the coordinator unwound — wedging the
+     * group); it completes or rolls back atomically, and the interrupt is re-asserted to the caller after.
+     *
      * @throws IllegalStateException    if the owner pool is not set, or a handoff step fails on an owner
      * @throws IllegalArgumentException if the group is unknown or already on the target owner
-     * @throws InterruptedException     if interrupted while awaiting an owner-executor step
      */
-    public void rehomeGroup(int groupId, int targetOwnerIndex) throws InterruptedException {
+    public void rehomeGroup(int groupId, int targetOwnerIndex) {
         OwnerExecutorPool p = ownerPool;
         if (p == null) {
             throw new IllegalStateException("owner pool not set — setOwnerPool() must run at wiring");
@@ -303,12 +307,12 @@ public final class MultiRaftDriver {
             // ADOPT on the GAINING owner (ordered after the detach by the await barrier above).
             runOnOwnerAwait(p.ownerByIndex(targetOwnerIndex), node::adoptOwnerThread);
             detached = false; // adopt succeeded — handoff complete, nothing to roll back
-        } catch (RuntimeException | InterruptedException e) {
+        } catch (RuntimeException e) {
             if (detached) {
                 // The losing owner detached but the gaining owner could not adopt — roll back to A.
                 try {
                     abortHandoff(groupId, from, priorOverride, node, p);
-                } catch (RuntimeException | InterruptedException abortFailed) {
+                } catch (RuntimeException abortFailed) {
                     e.addSuppressed(abortFailed); // A also unavailable — group stays wedged on HANDOFF (loud)
                 }
             }
@@ -329,7 +333,7 @@ public final class MultiRaftDriver {
      * never touched it) ⇒ no torn state, no lost message.
      */
     private void abortHandoff(int groupId, int fromOwnerIndex, Integer priorOverride, RaftNode node,
-                              OwnerExecutorPool p) throws InterruptedException {
+                              OwnerExecutorPool p) {
         if (priorOverride != null) {
             groupOwner.put(groupId, priorOverride); // restore the prior rehoming override
         } else {
@@ -338,13 +342,35 @@ public final class MultiRaftDriver {
         runOnOwnerAwait(p.ownerByIndex(fromOwnerIndex), node::adoptOwnerThread); // HANDOFF → losing owner
     }
 
-    /** Runs {@code task} on {@code owner} and blocks until it completes, surfacing any failure. */
-    private static void runOnOwnerAwait(ScheduledExecutorService owner, Runnable task)
-            throws InterruptedException {
+    /**
+     * Runs {@code task} on {@code owner} and blocks UNINTERRUPTIBLY until it completes, surfacing any
+     * failure. Uninterruptible by design (red-team Finding 1): a {@link Future#get()} interrupt does NOT
+     * cancel the already-submitted owner task, so ABANDONING the wait here would let that task run later
+     * (publish / detach / adopt) AFTER the coordinator unwound and the {@code finally} cleared
+     * {@code migrating} — wedging the group in a torn published-but-not-adopted state the rollback was
+     * meant to prevent. Instead we keep waiting for the bounded owner task to finish, then re-assert the
+     * interrupt to the caller: the handoff completes (or rolls back) ATOMICALLY and the interrupt is
+     * honoured AFTER, never lost.
+     */
+    private static void runOnOwnerAwait(ScheduledExecutorService owner, Runnable task) {
+        Future<?> f = owner.submit(task);
+        boolean interrupted = false;
         try {
-            owner.submit(task).get();
-        } catch (java.util.concurrent.ExecutionException e) {
-            throw new IllegalStateException("rehoming handoff step failed on an owner executor", e.getCause());
+            while (true) {
+                try {
+                    f.get();
+                    return;
+                } catch (InterruptedException e) {
+                    interrupted = true; // defer — never abandon a queued handoff step mid-flight
+                } catch (java.util.concurrent.ExecutionException e) {
+                    throw new IllegalStateException(
+                            "rehoming handoff step failed on an owner executor", e.getCause());
+                }
+            }
+        } finally {
+            if (interrupted) {
+                Thread.currentThread().interrupt(); // re-assert the deferred interrupt to the caller
+            }
         }
     }
 
@@ -461,12 +487,18 @@ public final class MultiRaftDriver {
         if (node == null) {
             return; // group removed — drop the stale flush
         }
+        // Bounce while a handoff is in flight (migrating), or for a STALE dispatch to the old owner after a
+        // SETTLED rehome (the node is owned by a different REAL owner — re-dispatch lands there). But do
+        // NOT bounce a group WEDGED on the HANDOFF sentinel ({@code isDetached} yet not migrating — an
+        // abandoned handoff / the rare double-fault): no real owner will ever run it, so re-dispatching
+        // would LIVELOCK the owner thread (red-team Finding 2). Fall through instead so flushDurable's
+        // guard FIRES once (loud) rather than spinning silently — consistent with "loudly wedged".
         if (migrating.contains(groupId)
-                || (groupOwner.containsKey(groupId) && node.boundToAnotherThread())) {
+                || (groupOwner.containsKey(groupId) && node.boundToAnotherThread() && !node.isDetached())) {
             ownerExecutor(groupId).execute(() -> runFlushOnCurrentOwner(groupId, flush));
             return;
         }
-        flush.run(); // RaftNode.flushDurable() on the current owner (guarded; on-owner ⇒ silent)
+        flush.run(); // current owner ⇒ on-owner & silent; wedged HANDOFF node ⇒ guard FIRES (loud, no spin)
     }
 
     // ========================================================================

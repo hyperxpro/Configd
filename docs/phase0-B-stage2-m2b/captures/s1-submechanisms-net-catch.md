@@ -65,3 +65,29 @@ green with the guard in place.
 `RehomingHandoffTest` 7/7 green UNCHANGED after S1 — including `missedHopOnNeverRehomedGroup_stillFiresNet_withPoolSet`
 (Defect-1) and `removeGroup_clearsRehomingState` (Defect-2). The S1 additions did not regress the M2a
 red-team fixes (session §7 rule 4).
+
+## Four-way: the red-team broke it (TWO findings) → fixed red/green
+
+The first S1 cut (`3a44cf0`) was four-way verified: implementer build + an independent line-by-line
+diff-review (SOUND) + an independent re-run (consensus-core 342/0, replication-engine 134/0, server
+165/0; neuter→RED→green replayed) + an adversarial red-team. The red-team **broke it** — two proven
+defects, both confined to the dormant rehoming path, **NO P0/safety breach** (every wedged path stays
+LOUD: no double-ownership, no lost/torn committed entry, no silent off-owner touch):
+
+| Finding | Sev | Defect | Fix |
+|---|---|---|---|
+| **1** | P1 | `Future.get()` interrupt does NOT cancel the submitted owner task; the pre-fix interruptible barrier abandoned the wait while the queued publish/detach task ran later → group wedged on HANDOFF with both owners alive (`detached` tracked coordinator control-flow, not node state). | `runOnOwnerAwait` is **UNINTERRUPTIBLE** — keeps waiting for the bounded owner task, then re-asserts the interrupt; the handoff completes (or rolls back) atomically. `rehomeGroup`/`abortHandoff` drop `throws InterruptedException`. |
+| **2** | P2 | A dispatched flush on a HANDOFF-wedged group (`groupOwner` override + `boundToAnotherThread`, never `migrating`) re-dispatched FOREVER (no real owner ever runs it) — the "loudly wedged" state was a SILENT livelock for the flush path. | `runFlushOnCurrentOwner` gates the bounce on `&& !node.isDetached()` (new non-firing `RaftNode.isDetached()`): a wedged node falls through so `flushDurable`'s guard FIRES once (loud), no spin. |
+
+Both fixed and proven red/green with adopted (red-team-authored, adapted) regressions in
+`RehomingRobustnessTest` (3):
+- `interruptDuringHandoff_completesAtomically_reassertsInterrupt_notWedged` — neuter `runOnOwnerAwait`
+  back to abandon-on-interrupt → **RED**; restore → green.
+- `flushDispatch_onWedgedGroup_doesNotLivelock` — drop the `!isDetached` gate → **RED** (flush never
+  lands / livelock); restore → green.
+- `quiesceThrowsMidRehome_leavesGroupCleanOnLosingOwner` — confirmation (green pre- and post-fix).
+
+Post-fix green: consensus-core **342/0**, replication-engine (incl. RehomingRobustnessTest 3/3,
+RehomingSubMechanismsTest 4/4, RehomingHandoffTest 7/7) **0 fail**, server **165/0**. Net non-vacuity
+and the M2a missed-hop detector unaffected (the fixes touch `runOnOwnerAwait`/`runFlushOnCurrentOwner`/
+`isDetached`, never `assertOwnerThread`). Second-agent replay: pending before the S1 checkpoint.

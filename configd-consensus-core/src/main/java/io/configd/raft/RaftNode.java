@@ -475,6 +475,16 @@ public final class RaftNode {
     }
 
     /**
+     * Stage 2 M2 — a NON-firing query: true iff this node is currently detached onto the {@link #HANDOFF}
+     * sentinel (mid-handoff, or wedged on an abandoned handoff). Used by the driver to tell a TRANSIENT
+     * handoff/stale-owner bounce (re-dispatch lands on a real owner) from a WEDGED group owned by nobody
+     * (re-dispatching would livelock — red-team Finding 2). A single volatile read; never fires the net.
+     */
+    public boolean isDetached() {
+        return ownerThread == HANDOFF;
+    }
+
+    /**
      * R-01' tripwire: asserts the current thread is this group's bound owner. No-op until an owner
      * is bound. A violation routes through the existing {@code invariantChecker} (throws in
      * test/sim via a throwing checker; metric + SEVERE in production), exactly like the in-node
