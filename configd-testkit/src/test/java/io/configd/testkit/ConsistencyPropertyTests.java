@@ -47,6 +47,14 @@ class ConsistencyPropertyTests {
         private final List<RaftLog> logs;
         private final List<ConfigStateMachine> stateMachines;
         private final List<VersionedConfigStore> stores;
+        /**
+         * Stage 2 M3: one heartbeat coalescer per node (each node is a single group in this cross-node
+         * sim). Wiring the coalesce→drain pipeline here means the no-spurious-election sweeps exercise it
+         * every tick — a drain that drops or delays a heartbeat surfaces as a spurious election (the sweep
+         * goes RED). One group per node ⇒ each drain sends a plain AppendEntries (identical payload; the
+         * per-seed schedule is a re-established M3 baseline, see drainHeartbeats).
+         */
+        private final List<HeartbeatCoalescer> coalescers;
         private final int nodeCount;
 
         /** R-01' owner binding is done once, on the first tick (the drive thread). */
@@ -72,6 +80,7 @@ class ConsistencyPropertyTests {
             this.logs = new ArrayList<>();
             this.stateMachines = new ArrayList<>();
             this.stores = new ArrayList<>();
+            this.coalescers = new ArrayList<>();
 
             for (int i = 0; i < nodeCount; i++) {
                 NodeId nodeId = NodeId.of(i);
@@ -85,8 +94,15 @@ class ConsistencyPropertyTests {
                 VersionedConfigStore store = new VersionedConfigStore();
                 ConfigStateMachine sm = new ConfigStateMachine(store);
 
-                RaftTransport transport = (target, message) ->
+                // Stage 2 M3: route this node's sends through the coalescing decorator. With one group per
+                // node the drain emits a plain AppendEntries (the base path is byte-identical), but the
+                // record→drain pipeline is genuinely exercised every tick — a broken drain (drop/delay)
+                // would slip the election timeout and the no-spurious-election sweeps would go RED.
+                RaftTransport baseTransport = (target, message) ->
                         sim.network().send(nodeId, target, message, sim.clock().currentTimeMillis());
+                HeartbeatCoalescer coalescer = new HeartbeatCoalescer();
+                CoalescingRaftTransport transport = new CoalescingRaftTransport(baseTransport, 0);
+                transport.bindCoalescer(coalescer);
 
                 // RR-010: derive the per-node election RNG from the master
                 // simulation seed (not entropy) so the same seed reproduces the
@@ -101,6 +117,7 @@ class ConsistencyPropertyTests {
                 logs.add(log);
                 stateMachines.add(sm);
                 stores.add(store);
+                coalescers.add(coalescer);
             }
 
             sim.network().setDeliveryHandler((target, message) -> {
@@ -125,8 +142,35 @@ class ConsistencyPropertyTests {
         void tick() {
             bindOwnersIfNeeded();
             sim.tick();
-            for (RaftNode node : nodes) {
-                node.tick();
+            for (int i = 0; i < nodes.size(); i++) {
+                // Stage 2 M3: open the coalescing window, tick, then drain this node's heartbeats EVEN IF
+                // tick() throws (H-2 — a dropped heartbeat would starve a follower into a spurious election).
+                HeartbeatCoalescer hc = coalescers.get(i);
+                hc.beginTick();
+                try {
+                    nodes.get(i).tick();
+                } finally {
+                    drainHeartbeats(i, hc);
+                }
+            }
+        }
+
+        /**
+         * Stage 2 M3: send node {@code i}'s coalesced heartbeats (one group per node ⇒ each drained peer
+         * carries a single AppendEntries) via the same {@link SimulatedNetwork} path as a normal send, at
+         * the current clock — identical payload. (On a tick that mixes a buffered heartbeat with an
+         * immediately-sent entry-carrying AppendEntries, the cross-tick PRNG draw order can shift since
+         * heartbeats drain after in-tick entry sends, so the M3 sweep is a re-established baseline — green
+         * on the new trajectory — not the identical prior schedule. D-020 review, finding 1.)
+         */
+        private void drainHeartbeats(int i, HeartbeatCoalescer hc) {
+            NodeId from = NodeId.of(i);
+            long now = sim.clock().currentTimeMillis();
+            for (Map.Entry<NodeId, Map<Integer, AppendEntriesRequest>> peerEntry
+                    : hc.drainAndEndTick().entrySet()) {
+                for (AppendEntriesRequest hb : peerEntry.getValue().values()) {
+                    sim.network().send(from, peerEntry.getKey(), hb, now);
+                }
             }
         }
 

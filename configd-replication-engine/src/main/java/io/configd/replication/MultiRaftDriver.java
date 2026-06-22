@@ -2,6 +2,10 @@ package io.configd.replication;
 
 import io.configd.common.Clock;
 import io.configd.common.NodeId;
+import io.configd.raft.AppendEntriesRequest;
+import io.configd.raft.CoalescedHeartbeat;
+import io.configd.raft.CoalescedHeartbeatTransport;
+import io.configd.raft.HeartbeatCoalescer;
 import io.configd.raft.ProposalResult;
 import io.configd.raft.ProposeOutcome;
 import io.configd.raft.RaftMessage;
@@ -69,6 +73,24 @@ public final class MultiRaftDriver {
      * has adopted.
      */
     private final Set<Integer> migrating = ConcurrentHashMap.newKeySet();
+
+    /**
+     * Stage 2 M3 (coalesced heartbeats) — ONE {@link HeartbeatCoalescer} per owner thread (index =
+     * owner index), or {@code null} when coalescing is not enabled (legacy/test wiring). Each is touched
+     * only on its owner's thread: {@link #tickOwner} opens its window and drains it; the group's
+     * {@code CoalescingRaftTransport} (bound to the same instance via {@link #heartbeatCoalescer}) records
+     * into it during {@code node.tick()}. Volatile: published by the wiring thread via
+     * {@link #enableHeartbeatCoalescing}, read by every owner thread. See docs/phase0-B-stage2-m3/design.md.
+     */
+    private volatile HeartbeatCoalescer[] coalescers;
+
+    /**
+     * Stage 2 M3 — where {@link #tickOwner} drains each owner's coalesced heartbeats (one call per peer).
+     * Set together with {@link #coalescers} by {@link #enableHeartbeatCoalescing}; {@code null} ⇒ coalescing
+     * disabled. The implementation owns the framing (1 group ⇒ a plain AppendEntries, wire unchanged; &gt;1
+     * ⇒ a {@link CoalescedHeartbeat}).
+     */
+    private volatile CoalescedHeartbeatTransport heartbeatDrain;
 
     /**
      * Creates a new MultiRaftDriver.
@@ -174,6 +196,62 @@ public final class MultiRaftDriver {
     }
 
     /**
+     * Stage 2 M3 — enable coalesced heartbeats: create one {@link HeartbeatCoalescer} per owner and route
+     * each owner's per-tick drain to {@code drain}. Call once at wiring AFTER {@link #setOwnerPool}, before
+     * any group is ticked; then bind each group's {@code CoalescingRaftTransport} to {@link #heartbeatCoalescer}
+     * for its owner. Strictly additive — until this runs, {@link #tickOwner} ticks exactly as before and the
+     * decorators pass through (legacy/test wiring leaves coalescing off).
+     *
+     * @param drain where {@link #tickOwner} sends each owner's coalesced heartbeats (one call per peer)
+     * @throws IllegalStateException if the owner pool has not been set
+     * @throws NullPointerException  if {@code drain} is null
+     */
+    public void enableHeartbeatCoalescing(CoalescedHeartbeatTransport drain) {
+        OwnerExecutorPool p = ownerPool;
+        if (p == null) {
+            throw new IllegalStateException("owner pool not set — setOwnerPool() must run before enableHeartbeatCoalescing()");
+        }
+        Objects.requireNonNull(drain, "drain");
+        HeartbeatCoalescer[] hcs = new HeartbeatCoalescer[p.size()];
+        for (int i = 0; i < hcs.length; i++) {
+            hcs[i] = new HeartbeatCoalescer();
+        }
+        this.coalescers = hcs;
+        this.heartbeatDrain = drain;
+    }
+
+    /**
+     * Stage 2 M3 — the {@link HeartbeatCoalescer} for an owner, for binding that owner's groups'
+     * {@code CoalescingRaftTransport} decorators. Available only after {@link #enableHeartbeatCoalescing}.
+     *
+     * @throws IllegalStateException if coalescing has not been enabled
+     */
+    public HeartbeatCoalescer heartbeatCoalescer(int ownerIndex) {
+        HeartbeatCoalescer[] hcs = coalescers;
+        if (hcs == null) {
+            throw new IllegalStateException("heartbeat coalescing not enabled — call enableHeartbeatCoalescing() first");
+        }
+        return hcs[ownerIndex];
+    }
+
+    /**
+     * Stage 2 M3 — demultiplex a received {@link CoalescedHeartbeat} back into per-group inbound routing:
+     * each group's empty AppendEntries is delivered via {@link #routeMessage}, exactly as if it had arrived
+     * un-coalesced (so each group's owner-thread marshalling, election-reset and rehoming check-and-bounce
+     * are identical). The production single-group path never receives one (a 1-group drain sends a plain
+     * AppendEntries); this is exercised by the N&gt;1 test surfaces and is the receive half Phase-1 wires onto
+     * the TCP transport.
+     *
+     * @param from the node that sent the coalesced heartbeat (the AppendEntries also carry {@code leaderId})
+     * @param ch   the coalesced heartbeat
+     */
+    public void routeCoalescedHeartbeat(NodeId from, CoalescedHeartbeat ch) {
+        for (Map.Entry<Integer, AppendEntriesRequest> e : ch.groupHeartbeats().entrySet()) {
+            routeMessage(e.getKey(), e.getValue());
+        }
+    }
+
+    /**
      * The owner executor for a group — the ONLY executor on which that group's {@link RaftNode} may
      * run. Inbound/propose/read/flush marshal their {@code RaftNode} work onto this.
      *
@@ -214,13 +292,51 @@ public final class MultiRaftDriver {
         if (p == null) {
             throw new IllegalStateException("owner pool not set — setOwnerPool() must run at wiring");
         }
-        for (Map.Entry<Integer, RaftNode> e : groups.entrySet()) {
-            int g = e.getKey();
-            // Stage 2 M2: tick only the groups this owner CURRENTLY owns (rehoming-aware) and that are
-            // NOT mid-handoff (a migrating group is owned by nobody until adopt — skipping it keeps the
-            // ambiguous window tick-free). At N=1/no-rehome this is exactly p.ownerIndexOf(g)==ownerIndex.
-            if (currentOwnerIndex(g) == ownerIndex && !migrating.contains(g)) {
-                e.getValue().tick();
+        // Stage 2 M3: open this owner's heartbeat-coalescing window for the duration of its tick. Each
+        // group's empty AppendEntries (heartbeat) emitted during node.tick() is buffered into hc instead
+        // of sent; at the end we drain hc into one message per peer (cost flat in group count). Gate on
+        // BOTH coalescers AND heartbeatDrain (enableHeartbeatCoalescing sets them together): this is
+        // fail-safe — we never open a heartbeat window we cannot drain, so a heartbeat is never buffered
+        // only to be silently discarded (which would starve followers).
+        HeartbeatCoalescer[] hcs = coalescers;
+        CoalescedHeartbeatTransport drain = heartbeatDrain;
+        HeartbeatCoalescer hc = (hcs != null && drain != null) ? hcs[ownerIndex] : null;
+        if (hc != null) {
+            hc.beginTick();
+        }
+        try {
+            for (Map.Entry<Integer, RaftNode> e : groups.entrySet()) {
+                int g = e.getKey();
+                // Stage 2 M2: tick only the groups this owner CURRENTLY owns (rehoming-aware) and that are
+                // NOT mid-handoff (a migrating group is owned by nobody until adopt — skipping it keeps the
+                // ambiguous window tick-free). At N=1/no-rehome this is exactly p.ownerIndexOf(g)==ownerIndex.
+                if (currentOwnerIndex(g) == ownerIndex && !migrating.contains(g)) {
+                    e.getValue().tick();
+                }
+            }
+        } finally {
+            // Stage 2 M3 (H-2): drain the coalesced heartbeats EVEN IF a group's tick() threw — otherwise
+            // the heartbeats already recorded this tick would be dropped, and a recurring throw would
+            // starve followers into spurious elections (the RR-113 failure mode this milestone fixes).
+            if (hc != null) {
+                drainHeartbeats(hc, drain);
+            }
+        }
+    }
+
+    /**
+     * Stage 2 M3 — drain one owner's coalesced heartbeats, sending one message per peer via {@code drain}
+     * (guaranteed non-null by the caller's both-wired gate). Per-peer exception isolation: one peer's send
+     * failure must not starve the others (mirrors {@code sendAppendEntries}'s codec-reject guard;
+     * fire-and-forget, Raft retransmits). The drain is pure I/O — it never re-enters a {@link RaftNode}, so
+     * a concurrent rehome cannot tear it.
+     */
+    private void drainHeartbeats(HeartbeatCoalescer hc, CoalescedHeartbeatTransport drain) {
+        for (Map.Entry<NodeId, Map<Integer, AppendEntriesRequest>> e : hc.drainAndEndTick().entrySet()) {
+            try {
+                drain.sendCoalesced(e.getKey(), e.getValue());
+            } catch (RuntimeException ignored) {
+                // isolate this peer; the rest still get their heartbeats
             }
         }
     }

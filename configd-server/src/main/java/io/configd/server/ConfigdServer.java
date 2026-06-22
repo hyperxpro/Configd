@@ -30,6 +30,8 @@ import io.configd.observability.ProductionSloDefinitions;
 import io.configd.observability.PropagationLivenessMonitor;
 import io.configd.observability.SafeLog;
 import io.configd.observability.SloTracker;
+import io.configd.raft.AppendEntriesRequest;
+import io.configd.raft.CoalescingRaftTransport;
 import io.configd.raft.RaftConfig;
 import io.configd.raft.RaftLog;
 import io.configd.raft.RaftNode;
@@ -340,7 +342,10 @@ public final class ConfigdServer {
                                 + "refusing to start to avoid plaintext Raft traffic");
             }
             RaftTransportAdapter adapter = new RaftTransportAdapter(tcpTransport, DEFAULT_RAFT_GROUP);
-            transport = adapter;
+            // Stage 2 M3: decorate the transport so the periodic empty-AppendEntries heartbeats coalesce
+            // (one message per peer per tick, flat in group count). At N=1 (production) this passes
+            // through unchanged until coalescing is enabled below. See docs/phase0-B-stage2-m3/design.md.
+            transport = new CoalescingRaftTransport(adapter, DEFAULT_RAFT_GROUP);
         } else {
             transport = (target, message) -> {
                 // No-op: peer addresses not configured (single-node or test mode)
@@ -380,6 +385,32 @@ public final class ConfigdServer {
         driver.setOwnerPool(ownerPool);
         System.out.println("  Owner pool   : " + ownerPool.size()
                 + " owner thread(s) [Phase 0 B Stage 1B — R-01 deleted, consensus via ownerExecutor(gid)]");
+
+        // ---------------------------------------------------------------
+        // Phase 0 — Workstream B (Stage 2 — M3): COALESCED HEARTBEATS. Each owner's per-tick drain sends
+        // one message per peer carrying every group's heartbeat, instead of one per group per peer — the
+        // fix for the RR-113 single-thread heartbeat starvation that caps throughput. At N=1 (production)
+        // every drain has exactly ONE group, so each heartbeat goes out as a normal AppendEntries frame
+        // and the wire is byte-for-byte unchanged; coalescing only collapses sends at N>1 (Phase-1
+        // sharding, when the coalesced wire frame is added). Enabled only on the real transport — inert in
+        // single-node/test mode (no peers ⇒ nothing to coalesce). See D-020 / design.md.
+        if (tcpTransport != null && transport instanceof CoalescingRaftTransport coalescingTransport) {
+            final TcpRaftTransport tcp = tcpTransport;
+            driver.enableHeartbeatCoalescing((peer, groupHeartbeats) -> {
+                // Frame each group's empty AppendEntries onto the node-level transport. At N=1 this is the
+                // single group → one normal AppendEntries frame (wire unchanged). >1 frames each group
+                // individually (a correct fallback; the single coalesced wire frame is Phase-1).
+                for (Map.Entry<Integer, AppendEntriesRequest> hb : groupHeartbeats.entrySet()) {
+                    try {
+                        tcp.send(peer, RaftMessageCodec.encode(hb.getValue(), hb.getKey()));
+                    } catch (RuntimeException ignored) {
+                        // codec reject / transport drop — fire-and-forget, Raft retransmits (mirrors send path)
+                    }
+                }
+            });
+            coalescingTransport.bindCoalescer(
+                    driver.heartbeatCoalescer(driver.currentOwnerIndex(DEFAULT_RAFT_GROUP)));
+        }
         ScheduledExecutorService readDispatchExecutor = Executors.newSingleThreadScheduledExecutor(r -> {
             Thread t = new Thread(r, "configd-read-dispatch");
             t.setDaemon(true);
@@ -453,7 +484,9 @@ public final class ConfigdServer {
         // with the per-owner tick on the non-synchronized RaftNode. Registration stays BEFORE start()
         // so the handler is published (behind the bind task) before the accept loop begins.
         if (tcpTransport != null) {
-            RaftTransportAdapter adapter = (RaftTransportAdapter) transport;
+            // transport is the M3 CoalescingRaftTransport wrapping the adapter (see above); the inbound
+            // handler is registered on the underlying adapter/TCP transport.
+            RaftTransportAdapter adapter = (RaftTransportAdapter) ((CoalescingRaftTransport) transport).delegate();
             adapter.registerInboundHandler(
                     raftInboundHandler(driver, DEFAULT_RAFT_GROUP,
                             driver.ownerExecutor(DEFAULT_RAFT_GROUP), configdMetrics));
