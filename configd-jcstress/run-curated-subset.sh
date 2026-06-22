@@ -21,9 +21,13 @@
 # eviction (RR-066), VersionedConfigStore torn-version + CF-31 aliased array
 # (RR-029), HamtMap consistent-version structural sharing (RR-029), the
 # Phase 0 R-01' owner-thread-guard publication (no false negative once a node is
-# in service), and the Phase 0-B H-3 monitor-view publication (an immutable
-# snapshot published via a single volatile ref is never observed torn). The
-# UnboundGuardIsInertAndRaces and PerFieldPublishCanTear companions are
+# in service), the Phase 0-B H-3 monitor-view publication (an immutable
+# snapshot published via a single volatile ref is never observed torn), and the
+# Phase 0-B Stage 2 M2b H-4 rehoming no-double-ownership proof
+# (RehomingDoubleOwnershipTest: the volatile owner field + the detach->adopt
+# barrier never let two owners both own the group; and a re-bind opens no false
+# negative). The UnboundGuardIsInertAndRaces, PerFieldPublishCanTear, and
+# RehomingDoubleOwnershipTest.BrokenHandoffDoubleOwnership companions are
 # INTENTIONALLY forbidden/tear-hitting (like HarnessSelfTest.KnownRacyCounter)
 # and excluded here.
 #
@@ -61,6 +65,8 @@ io.configd.jcstress.VersionedConfigStoreReadTest.AliasedArrayNoTear
 io.configd.jcstress.HamtMapStructuralSharingTest.ConsistentMapVersion
 io.configd.jcstress.RaftOwnerThreadGuardTest.OwnerGuardNoFalseNegativeInService
 io.configd.jcstress.RaftMonitorViewPublicationTest.PublishedSnapshotNeverTears
+io.configd.jcstress.RehomingDoubleOwnershipTest.CleanHandoffNoDoubleOwnership
+io.configd.jcstress.RehomingDoubleOwnershipTest.PostAdoptGuardNoFalseNegative
 EOF
 
 # jcstress -t takes a single regex; OR the exact names together (escape dots).
