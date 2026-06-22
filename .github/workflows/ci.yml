@@ -479,6 +479,25 @@ jobs:
           path: ${{ runner.temp }}/gate-phase0-logs
           retention-days: 7
 
+  gate-B:
+    # Workstream B MERGE gate (gates/gate-B.sh) — the merge-readiness SEAL for the multi-Raft
+    # re-threading: R-01 deletion (Stage 1), N>1 owner-isolation (M1), H-4 group-rehoming closure
+    # (M2a/M2b), and the coalesced-heartbeat de-regression (M3). Cumulative with gates 1..7 + phase0,
+    # which each run as their own job; this job DEPENDS on gate-phase0, so a green gate-B means the whole
+    # chain passed. It sets GATE_B_SKIP_CHAIN=1 (the chain is supplied by the gate jobs, not re-run) and
+    # asserts the B milestone artifacts exist (non-vacuity — a deleted contract/gate/coalescing class
+    # FAILS, never a silent pass) + records the verified baseline (cedc706, D-010). A green gate-B is the
+    # named status the B → main merge is gated on.
+    needs: gate-phase0
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # gate-B reads the merge-base with main for the baseline seal
+      - name: Run gate-B (merge-readiness seal; cumulative chain supplied by the gate jobs)
+        run: GATE_B_SKIP_CHAIN=1 bash gates/gate-B.sh
+        timeout-minutes: 5
+
   wire-compat:
     # ADR-0029 §8.10 fixture-bump guardrail.
     # Fails the build if GoldenFixtures.java changed without a matching bump
