@@ -1,0 +1,15 @@
+E2E which=jdk payload=0 sends=2000000 perMsgAllocBytes=40.0 nsPerMsg=14353 throughputMsgPerSec=69671
+=== variant=jdk payload=0 : allocation sample count by type (~ bytes) ===
+    274 java.net.InetSocketAddress$InetSocketAddressHolder
+    137 java.net.InetSocketAddress
+      8 java.util.ArrayList$Itr
+      4 java.lang.String
+      2 java.nio.HeapByteBuffer
+      1 java.util.concurrent.ConcurrentHashMap$Node[]
+      1 java.util.concurrent.ConcurrentHashMap
+      1 java.util.ArrayList
+      1 java.lang.classfile.constantpool.PoolEntry[]
+      1 byte[]
+=== total sampled bytes (weight) ===
+sample_count=430
+== done ==

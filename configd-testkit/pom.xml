@@ -112,6 +112,43 @@
             <artifactId>jmh-generator-annprocess</artifactId>
             <optional>true</optional>
         </dependency>
+        <!--
+          Netty 4.2 — JDK-vs-Netty head-to-head ONLY (docs/jdk-vs-netty/). Confined to this
+          bench module; NO production module depends on Netty (charter §7/§8: research, not a
+          migration). Marked optional (like JMH) so the thin testkit jar does not leak Netty
+          transitively; the shade plugin still bundles them into benchmarks.jar.
+        -->
+        <dependency>
+            <groupId>io.netty</groupId>
+            <artifactId>netty-transport</artifactId>
+            <optional>true</optional>
+        </dependency>
+        <dependency>
+            <groupId>io.netty</groupId>
+            <artifactId>netty-buffer</artifactId>
+            <optional>true</optional>
+        </dependency>
+        <dependency>
+            <groupId>io.netty</groupId>
+            <artifactId>netty-codec</artifactId>
+            <optional>true</optional>
+        </dependency>
+        <dependency>
+            <groupId>io.netty</groupId>
+            <artifactId>netty-codec-http</artifactId>
+            <optional>true</optional>
+        </dependency>
+        <dependency>
+            <groupId>io.netty</groupId>
+            <artifactId>netty-transport-classes-epoll</artifactId>
+            <optional>true</optional>
+        </dependency>
+        <dependency>
+            <groupId>io.netty</groupId>
+            <artifactId>netty-transport-native-epoll</artifactId>
+            <classifier>linux-x86_64</classifier>
+            <optional>true</optional>
+        </dependency>
     </dependencies>
 
     <build>

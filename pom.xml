@@ -47,6 +47,13 @@
         <jmh.version>1.37</jmh.version>
         <!-- B6 / RR-011: jcstress race-testing harness (configd-jcstress module). -->
         <jcstress.version>0.16</jcstress.version>
+        <!--
+          Netty-migration JDK-vs-Netty head-to-head (research only): the strongest-Netty
+          prototype + its benchmarks live ONLY in configd-testkit (test/bench scope). NO
+          production module depends on Netty; this is additive research, not a migration
+          (charter §7/§8). Pinned for reproducibility. See docs/jdk-vs-netty/netty42-api.md.
+        -->
+        <netty.version>4.2.15.Final</netty.version>
     </properties>
 
     <dependencyManagement>
@@ -95,6 +102,41 @@
                 <groupId>org.openjdk.jcstress</groupId>
                 <artifactId>jcstress-core</artifactId>
                 <version>${jcstress.version}</version>
+            </dependency>
+            <!--
+              Netty 4.2 (JDK-vs-Netty head-to-head, configd-testkit only). Module split per
+              4.2: native transports separate classes + native-binary (classifier) jars.
+            -->
+            <dependency>
+                <groupId>io.netty</groupId>
+                <artifactId>netty-transport</artifactId>
+                <version>${netty.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>io.netty</groupId>
+                <artifactId>netty-buffer</artifactId>
+                <version>${netty.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>io.netty</groupId>
+                <artifactId>netty-codec</artifactId>
+                <version>${netty.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>io.netty</groupId>
+                <artifactId>netty-codec-http</artifactId>
+                <version>${netty.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>io.netty</groupId>
+                <artifactId>netty-transport-classes-epoll</artifactId>
+                <version>${netty.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>io.netty</groupId>
+                <artifactId>netty-transport-native-epoll</artifactId>
+                <version>${netty.version}</version>
+                <classifier>linux-x86_64</classifier>
             </dependency>
         </dependencies>
     </dependencyManagement>

@@ -1,0 +1,17 @@
+=== jdk server ===
+  server ready httpPort=32793 (READY which=jdk httpPort=32793 epoll=false)
+CLIENT requests=200000 concurrency=8 seconds=33.627
+CLIENT throughputReqPerSec=5948
+CLIENT latencyMicros p50=1105.9 p99=4735.0 p999=7495.7 max=30228.5
+CLIENT serverSide=RESULT 15010.26884
+  server-side result: IDLE which=jdk windowMs=1000 backgroundAllocBytes=56 RESULT which=jdk epoll=false requests=200000 serverAllocBytes=3002053768 serverBytesPerRequest=15010.3 
+
+=== netty server ===
+  server ready httpPort=44313 (READY which=netty httpPort=44313 epoll=true)
+CLIENT requests=200000 concurrency=8 seconds=29.745
+CLIENT throughputReqPerSec=6724
+CLIENT latencyMicros p50=950.8 p99=4714.5 p999=7200.8 max=33914.9
+CLIENT serverSide=RESULT 1716.24972
+  server-side result: IDLE which=netty windowMs=1000 backgroundAllocBytes=40 RESULT which=netty epoll=true requests=200000 serverAllocBytes=343249944 serverBytesPerRequest=1716.2 
+
+edge-read H2H complete. Raw logs in docs/jdk-vs-netty/raw/edge-read-*.txt
