@@ -103,22 +103,36 @@ public final class EdgeReadAllocServerMain {
         Runnable stopper;
         int boundPort;
         boolean epoll = false;
+        String tier = "-";
         if ("netty".equals(which)) {
+            // The head-to-head PROTOTYPE (read-only shell) — the original 1,716 B/req measurement.
             NettyEdgeReadServer server =
                     new NettyEdgeReadServer(httpPort, core, StrongReadKeyClass.DEFAULT, metrics);
             server.start();
             boundPort = server.port();
             epoll = server.usingEpoll();
+            tier = epoll ? "epoll" : "nio";
+            stopper = server::stop;
+        } else if ("netty-prod".equals(which)) {
+            // The PRODUCTION Netty edge server (ADR-0043 M1): shared EdgeReadHandler + 3-tier selector
+            // + hardening. M1.5 proves the 1,716 B/req win HOLDS on this production pipeline.
+            NettyEdgeHttpServer server = new NettyEdgeHttpServer(httpPort, core,
+                    StrongReadKeyClass.DEFAULT, new PrometheusExporter(registry), metrics);
+            server.start();
+            boundPort = server.port();
+            tier = server.transportTier();
+            epoll = "epoll".equals(tier);
             stopper = server::stop;
         } else {
             EdgeHttpServer server = new EdgeHttpServer(httpPort, core, StrongReadKeyClass.DEFAULT,
                     new PrometheusExporter(registry), metrics);
             server.start();
             boundPort = server.port();
+            tier = "jdk";
             stopper = () -> server.stop(0);
         }
         System.out.println("READY which=" + which + " httpPort=" + boundPort
-                + " epoll=" + epoll);
+                + " epoll=" + epoll + " tier=" + tier);
         System.out.flush();
 
         // ---- control loop: delimit measurement windows from the out-of-JVM client ----
@@ -145,9 +159,9 @@ public final class EdgeReadAllocServerMain {
                         long windowEnd = threadBean.getTotalThreadAllocatedBytes();
                         long delta = windowEnd - windowStart;
                         double perReq = (double) delta / requestCount;
-                        System.out.printf("RESULT which=%s epoll=%s requests=%d "
+                        System.out.printf("RESULT which=%s tier=%s epoll=%s requests=%d "
                                         + "serverAllocBytes=%d serverBytesPerRequest=%.1f%n",
-                                which, epoll, requestCount, delta, perReq);
+                                which, tier, epoll, requestCount, delta, perReq);
                         System.out.flush();
                         out.println("RESULT " + perReq);
                     }

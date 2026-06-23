@@ -1,6 +1,11 @@
 # ADR-0037: Edge data-plane transport reuses the JDK-socket/TlsManager/FrameCodec stack (no Netty)
 
-- **Status:** Accepted (review-architect RATIFY-WITH-CHANGES 2026-06-11, `docs/session-3/reviews/c1-design-review.md` §A1 — the required scale-envelope wording fix is applied below; the TransportSink-seam contingency is confirmed at C1 design-note closeout)
+- **Status:** **SUPERSEDED by [ADR-0043](adr-0043-netty-transport-platform.md) (2026-06-23)** — the
+  transport platform standardizes on Netty 4.2 (io_uring + uniformity + the measured edge-read win;
+  measured-neutral on the wire codecs). The connection-scale math below is **not** invalidated (it
+  correctly says today's per-node connection count does not *force* Netty); ADR-0043 overrides on
+  different, forward-looking grounds and pays the dependency cost ADR-0037 priced. _Original status:_
+  Accepted (review-architect RATIFY-WITH-CHANGES 2026-06-11, `docs/session-3/reviews/c1-design-review.md` §A1 — the required scale-envelope wording fix is applied below; the TransportSink-seam contingency is confirmed at C1 design-note closeout)
 - **Date:** 2026-06-11
 - **Session:** 3 (Edge Data Plane)
 - **Interacts with:** ADR-0010 (named "Netty gRPC transport" — documented FICTION since the Session-1 audit: no `io.netty` dependency exists in any pom; the real control-plane transport is JDK sockets), ADR-0034 (the boundary the fan-out service drains), hard rule 5 (no new external runtime dependencies without an ADR), the Session-3 charter §4 C2 ("Netty transport to the fan-out service, mTLS consistent with the control plane's")
