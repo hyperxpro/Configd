@@ -1106,6 +1106,864 @@
     },
     {
       "type" : "library",
+      "bom-ref" : "pkg:maven/io.netty/netty-transport@4.2.15.Final?type=jar",
+      "publisher" : "The Netty Project",
+      "group" : "io.netty",
+      "name" : "netty-transport",
+      "version" : "4.2.15.Final",
+      "description" : "Netty is an asynchronous event-driven network application framework for rapid development of maintainable high performance protocol servers and clients.",
+      "scope" : "required",
+      "hashes" : [
+        {
+          "alg" : "MD5",
+          "content" : "c7494798baef79eb9fcfa98c4ab8fbf7"
+        },
+        {
+          "alg" : "SHA-1",
+          "content" : "a000c3a6196ee40207b73ac619dcb339409dd62f"
+        },
+        {
+          "alg" : "SHA-256",
+          "content" : "9fb671e96651066cf1a28dad3f1382c7c99df5b8326d4a214d9a375b311f8dc1"
+        },
+        {
+          "alg" : "SHA-512",
+          "content" : "27aab56f39e621cc13050531aa45ca834b6ba2f7bf3b28b58afdf290ae3f8581e9d0989bf0bdf45b33a3193edf20f51f4f38333b9f97a50e955417288379f340"
+        },
+        {
+          "alg" : "SHA-384",
+          "content" : "ff9ae5b87c2fd05a880e4c1ffe944c41d2f9b1563f5ea35fcdd83bc3700250643879ee2472022bb36fa24d5df041bdd3"
+        },
+        {
+          "alg" : "SHA3-384",
+          "content" : "c27c3370f3ad524e0cc492ca22d4dc5a8a710f832e5cbdf3183f9d0ffa80accfdb6290ce1c3a908eeca6961d7707885d"
+        },
+        {
+          "alg" : "SHA3-256",
+          "content" : "1d55ee670f739016a6edbdc88a4d9b63fb52a2151e02ae6810e173d0fdcec4ab"
+        },
+        {
+          "alg" : "SHA3-512",
+          "content" : "c2bcfe307a88d5c66143031fec6edd3a9ba2f0d263964d2f2bd40caf42bb47a0a0ee423bea890705b0761212b8cd028a2c76090139254db0030543cc3d9a9fe9"
+        }
+      ],
+      "licenses" : [
+        {
+          "license" : {
+            "id" : "Apache-2.0"
+          }
+        }
+      ],
+      "purl" : "pkg:maven/io.netty/netty-transport@4.2.15.Final?type=jar",
+      "externalReferences" : [
+        {
+          "type" : "website",
+          "url" : "https://netty.io/netty-transport/"
+        },
+        {
+          "type" : "distribution-intake",
+          "url" : "https://oss.sonatype.org/service/local/staging/deploy/maven2/"
+        },
+        {
+          "type" : "vcs",
+          "url" : "https://github.com/netty/netty/netty-transport"
+        }
+      ]
+    },
+    {
+      "type" : "library",
+      "bom-ref" : "pkg:maven/io.netty/netty-common@4.2.15.Final?type=jar",
+      "publisher" : "The Netty Project",
+      "group" : "io.netty",
+      "name" : "netty-common",
+      "version" : "4.2.15.Final",
+      "description" : "Netty is an asynchronous event-driven network application framework for rapid development of maintainable high performance protocol servers and clients.",
+      "scope" : "required",
+      "hashes" : [
+        {
+          "alg" : "MD5",
+          "content" : "92a27d3fb05eafeb4da4088cd2c6455e"
+        },
+        {
+          "alg" : "SHA-1",
+          "content" : "7222492c1af9c2d4d78d521eea340a619e242fda"
+        },
+        {
+          "alg" : "SHA-256",
+          "content" : "78206aa7f6d197caa926291408c01889b6b910ca0f74017d3fcbdaccf9562959"
+        },
+        {
+          "alg" : "SHA-512",
+          "content" : "2936b9e40ff5cc73eeeddca11518655d14a0ce6a2a89af1d2d4cdb8790f2630ccb99b8860c453a0ff8fab29a26f1dc3de4cb1664d9e79c732ac1e5b107713756"
+        },
+        {
+          "alg" : "SHA-384",
+          "content" : "b35e12411a3b83211b5e15f6fe7379a28af95a72f30b4071da1f0e893efc851362b2e09cfb4d9515969b6ccef98f93b4"
+        },
+        {
+          "alg" : "SHA3-384",
+          "content" : "25caba2a8c5962c88cc224a62ebc9000c9f5c7810aa7ca36334c8c37a6f65578738613b225db09ca615807c156723d9f"
+        },
+        {
+          "alg" : "SHA3-256",
+          "content" : "013390d6dd4bd00ec28f9ca6cf6ebc252737707ae3bf3d334d8ae57d7760f319"
+        },
+        {
+          "alg" : "SHA3-512",
+          "content" : "7fc70efbe585e0863522a567039dadefc55c072e717f3f9df7d6db8f186d8ccddb98ed8ea3a6fad5ddba2e073444f778af0f7b554e9900c1e9efe38ba14c1735"
+        }
+      ],
+      "licenses" : [
+        {
+          "license" : {
+            "id" : "Apache-2.0"
+          }
+        }
+      ],
+      "purl" : "pkg:maven/io.netty/netty-common@4.2.15.Final?type=jar",
+      "externalReferences" : [
+        {
+          "type" : "website",
+          "url" : "https://netty.io/netty-common/"
+        },
+        {
+          "type" : "distribution-intake",
+          "url" : "https://oss.sonatype.org/service/local/staging/deploy/maven2/"
+        },
+        {
+          "type" : "vcs",
+          "url" : "https://github.com/netty/netty/netty-common"
+        }
+      ]
+    },
+    {
+      "type" : "library",
+      "bom-ref" : "pkg:maven/io.netty/netty-resolver@4.2.15.Final?type=jar",
+      "publisher" : "The Netty Project",
+      "group" : "io.netty",
+      "name" : "netty-resolver",
+      "version" : "4.2.15.Final",
+      "description" : "Netty is an asynchronous event-driven network application framework for rapid development of maintainable high performance protocol servers and clients.",
+      "scope" : "required",
+      "hashes" : [
+        {
+          "alg" : "MD5",
+          "content" : "66cdbaad85a04936f23eea413d7dd52d"
+        },
+        {
+          "alg" : "SHA-1",
+          "content" : "b961a16d379b508b473e064ba06842bba280f4e3"
+        },
+        {
+          "alg" : "SHA-256",
+          "content" : "24318497f2a3a645964fed418f48879ba11365cab8e1f8d66c47fa7da15ef19a"
+        },
+        {
+          "alg" : "SHA-512",
+          "content" : "bad4425bc195209dfc7eb630a06b52923bffffaceb585f8a868eb6c6c177e5f58b927bea26a0a52b1deb39a1cf524b15be160d6f02d854c6e4d13087ebd3e830"
+        },
+        {
+          "alg" : "SHA-384",
+          "content" : "6f8ee405f4af88dd1bfd85d3b3f6f5c84d39f6a79d99897f68b9335350173a1fc90576743a1d72ba1e5e178d3fd099c0"
+        },
+        {
+          "alg" : "SHA3-384",
+          "content" : "f7c777d8887e5946d0ece2767da04f82ab8bfc03ba59955d8272aea4d08b179e5c2ca55b6d2b789ad38be4858d8711ea"
+        },
+        {
+          "alg" : "SHA3-256",
+          "content" : "e1017b6583dc99da2253c00873115b4b4f54c612dd7e7504db33647d2ae905ba"
+        },
+        {
+          "alg" : "SHA3-512",
+          "content" : "59cf8a55acc08b7bf0ff32744375c11f34acc516d876310b16e789aa4e8cb442e591a6e8a30054947505809a3449cf2a37fc75dc96402d4b2276bb838e6e91dd"
+        }
+      ],
+      "licenses" : [
+        {
+          "license" : {
+            "id" : "Apache-2.0"
+          }
+        }
+      ],
+      "purl" : "pkg:maven/io.netty/netty-resolver@4.2.15.Final?type=jar",
+      "externalReferences" : [
+        {
+          "type" : "website",
+          "url" : "https://netty.io/netty-resolver/"
+        },
+        {
+          "type" : "distribution-intake",
+          "url" : "https://oss.sonatype.org/service/local/staging/deploy/maven2/"
+        },
+        {
+          "type" : "vcs",
+          "url" : "https://github.com/netty/netty/netty-resolver"
+        }
+      ]
+    },
+    {
+      "type" : "library",
+      "bom-ref" : "pkg:maven/io.netty/netty-buffer@4.2.15.Final?type=jar",
+      "publisher" : "The Netty Project",
+      "group" : "io.netty",
+      "name" : "netty-buffer",
+      "version" : "4.2.15.Final",
+      "description" : "Netty is an asynchronous event-driven network application framework for rapid development of maintainable high performance protocol servers and clients.",
+      "scope" : "required",
+      "hashes" : [
+        {
+          "alg" : "MD5",
+          "content" : "8990ccfc32cdc95a53bc262eb1b12bb4"
+        },
+        {
+          "alg" : "SHA-1",
+          "content" : "2beb620803bf871cda2dd5d46b8f831e8015dd34"
+        },
+        {
+          "alg" : "SHA-256",
+          "content" : "1361fd9c9ba85b9831cf54a1b2e45ddc3ce34a768931726c099d3f5ef0efe4a3"
+        },
+        {
+          "alg" : "SHA-512",
+          "content" : "32f95019291194fcf5c0934374520bce4671fe57eee3ef5c3c91c4827ec2fc117ab6d4a1b5be4468793c53864f74e8dc9cc556fe1d2163adfa19597dafd6540a"
+        },
+        {
+          "alg" : "SHA-384",
+          "content" : "c7119215644f2624da89c2604e3b99eceb67d8154c5e46c1e98da63ac2bbc8306348a72a5cd329643e030cc20bdd047e"
+        },
+        {
+          "alg" : "SHA3-384",
+          "content" : "80d8acf58e0b1510dd9705dc8b9c179b78a7bbb16baa9349ecbd143e2d62d74e7161427e0546ca6decb2e74059feb726"
+        },
+        {
+          "alg" : "SHA3-256",
+          "content" : "60727e53ce4ae027ca99dd967429c827780b8ecff34d662c3c0a2cd46afaa906"
+        },
+        {
+          "alg" : "SHA3-512",
+          "content" : "01937ba9ce883d363e91f643ca0f34062f4f0ee7f1bfe7a7b77fbc44955b3ff827beb7f9d0aa093acef3bf7390428a29c870989c5c2f1006e34d84205e34f4dd"
+        }
+      ],
+      "licenses" : [
+        {
+          "license" : {
+            "id" : "Apache-2.0"
+          }
+        }
+      ],
+      "purl" : "pkg:maven/io.netty/netty-buffer@4.2.15.Final?type=jar",
+      "externalReferences" : [
+        {
+          "type" : "website",
+          "url" : "https://netty.io/netty-buffer/"
+        },
+        {
+          "type" : "distribution-intake",
+          "url" : "https://oss.sonatype.org/service/local/staging/deploy/maven2/"
+        },
+        {
+          "type" : "vcs",
+          "url" : "https://github.com/netty/netty/netty-buffer"
+        }
+      ]
+    },
+    {
+      "type" : "library",
+      "bom-ref" : "pkg:maven/io.netty/netty-codec-http@4.2.15.Final?type=jar",
+      "publisher" : "The Netty Project",
+      "group" : "io.netty",
+      "name" : "netty-codec-http",
+      "version" : "4.2.15.Final",
+      "description" : "Netty is an asynchronous event-driven network application framework for rapid development of maintainable high performance protocol servers and clients.",
+      "scope" : "required",
+      "hashes" : [
+        {
+          "alg" : "MD5",
+          "content" : "74b024529b5d558929a93ca1f7b8af89"
+        },
+        {
+          "alg" : "SHA-1",
+          "content" : "e611826aa054371bb9a17f27bdb05755a4cac5f0"
+        },
+        {
+          "alg" : "SHA-256",
+          "content" : "76ae57e87af37b3c4107140f50b9244b1456163a6a225510838f7c5a4458ec22"
+        },
+        {
+          "alg" : "SHA-512",
+          "content" : "97af93a1f98cd0e5c8b77bdcd06d5342454690761edbcf36ebf01af14ad0754af06362139756add35a27ed8175b59b5cd879219838c1fe45f216bda1e6f8bed5"
+        },
+        {
+          "alg" : "SHA-384",
+          "content" : "597fc3570b0be0944c67ad2be6481e09a03e5bee9527d1e2cfa20726381ca1511eb3963a6b16050c84c8ced79710216a"
+        },
+        {
+          "alg" : "SHA3-384",
+          "content" : "be68b44ffec9a2603f9ff8efb4f5d08a48cb0bf3c2f82efbaef02711ea2495555ce5d6f1ad4e19c0f60f49ee3872db76"
+        },
+        {
+          "alg" : "SHA3-256",
+          "content" : "6cf88dfc93974f305432329ba03bf7b0ceda22587649cc60aafdc85291b22489"
+        },
+        {
+          "alg" : "SHA3-512",
+          "content" : "20660ee8183f43e8daee74bec1cbd56903e9f588639ac9b8da729a1aa34f3dad8131891941f223dacf9d8d7d3f9ce08098dcab4aa255ae54ec54b09d3045fca8"
+        }
+      ],
+      "licenses" : [
+        {
+          "license" : {
+            "id" : "Apache-2.0"
+          }
+        }
+      ],
+      "purl" : "pkg:maven/io.netty/netty-codec-http@4.2.15.Final?type=jar",
+      "externalReferences" : [
+        {
+          "type" : "website",
+          "url" : "https://netty.io/netty-codec-http/"
+        },
+        {
+          "type" : "distribution-intake",
+          "url" : "https://oss.sonatype.org/service/local/staging/deploy/maven2/"
+        },
+        {
+          "type" : "vcs",
+          "url" : "https://github.com/netty/netty/netty-codec-http"
+        }
+      ]
+    },
+    {
+      "type" : "library",
+      "bom-ref" : "pkg:maven/io.netty/netty-codec-base@4.2.15.Final?type=jar",
+      "publisher" : "The Netty Project",
+      "group" : "io.netty",
+      "name" : "netty-codec-base",
+      "version" : "4.2.15.Final",
+      "description" : "Netty is an asynchronous event-driven network application framework for rapid development of maintainable high performance protocol servers and clients.",
+      "scope" : "required",
+      "hashes" : [
+        {
+          "alg" : "MD5",
+          "content" : "49e8598fac2f6433113ed0f76eff0936"
+        },
+        {
+          "alg" : "SHA-1",
+          "content" : "e97149fdd5fb04858efa90e314651c8d700dc68b"
+        },
+        {
+          "alg" : "SHA-256",
+          "content" : "2c6d39d7270628b8cfc3166fbd7a93d595958e59c461bc32ddb383c8c91bf811"
+        },
+        {
+          "alg" : "SHA-512",
+          "content" : "711b2354d339182ed301fc65f9b600eaaa0226878ded50974c3dff1e9d064844af95250453ec9c5ea916eb3d00cc45569e540a2c7a6de439487edd4482c49d0a"
+        },
+        {
+          "alg" : "SHA-384",
+          "content" : "e9ac07161ec30c3ea79379fd64e95351fb5ca7f6d7b60c97f7a40a22b28afa6c75410348595421a0188ec08693efebf7"
+        },
+        {
+          "alg" : "SHA3-384",
+          "content" : "bc819a45b845e1e1e27276c23c24e07b942dcf1bde9e1df6f53b2229d325a7a1b4f3daac5de88cb02a8915b10d07aea2"
+        },
+        {
+          "alg" : "SHA3-256",
+          "content" : "1e0652600d5ebc21ce6a74d89e528f1908222f8ae85e5eb9290b7f6693591bb9"
+        },
+        {
+          "alg" : "SHA3-512",
+          "content" : "9420043245482b9b54a72edd4d447c017e3d3ef88c871396d58ae0277bc642d561c0eb9196372618a775fee271d5bc8551311656a694004deefa9990736dbf8b"
+        }
+      ],
+      "licenses" : [
+        {
+          "license" : {
+            "id" : "Apache-2.0"
+          }
+        }
+      ],
+      "purl" : "pkg:maven/io.netty/netty-codec-base@4.2.15.Final?type=jar",
+      "externalReferences" : [
+        {
+          "type" : "website",
+          "url" : "https://netty.io/netty-codec-base/"
+        },
+        {
+          "type" : "distribution-intake",
+          "url" : "https://oss.sonatype.org/service/local/staging/deploy/maven2/"
+        },
+        {
+          "type" : "vcs",
+          "url" : "https://github.com/netty/netty/netty-codec-base"
+        }
+      ]
+    },
+    {
+      "type" : "library",
+      "bom-ref" : "pkg:maven/io.netty/netty-codec-compression@4.2.15.Final?type=jar",
+      "publisher" : "The Netty Project",
+      "group" : "io.netty",
+      "name" : "netty-codec-compression",
+      "version" : "4.2.15.Final",
+      "description" : "Netty is an asynchronous event-driven network application framework for rapid development of maintainable high performance protocol servers and clients.",
+      "scope" : "required",
+      "hashes" : [
+        {
+          "alg" : "MD5",
+          "content" : "9d00d226ccb09206324722a346456c6f"
+        },
+        {
+          "alg" : "SHA-1",
+          "content" : "89fc4a20b7ae6af974304b1695405e62c4f9b16d"
+        },
+        {
+          "alg" : "SHA-256",
+          "content" : "4adaa5cdd4d2e9b50b23e4c3eff42e73de6eb40848718b3aa84cd5b454da6ce8"
+        },
+        {
+          "alg" : "SHA-512",
+          "content" : "e4fa499a0a2aea866ed99205ee54cea013f031d1aaceb0c8581be1f201aafd8d5f98f9be7738ed8111951728caa69b6849076f242d78ce7ef3fed92e2ec3bb2f"
+        },
+        {
+          "alg" : "SHA-384",
+          "content" : "91b99d666d630bf1f0b8e02dccb98829b2d25ebe921dfe5e9ef46a0154f3da08be2c96f135f1478b9a35c86b7efebb74"
+        },
+        {
+          "alg" : "SHA3-384",
+          "content" : "7f15218e8fad49a564aa78d7a87acaf786cdbcb8ab4096ddd710d5377e2f74abdb6a235e107c4a58de7c4962c9f6a490"
+        },
+        {
+          "alg" : "SHA3-256",
+          "content" : "45c255ac06bfd94cded21ce06bdb6dbc1d6340b0ef2d4d02bc5fdba43cc00fc3"
+        },
+        {
+          "alg" : "SHA3-512",
+          "content" : "718e6ec32d1fc900c94ff01fb4ac70615d0f20372b192d649da40b0513a8ae806427c94c407ec2155f6d1fe042e42b5699942c89484cddf9f6993c6e34357b81"
+        }
+      ],
+      "licenses" : [
+        {
+          "license" : {
+            "id" : "Apache-2.0"
+          }
+        }
+      ],
+      "purl" : "pkg:maven/io.netty/netty-codec-compression@4.2.15.Final?type=jar",
+      "externalReferences" : [
+        {
+          "type" : "website",
+          "url" : "https://netty.io/netty-codec-compression/"
+        },
+        {
+          "type" : "distribution-intake",
+          "url" : "https://oss.sonatype.org/service/local/staging/deploy/maven2/"
+        },
+        {
+          "type" : "vcs",
+          "url" : "https://github.com/netty/netty/netty-codec-compression"
+        }
+      ]
+    },
+    {
+      "type" : "library",
+      "bom-ref" : "pkg:maven/io.netty/netty-handler@4.2.15.Final?type=jar",
+      "publisher" : "The Netty Project",
+      "group" : "io.netty",
+      "name" : "netty-handler",
+      "version" : "4.2.15.Final",
+      "description" : "Netty is an asynchronous event-driven network application framework for rapid development of maintainable high performance protocol servers and clients.",
+      "scope" : "required",
+      "hashes" : [
+        {
+          "alg" : "MD5",
+          "content" : "28d5ec2e1631f2fb8d4f2e19cd859a34"
+        },
+        {
+          "alg" : "SHA-1",
+          "content" : "d5344afd1148e3b9927a74be019605ebb0937a93"
+        },
+        {
+          "alg" : "SHA-256",
+          "content" : "99b59e4bea72220d2aed52df8baf37d97431b06ade0b135226cdf73168975eab"
+        },
+        {
+          "alg" : "SHA-512",
+          "content" : "6873ee3a5a5502d0c3f8671ff73745252408b606f4de9241f84e41e9a5e08ea866aac6fd9000bd836e72b5b15f68aee6175c9d5959d25ced21542c50d550b8ad"
+        },
+        {
+          "alg" : "SHA-384",
+          "content" : "7307a360730315c2e4331fca4c8a6aedd0690222f4a12680f0a65eec809a37cea050ecfab89617c6ff25ac3b40444721"
+        },
+        {
+          "alg" : "SHA3-384",
+          "content" : "bef3e43b522ac2236b4115019ceb694f38abf4fb445da89c670967a0330e4b8df0267b2151e9c25c30231dd7cf0796ce"
+        },
+        {
+          "alg" : "SHA3-256",
+          "content" : "efe4035c5e8ab855232dfa5dd27c3d932c5dfe1667b4f857b45e4538566c431a"
+        },
+        {
+          "alg" : "SHA3-512",
+          "content" : "a39047051d02321af47bebfb22f3f54027afb1b7d8ea7dce33253aa0d57d09403c16f94e177c233c32b29c30f7e061c81bce8241b0de91848f602208cfed0008"
+        }
+      ],
+      "licenses" : [
+        {
+          "license" : {
+            "id" : "Apache-2.0"
+          }
+        }
+      ],
+      "purl" : "pkg:maven/io.netty/netty-handler@4.2.15.Final?type=jar",
+      "externalReferences" : [
+        {
+          "type" : "website",
+          "url" : "https://netty.io/netty-handler/"
+        },
+        {
+          "type" : "distribution-intake",
+          "url" : "https://oss.sonatype.org/service/local/staging/deploy/maven2/"
+        },
+        {
+          "type" : "vcs",
+          "url" : "https://github.com/netty/netty/netty-handler"
+        }
+      ]
+    },
+    {
+      "type" : "library",
+      "bom-ref" : "pkg:maven/io.netty/netty-transport-native-unix-common@4.2.15.Final?type=jar",
+      "publisher" : "The Netty Project",
+      "group" : "io.netty",
+      "name" : "netty-transport-native-unix-common",
+      "version" : "4.2.15.Final",
+      "description" : "Static library which contains common unix utilities.",
+      "scope" : "required",
+      "hashes" : [
+        {
+          "alg" : "MD5",
+          "content" : "208a76e2e8715abe4d5a4123b0c388eb"
+        },
+        {
+          "alg" : "SHA-1",
+          "content" : "efb6943b4de9e0226a5ac35330f232605424af02"
+        },
+        {
+          "alg" : "SHA-256",
+          "content" : "b9ea9fc5ad5eba04e99afdff75b2eb97b5ddfb2ad772e2f2ef5d8f277f3cbd76"
+        },
+        {
+          "alg" : "SHA-512",
+          "content" : "97ec4cc69142cdb06d320bfd054b0b772a4e0ba265726d23765796197c2825187c0422f5c49ecc88da7d3167ba58b06dbb1ea4ed60d1e5db3b739902ee023676"
+        },
+        {
+          "alg" : "SHA-384",
+          "content" : "b60724518ba80f17fffe1d2ea179fd15e92d53808dc7c70326c6fe8a1fdb8f3cac57a5fff96ad97513f722f791331314"
+        },
+        {
+          "alg" : "SHA3-384",
+          "content" : "32b4e5264bf9785c48e853c3b76f76f537406a742bce943f0eb05ccb52705997e17840f3cc57fce1c12a6a58116f74ae"
+        },
+        {
+          "alg" : "SHA3-256",
+          "content" : "d3af7993f162fc3a9dbf731f8572a66fb0286e3d72203179f1edb3c84666e96e"
+        },
+        {
+          "alg" : "SHA3-512",
+          "content" : "67c37388ef3c4c10c5a625bc5357c89c4ff2ef24621cd6ddd3e68d09244185bca4a50d34ff269bf73c890e8d1540b6a25c2ca95e63997d02e0fa4a2c3a481ce4"
+        }
+      ],
+      "licenses" : [
+        {
+          "license" : {
+            "id" : "Apache-2.0"
+          }
+        }
+      ],
+      "purl" : "pkg:maven/io.netty/netty-transport-native-unix-common@4.2.15.Final?type=jar",
+      "externalReferences" : [
+        {
+          "type" : "website",
+          "url" : "https://netty.io/netty-transport-native-unix-common/"
+        },
+        {
+          "type" : "distribution-intake",
+          "url" : "https://oss.sonatype.org/service/local/staging/deploy/maven2/"
+        },
+        {
+          "type" : "vcs",
+          "url" : "https://github.com/netty/netty/netty-transport-native-unix-common"
+        }
+      ]
+    },
+    {
+      "type" : "library",
+      "bom-ref" : "pkg:maven/io.netty/netty-transport-classes-epoll@4.2.15.Final?type=jar",
+      "publisher" : "The Netty Project",
+      "group" : "io.netty",
+      "name" : "netty-transport-classes-epoll",
+      "version" : "4.2.15.Final",
+      "description" : "Netty is an asynchronous event-driven network application framework for rapid development of maintainable high performance protocol servers and clients.",
+      "scope" : "required",
+      "hashes" : [
+        {
+          "alg" : "MD5",
+          "content" : "69ab01b1404f61b0bd3409b6b24ecca8"
+        },
+        {
+          "alg" : "SHA-1",
+          "content" : "44bafba9c9993800e955b365bba4981326f3f3b1"
+        },
+        {
+          "alg" : "SHA-256",
+          "content" : "be509407fd71a4b83378567c613420db544d659bb522df7b253a1dbe8ca297fe"
+        },
+        {
+          "alg" : "SHA-512",
+          "content" : "1cb6e549eb7a6a993633f4a82877c2a74f6e8b5aed302d21a7157f7719702b58aa14ae037af5fdb97b7d62f01f66ff1690dec11eac61235fe28b0fdbd993f1e9"
+        },
+        {
+          "alg" : "SHA-384",
+          "content" : "ba092de30d7b7786d440ca08548f8e589d99b39e67abd40934d096de6e3a49ca7c3f088441ffee07548e030e0c2ce475"
+        },
+        {
+          "alg" : "SHA3-384",
+          "content" : "5c98656395841d997fd255d63ab7994691a6d085e9cd234fd9214601e197ce243b3bedfa97ca2437be4975edf70d3ce6"
+        },
+        {
+          "alg" : "SHA3-256",
+          "content" : "b800aa9dcb395e53c93cda0dda68874ddd111166c10ac274b46ff398f87ea25f"
+        },
+        {
+          "alg" : "SHA3-512",
+          "content" : "84f27c54fd0ef1dd6e824e8c549033d24737f1aa97332e0dec83bdeb24e770dcd214a2e06c8eb939e449e68b48c30cbc302f77ec2e0ce02b64ac1000b6596a01"
+        }
+      ],
+      "licenses" : [
+        {
+          "license" : {
+            "id" : "Apache-2.0"
+          }
+        }
+      ],
+      "purl" : "pkg:maven/io.netty/netty-transport-classes-epoll@4.2.15.Final?type=jar",
+      "externalReferences" : [
+        {
+          "type" : "website",
+          "url" : "https://netty.io/netty-transport-classes-epoll/"
+        },
+        {
+          "type" : "distribution-intake",
+          "url" : "https://oss.sonatype.org/service/local/staging/deploy/maven2/"
+        },
+        {
+          "type" : "vcs",
+          "url" : "https://github.com/netty/netty/netty-transport-classes-epoll"
+        }
+      ]
+    },
+    {
+      "type" : "library",
+      "bom-ref" : "pkg:maven/io.netty/netty-transport-native-epoll@4.2.15.Final?classifier=linux-x86_64&type=jar",
+      "publisher" : "The Netty Project",
+      "group" : "io.netty",
+      "name" : "netty-transport-native-epoll",
+      "version" : "4.2.15.Final",
+      "description" : "Netty is an asynchronous event-driven network application framework for rapid development of maintainable high performance protocol servers and clients.",
+      "scope" : "required",
+      "hashes" : [
+        {
+          "alg" : "MD5",
+          "content" : "e63e60ab17305cc14043d52ca8e053e7"
+        },
+        {
+          "alg" : "SHA-1",
+          "content" : "ce256127f8ed3f076756f1f4dcb5877d65d1f1c2"
+        },
+        {
+          "alg" : "SHA-256",
+          "content" : "5440e38f5ca2858fee8d7898e65291e05b665736c9e8a14c832e707511f5dba6"
+        },
+        {
+          "alg" : "SHA-512",
+          "content" : "34690e9e18a7c87626c5bd2a189a1921156412be6dbea3dd5206b8ee693ab094d7b016bba32161b215e769d01ece3f7249ea0b0a5b34cdb6872496a7eeafadbb"
+        },
+        {
+          "alg" : "SHA-384",
+          "content" : "dd22c094c2ec8d12d0d14b80b780d119db5540ba4f0e6e21140bc68673c471d5e9845a30d67f35d6264369ef91925a85"
+        },
+        {
+          "alg" : "SHA3-384",
+          "content" : "3159abdd770679180516da5fc14dc38e200fbe451c8a0073a722f0763a03518734921b00902bcad72f5d44578e55b8db"
+        },
+        {
+          "alg" : "SHA3-256",
+          "content" : "0a5eb0246a8fbd9cc00c020b82d54fab1fc67404ba5feab20437a72d9f01542f"
+        },
+        {
+          "alg" : "SHA3-512",
+          "content" : "62612295acbcd134dd67f545d6625bf2d647a0c852c57e314e5ce784d5ed877e8dd4b933826dd15ccbe7e09d0a8b9f956b3f9af6d312a67b25e0957754ff731e"
+        }
+      ],
+      "licenses" : [
+        {
+          "license" : {
+            "id" : "Apache-2.0"
+          }
+        }
+      ],
+      "purl" : "pkg:maven/io.netty/netty-transport-native-epoll@4.2.15.Final?classifier=linux-x86_64&type=jar",
+      "externalReferences" : [
+        {
+          "type" : "website",
+          "url" : "https://netty.io/netty-transport-native-epoll/"
+        },
+        {
+          "type" : "distribution-intake",
+          "url" : "https://oss.sonatype.org/service/local/staging/deploy/maven2/"
+        },
+        {
+          "type" : "vcs",
+          "url" : "https://github.com/netty/netty/netty-transport-native-epoll"
+        }
+      ]
+    },
+    {
+      "type" : "library",
+      "bom-ref" : "pkg:maven/io.netty/netty-transport-classes-io_uring@4.2.15.Final?type=jar",
+      "publisher" : "The Netty Project",
+      "group" : "io.netty",
+      "name" : "netty-transport-classes-io_uring",
+      "version" : "4.2.15.Final",
+      "description" : "Netty is an asynchronous event-driven network application framework for rapid development of maintainable high performance protocol servers and clients.",
+      "scope" : "required",
+      "hashes" : [
+        {
+          "alg" : "MD5",
+          "content" : "ee728c78553e0afc6a9948c8988aa2d8"
+        },
+        {
+          "alg" : "SHA-1",
+          "content" : "ad6bb4d4a733f31edc3e2778e9ac2d1eb7a215fe"
+        },
+        {
+          "alg" : "SHA-256",
+          "content" : "dcfb9c578e47aed5d05045b4b80a5d05c7b4d0cfbe63eb4310a0951cbdf7e89b"
+        },
+        {
+          "alg" : "SHA-512",
+          "content" : "295e4d4860a5a5e78c6ea10d79830855cf549a25e1a4543b7d0b134d7930583e655031748402a51ad211359261fc55b97ab95c76462d2c62f1544a1796a4cb5d"
+        },
+        {
+          "alg" : "SHA-384",
+          "content" : "f40bd2c434cdf688f62df7679528e09fdc43038dd8a80ce895ac2926f1bb8db346f11e413a204c60248782bc166bb2eb"
+        },
+        {
+          "alg" : "SHA3-384",
+          "content" : "5acd123ea9095dc498de58bbca019c922cda93f6883e1e23bd06692abc633c3df884843657b29cbd3a27f486991a0a83"
+        },
+        {
+          "alg" : "SHA3-256",
+          "content" : "9294f48aa404e474ab8b2bea88e14fd5f22ae27026a595c832d57a3cde88f87e"
+        },
+        {
+          "alg" : "SHA3-512",
+          "content" : "99a68934e703999b2ab9f050ee0eff6989da4efc7fa4de5d1d6e6757b772ad70b0a914cc15f8dea7893ea6d40f15740fed1dcdd326318fb1ef95b885c3bb9b43"
+        }
+      ],
+      "licenses" : [
+        {
+          "license" : {
+            "id" : "Apache-2.0"
+          }
+        }
+      ],
+      "purl" : "pkg:maven/io.netty/netty-transport-classes-io_uring@4.2.15.Final?type=jar",
+      "externalReferences" : [
+        {
+          "type" : "website",
+          "url" : "https://netty.io/netty-transport-classes-io_uring/"
+        },
+        {
+          "type" : "distribution-intake",
+          "url" : "https://oss.sonatype.org/service/local/staging/deploy/maven2/"
+        },
+        {
+          "type" : "vcs",
+          "url" : "https://github.com/netty/netty/netty-transport-classes-io_uring"
+        }
+      ]
+    },
+    {
+      "type" : "library",
+      "bom-ref" : "pkg:maven/io.netty/netty-transport-native-io_uring@4.2.15.Final?classifier=linux-x86_64&type=jar",
+      "publisher" : "The Netty Project",
+      "group" : "io.netty",
+      "name" : "netty-transport-native-io_uring",
+      "version" : "4.2.15.Final",
+      "description" : "Netty is an asynchronous event-driven network application framework for rapid development of maintainable high performance protocol servers and clients.",
+      "scope" : "required",
+      "hashes" : [
+        {
+          "alg" : "MD5",
+          "content" : "1d9085372b71692c865443f3c6e0ffc8"
+        },
+        {
+          "alg" : "SHA-1",
+          "content" : "6967ce62a3e0f9caf895b5d0c22259bfe57bc528"
+        },
+        {
+          "alg" : "SHA-256",
+          "content" : "1438cfb2bf6426e252da48c11ef803cf283e9bfd838ddaf5170bb40c5b238917"
+        },
+        {
+          "alg" : "SHA-512",
+          "content" : "f71b48ce73792c1eb380772c380a6ac2df094e10ce71c941f5a6ca4e4f13697037f653a09e0defa8b66315692ba50715b2ce789156d53d2aea16526a6d96352f"
+        },
+        {
+          "alg" : "SHA-384",
+          "content" : "c828c26c6a46fa3a74bc6ff2171f4db5ef89afe43512103c444eba27d0c9af031a9fe24d91285ddc3d5a3221f654e377"
+        },
+        {
+          "alg" : "SHA3-384",
+          "content" : "6bcea595b590beff112382871b8dc0430016b59659caa3c264c40ca3de84cc1123cf62c6b1da5e03a8ca4ba1b2f62e4d"
+        },
+        {
+          "alg" : "SHA3-256",
+          "content" : "4ad6b66faf45001779fefa3db3cf3ecd313290da9cb3f94ee347fd525c211a8b"
+        },
+        {
+          "alg" : "SHA3-512",
+          "content" : "caf39f2600ca763c31b8690b5d38af241833fc2a7a2887e385aaa1ddd5e76693370101d241a03a5d7d86988abdbd890f20327f121bee74c54063108920be33f5"
+        }
+      ],
+      "licenses" : [
+        {
+          "license" : {
+            "id" : "Apache-2.0"
+          }
+        }
+      ],
+      "purl" : "pkg:maven/io.netty/netty-transport-native-io_uring@4.2.15.Final?classifier=linux-x86_64&type=jar",
+      "externalReferences" : [
+        {
+          "type" : "website",
+          "url" : "https://netty.io/netty-transport-native-io_uring/"
+        },
+        {
+          "type" : "distribution-intake",
+          "url" : "https://oss.sonatype.org/service/local/staging/deploy/maven2/"
+        },
+        {
+          "type" : "vcs",
+          "url" : "https://github.com/netty/netty/netty-transport-native-io_uring"
+        }
+      ]
+    },
+    {
+      "type" : "library",
       "bom-ref" : "pkg:maven/io.configd/configd-testkit@0.1.0-SNAPSHOT?type=jar",
       "group" : "io.configd",
       "name" : "configd-testkit",
@@ -1382,6 +2240,204 @@
         {
           "type" : "vcs",
           "url" : "https://github.com/openjdk/jmh/jmh-generator-annprocess"
+        }
+      ]
+    },
+    {
+      "type" : "library",
+      "bom-ref" : "pkg:maven/io.netty/netty-codec@4.2.15.Final?type=jar",
+      "publisher" : "The Netty Project",
+      "group" : "io.netty",
+      "name" : "netty-codec",
+      "version" : "4.2.15.Final",
+      "description" : "Netty is an asynchronous event-driven network application framework for rapid development of maintainable high performance protocol servers and clients.",
+      "scope" : "optional",
+      "hashes" : [
+        {
+          "alg" : "MD5",
+          "content" : "a96c7e05db64fb7977bb3a39daf28a74"
+        },
+        {
+          "alg" : "SHA-1",
+          "content" : "bfb2ba7974e83ba3a412fef8818667494a2efe19"
+        },
+        {
+          "alg" : "SHA-256",
+          "content" : "153b11a166459733af79fb0d4667f30bfa39792896f689b21c93a4a4091387ea"
+        },
+        {
+          "alg" : "SHA-512",
+          "content" : "460e9a76274e472e65dd0bb4e485e59b9696750cc643cc14d72008447aa8d8efc9f44af6fb21c1433688c339c265c34d87073844b314f6ec721354515e8e2c20"
+        },
+        {
+          "alg" : "SHA-384",
+          "content" : "523022c5b672f87c52aea7b93c138e149b3c335ba647570b4bcc14835b83f2c20afbade5bcae57d313870bc6f57d604d"
+        },
+        {
+          "alg" : "SHA3-384",
+          "content" : "65d59a683f25a7530b8c3f5eb33cab92b4fe24cfabe6c91b37fc978bc2ccc803504f70a554233e38255e1ecb0ad1c585"
+        },
+        {
+          "alg" : "SHA3-256",
+          "content" : "e0eef653375f05e87c5d641784cea70be823935c8f77c54b22dda421c7ec3578"
+        },
+        {
+          "alg" : "SHA3-512",
+          "content" : "871fd534f5f30dd30951b3c7276fb5d8b8c0a0752d05ff5a72823cd2dbb9674f24940ccfaee5be8972267bd43848dae1041ed5ec2c324ec53a540f38e97d14fb"
+        }
+      ],
+      "licenses" : [
+        {
+          "license" : {
+            "id" : "Apache-2.0"
+          }
+        }
+      ],
+      "purl" : "pkg:maven/io.netty/netty-codec@4.2.15.Final?type=jar",
+      "externalReferences" : [
+        {
+          "type" : "website",
+          "url" : "https://netty.io/netty-codec/"
+        },
+        {
+          "type" : "distribution-intake",
+          "url" : "https://oss.sonatype.org/service/local/staging/deploy/maven2/"
+        },
+        {
+          "type" : "vcs",
+          "url" : "https://github.com/netty/netty/netty-codec"
+        }
+      ]
+    },
+    {
+      "type" : "library",
+      "bom-ref" : "pkg:maven/io.netty/netty-codec-protobuf@4.2.15.Final?type=jar",
+      "publisher" : "The Netty Project",
+      "group" : "io.netty",
+      "name" : "netty-codec-protobuf",
+      "version" : "4.2.15.Final",
+      "description" : "Netty is an asynchronous event-driven network application framework for rapid development of maintainable high performance protocol servers and clients.",
+      "scope" : "optional",
+      "hashes" : [
+        {
+          "alg" : "MD5",
+          "content" : "f00b16ca3e971b86aae39348cd153a11"
+        },
+        {
+          "alg" : "SHA-1",
+          "content" : "106fa7bb7b7cb288965a576bfcb96463241f33e2"
+        },
+        {
+          "alg" : "SHA-256",
+          "content" : "ecf3a24695374b3544700d94db56875da90c1dfbe1e43c744dcc15e1e8998a01"
+        },
+        {
+          "alg" : "SHA-512",
+          "content" : "9f9eafdaf9ef04ad22a681b2740613bee842cb85af62019e97e1e4a0f59430fce14d3591bcdb9c7815e9065d9cb4cedb256ac1eede8ef1d6c4e5f6d9e9f6b7b2"
+        },
+        {
+          "alg" : "SHA-384",
+          "content" : "ea3eb0ca59ab7512a96739fe702125e917f05ad85477b78ec5c8f60057bd009ed3a0b71ee408036653c81412c0ea2f24"
+        },
+        {
+          "alg" : "SHA3-384",
+          "content" : "cf49b9a442f7065e39aad6f656155d12a9543125ed3c891ceb00e0245d21109024de25f31f5c16195ad00b41eb36b6e0"
+        },
+        {
+          "alg" : "SHA3-256",
+          "content" : "432c2f4232d3b214e525d799b3c184b0c3a3287caede42c04841844fa508bb17"
+        },
+        {
+          "alg" : "SHA3-512",
+          "content" : "66138f72e14bafd8d878b4353cece0771a90c927a0bb2705c6c4b1f15558a9a021ec2c84207848b129ec19ffc113cac0d7333885ca7318b124900efc4c8b9433"
+        }
+      ],
+      "licenses" : [
+        {
+          "license" : {
+            "id" : "Apache-2.0"
+          }
+        }
+      ],
+      "purl" : "pkg:maven/io.netty/netty-codec-protobuf@4.2.15.Final?type=jar",
+      "externalReferences" : [
+        {
+          "type" : "website",
+          "url" : "https://netty.io/netty-codec-protobuf/"
+        },
+        {
+          "type" : "distribution-intake",
+          "url" : "https://oss.sonatype.org/service/local/staging/deploy/maven2/"
+        },
+        {
+          "type" : "vcs",
+          "url" : "https://github.com/netty/netty/netty-codec-protobuf"
+        }
+      ]
+    },
+    {
+      "type" : "library",
+      "bom-ref" : "pkg:maven/io.netty/netty-codec-marshalling@4.2.15.Final?type=jar",
+      "publisher" : "The Netty Project",
+      "group" : "io.netty",
+      "name" : "netty-codec-marshalling",
+      "version" : "4.2.15.Final",
+      "description" : "Netty is an asynchronous event-driven network application framework for rapid development of maintainable high performance protocol servers and clients.",
+      "scope" : "optional",
+      "hashes" : [
+        {
+          "alg" : "MD5",
+          "content" : "565c77a6d52d28fa2360bf2d2231b77a"
+        },
+        {
+          "alg" : "SHA-1",
+          "content" : "45e92017ba43525cc52610ea04d4fc73b31f6972"
+        },
+        {
+          "alg" : "SHA-256",
+          "content" : "bbc655b5253387f566b25d4185152951f0121fb3afef2c352e7aa52b9fb965d3"
+        },
+        {
+          "alg" : "SHA-512",
+          "content" : "9ba643179701213ab45abab525b0d4527e19829918554f914361f74a30b3d4f1fb7a7631473b4110900623535700b9d9f974cfae6f587bcb9de25f1d5765e213"
+        },
+        {
+          "alg" : "SHA-384",
+          "content" : "e0ce79541ae7cee7deabf0575ec0c423021c024159b68bb46b9ee342c0d4094da388765ea978357c17370ab97b5b52e0"
+        },
+        {
+          "alg" : "SHA3-384",
+          "content" : "1bbf888fc03a316989533c0978ac533eb61793174dce1d15aa21a3afc2cc23d5ff2ab9e82cb3d64e6cdf6f343710059b"
+        },
+        {
+          "alg" : "SHA3-256",
+          "content" : "bffaf401c8b9f1e59196aa6bb85b6d1e77f8d637d4f2e8dd4747751fbffb9e60"
+        },
+        {
+          "alg" : "SHA3-512",
+          "content" : "6402fe90f92dd11e7e287a0c44a6205cb386e39a2ddc593143576cc60f09644e54d94402566ce677afbb76db5dfcb560dba8293a5de11b999cd4257875a90b3f"
+        }
+      ],
+      "licenses" : [
+        {
+          "license" : {
+            "id" : "Apache-2.0"
+          }
+        }
+      ],
+      "purl" : "pkg:maven/io.netty/netty-codec-marshalling@4.2.15.Final?type=jar",
+      "externalReferences" : [
+        {
+          "type" : "website",
+          "url" : "https://netty.io/netty-codec-marshalling/"
+        },
+        {
+          "type" : "distribution-intake",
+          "url" : "https://oss.sonatype.org/service/local/staging/deploy/maven2/"
+        },
+        {
+          "type" : "vcs",
+          "url" : "https://github.com/netty/netty/netty-codec-marshalling"
         }
       ]
     },
@@ -1824,7 +2880,124 @@
         "pkg:maven/io.configd/configd-config-store@0.1.0-SNAPSHOT?type=jar",
         "pkg:maven/io.configd/configd-edge-cache@0.1.0-SNAPSHOT?type=jar",
         "pkg:maven/io.configd/configd-distribution-service@0.1.0-SNAPSHOT?type=jar",
-        "pkg:maven/io.configd/configd-observability@0.1.0-SNAPSHOT?type=jar"
+        "pkg:maven/io.configd/configd-observability@0.1.0-SNAPSHOT?type=jar",
+        "pkg:maven/io.netty/netty-transport@4.2.15.Final?type=jar",
+        "pkg:maven/io.netty/netty-buffer@4.2.15.Final?type=jar",
+        "pkg:maven/io.netty/netty-codec-http@4.2.15.Final?type=jar",
+        "pkg:maven/io.netty/netty-handler@4.2.15.Final?type=jar",
+        "pkg:maven/io.netty/netty-transport-classes-epoll@4.2.15.Final?type=jar",
+        "pkg:maven/io.netty/netty-transport-native-epoll@4.2.15.Final?classifier=linux-x86_64&type=jar",
+        "pkg:maven/io.netty/netty-transport-classes-io_uring@4.2.15.Final?type=jar",
+        "pkg:maven/io.netty/netty-transport-native-io_uring@4.2.15.Final?classifier=linux-x86_64&type=jar"
+      ]
+    },
+    {
+      "ref" : "pkg:maven/io.netty/netty-transport@4.2.15.Final?type=jar",
+      "dependsOn" : [
+        "pkg:maven/io.netty/netty-common@4.2.15.Final?type=jar",
+        "pkg:maven/io.netty/netty-buffer@4.2.15.Final?type=jar",
+        "pkg:maven/io.netty/netty-resolver@4.2.15.Final?type=jar"
+      ]
+    },
+    {
+      "ref" : "pkg:maven/io.netty/netty-common@4.2.15.Final?type=jar",
+      "dependsOn" : [ ]
+    },
+    {
+      "ref" : "pkg:maven/io.netty/netty-buffer@4.2.15.Final?type=jar",
+      "dependsOn" : [
+        "pkg:maven/io.netty/netty-common@4.2.15.Final?type=jar"
+      ]
+    },
+    {
+      "ref" : "pkg:maven/io.netty/netty-resolver@4.2.15.Final?type=jar",
+      "dependsOn" : [
+        "pkg:maven/io.netty/netty-common@4.2.15.Final?type=jar"
+      ]
+    },
+    {
+      "ref" : "pkg:maven/io.netty/netty-codec-http@4.2.15.Final?type=jar",
+      "dependsOn" : [
+        "pkg:maven/io.netty/netty-common@4.2.15.Final?type=jar",
+        "pkg:maven/io.netty/netty-buffer@4.2.15.Final?type=jar",
+        "pkg:maven/io.netty/netty-transport@4.2.15.Final?type=jar",
+        "pkg:maven/io.netty/netty-codec-base@4.2.15.Final?type=jar",
+        "pkg:maven/io.netty/netty-codec-compression@4.2.15.Final?type=jar",
+        "pkg:maven/io.netty/netty-handler@4.2.15.Final?type=jar"
+      ]
+    },
+    {
+      "ref" : "pkg:maven/io.netty/netty-codec-base@4.2.15.Final?type=jar",
+      "dependsOn" : [
+        "pkg:maven/io.netty/netty-common@4.2.15.Final?type=jar",
+        "pkg:maven/io.netty/netty-buffer@4.2.15.Final?type=jar",
+        "pkg:maven/io.netty/netty-transport@4.2.15.Final?type=jar"
+      ]
+    },
+    {
+      "ref" : "pkg:maven/io.netty/netty-codec-compression@4.2.15.Final?type=jar",
+      "dependsOn" : [
+        "pkg:maven/io.netty/netty-common@4.2.15.Final?type=jar",
+        "pkg:maven/io.netty/netty-buffer@4.2.15.Final?type=jar",
+        "pkg:maven/io.netty/netty-transport@4.2.15.Final?type=jar",
+        "pkg:maven/io.netty/netty-codec-base@4.2.15.Final?type=jar"
+      ]
+    },
+    {
+      "ref" : "pkg:maven/io.netty/netty-handler@4.2.15.Final?type=jar",
+      "dependsOn" : [
+        "pkg:maven/io.netty/netty-common@4.2.15.Final?type=jar",
+        "pkg:maven/io.netty/netty-resolver@4.2.15.Final?type=jar",
+        "pkg:maven/io.netty/netty-buffer@4.2.15.Final?type=jar",
+        "pkg:maven/io.netty/netty-transport@4.2.15.Final?type=jar",
+        "pkg:maven/io.netty/netty-transport-native-unix-common@4.2.15.Final?type=jar",
+        "pkg:maven/io.netty/netty-codec-base@4.2.15.Final?type=jar"
+      ]
+    },
+    {
+      "ref" : "pkg:maven/io.netty/netty-transport-native-unix-common@4.2.15.Final?type=jar",
+      "dependsOn" : [
+        "pkg:maven/io.netty/netty-common@4.2.15.Final?type=jar",
+        "pkg:maven/io.netty/netty-buffer@4.2.15.Final?type=jar",
+        "pkg:maven/io.netty/netty-transport@4.2.15.Final?type=jar"
+      ]
+    },
+    {
+      "ref" : "pkg:maven/io.netty/netty-transport-classes-epoll@4.2.15.Final?type=jar",
+      "dependsOn" : [
+        "pkg:maven/io.netty/netty-common@4.2.15.Final?type=jar",
+        "pkg:maven/io.netty/netty-buffer@4.2.15.Final?type=jar",
+        "pkg:maven/io.netty/netty-transport@4.2.15.Final?type=jar",
+        "pkg:maven/io.netty/netty-transport-native-unix-common@4.2.15.Final?type=jar"
+      ]
+    },
+    {
+      "ref" : "pkg:maven/io.netty/netty-transport-native-epoll@4.2.15.Final?classifier=linux-x86_64&type=jar",
+      "dependsOn" : [
+        "pkg:maven/io.netty/netty-common@4.2.15.Final?type=jar",
+        "pkg:maven/io.netty/netty-buffer@4.2.15.Final?type=jar",
+        "pkg:maven/io.netty/netty-transport@4.2.15.Final?type=jar",
+        "pkg:maven/io.netty/netty-transport-native-unix-common@4.2.15.Final?type=jar",
+        "pkg:maven/io.netty/netty-transport-classes-epoll@4.2.15.Final?type=jar"
+      ]
+    },
+    {
+      "ref" : "pkg:maven/io.netty/netty-transport-classes-io_uring@4.2.15.Final?type=jar",
+      "dependsOn" : [
+        "pkg:maven/io.netty/netty-common@4.2.15.Final?type=jar",
+        "pkg:maven/io.netty/netty-buffer@4.2.15.Final?type=jar",
+        "pkg:maven/io.netty/netty-transport@4.2.15.Final?type=jar",
+        "pkg:maven/io.netty/netty-transport-native-unix-common@4.2.15.Final?type=jar"
+      ]
+    },
+    {
+      "ref" : "pkg:maven/io.netty/netty-transport-native-io_uring@4.2.15.Final?classifier=linux-x86_64&type=jar",
+      "dependsOn" : [
+        "pkg:maven/io.netty/netty-common@4.2.15.Final?type=jar",
+        "pkg:maven/io.netty/netty-buffer@4.2.15.Final?type=jar",
+        "pkg:maven/io.netty/netty-transport@4.2.15.Final?type=jar",
+        "pkg:maven/io.netty/netty-transport-native-unix-common@4.2.15.Final?type=jar",
+        "pkg:maven/io.netty/netty-transport-classes-io_uring@4.2.15.Final?type=jar"
       ]
     },
     {
@@ -1841,7 +3014,13 @@
         "pkg:maven/org.hdrhistogram/HdrHistogram@2.2.2?type=jar",
         "pkg:maven/org.junit.jupiter/junit-jupiter@5.11.4?type=jar",
         "pkg:maven/org.openjdk.jmh/jmh-core@1.37?type=jar",
-        "pkg:maven/org.openjdk.jmh/jmh-generator-annprocess@1.37?type=jar"
+        "pkg:maven/org.openjdk.jmh/jmh-generator-annprocess@1.37?type=jar",
+        "pkg:maven/io.netty/netty-transport@4.2.15.Final?type=jar",
+        "pkg:maven/io.netty/netty-buffer@4.2.15.Final?type=jar",
+        "pkg:maven/io.netty/netty-codec@4.2.15.Final?type=jar",
+        "pkg:maven/io.netty/netty-codec-http@4.2.15.Final?type=jar",
+        "pkg:maven/io.netty/netty-transport-classes-epoll@4.2.15.Final?type=jar",
+        "pkg:maven/io.netty/netty-transport-native-epoll@4.2.15.Final?classifier=linux-x86_64&type=jar"
       ]
     },
     {
@@ -1916,6 +3095,36 @@
       "ref" : "pkg:maven/org.openjdk.jmh/jmh-generator-annprocess@1.37?type=jar",
       "dependsOn" : [
         "pkg:maven/org.openjdk.jmh/jmh-core@1.37?type=jar"
+      ]
+    },
+    {
+      "ref" : "pkg:maven/io.netty/netty-codec@4.2.15.Final?type=jar",
+      "dependsOn" : [
+        "pkg:maven/io.netty/netty-common@4.2.15.Final?type=jar",
+        "pkg:maven/io.netty/netty-buffer@4.2.15.Final?type=jar",
+        "pkg:maven/io.netty/netty-transport@4.2.15.Final?type=jar",
+        "pkg:maven/io.netty/netty-codec-base@4.2.15.Final?type=jar",
+        "pkg:maven/io.netty/netty-codec-compression@4.2.15.Final?type=jar",
+        "pkg:maven/io.netty/netty-codec-protobuf@4.2.15.Final?type=jar",
+        "pkg:maven/io.netty/netty-codec-marshalling@4.2.15.Final?type=jar"
+      ]
+    },
+    {
+      "ref" : "pkg:maven/io.netty/netty-codec-protobuf@4.2.15.Final?type=jar",
+      "dependsOn" : [
+        "pkg:maven/io.netty/netty-common@4.2.15.Final?type=jar",
+        "pkg:maven/io.netty/netty-buffer@4.2.15.Final?type=jar",
+        "pkg:maven/io.netty/netty-transport@4.2.15.Final?type=jar",
+        "pkg:maven/io.netty/netty-codec-base@4.2.15.Final?type=jar"
+      ]
+    },
+    {
+      "ref" : "pkg:maven/io.netty/netty-codec-marshalling@4.2.15.Final?type=jar",
+      "dependsOn" : [
+        "pkg:maven/io.netty/netty-common@4.2.15.Final?type=jar",
+        "pkg:maven/io.netty/netty-buffer@4.2.15.Final?type=jar",
+        "pkg:maven/io.netty/netty-transport@4.2.15.Final?type=jar",
+        "pkg:maven/io.netty/netty-codec-base@4.2.15.Final?type=jar"
       ]
     },
     {
