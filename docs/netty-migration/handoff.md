@@ -43,15 +43,30 @@ proved Netty ties JDK at ~0 there). NOT a "Netty is faster everywhere" claim.
 - **Allocation discipline is load-bearing:** naive Netty hardening regressed the floor; idiomatic
   (no per-request `schedule()`/sink object) restored it. Same lesson as the head-to-head.
 
-### Remaining for M1 (immediate next steps)
-- **Second-agent replay** (charter gate) — IN PROGRESS at handoff; the swap is gated on its APPROVE.
-- **M1.7 swap:** point `EdgeNodeMain` at `NettyEdgeHttpServer` (field type + construction +
-  `start()` throws InterruptedException + `stop()` no-arg). Then run the full edge-node + integration
-  suite (EdgeNodeIntegrationTest, EdgeFailoverTest, EdgeBootstrapUnderSustainedWritesProcessTest,
-  GameDayDrillTest, …) which then exercises the Netty server in-process. **Until that flip, production
-  is on the JDK server (a clean, not-half-migrated seam).**
-- **Push the branch → CI green** (RR-097 rule: no close with unpushed branches / unverified CI
-  claims). `main` moves only at the CI-green merge gate (a separate explicit step; not this session).
+### M1 closeout (this session) — DONE
+- **Second-agent replay: APPROVE, 0 must-fix** (java-distinguished-engineer; independently re-ran all
+  tests, traced equivalence, live-probed hardening on the io_uring server, dropped-control hunt empty).
+  One finding F1 (routing exact-match tightening) reconciled → DR-N4 + a pinning test.
+- **M1.7 swap DONE:** `EdgeNodeMain` now wires `NettyEdgeHttpServer`. Full edge-node suite **105 tests,
+  0F/0E, 1 skipped** — incl. the integration/process tests (EdgeNodeIntegrationTest, EdgeFailoverTest,
+  EdgeBootstrapUnderSustainedWrites, GameDayDrill, ReBootstrap, PoisonPill) now booting Netty in-process.
+- **Committed `b6aadf7` (M1) + `bbf3d2f` (SBOM), pushed. CI GREEN: run 28053243253 — ALL 12 jobs
+  success** (build-and-test/JDK25, gate-1..7, tlc, wire-compat, gate-phase0, gate-B). The first run
+  (28051558448) was 9/10 green, failing only gate-7's SBOM normalized-diff — adding Netty as a
+  *production* dep drifted the committed CycloneDX SBOM (`docs/session-7/sbom/bom.json`); regenerated
+  it (delta = exactly +16 io.netty 4.2.15 components, 0 removed; DR-N5). `main` moves only at the
+  CI-green merge gate (a separate explicit step — not done this session).
+- **Footprint note (follow-up):** netty-handler pulled `netty-codec-marshalling`/`-protobuf`/
+  `-compression` transitively (unused by the HTTP read path) — candidates for `<exclusions>` in a
+  later supply-chain hardening pass if the CVE surface warrants; the SBOM records them faithfully.
+
+### Performance (measured this session)
+- **Allocation (trustworthy, CPU-independent — the load-bearing axis):** JDK 14,999.2 → Netty
+  **1,703.8 B/req server-side = 8.80×** (~13.3 KB/req less). io_uring tier selected; same shell cost
+  (io_uring's win is syscalls, Phase V). Idle floor 56 B/s (noise).
+- **Throughput / tail latency:** RELATIVE-ONLY on this contended 2-vCPU box (client+server share it) —
+  a **wash** (JDK ~3,130 req/s p99 7.6 ms; Netty ~3,140 req/s p99 7.9 ms). NOT production numbers; the
+  verdict rests on allocation, exactly as the head-to-head found.
 
 ### Remaining for the migration (later sessions)
 - **M2 admin API** (re-prove ALL of S7: authn/authz/audit/replay/429/strong-read on Netty).

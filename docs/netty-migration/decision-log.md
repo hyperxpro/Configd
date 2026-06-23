@@ -179,3 +179,18 @@ run on JDK + Netty + NIO) and (b) qualify the claim everywhere to **"byte-identi
 request paths; routing is exact-match (this DR)"**. This converts a silent behaviour change into a
 documented, tested decision — no dropped control (the agent confirmed the dropped-control hunt is
 empty), just a deliberate, recorded tightening.
+
+## DR-N5 — New production dep ⇒ regenerate the committed CycloneDX SBOM (gate-7 supply-chain)
+**Date:** 2026-06-23 · **Type:** process/supply-chain · **Status:** decided (CI gate-7 finding)
+
+The first CI run (28051558448) was 9/10 green — failing **only** gate-7's `sbom` step (a normalized
+`diff` of a freshly generated CycloneDX aggregate BOM vs the committed `docs/session-7/sbom/bom.json`).
+Cause: M1 added Netty as a **production** dependency, so the dependency graph — and thus the SBOM —
+legitimately changed; the committed SBOM had not been regenerated. This is the supply-chain gate
+working as designed (it makes a new runtime dependency a deliberate, recorded act). **Fix:** regenerate
+via `cyclonedx-maven-plugin:2.9.0:makeAggregateBom` → `target/bom.json` → `docs/session-7/sbom/bom.json`
+(commit `bbf3d2f`). The delta was verified to be **exactly +16 `io.netty` 4.2.15.Final components, 0
+removed** (the 8 declared + standard transitives). CI re-ran **GREEN: run 28053243253, all 12 jobs**.
+**Rule for M2–M4:** every surface that adds/changes a production dependency must regenerate this SBOM
+in the same commit, or gate-7 fails. (CVE/gitleaks/full-repro are nightly-only — they did NOT run on
+this push/PR dispatch; a nightly run is the next supply-chain checkpoint for the Netty CVE surface.)
