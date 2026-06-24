@@ -61,11 +61,11 @@ public final class EdgeNodeMain {
     private final EdgeNodeMetrics metrics;
     private final EdgeClientCore core;
     private final EdgeStreamClient streamClient;
-    private final EdgeHttpServer httpServer;
+    private final NettyEdgeHttpServer httpServer;
 
     private EdgeNodeMain(EdgeNodeConfig config, MetricsRegistry metricsRegistry,
                          EdgeNodeMetrics metrics, EdgeClientCore core,
-                         EdgeStreamClient streamClient, EdgeHttpServer httpServer) {
+                         EdgeStreamClient streamClient, NettyEdgeHttpServer httpServer) {
         this.config = config;
         this.metricsRegistry = metricsRegistry;
         this.metrics = metrics;
@@ -153,19 +153,23 @@ public final class EdgeNodeMain {
         }
         metrics.bind(core);
 
-        EdgeHttpServer httpServer;
+        // ADR-0043 M1: the edge-read HTTP surface is served by Netty (io_uring→Epoll→NIO selected at
+        // start), replacing the JDK HttpServer (EdgeHttpServer). Byte-identical responses (both adapters
+        // delegate to EdgeReadHandler) at 8.7× less server-side allocation (docs/netty-migration/).
+        // S6/WS-A: publish the edge-read histogram bucket schedule so configd_edge_read_seconds renders
+        // the le buckets (0.001 / 0.005) the edge-read burn-rate alert queries.
+        NettyEdgeHttpServer httpServer = new NettyEdgeHttpServer(config.apiPort(), core,
+                StrongReadKeyClass.DEFAULT,
+                new PrometheusExporter(registry,
+                        io.configd.observability.ConfigdMetrics.edgeProcessHistogramSchedules()),
+                metrics);
         try {
-            // S6/WS-A: publish the edge-read histogram bucket schedule so configd_edge_read_seconds
-            // renders the le buckets (0.001 / 0.005) the edge-read burn-rate alert queries.
-            httpServer = new EdgeHttpServer(config.apiPort(), core, StrongReadKeyClass.DEFAULT,
-                    new PrometheusExporter(registry,
-                            io.configd.observability.ConfigdMetrics.edgeProcessHistogramSchedules()),
-                    metrics);
-        } catch (IOException e) {
+            httpServer.start();
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
             throw new RuntimeException(
-                    "Failed to start edge HTTP server on port " + config.apiPort(), e);
+                    "Interrupted starting edge HTTP server on port " + config.apiPort(), e);
         }
-        httpServer.start();
         streamClient.start(core);
 
         return new EdgeNodeMain(config, registry, metrics, core, streamClient, httpServer);
@@ -188,7 +192,7 @@ public final class EdgeNodeMain {
     /** Stops the edge node: stream client first (clean socket end), then the HTTP surface. */
     public void shutdown() {
         streamClient.close();
-        httpServer.stop(1);
+        httpServer.stop();
     }
 
     /** The actual bound API port (resolves an ephemeral {@code --api-port 0}). */

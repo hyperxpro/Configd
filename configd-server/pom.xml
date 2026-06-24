@@ -22,6 +22,9 @@
         <dependency><groupId>io.configd</groupId><artifactId>configd-control-plane-api</artifactId><version>${project.version}</version></dependency>
         <dependency><groupId>io.configd</groupId><artifactId>configd-edge-cache</artifactId><version>${project.version}</version></dependency>
         <dependency><groupId>io.configd</groupId><artifactId>configd-observability</artifactId><version>${project.version}</version></dependency>
+        <!-- Netty 4.2 platform (ADR-0043 M2, DR-N6): the shared transport selector + the HTTP-transport
+             dep closure, used by the Netty admin-API adapter (NettyHttpApiServer). PRODUCTION scope. -->
+        <dependency><groupId>io.configd</groupId><artifactId>configd-netty</artifactId><version>${project.version}</version></dependency>
     </dependencies>
 
     <build>
@@ -106,6 +109,15 @@
                         <artifactId>pitest-maven</artifactId>
                         <configuration>
                             <targetClasses>
+                                <!-- M2 (ADR-0043 DR-N2): the admin-API decision seam moved from
+                                     HttpApiServer's inner handlers into AdminApiHandler — the shared
+                                     transport-agnostic logic both the JDK and Netty adapters delegate to.
+                                     NettyHttpApiServer (like NettyEdgeHttpServer in configd-edge-node) is
+                                     EXCLUDED: pure transport-IO orchestration whose per-mutant run needs a
+                                     live socket/event loop (the per-mutant-fork instability RR-085/092 forbid);
+                                     its decision content lives in AdminApiHandler and its IO + the slowloris/
+                                     size hardening are pinned by the contract + hardening tests. -->
+                                <param>io.configd.server.AdminApiHandler*</param>
                                 <param>io.configd.server.HttpApiServer*</param>
                                 <param>io.configd.server.ServerConfig*</param>
                                 <param>io.configd.server.RaftTransportAdapter*</param>

@@ -51,7 +51,7 @@ LOGDIR="${GATE7_LOG_DIR:-$(mktemp -d /tmp/gate7-XXXXXX)}"
 mkdir -p "$LOGDIR"
 
 # Modules whose security tests gate-7 exercises.
-MODULES="configd-common,configd-consensus-core,configd-transport,configd-distribution-service,configd-control-plane-api,configd-server,configd-edge-node"
+MODULES="configd-common,configd-consensus-core,configd-transport,configd-netty,configd-distribution-service,configd-control-plane-api,configd-server,configd-edge-node"
 
 echo "=== GATE-7 (Session 7: security & supply chain) — logs in $LOGDIR ==="
 
@@ -139,14 +139,19 @@ assert_class_green "$FZ" "InboundReadDeadlineFuzzTest"  # slowloris mechanism pi
 echo "GATE-7 fuzz: OK"
 
 # --- (d) API authn/authz + audit + replay ------------------------------------
-echo "GATE-7 api: 401/403, verbatim-replay 409, keyed-HMAC tamper-evident audit..."
+echo "GATE-7 api: 401/403, verbatim-replay 409, keyed-HMAC tamper-evident audit, strong-read fail-closed (ADR-0043 M2: re-proven on JDK + Netty + forced-NIO)..."
 AP="$LOGDIR/api.txt"
-run_tests api "AuditLogTest,ReplayGuardTest,ConfigHandlerAuthTest,ConfigHandlerReplayTest,ConfigHandlerAuditTest" "$AP"
-assert_class_green "$AP" "AuditLogTest"                 # keyed-HMAC chain defeats a log editor
-assert_class_green "$AP" "ReplayGuardTest"              # nonce+window replay reject
-assert_class_green "$AP" "ConfigHandlerAuthTest"        # 401 (authn) vs 403 (authz)
-assert_class_green "$AP" "ConfigHandlerReplayTest"      # verbatim replay → 409
-assert_class_green "$AP" "ConfigHandlerAuditTest"       # every mutating op audited
+# ADR-0043 M2: the admin S7 HTTP controls (401/403, replay 409, audit completeness, strong-read
+# fail-closed incl. the C6 path-normalization vectors) moved from ConfigHandler{Auth,Replay,Audit}Test
+# + StrongReadFailClosedTest into the single AbstractAdminApiServerContract, run on all three
+# transports by these subclasses. Gating ALL THREE proves the controls hold on the PRODUCTION (Netty)
+# transport, not just the JDK incumbent — a strengthening of this gate, not just a rename.
+run_tests api "AuditLogTest,ReplayGuardTest,JdkAdminApiServerContractTest,NettyAdminApiServerContractTest,NettyAdminApiServerNioFallbackTest" "$AP"
+assert_class_green "$AP" "AuditLogTest"                          # keyed-HMAC chain defeats a log editor
+assert_class_green "$AP" "ReplayGuardTest"                       # nonce+window replay reject
+assert_class_green "$AP" "JdkAdminApiServerContractTest"         # S7 API set on the JDK transport (401/403, replay 409, audit, strong-read)
+assert_class_green "$AP" "NettyAdminApiServerContractTest"       # ...re-proven on the production Netty transport
+assert_class_green "$AP" "NettyAdminApiServerNioFallbackTest"    # ...and on the forced-NIO fallback tier
 echo "GATE-7 api: OK"
 
 # --- (e) SBOM: committed CycloneDX matches a freshly-generated one ------------

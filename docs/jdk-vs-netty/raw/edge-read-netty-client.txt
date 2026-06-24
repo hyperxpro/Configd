@@ -1,0 +1,4 @@
+CLIENT requests=80000 concurrency=8 seconds=16.260
+CLIENT throughputReqPerSec=4920
+CLIENT latencyMicros p50=1276.9 p99=5709.8 p999=10960.9 max=23937.0
+CLIENT serverSide=RESULT 1703.2394

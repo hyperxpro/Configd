@@ -1,0 +1,23 @@
+E2E which=netty-idiomatic(epoll=true) payload=0 sends=1000000 perMsgAllocBytes=43.2 nsPerMsg=1271 throughputMsgPerSec=786562
+=== idiomatic payload=0 : allocation sample count by type (~ proportional to bytes) ===
+    165 io.netty.channel.AbstractChannelHandlerContext$WriteTask
+    156 java.lang.Object[]
+     39 byte[]
+      8 java.lang.String
+      5 java.lang.classfile.constantpool.PoolEntry[]
+      4 java.util.ArrayList$Itr
+      3 int[]
+      2 jdk.jfr.internal.MetadataDescriptor$Attribute
+      2 java.util.concurrent.atomic.AtomicReferenceArray
+      2 java.util.HashMap
+      2 java.lang.constant.ClassDesc[]
+      1 long[]
+      1 jdk.jfr.internal.MetadataDescriptor$Element
+      1 jdk.internal.event.ThreadSleepEvent
+      1 jdk.internal.classfile.impl.StackMapGenerator$Frame
+      1 jdk.internal.classfile.impl.StackMapGenerator
+      1 jdk.internal.classfile.impl.DirectMethodBuilder
+      1 jdk.internal.classfile.impl.DirectCodeBuilder
+      1 jdk.internal.classfile.impl.AbstractPoolEntry$Utf8EntryImpl
+      1 java.util.concurrent.ConcurrentHashMap$Node[]
+== done ==

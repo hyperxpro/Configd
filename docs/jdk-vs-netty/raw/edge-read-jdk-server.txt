@@ -1,0 +1,3 @@
+READY which=jdk httpPort=34397 epoll=false
+IDLE which=jdk windowMs=1000 backgroundAllocBytes=88
+RESULT which=jdk epoll=false requests=80000 serverAllocBytes=1199053512 serverBytesPerRequest=14988.2

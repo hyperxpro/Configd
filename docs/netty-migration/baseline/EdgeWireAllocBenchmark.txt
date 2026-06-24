@@ -1,0 +1,1040 @@
+# Netty-migration baseline — EdgeWireAllocBenchmark (REV2: signed delta / faithful send, post-audit)
+# date: 2026-06-22T19:17:30Z  git: 001d373  box: 2vCPU
+# args: -prof gc -f 2 -wi 3 -i 4 -w 1 -r 1
+
+WARNING: A terminally deprecated method in sun.misc.Unsafe has been called
+WARNING: sun.misc.Unsafe::objectFieldOffset has been called by org.openjdk.jmh.util.Utils (file:/home/ubuntu/Code/Configd/configd-testkit/target/benchmarks.jar)
+WARNING: Please consider reporting this to the maintainers of class org.openjdk.jmh.util.Utils
+WARNING: sun.misc.Unsafe::objectFieldOffset will be removed in a future release
+# JMH version: 1.37
+# VM version: JDK 25, OpenJDK 64-Bit Server VM, 25+36-LTS
+# VM invoker: /home/ubuntu/.sdkman/candidates/java/25-amzn/bin/java
+# VM options: --enable-preview
+# Blackhole mode: compiler (auto-detected, use -Djmh.blackhole.autoDetect=false to disable)
+# Warmup: 3 iterations, 1 s each
+# Measurement: 4 iterations, 1 s each
+# Timeout: 10 min per iteration
+# Threads: 1 thread, will synchronize iterations
+# Benchmark mode: Average time, time/op
+# Benchmark: io.configd.bench.EdgeWireAllocBenchmark.decodeNotify
+# Parameters: (notifyCount = 1)
+
+# Run progress: 0.00% complete, ETA 00:02:06
+# Fork: 1 of 2
+WARNING: A terminally deprecated method in sun.misc.Unsafe has been called
+WARNING: sun.misc.Unsafe::objectFieldOffset has been called by org.openjdk.jmh.util.Utils (file:/home/ubuntu/Code/Configd/configd-testkit/target/benchmarks.jar)
+WARNING: Please consider reporting this to the maintainers of class org.openjdk.jmh.util.Utils
+WARNING: sun.misc.Unsafe::objectFieldOffset will be removed in a future release
+# Warmup Iteration   1: 806.654 ns/op
+# Warmup Iteration   2: 450.169 ns/op
+# Warmup Iteration   3: 366.798 ns/op
+Iteration   1: 365.854 ns/op
+                 gc.alloc.rate:      2480.155 MB/sec
+                 gc.alloc.rate.norm: 952.003 B/op
+                 gc.count:           9.000 counts
+                 gc.time:            11.000 ms
+
+Iteration   2: 367.282 ns/op
+                 gc.alloc.rate:      2468.418 MB/sec
+                 gc.alloc.rate.norm: 952.003 B/op
+                 gc.count:           8.000 counts
+                 gc.time:            11.000 ms
+
+Iteration   3: 366.989 ns/op
+                 gc.alloc.rate:      2472.920 MB/sec
+                 gc.alloc.rate.norm: 952.003 B/op
+                 gc.count:           9.000 counts
+                 gc.time:            12.000 ms
+
+Iteration   4: 366.003 ns/op
+                 gc.alloc.rate:      2479.481 MB/sec
+                 gc.alloc.rate.norm: 952.003 B/op
+                 gc.count:           9.000 counts
+                 gc.time:            12.000 ms
+
+
+# Run progress: 5.56% complete, ETA 00:02:11
+# Fork: 2 of 2
+WARNING: A terminally deprecated method in sun.misc.Unsafe has been called
+WARNING: sun.misc.Unsafe::objectFieldOffset has been called by org.openjdk.jmh.util.Utils (file:/home/ubuntu/Code/Configd/configd-testkit/target/benchmarks.jar)
+WARNING: Please consider reporting this to the maintainers of class org.openjdk.jmh.util.Utils
+WARNING: sun.misc.Unsafe::objectFieldOffset will be removed in a future release
+# Warmup Iteration   1: 767.099 ns/op
+# Warmup Iteration   2: 429.373 ns/op
+# Warmup Iteration   3: 384.084 ns/op
+Iteration   1: 386.160 ns/op
+                 gc.alloc.rate:      2527.920 MB/sec
+                 gc.alloc.rate.norm: 1024.003 B/op
+                 gc.count:           9.000 counts
+                 gc.time:            12.000 ms
+
+Iteration   2: 383.937 ns/op
+                 gc.alloc.rate:      2540.975 MB/sec
+                 gc.alloc.rate.norm: 1024.003 B/op
+                 gc.count:           9.000 counts
+                 gc.time:            14.000 ms
+
+Iteration   3: 384.800 ns/op
+                 gc.alloc.rate:      2536.550 MB/sec
+                 gc.alloc.rate.norm: 1024.003 B/op
+                 gc.count:           9.000 counts
+                 gc.time:            12.000 ms
+
+Iteration   4: 384.986 ns/op
+                 gc.alloc.rate:      2535.613 MB/sec
+                 gc.alloc.rate.norm: 1024.003 B/op
+                 gc.count:           10.000 counts
+                 gc.time:            15.000 ms
+
+
+
+Result "io.configd.bench.EdgeWireAllocBenchmark.decodeNotify":
+  375.751 ±(99.9%) 18.900 ns/op [Average]
+  (min, avg, max) = (365.854, 375.751, 386.160), stdev = 9.885
+  CI (99.9%): [356.851, 394.651] (assumes normal distribution)
+
+Secondary result "io.configd.bench.EdgeWireAllocBenchmark.decodeNotify:gc.alloc.rate":
+  2505.254 ±(99.9%) 62.112 MB/sec [Average]
+  (min, avg, max) = (2468.418, 2505.254, 2540.975), stdev = 32.486
+  CI (99.9%): [2443.141, 2567.366] (assumes normal distribution)
+
+Secondary result "io.configd.bench.EdgeWireAllocBenchmark.decodeNotify:gc.alloc.rate.norm":
+  988.003 ±(99.9%) 73.584 B/op [Average]
+  (min, avg, max) = (952.003, 988.003, 1024.003), stdev = 38.486
+  CI (99.9%): [914.419, 1061.586] (assumes normal distribution)
+
+Secondary result "io.configd.bench.EdgeWireAllocBenchmark.decodeNotify:gc.count":
+  72.000 ±(99.9%) 0.001 counts [Sum]
+  (min, avg, max) = (8.000, 9.000, 10.000), stdev = 0.535
+  CI (99.9%): [72.000, 72.000] (assumes normal distribution)
+
+Secondary result "io.configd.bench.EdgeWireAllocBenchmark.decodeNotify:gc.time":
+  99.000 ±(99.9%) 0.001 ms [Sum]
+  (min, avg, max) = (11.000, 12.375, 15.000), stdev = 1.408
+  CI (99.9%): [99.000, 99.000] (assumes normal distribution)
+
+
+# JMH version: 1.37
+# VM version: JDK 25, OpenJDK 64-Bit Server VM, 25+36-LTS
+# VM invoker: /home/ubuntu/.sdkman/candidates/java/25-amzn/bin/java
+# VM options: --enable-preview
+# Blackhole mode: compiler (auto-detected, use -Djmh.blackhole.autoDetect=false to disable)
+# Warmup: 3 iterations, 1 s each
+# Measurement: 4 iterations, 1 s each
+# Timeout: 10 min per iteration
+# Threads: 1 thread, will synchronize iterations
+# Benchmark mode: Average time, time/op
+# Benchmark: io.configd.bench.EdgeWireAllocBenchmark.decodeNotify
+# Parameters: (notifyCount = 16)
+
+# Run progress: 11.11% complete, ETA 00:02:02
+# Fork: 1 of 2
+WARNING: A terminally deprecated method in sun.misc.Unsafe has been called
+WARNING: sun.misc.Unsafe::objectFieldOffset has been called by org.openjdk.jmh.util.Utils (file:/home/ubuntu/Code/Configd/configd-testkit/target/benchmarks.jar)
+WARNING: Please consider reporting this to the maintainers of class org.openjdk.jmh.util.Utils
+WARNING: sun.misc.Unsafe::objectFieldOffset will be removed in a future release
+# Warmup Iteration   1: 10628.275 ns/op
+# Warmup Iteration   2: 5702.717 ns/op
+# Warmup Iteration   3: 5168.847 ns/op
+Iteration   1: 5124.445 ns/op
+                 gc.alloc.rate:      2622.857 MB/sec
+                 gc.alloc.rate.norm: 14104.036 B/op
+                 gc.count:           9.000 counts
+                 gc.time:            13.000 ms
+
+Iteration   2: 5104.370 ns/op
+                 gc.alloc.rate:      2627.434 MB/sec
+                 gc.alloc.rate.norm: 14104.035 B/op
+                 gc.count:           10.000 counts
+                 gc.time:            13.000 ms
+
+Iteration   3: 5120.002 ns/op
+                 gc.alloc.rate:      2625.250 MB/sec
+                 gc.alloc.rate.norm: 14104.036 B/op
+                 gc.count:           10.000 counts
+                 gc.time:            12.000 ms
+
+Iteration   4: 5117.073 ns/op
+                 gc.alloc.rate:      2627.726 MB/sec
+                 gc.alloc.rate.norm: 14104.036 B/op
+                 gc.count:           9.000 counts
+                 gc.time:            9.000 ms
+
+
+# Run progress: 16.67% complete, ETA 00:01:54
+# Fork: 2 of 2
+WARNING: A terminally deprecated method in sun.misc.Unsafe has been called
+WARNING: sun.misc.Unsafe::objectFieldOffset has been called by org.openjdk.jmh.util.Utils (file:/home/ubuntu/Code/Configd/configd-testkit/target/benchmarks.jar)
+WARNING: Please consider reporting this to the maintainers of class org.openjdk.jmh.util.Utils
+WARNING: sun.misc.Unsafe::objectFieldOffset will be removed in a future release
+# Warmup Iteration   1: 11954.408 ns/op
+# Warmup Iteration   2: 5641.271 ns/op
+# Warmup Iteration   3: 5230.953 ns/op
+Iteration   1: 5192.003 ns/op
+                 gc.alloc.rate:      2584.600 MB/sec
+                 gc.alloc.rate.norm: 14104.036 B/op
+                 gc.count:           9.000 counts
+                 gc.time:            12.000 ms
+
+Iteration   2: 5166.166 ns/op
+                 gc.alloc.rate:      2596.955 MB/sec
+                 gc.alloc.rate.norm: 14104.036 B/op
+                 gc.count:           9.000 counts
+                 gc.time:            12.000 ms
+
+Iteration   3: 5115.969 ns/op
+                 gc.alloc.rate:      2626.609 MB/sec
+                 gc.alloc.rate.norm: 14104.036 B/op
+                 gc.count:           9.000 counts
+                 gc.time:            11.000 ms
+
+Iteration   4: 5117.355 ns/op
+                 gc.alloc.rate:      2620.233 MB/sec
+                 gc.alloc.rate.norm: 14104.036 B/op
+                 gc.count:           9.000 counts
+                 gc.time:            8.000 ms
+
+
+
+Result "io.configd.bench.EdgeWireAllocBenchmark.decodeNotify":
+  5132.173 ±(99.9%) 57.930 ns/op [Average]
+  (min, avg, max) = (5104.370, 5132.173, 5192.003), stdev = 30.299
+  CI (99.9%): [5074.242, 5190.103] (assumes normal distribution)
+
+Secondary result "io.configd.bench.EdgeWireAllocBenchmark.decodeNotify:gc.alloc.rate":
+  2616.458 ±(99.9%) 31.319 MB/sec [Average]
+  (min, avg, max) = (2584.600, 2616.458, 2627.726), stdev = 16.381
+  CI (99.9%): [2585.139, 2647.778] (assumes normal distribution)
+
+Secondary result "io.configd.bench.EdgeWireAllocBenchmark.decodeNotify:gc.alloc.rate.norm":
+  14104.036 ±(99.9%) 0.001 B/op [Average]
+  (min, avg, max) = (14104.035, 14104.036, 14104.036), stdev = 0.001
+  CI (99.9%): [14104.035, 14104.036] (assumes normal distribution)
+
+Secondary result "io.configd.bench.EdgeWireAllocBenchmark.decodeNotify:gc.count":
+  74.000 ±(99.9%) 0.001 counts [Sum]
+  (min, avg, max) = (9.000, 9.250, 10.000), stdev = 0.463
+  CI (99.9%): [74.000, 74.000] (assumes normal distribution)
+
+Secondary result "io.configd.bench.EdgeWireAllocBenchmark.decodeNotify:gc.time":
+  90.000 ±(99.9%) 0.001 ms [Sum]
+  (min, avg, max) = (8.000, 11.250, 13.000), stdev = 1.832
+  CI (99.9%): [90.000, 90.000] (assumes normal distribution)
+
+
+# JMH version: 1.37
+# VM version: JDK 25, OpenJDK 64-Bit Server VM, 25+36-LTS
+# VM invoker: /home/ubuntu/.sdkman/candidates/java/25-amzn/bin/java
+# VM options: --enable-preview
+# Blackhole mode: compiler (auto-detected, use -Djmh.blackhole.autoDetect=false to disable)
+# Warmup: 3 iterations, 1 s each
+# Measurement: 4 iterations, 1 s each
+# Timeout: 10 min per iteration
+# Threads: 1 thread, will synchronize iterations
+# Benchmark mode: Average time, time/op
+# Benchmark: io.configd.bench.EdgeWireAllocBenchmark.decodeNotify
+# Parameters: (notifyCount = 64)
+
+# Run progress: 22.22% complete, ETA 00:01:47
+# Fork: 1 of 2
+WARNING: A terminally deprecated method in sun.misc.Unsafe has been called
+WARNING: sun.misc.Unsafe::objectFieldOffset has been called by org.openjdk.jmh.util.Utils (file:/home/ubuntu/Code/Configd/configd-testkit/target/benchmarks.jar)
+WARNING: Please consider reporting this to the maintainers of class org.openjdk.jmh.util.Utils
+WARNING: sun.misc.Unsafe::objectFieldOffset will be removed in a future release
+# Warmup Iteration   1: 43818.239 ns/op
+# Warmup Iteration   2: 24345.931 ns/op
+# Warmup Iteration   3: 21110.386 ns/op
+Iteration   1: 20382.720 ns/op
+                 gc.alloc.rate:      2626.142 MB/sec
+                 gc.alloc.rate.norm: 56152.142 B/op
+                 gc.count:           9.000 counts
+                 gc.time:            13.000 ms
+
+Iteration   2: 20453.063 ns/op
+                 gc.alloc.rate:      2608.199 MB/sec
+                 gc.alloc.rate.norm: 56152.142 B/op
+                 gc.count:           9.000 counts
+                 gc.time:            12.000 ms
+
+Iteration   3: 20294.660 ns/op
+                 gc.alloc.rate:      2636.188 MB/sec
+                 gc.alloc.rate.norm: 56152.142 B/op
+                 gc.count:           8.000 counts
+                 gc.time:            8.000 ms
+
+Iteration   4: 20225.891 ns/op
+                 gc.alloc.rate:      2646.520 MB/sec
+                 gc.alloc.rate.norm: 56152.142 B/op
+                 gc.count:           9.000 counts
+                 gc.time:            9.000 ms
+
+
+# Run progress: 27.78% complete, ETA 00:01:39
+# Fork: 2 of 2
+WARNING: A terminally deprecated method in sun.misc.Unsafe has been called
+WARNING: sun.misc.Unsafe::objectFieldOffset has been called by org.openjdk.jmh.util.Utils (file:/home/ubuntu/Code/Configd/configd-testkit/target/benchmarks.jar)
+WARNING: Please consider reporting this to the maintainers of class org.openjdk.jmh.util.Utils
+WARNING: sun.misc.Unsafe::objectFieldOffset will be removed in a future release
+# Warmup Iteration   1: 44085.294 ns/op
+# Warmup Iteration   2: 23314.370 ns/op
+# Warmup Iteration   3: 20961.258 ns/op
+Iteration   1: 20646.914 ns/op
+                 gc.alloc.rate:      2586.573 MB/sec
+                 gc.alloc.rate.norm: 56152.144 B/op
+                 gc.count:           9.000 counts
+                 gc.time:            13.000 ms
+
+Iteration   2: 20723.451 ns/op
+                 gc.alloc.rate:      2580.776 MB/sec
+                 gc.alloc.rate.norm: 56152.144 B/op
+                 gc.count:           9.000 counts
+                 gc.time:            12.000 ms
+
+Iteration   3: 20299.101 ns/op
+                 gc.alloc.rate:      2634.930 MB/sec
+                 gc.alloc.rate.norm: 56152.141 B/op
+                 gc.count:           10.000 counts
+                 gc.time:            10.000 ms
+
+Iteration   4: 20365.317 ns/op
+                 gc.alloc.rate:      2624.653 MB/sec
+                 gc.alloc.rate.norm: 56152.142 B/op
+                 gc.count:           9.000 counts
+                 gc.time:            9.000 ms
+
+
+
+Result "io.configd.bench.EdgeWireAllocBenchmark.decodeNotify":
+  20423.890 ±(99.9%) 336.583 ns/op [Average]
+  (min, avg, max) = (20225.891, 20423.890, 20723.451), stdev = 176.040
+  CI (99.9%): [20087.306, 20760.473] (assumes normal distribution)
+
+Secondary result "io.configd.bench.EdgeWireAllocBenchmark.decodeNotify:gc.alloc.rate":
+  2617.998 ±(99.9%) 45.766 MB/sec [Average]
+  (min, avg, max) = (2580.776, 2617.998, 2646.520), stdev = 23.936
+  CI (99.9%): [2572.232, 2663.764] (assumes normal distribution)
+
+Secondary result "io.configd.bench.EdgeWireAllocBenchmark.decodeNotify:gc.alloc.rate.norm":
+  56152.142 ±(99.9%) 0.002 B/op [Average]
+  (min, avg, max) = (56152.141, 56152.142, 56152.144), stdev = 0.001
+  CI (99.9%): [56152.140, 56152.145] (assumes normal distribution)
+
+Secondary result "io.configd.bench.EdgeWireAllocBenchmark.decodeNotify:gc.count":
+  72.000 ±(99.9%) 0.001 counts [Sum]
+  (min, avg, max) = (8.000, 9.000, 10.000), stdev = 0.535
+  CI (99.9%): [72.000, 72.000] (assumes normal distribution)
+
+Secondary result "io.configd.bench.EdgeWireAllocBenchmark.decodeNotify:gc.time":
+  86.000 ±(99.9%) 0.001 ms [Sum]
+  (min, avg, max) = (8.000, 10.750, 13.000), stdev = 1.982
+  CI (99.9%): [86.000, 86.000] (assumes normal distribution)
+
+
+# JMH version: 1.37
+# VM version: JDK 25, OpenJDK 64-Bit Server VM, 25+36-LTS
+# VM invoker: /home/ubuntu/.sdkman/candidates/java/25-amzn/bin/java
+# VM options: --enable-preview
+# Blackhole mode: compiler (auto-detected, use -Djmh.blackhole.autoDetect=false to disable)
+# Warmup: 3 iterations, 1 s each
+# Measurement: 4 iterations, 1 s each
+# Timeout: 10 min per iteration
+# Threads: 1 thread, will synchronize iterations
+# Benchmark mode: Average time, time/op
+# Benchmark: io.configd.bench.EdgeWireAllocBenchmark.encodeHeartbeat
+# Parameters: (notifyCount = 1)
+
+# Run progress: 33.33% complete, ETA 00:01:31
+# Fork: 1 of 2
+WARNING: A terminally deprecated method in sun.misc.Unsafe has been called
+WARNING: sun.misc.Unsafe::objectFieldOffset has been called by org.openjdk.jmh.util.Utils (file:/home/ubuntu/Code/Configd/configd-testkit/target/benchmarks.jar)
+WARNING: Please consider reporting this to the maintainers of class org.openjdk.jmh.util.Utils
+WARNING: sun.misc.Unsafe::objectFieldOffset will be removed in a future release
+# Warmup Iteration   1: 66.218 ns/op
+# Warmup Iteration   2: 43.527 ns/op
+# Warmup Iteration   3: 40.734 ns/op
+Iteration   1: 41.097 ns/op
+                 gc.alloc.rate:      1855.771 MB/sec
+                 gc.alloc.rate.norm: 80.000 B/op
+                 gc.count:           7.000 counts
+                 gc.time:            9.000 ms
+
+Iteration   2: 41.169 ns/op
+                 gc.alloc.rate:      1851.635 MB/sec
+                 gc.alloc.rate.norm: 80.000 B/op
+                 gc.count:           6.000 counts
+                 gc.time:            7.000 ms
+
+Iteration   3: 40.777 ns/op
+                 gc.alloc.rate:      1870.241 MB/sec
+                 gc.alloc.rate.norm: 80.000 B/op
+                 gc.count:           8.000 counts
+                 gc.time:            8.000 ms
+
+Iteration   4: 40.845 ns/op
+                 gc.alloc.rate:      1865.688 MB/sec
+                 gc.alloc.rate.norm: 80.000 B/op
+                 gc.count:           7.000 counts
+                 gc.time:            6.000 ms
+
+
+# Run progress: 38.89% complete, ETA 00:01:24
+# Fork: 2 of 2
+WARNING: A terminally deprecated method in sun.misc.Unsafe has been called
+WARNING: sun.misc.Unsafe::objectFieldOffset has been called by org.openjdk.jmh.util.Utils (file:/home/ubuntu/Code/Configd/configd-testkit/target/benchmarks.jar)
+WARNING: Please consider reporting this to the maintainers of class org.openjdk.jmh.util.Utils
+WARNING: sun.misc.Unsafe::objectFieldOffset will be removed in a future release
+# Warmup Iteration   1: 65.473 ns/op
+# Warmup Iteration   2: 42.996 ns/op
+# Warmup Iteration   3: 40.677 ns/op
+Iteration   1: 40.984 ns/op
+                 gc.alloc.rate:      1860.697 MB/sec
+                 gc.alloc.rate.norm: 80.000 B/op
+                 gc.count:           8.000 counts
+                 gc.time:            11.000 ms
+
+Iteration   2: 40.938 ns/op
+                 gc.alloc.rate:      1862.911 MB/sec
+                 gc.alloc.rate.norm: 80.000 B/op
+                 gc.count:           7.000 counts
+                 gc.time:            8.000 ms
+
+Iteration   3: 40.587 ns/op
+                 gc.alloc.rate:      1879.054 MB/sec
+                 gc.alloc.rate.norm: 80.000 B/op
+                 gc.count:           8.000 counts
+                 gc.time:            8.000 ms
+
+Iteration   4: 40.600 ns/op
+                 gc.alloc.rate:      1877.356 MB/sec
+                 gc.alloc.rate.norm: 80.000 B/op
+                 gc.count:           8.000 counts
+                 gc.time:            6.000 ms
+
+
+
+Result "io.configd.bench.EdgeWireAllocBenchmark.encodeHeartbeat":
+  40.875 ±(99.9%) 0.409 ns/op [Average]
+  (min, avg, max) = (40.587, 40.875, 41.169), stdev = 0.214
+  CI (99.9%): [40.465, 41.284] (assumes normal distribution)
+
+Secondary result "io.configd.bench.EdgeWireAllocBenchmark.encodeHeartbeat:gc.alloc.rate":
+  1865.419 ±(99.9%) 18.613 MB/sec [Average]
+  (min, avg, max) = (1851.635, 1865.419, 1879.054), stdev = 9.735
+  CI (99.9%): [1846.806, 1884.032] (assumes normal distribution)
+
+Secondary result "io.configd.bench.EdgeWireAllocBenchmark.encodeHeartbeat:gc.alloc.rate.norm":
+  80.000 ±(99.9%) 0.001 B/op [Average]
+  (min, avg, max) = (80.000, 80.000, 80.000), stdev = 0.001
+  CI (99.9%): [80.000, 80.000] (assumes normal distribution)
+
+Secondary result "io.configd.bench.EdgeWireAllocBenchmark.encodeHeartbeat:gc.count":
+  59.000 ±(99.9%) 0.001 counts [Sum]
+  (min, avg, max) = (6.000, 7.375, 8.000), stdev = 0.744
+  CI (99.9%): [59.000, 59.000] (assumes normal distribution)
+
+Secondary result "io.configd.bench.EdgeWireAllocBenchmark.encodeHeartbeat:gc.time":
+  63.000 ±(99.9%) 0.001 ms [Sum]
+  (min, avg, max) = (6.000, 7.875, 11.000), stdev = 1.642
+  CI (99.9%): [63.000, 63.000] (assumes normal distribution)
+
+
+# JMH version: 1.37
+# VM version: JDK 25, OpenJDK 64-Bit Server VM, 25+36-LTS
+# VM invoker: /home/ubuntu/.sdkman/candidates/java/25-amzn/bin/java
+# VM options: --enable-preview
+# Blackhole mode: compiler (auto-detected, use -Djmh.blackhole.autoDetect=false to disable)
+# Warmup: 3 iterations, 1 s each
+# Measurement: 4 iterations, 1 s each
+# Timeout: 10 min per iteration
+# Threads: 1 thread, will synchronize iterations
+# Benchmark mode: Average time, time/op
+# Benchmark: io.configd.bench.EdgeWireAllocBenchmark.encodeHeartbeat
+# Parameters: (notifyCount = 16)
+
+# Run progress: 44.44% complete, ETA 00:01:16
+# Fork: 1 of 2
+WARNING: A terminally deprecated method in sun.misc.Unsafe has been called
+WARNING: sun.misc.Unsafe::objectFieldOffset has been called by org.openjdk.jmh.util.Utils (file:/home/ubuntu/Code/Configd/configd-testkit/target/benchmarks.jar)
+WARNING: Please consider reporting this to the maintainers of class org.openjdk.jmh.util.Utils
+WARNING: sun.misc.Unsafe::objectFieldOffset will be removed in a future release
+# Warmup Iteration   1: 67.599 ns/op
+# Warmup Iteration   2: 42.776 ns/op
+# Warmup Iteration   3: 40.840 ns/op
+Iteration   1: 40.536 ns/op
+                 gc.alloc.rate:      1881.465 MB/sec
+                 gc.alloc.rate.norm: 80.000 B/op
+                 gc.count:           8.000 counts
+                 gc.time:            9.000 ms
+
+Iteration   2: 41.082 ns/op
+                 gc.alloc.rate:      1855.080 MB/sec
+                 gc.alloc.rate.norm: 80.000 B/op
+                 gc.count:           8.000 counts
+                 gc.time:            7.000 ms
+
+Iteration   3: 41.012 ns/op
+                 gc.alloc.rate:      1858.508 MB/sec
+                 gc.alloc.rate.norm: 80.000 B/op
+                 gc.count:           7.000 counts
+                 gc.time:            7.000 ms
+
+Iteration   4: 41.431 ns/op
+                 gc.alloc.rate:      1839.954 MB/sec
+                 gc.alloc.rate.norm: 80.000 B/op
+                 gc.count:           8.000 counts
+                 gc.time:            7.000 ms
+
+
+# Run progress: 50.00% complete, ETA 00:01:08
+# Fork: 2 of 2
+WARNING: A terminally deprecated method in sun.misc.Unsafe has been called
+WARNING: sun.misc.Unsafe::objectFieldOffset has been called by org.openjdk.jmh.util.Utils (file:/home/ubuntu/Code/Configd/configd-testkit/target/benchmarks.jar)
+WARNING: Please consider reporting this to the maintainers of class org.openjdk.jmh.util.Utils
+WARNING: sun.misc.Unsafe::objectFieldOffset will be removed in a future release
+# Warmup Iteration   1: 62.078 ns/op
+# Warmup Iteration   2: 43.215 ns/op
+# Warmup Iteration   3: 41.187 ns/op
+Iteration   1: 40.996 ns/op
+                 gc.alloc.rate:      1859.766 MB/sec
+                 gc.alloc.rate.norm: 80.000 B/op
+                 gc.count:           8.000 counts
+                 gc.time:            10.000 ms
+
+Iteration   2: 40.724 ns/op
+                 gc.alloc.rate:      1871.455 MB/sec
+                 gc.alloc.rate.norm: 80.000 B/op
+                 gc.count:           7.000 counts
+                 gc.time:            6.000 ms
+
+Iteration   3: 40.707 ns/op
+                 gc.alloc.rate:      1872.946 MB/sec
+                 gc.alloc.rate.norm: 80.000 B/op
+                 gc.count:           8.000 counts
+                 gc.time:            7.000 ms
+
+Iteration   4: 40.890 ns/op
+                 gc.alloc.rate:      1865.233 MB/sec
+                 gc.alloc.rate.norm: 80.000 B/op
+                 gc.count:           8.000 counts
+                 gc.time:            7.000 ms
+
+
+
+Result "io.configd.bench.EdgeWireAllocBenchmark.encodeHeartbeat":
+  40.922 ±(99.9%) 0.528 ns/op [Average]
+  (min, avg, max) = (40.536, 40.922, 41.431), stdev = 0.276
+  CI (99.9%): [40.394, 41.450] (assumes normal distribution)
+
+Secondary result "io.configd.bench.EdgeWireAllocBenchmark.encodeHeartbeat:gc.alloc.rate":
+  1863.051 ±(99.9%) 24.408 MB/sec [Average]
+  (min, avg, max) = (1839.954, 1863.051, 1881.465), stdev = 12.766
+  CI (99.9%): [1838.642, 1887.459] (assumes normal distribution)
+
+Secondary result "io.configd.bench.EdgeWireAllocBenchmark.encodeHeartbeat:gc.alloc.rate.norm":
+  80.000 ±(99.9%) 0.001 B/op [Average]
+  (min, avg, max) = (80.000, 80.000, 80.000), stdev = 0.001
+  CI (99.9%): [80.000, 80.000] (assumes normal distribution)
+
+Secondary result "io.configd.bench.EdgeWireAllocBenchmark.encodeHeartbeat:gc.count":
+  62.000 ±(99.9%) 0.001 counts [Sum]
+  (min, avg, max) = (7.000, 7.750, 8.000), stdev = 0.463
+  CI (99.9%): [62.000, 62.000] (assumes normal distribution)
+
+Secondary result "io.configd.bench.EdgeWireAllocBenchmark.encodeHeartbeat:gc.time":
+  60.000 ±(99.9%) 0.001 ms [Sum]
+  (min, avg, max) = (6.000, 7.500, 10.000), stdev = 1.309
+  CI (99.9%): [60.000, 60.000] (assumes normal distribution)
+
+
+# JMH version: 1.37
+# VM version: JDK 25, OpenJDK 64-Bit Server VM, 25+36-LTS
+# VM invoker: /home/ubuntu/.sdkman/candidates/java/25-amzn/bin/java
+# VM options: --enable-preview
+# Blackhole mode: compiler (auto-detected, use -Djmh.blackhole.autoDetect=false to disable)
+# Warmup: 3 iterations, 1 s each
+# Measurement: 4 iterations, 1 s each
+# Timeout: 10 min per iteration
+# Threads: 1 thread, will synchronize iterations
+# Benchmark mode: Average time, time/op
+# Benchmark: io.configd.bench.EdgeWireAllocBenchmark.encodeHeartbeat
+# Parameters: (notifyCount = 64)
+
+# Run progress: 55.56% complete, ETA 00:01:01
+# Fork: 1 of 2
+WARNING: A terminally deprecated method in sun.misc.Unsafe has been called
+WARNING: sun.misc.Unsafe::objectFieldOffset has been called by org.openjdk.jmh.util.Utils (file:/home/ubuntu/Code/Configd/configd-testkit/target/benchmarks.jar)
+WARNING: Please consider reporting this to the maintainers of class org.openjdk.jmh.util.Utils
+WARNING: sun.misc.Unsafe::objectFieldOffset will be removed in a future release
+# Warmup Iteration   1: 67.927 ns/op
+# Warmup Iteration   2: 43.044 ns/op
+# Warmup Iteration   3: 40.873 ns/op
+Iteration   1: 40.762 ns/op
+                 gc.alloc.rate:      1868.121 MB/sec
+                 gc.alloc.rate.norm: 80.000 B/op
+                 gc.count:           7.000 counts
+                 gc.time:            9.000 ms
+
+Iteration   2: 41.184 ns/op
+                 gc.alloc.rate:      1851.308 MB/sec
+                 gc.alloc.rate.norm: 80.000 B/op
+                 gc.count:           8.000 counts
+                 gc.time:            7.000 ms
+
+Iteration   3: 40.742 ns/op
+                 gc.alloc.rate:      1869.549 MB/sec
+                 gc.alloc.rate.norm: 80.000 B/op
+                 gc.count:           7.000 counts
+                 gc.time:            7.000 ms
+
+Iteration   4: 40.543 ns/op
+                 gc.alloc.rate:      1880.016 MB/sec
+                 gc.alloc.rate.norm: 80.000 B/op
+                 gc.count:           8.000 counts
+                 gc.time:            9.000 ms
+
+
+# Run progress: 61.11% complete, ETA 00:00:53
+# Fork: 2 of 2
+WARNING: A terminally deprecated method in sun.misc.Unsafe has been called
+WARNING: sun.misc.Unsafe::objectFieldOffset has been called by org.openjdk.jmh.util.Utils (file:/home/ubuntu/Code/Configd/configd-testkit/target/benchmarks.jar)
+WARNING: Please consider reporting this to the maintainers of class org.openjdk.jmh.util.Utils
+WARNING: sun.misc.Unsafe::objectFieldOffset will be removed in a future release
+# Warmup Iteration   1: 65.244 ns/op
+# Warmup Iteration   2: 42.755 ns/op
+# Warmup Iteration   3: 40.628 ns/op
+Iteration   1: 41.043 ns/op
+                 gc.alloc.rate:      1857.976 MB/sec
+                 gc.alloc.rate.norm: 80.000 B/op
+                 gc.count:           8.000 counts
+                 gc.time:            10.000 ms
+
+Iteration   2: 40.699 ns/op
+                 gc.alloc.rate:      1872.928 MB/sec
+                 gc.alloc.rate.norm: 80.000 B/op
+                 gc.count:           8.000 counts
+                 gc.time:            7.000 ms
+
+Iteration   3: 41.368 ns/op
+                 gc.alloc.rate:      1841.809 MB/sec
+                 gc.alloc.rate.norm: 80.000 B/op
+                 gc.count:           8.000 counts
+                 gc.time:            7.000 ms
+
+Iteration   4: 41.012 ns/op
+                 gc.alloc.rate:      1859.575 MB/sec
+                 gc.alloc.rate.norm: 80.000 B/op
+                 gc.count:           8.000 counts
+                 gc.time:            7.000 ms
+
+
+
+Result "io.configd.bench.EdgeWireAllocBenchmark.encodeHeartbeat":
+  40.919 ±(99.9%) 0.532 ns/op [Average]
+  (min, avg, max) = (40.543, 40.919, 41.368), stdev = 0.278
+  CI (99.9%): [40.387, 41.451] (assumes normal distribution)
+
+Secondary result "io.configd.bench.EdgeWireAllocBenchmark.encodeHeartbeat:gc.alloc.rate":
+  1862.660 ±(99.9%) 23.739 MB/sec [Average]
+  (min, avg, max) = (1841.809, 1862.660, 1880.016), stdev = 12.416
+  CI (99.9%): [1838.922, 1886.399] (assumes normal distribution)
+
+Secondary result "io.configd.bench.EdgeWireAllocBenchmark.encodeHeartbeat:gc.alloc.rate.norm":
+  80.000 ±(99.9%) 0.001 B/op [Average]
+  (min, avg, max) = (80.000, 80.000, 80.000), stdev = 0.001
+  CI (99.9%): [80.000, 80.000] (assumes normal distribution)
+
+Secondary result "io.configd.bench.EdgeWireAllocBenchmark.encodeHeartbeat:gc.count":
+  62.000 ±(99.9%) 0.001 counts [Sum]
+  (min, avg, max) = (7.000, 7.750, 8.000), stdev = 0.463
+  CI (99.9%): [62.000, 62.000] (assumes normal distribution)
+
+Secondary result "io.configd.bench.EdgeWireAllocBenchmark.encodeHeartbeat:gc.time":
+  63.000 ±(99.9%) 0.001 ms [Sum]
+  (min, avg, max) = (7.000, 7.875, 10.000), stdev = 1.246
+  CI (99.9%): [63.000, 63.000] (assumes normal distribution)
+
+
+# JMH version: 1.37
+# VM version: JDK 25, OpenJDK 64-Bit Server VM, 25+36-LTS
+# VM invoker: /home/ubuntu/.sdkman/candidates/java/25-amzn/bin/java
+# VM options: --enable-preview
+# Blackhole mode: compiler (auto-detected, use -Djmh.blackhole.autoDetect=false to disable)
+# Warmup: 3 iterations, 1 s each
+# Measurement: 4 iterations, 1 s each
+# Timeout: 10 min per iteration
+# Threads: 1 thread, will synchronize iterations
+# Benchmark mode: Average time, time/op
+# Benchmark: io.configd.bench.EdgeWireAllocBenchmark.encodeNotify
+# Parameters: (notifyCount = 1)
+
+# Run progress: 66.67% complete, ETA 00:00:45
+# Fork: 1 of 2
+WARNING: A terminally deprecated method in sun.misc.Unsafe has been called
+WARNING: sun.misc.Unsafe::objectFieldOffset has been called by org.openjdk.jmh.util.Utils (file:/home/ubuntu/Code/Configd/configd-testkit/target/benchmarks.jar)
+WARNING: Please consider reporting this to the maintainers of class org.openjdk.jmh.util.Utils
+WARNING: sun.misc.Unsafe::objectFieldOffset will be removed in a future release
+# Warmup Iteration   1: 792.028 ns/op
+# Warmup Iteration   2: 388.198 ns/op
+# Warmup Iteration   3: 347.552 ns/op
+Iteration   1: 346.814 ns/op
+                 gc.alloc.rate:      3294.587 MB/sec
+                 gc.alloc.rate.norm: 1200.002 B/op
+                 gc.count:           10.000 counts
+                 gc.time:            13.000 ms
+
+Iteration   2: 349.950 ns/op
+                 gc.alloc.rate:      3268.352 MB/sec
+                 gc.alloc.rate.norm: 1200.002 B/op
+                 gc.count:           10.000 counts
+                 gc.time:            13.000 ms
+
+Iteration   3: 348.035 ns/op
+                 gc.alloc.rate:      3286.320 MB/sec
+                 gc.alloc.rate.norm: 1200.002 B/op
+                 gc.count:           11.000 counts
+                 gc.time:            10.000 ms
+
+Iteration   4: 350.955 ns/op
+                 gc.alloc.rate:      3257.825 MB/sec
+                 gc.alloc.rate.norm: 1200.002 B/op
+                 gc.count:           10.000 counts
+                 gc.time:            10.000 ms
+
+
+# Run progress: 72.22% complete, ETA 00:00:38
+# Fork: 2 of 2
+WARNING: A terminally deprecated method in sun.misc.Unsafe has been called
+WARNING: sun.misc.Unsafe::objectFieldOffset has been called by org.openjdk.jmh.util.Utils (file:/home/ubuntu/Code/Configd/configd-testkit/target/benchmarks.jar)
+WARNING: Please consider reporting this to the maintainers of class org.openjdk.jmh.util.Utils
+WARNING: sun.misc.Unsafe::objectFieldOffset will be removed in a future release
+# Warmup Iteration   1: 960.224 ns/op
+# Warmup Iteration   2: 418.313 ns/op
+# Warmup Iteration   3: 354.593 ns/op
+Iteration   1: 358.656 ns/op
+                 gc.alloc.rate:      3189.652 MB/sec
+                 gc.alloc.rate.norm: 1200.002 B/op
+                 gc.count:           10.000 counts
+                 gc.time:            13.000 ms
+
+Iteration   2: 355.930 ns/op
+                 gc.alloc.rate:      3214.133 MB/sec
+                 gc.alloc.rate.norm: 1200.002 B/op
+                 gc.count:           10.000 counts
+                 gc.time:            11.000 ms
+
+Iteration   3: 352.385 ns/op
+                 gc.alloc.rate:      3244.098 MB/sec
+                 gc.alloc.rate.norm: 1200.002 B/op
+                 gc.count:           10.000 counts
+                 gc.time:            10.000 ms
+
+Iteration   4: 359.091 ns/op
+                 gc.alloc.rate:      3186.064 MB/sec
+                 gc.alloc.rate.norm: 1200.002 B/op
+                 gc.count:           10.000 counts
+                 gc.time:            9.000 ms
+
+
+
+Result "io.configd.bench.EdgeWireAllocBenchmark.encodeNotify":
+  352.727 ±(99.9%) 8.964 ns/op [Average]
+  (min, avg, max) = (346.814, 352.727, 359.091), stdev = 4.688
+  CI (99.9%): [343.763, 361.691] (assumes normal distribution)
+
+Secondary result "io.configd.bench.EdgeWireAllocBenchmark.encodeNotify:gc.alloc.rate":
+  3242.629 ±(99.9%) 80.217 MB/sec [Average]
+  (min, avg, max) = (3186.064, 3242.629, 3294.587), stdev = 41.955
+  CI (99.9%): [3162.412, 3322.846] (assumes normal distribution)
+
+Secondary result "io.configd.bench.EdgeWireAllocBenchmark.encodeNotify:gc.alloc.rate.norm":
+  1200.002 ±(99.9%) 0.001 B/op [Average]
+  (min, avg, max) = (1200.002, 1200.002, 1200.002), stdev = 0.001
+  CI (99.9%): [1200.002, 1200.003] (assumes normal distribution)
+
+Secondary result "io.configd.bench.EdgeWireAllocBenchmark.encodeNotify:gc.count":
+  81.000 ±(99.9%) 0.001 counts [Sum]
+  (min, avg, max) = (10.000, 10.125, 11.000), stdev = 0.354
+  CI (99.9%): [81.000, 81.000] (assumes normal distribution)
+
+Secondary result "io.configd.bench.EdgeWireAllocBenchmark.encodeNotify:gc.time":
+  89.000 ±(99.9%) 0.001 ms [Sum]
+  (min, avg, max) = (9.000, 11.125, 13.000), stdev = 1.642
+  CI (99.9%): [89.000, 89.000] (assumes normal distribution)
+
+
+# JMH version: 1.37
+# VM version: JDK 25, OpenJDK 64-Bit Server VM, 25+36-LTS
+# VM invoker: /home/ubuntu/.sdkman/candidates/java/25-amzn/bin/java
+# VM options: --enable-preview
+# Blackhole mode: compiler (auto-detected, use -Djmh.blackhole.autoDetect=false to disable)
+# Warmup: 3 iterations, 1 s each
+# Measurement: 4 iterations, 1 s each
+# Timeout: 10 min per iteration
+# Threads: 1 thread, will synchronize iterations
+# Benchmark mode: Average time, time/op
+# Benchmark: io.configd.bench.EdgeWireAllocBenchmark.encodeNotify
+# Parameters: (notifyCount = 16)
+
+# Run progress: 77.78% complete, ETA 00:00:30
+# Fork: 1 of 2
+WARNING: A terminally deprecated method in sun.misc.Unsafe has been called
+WARNING: sun.misc.Unsafe::objectFieldOffset has been called by org.openjdk.jmh.util.Utils (file:/home/ubuntu/Code/Configd/configd-testkit/target/benchmarks.jar)
+WARNING: Please consider reporting this to the maintainers of class org.openjdk.jmh.util.Utils
+WARNING: sun.misc.Unsafe::objectFieldOffset will be removed in a future release
+# Warmup Iteration   1: 10764.224 ns/op
+# Warmup Iteration   2: 6195.479 ns/op
+# Warmup Iteration   3: 5583.760 ns/op
+Iteration   1: 5690.696 ns/op
+                 gc.alloc.rate:      2975.274 MB/sec
+                 gc.alloc.rate.norm: 17760.040 B/op
+                 gc.count:           9.000 counts
+                 gc.time:            12.000 ms
+
+Iteration   2: 5514.839 ns/op
+                 gc.alloc.rate:      3068.453 MB/sec
+                 gc.alloc.rate.norm: 17760.038 B/op
+                 gc.count:           10.000 counts
+                 gc.time:            11.000 ms
+
+Iteration   3: 5513.969 ns/op
+                 gc.alloc.rate:      3070.398 MB/sec
+                 gc.alloc.rate.norm: 17760.038 B/op
+                 gc.count:           10.000 counts
+                 gc.time:            11.000 ms
+
+Iteration   4: 5607.061 ns/op
+                 gc.alloc.rate:      3018.184 MB/sec
+                 gc.alloc.rate.norm: 17760.039 B/op
+                 gc.count:           10.000 counts
+                 gc.time:            9.000 ms
+
+
+# Run progress: 83.33% complete, ETA 00:00:22
+# Fork: 2 of 2
+WARNING: A terminally deprecated method in sun.misc.Unsafe has been called
+WARNING: sun.misc.Unsafe::objectFieldOffset has been called by org.openjdk.jmh.util.Utils (file:/home/ubuntu/Code/Configd/configd-testkit/target/benchmarks.jar)
+WARNING: Please consider reporting this to the maintainers of class org.openjdk.jmh.util.Utils
+WARNING: sun.misc.Unsafe::objectFieldOffset will be removed in a future release
+# Warmup Iteration   1: 10750.326 ns/op
+# Warmup Iteration   2: 6189.621 ns/op
+# Warmup Iteration   3: 5720.172 ns/op
+Iteration   1: 5657.721 ns/op
+                 gc.alloc.rate:      2992.502 MB/sec
+                 gc.alloc.rate.norm: 17760.039 B/op
+                 gc.count:           10.000 counts
+                 gc.time:            13.000 ms
+
+Iteration   2: 5535.834 ns/op
+                 gc.alloc.rate:      3054.342 MB/sec
+                 gc.alloc.rate.norm: 17760.039 B/op
+                 gc.count:           10.000 counts
+                 gc.time:            10.000 ms
+
+Iteration   3: 5546.409 ns/op
+                 gc.alloc.rate:      3052.577 MB/sec
+                 gc.alloc.rate.norm: 17760.039 B/op
+                 gc.count:           9.000 counts
+                 gc.time:            8.000 ms
+
+Iteration   4: 5530.346 ns/op
+                 gc.alloc.rate:      3061.501 MB/sec
+                 gc.alloc.rate.norm: 17760.039 B/op
+                 gc.count:           10.000 counts
+                 gc.time:            11.000 ms
+
+
+
+Result "io.configd.bench.EdgeWireAllocBenchmark.encodeNotify":
+  5574.609 ±(99.9%) 131.167 ns/op [Average]
+  (min, avg, max) = (5513.969, 5574.609, 5690.696), stdev = 68.603
+  CI (99.9%): [5443.442, 5705.777] (assumes normal distribution)
+
+Secondary result "io.configd.bench.EdgeWireAllocBenchmark.encodeNotify:gc.alloc.rate":
+  3036.654 ±(99.9%) 70.033 MB/sec [Average]
+  (min, avg, max) = (2975.274, 3036.654, 3070.398), stdev = 36.629
+  CI (99.9%): [2966.621, 3106.687] (assumes normal distribution)
+
+Secondary result "io.configd.bench.EdgeWireAllocBenchmark.encodeNotify:gc.alloc.rate.norm":
+  17760.039 ±(99.9%) 0.001 B/op [Average]
+  (min, avg, max) = (17760.038, 17760.039, 17760.040), stdev = 0.001
+  CI (99.9%): [17760.038, 17760.040] (assumes normal distribution)
+
+Secondary result "io.configd.bench.EdgeWireAllocBenchmark.encodeNotify:gc.count":
+  78.000 ±(99.9%) 0.001 counts [Sum]
+  (min, avg, max) = (9.000, 9.750, 10.000), stdev = 0.463
+  CI (99.9%): [78.000, 78.000] (assumes normal distribution)
+
+Secondary result "io.configd.bench.EdgeWireAllocBenchmark.encodeNotify:gc.time":
+  85.000 ±(99.9%) 0.001 ms [Sum]
+  (min, avg, max) = (8.000, 10.625, 13.000), stdev = 1.598
+  CI (99.9%): [85.000, 85.000] (assumes normal distribution)
+
+
+# JMH version: 1.37
+# VM version: JDK 25, OpenJDK 64-Bit Server VM, 25+36-LTS
+# VM invoker: /home/ubuntu/.sdkman/candidates/java/25-amzn/bin/java
+# VM options: --enable-preview
+# Blackhole mode: compiler (auto-detected, use -Djmh.blackhole.autoDetect=false to disable)
+# Warmup: 3 iterations, 1 s each
+# Measurement: 4 iterations, 1 s each
+# Timeout: 10 min per iteration
+# Threads: 1 thread, will synchronize iterations
+# Benchmark mode: Average time, time/op
+# Benchmark: io.configd.bench.EdgeWireAllocBenchmark.encodeNotify
+# Parameters: (notifyCount = 64)
+
+# Run progress: 88.89% complete, ETA 00:00:15
+# Fork: 1 of 2
+WARNING: A terminally deprecated method in sun.misc.Unsafe has been called
+WARNING: sun.misc.Unsafe::objectFieldOffset has been called by org.openjdk.jmh.util.Utils (file:/home/ubuntu/Code/Configd/configd-testkit/target/benchmarks.jar)
+WARNING: Please consider reporting this to the maintainers of class org.openjdk.jmh.util.Utils
+WARNING: sun.misc.Unsafe::objectFieldOffset will be removed in a future release
+# Warmup Iteration   1: 43263.845 ns/op
+# Warmup Iteration   2: 24303.233 ns/op
+# Warmup Iteration   3: 22478.655 ns/op
+Iteration   1: 22581.974 ns/op
+                 gc.alloc.rate:      2993.971 MB/sec
+                 gc.alloc.rate.norm: 71040.158 B/op
+                 gc.count:           9.000 counts
+                 gc.time:            11.000 ms
+
+Iteration   2: 22025.324 ns/op
+                 gc.alloc.rate:      3074.241 MB/sec
+                 gc.alloc.rate.norm: 71040.154 B/op
+                 gc.count:           10.000 counts
+                 gc.time:            9.000 ms
+
+Iteration   3: 22170.784 ns/op
+                 gc.alloc.rate:      3054.149 MB/sec
+                 gc.alloc.rate.norm: 71040.155 B/op
+                 gc.count:           10.000 counts
+                 gc.time:            10.000 ms
+
+Iteration   4: 22536.723 ns/op
+                 gc.alloc.rate:      3005.131 MB/sec
+                 gc.alloc.rate.norm: 71040.157 B/op
+                 gc.count:           9.000 counts
+                 gc.time:            10.000 ms
+
+
+# Run progress: 94.44% complete, ETA 00:00:07
+# Fork: 2 of 2
+WARNING: A terminally deprecated method in sun.misc.Unsafe has been called
+WARNING: sun.misc.Unsafe::objectFieldOffset has been called by org.openjdk.jmh.util.Utils (file:/home/ubuntu/Code/Configd/configd-testkit/target/benchmarks.jar)
+WARNING: Please consider reporting this to the maintainers of class org.openjdk.jmh.util.Utils
+WARNING: sun.misc.Unsafe::objectFieldOffset will be removed in a future release
+# Warmup Iteration   1: 44937.755 ns/op
+# Warmup Iteration   2: 24649.720 ns/op
+# Warmup Iteration   3: 22904.150 ns/op
+Iteration   1: 23065.175 ns/op
+                 gc.alloc.rate:      2936.272 MB/sec
+                 gc.alloc.rate.norm: 71040.160 B/op
+                 gc.count:           9.000 counts
+                 gc.time:            13.000 ms
+
+Iteration   2: 22817.604 ns/op
+                 gc.alloc.rate:      2966.630 MB/sec
+                 gc.alloc.rate.norm: 71040.160 B/op
+                 gc.count:           9.000 counts
+                 gc.time:            9.000 ms
+
+Iteration   3: 22746.707 ns/op
+                 gc.alloc.rate:      2971.378 MB/sec
+                 gc.alloc.rate.norm: 71040.159 B/op
+                 gc.count:           10.000 counts
+                 gc.time:            10.000 ms
+
+Iteration   4: 22408.419 ns/op
+                 gc.alloc.rate:      3016.225 MB/sec
+                 gc.alloc.rate.norm: 71040.156 B/op
+                 gc.count:           10.000 counts
+                 gc.time:            10.000 ms
+
+
+
+Result "io.configd.bench.EdgeWireAllocBenchmark.encodeNotify":
+  22544.089 ±(99.9%) 652.703 ns/op [Average]
+  (min, avg, max) = (22025.324, 22544.089, 23065.175), stdev = 341.376
+  CI (99.9%): [21891.386, 23196.792] (assumes normal distribution)
+
+Secondary result "io.configd.bench.EdgeWireAllocBenchmark.encodeNotify:gc.alloc.rate":
+  3002.250 ±(99.9%) 87.687 MB/sec [Average]
+  (min, avg, max) = (2936.272, 3002.250, 3074.241), stdev = 45.862
+  CI (99.9%): [2914.563, 3089.937] (assumes normal distribution)
+
+Secondary result "io.configd.bench.EdgeWireAllocBenchmark.encodeNotify:gc.alloc.rate.norm":
+  71040.157 ±(99.9%) 0.004 B/op [Average]
+  (min, avg, max) = (71040.154, 71040.157, 71040.160), stdev = 0.002
+  CI (99.9%): [71040.153, 71040.161] (assumes normal distribution)
+
+Secondary result "io.configd.bench.EdgeWireAllocBenchmark.encodeNotify:gc.count":
+  76.000 ±(99.9%) 0.001 counts [Sum]
+  (min, avg, max) = (9.000, 9.500, 10.000), stdev = 0.535
+  CI (99.9%): [76.000, 76.000] (assumes normal distribution)
+
+Secondary result "io.configd.bench.EdgeWireAllocBenchmark.encodeNotify:gc.time":
+  82.000 ±(99.9%) 0.001 ms [Sum]
+  (min, avg, max) = (9.000, 10.250, 13.000), stdev = 1.282
+  CI (99.9%): [82.000, 82.000] (assumes normal distribution)
+
+
+# Run complete. Total time: 00:02:17
+
+REMEMBER: The numbers below are just data. To gain reusable insights, you need to follow up on
+why the numbers are the way they are. Use profilers (see -prof, -lprof), design factorial
+experiments, perform baseline and negative tests that provide experimental control, make sure
+the benchmarking environment is safe on JVM/OS/HW level, ask for reviews from the domain experts.
+Do not assume the numbers tell you what you want them to tell.
+
+NOTE: Current JVM experimentally supports Compiler Blackholes, and they are in use. Please exercise
+extra caution when trusting the results, look into the generated code to check the benchmark still
+works, and factor in a small probability of new VM bugs. Additionally, while comparisons between
+different JVMs are already problematic, the performance difference caused by different Blackhole
+modes can be very significant. Please make sure you use the consistent Blackhole mode for comparisons.
+
+Benchmark                                                  (notifyCount)  Mode  Cnt      Score     Error   Units
+EdgeWireAllocBenchmark.decodeNotify                                    1  avgt    8    375.751 ±  18.900   ns/op
+EdgeWireAllocBenchmark.decodeNotify:gc.alloc.rate                      1  avgt    8   2505.254 ±  62.112  MB/sec
+EdgeWireAllocBenchmark.decodeNotify:gc.alloc.rate.norm                 1  avgt    8    988.003 ±  73.584    B/op
+EdgeWireAllocBenchmark.decodeNotify:gc.count                           1  avgt    8     72.000            counts
+EdgeWireAllocBenchmark.decodeNotify:gc.time                            1  avgt    8     99.000                ms
+EdgeWireAllocBenchmark.decodeNotify                                   16  avgt    8   5132.173 ±  57.930   ns/op
+EdgeWireAllocBenchmark.decodeNotify:gc.alloc.rate                     16  avgt    8   2616.458 ±  31.319  MB/sec
+EdgeWireAllocBenchmark.decodeNotify:gc.alloc.rate.norm                16  avgt    8  14104.036 ±   0.001    B/op
+EdgeWireAllocBenchmark.decodeNotify:gc.count                          16  avgt    8     74.000            counts
+EdgeWireAllocBenchmark.decodeNotify:gc.time                           16  avgt    8     90.000                ms
+EdgeWireAllocBenchmark.decodeNotify                                   64  avgt    8  20423.890 ± 336.583   ns/op
+EdgeWireAllocBenchmark.decodeNotify:gc.alloc.rate                     64  avgt    8   2617.998 ±  45.766  MB/sec
+EdgeWireAllocBenchmark.decodeNotify:gc.alloc.rate.norm                64  avgt    8  56152.142 ±   0.002    B/op
+EdgeWireAllocBenchmark.decodeNotify:gc.count                          64  avgt    8     72.000            counts
+EdgeWireAllocBenchmark.decodeNotify:gc.time                           64  avgt    8     86.000                ms
+EdgeWireAllocBenchmark.encodeHeartbeat                                 1  avgt    8     40.875 ±   0.409   ns/op
+EdgeWireAllocBenchmark.encodeHeartbeat:gc.alloc.rate                   1  avgt    8   1865.419 ±  18.613  MB/sec
+EdgeWireAllocBenchmark.encodeHeartbeat:gc.alloc.rate.norm              1  avgt    8     80.000 ±   0.001    B/op
+EdgeWireAllocBenchmark.encodeHeartbeat:gc.count                        1  avgt    8     59.000            counts
+EdgeWireAllocBenchmark.encodeHeartbeat:gc.time                         1  avgt    8     63.000                ms
+EdgeWireAllocBenchmark.encodeHeartbeat                                16  avgt    8     40.922 ±   0.528   ns/op
+EdgeWireAllocBenchmark.encodeHeartbeat:gc.alloc.rate                  16  avgt    8   1863.051 ±  24.408  MB/sec
+EdgeWireAllocBenchmark.encodeHeartbeat:gc.alloc.rate.norm             16  avgt    8     80.000 ±   0.001    B/op
+EdgeWireAllocBenchmark.encodeHeartbeat:gc.count                       16  avgt    8     62.000            counts
+EdgeWireAllocBenchmark.encodeHeartbeat:gc.time                        16  avgt    8     60.000                ms
+EdgeWireAllocBenchmark.encodeHeartbeat                                64  avgt    8     40.919 ±   0.532   ns/op
+EdgeWireAllocBenchmark.encodeHeartbeat:gc.alloc.rate                  64  avgt    8   1862.660 ±  23.739  MB/sec
+EdgeWireAllocBenchmark.encodeHeartbeat:gc.alloc.rate.norm             64  avgt    8     80.000 ±   0.001    B/op
+EdgeWireAllocBenchmark.encodeHeartbeat:gc.count                       64  avgt    8     62.000            counts
+EdgeWireAllocBenchmark.encodeHeartbeat:gc.time                        64  avgt    8     63.000                ms
+EdgeWireAllocBenchmark.encodeNotify                                    1  avgt    8    352.727 ±   8.964   ns/op
+EdgeWireAllocBenchmark.encodeNotify:gc.alloc.rate                      1  avgt    8   3242.629 ±  80.217  MB/sec
+EdgeWireAllocBenchmark.encodeNotify:gc.alloc.rate.norm                 1  avgt    8   1200.002 ±   0.001    B/op
+EdgeWireAllocBenchmark.encodeNotify:gc.count                           1  avgt    8     81.000            counts
+EdgeWireAllocBenchmark.encodeNotify:gc.time                            1  avgt    8     89.000                ms
+EdgeWireAllocBenchmark.encodeNotify                                   16  avgt    8   5574.609 ± 131.167   ns/op
+EdgeWireAllocBenchmark.encodeNotify:gc.alloc.rate                     16  avgt    8   3036.654 ±  70.033  MB/sec
+EdgeWireAllocBenchmark.encodeNotify:gc.alloc.rate.norm                16  avgt    8  17760.039 ±   0.001    B/op
+EdgeWireAllocBenchmark.encodeNotify:gc.count                          16  avgt    8     78.000            counts
+EdgeWireAllocBenchmark.encodeNotify:gc.time                           16  avgt    8     85.000                ms
+EdgeWireAllocBenchmark.encodeNotify                                   64  avgt    8  22544.089 ± 652.703   ns/op
+EdgeWireAllocBenchmark.encodeNotify:gc.alloc.rate                     64  avgt    8   3002.250 ±  87.687  MB/sec
+EdgeWireAllocBenchmark.encodeNotify:gc.alloc.rate.norm                64  avgt    8  71040.157 ±   0.004    B/op
+EdgeWireAllocBenchmark.encodeNotify:gc.count                          64  avgt    8     76.000            counts
+EdgeWireAllocBenchmark.encodeNotify:gc.time                           64  avgt    8     82.000                ms

@@ -1,0 +1,3 @@
+READY which=netty httpPort=42941 epoll=true
+IDLE which=netty windowMs=1000 backgroundAllocBytes=40
+RESULT which=netty epoll=true requests=80000 serverAllocBytes=136259152 serverBytesPerRequest=1703.2

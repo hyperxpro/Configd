@@ -12,6 +12,7 @@
     <modules>
         <module>configd-common</module>
         <module>configd-transport</module>
+        <module>configd-netty</module>
         <module>configd-consensus-core</module>
         <module>configd-config-store</module>
         <module>configd-edge-cache</module>
@@ -47,6 +48,15 @@
         <jmh.version>1.37</jmh.version>
         <!-- B6 / RR-011: jcstress race-testing harness (configd-jcstress module). -->
         <jcstress.version>0.16</jcstress.version>
+        <!--
+          Netty transport platform (ADR-0043 supersedes ADR-0037 wholesale): all network
+          transport standardizes on Netty 4.2, staged by verification, surface by surface
+          (M1 edge-read → M2 admin → M3 fan-out → M4 consensus). Production modules depend on
+          Netty as each surface migrates (M1 wires configd-edge-node). The configd-testkit
+          head-to-head prototype/benchmarks (docs/jdk-vs-netty/) remain test/bench scope.
+          Pinned for reproducibility. API + 3-tier selector: docs/netty-migration/netty42-api.md.
+        -->
+        <netty.version>4.2.15.Final</netty.version>
     </properties>
 
     <dependencyManagement>
@@ -95,6 +105,61 @@
                 <groupId>org.openjdk.jcstress</groupId>
                 <artifactId>jcstress-core</artifactId>
                 <version>${jcstress.version}</version>
+            </dependency>
+            <!--
+              Netty 4.2 transport platform (ADR-0043). Module split per 4.2: native transports
+              are separate classes + native-binary (classifier) jars. The io_uring artifacts
+              (tier 1 of the io_uring→Epoll→NIO selector, netty42-api.md §1/§2) are managed here
+              alongside epoll; both are linux-x86_64-classified native binaries.
+            -->
+            <dependency>
+                <groupId>io.netty</groupId>
+                <artifactId>netty-transport</artifactId>
+                <version>${netty.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>io.netty</groupId>
+                <artifactId>netty-buffer</artifactId>
+                <version>${netty.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>io.netty</groupId>
+                <artifactId>netty-codec</artifactId>
+                <version>${netty.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>io.netty</groupId>
+                <artifactId>netty-codec-http</artifactId>
+                <version>${netty.version}</version>
+            </dependency>
+            <!-- netty-handler: IdleStateHandler (slowloris/idle reaping) now; SslHandler for the
+                 fan-out/consensus mTLS surfaces (M3/M4). -->
+            <dependency>
+                <groupId>io.netty</groupId>
+                <artifactId>netty-handler</artifactId>
+                <version>${netty.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>io.netty</groupId>
+                <artifactId>netty-transport-classes-epoll</artifactId>
+                <version>${netty.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>io.netty</groupId>
+                <artifactId>netty-transport-native-epoll</artifactId>
+                <version>${netty.version}</version>
+                <classifier>linux-x86_64</classifier>
+            </dependency>
+            <dependency>
+                <groupId>io.netty</groupId>
+                <artifactId>netty-transport-classes-io_uring</artifactId>
+                <version>${netty.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>io.netty</groupId>
+                <artifactId>netty-transport-native-io_uring</artifactId>
+                <version>${netty.version}</version>
+                <classifier>linux-x86_64</classifier>
             </dependency>
         </dependencies>
     </dependencyManagement>

@@ -17,7 +17,6 @@ import io.configd.raft.RaftTransport;
 import io.configd.raft.StateMachine;
 import io.configd.replication.MultiRaftDriver;
 
-import java.lang.reflect.Field;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
@@ -229,14 +228,10 @@ class OwnerNetCatchesOffOwnerInboundTest {
         }
     }
 
-    private static int apiPort(ConfigdServer server) throws Exception {
-        Field hf = ConfigdServer.class.getDeclaredField("httpApiServer");
-        hf.setAccessible(true);
-        HttpApiServer api = (HttpApiServer) hf.get(server);
-        Field sf = HttpApiServer.class.getDeclaredField("server");
-        sf.setAccessible(true);
-        com.sun.net.httpserver.HttpServer hs = (com.sun.net.httpserver.HttpServer) sf.get(api);
-        return hs.getAddress().getPort();
+    private static int apiPort(ConfigdServer server) {
+        // ADR-0043 M2: the admin server is now Netty; use the public bound-port accessor rather than
+        // reflecting into a transport-specific internal field.
+        return server.apiPort();
     }
 
     /** Scrapes the running server's public (no-auth minimal config) /metrics exposition. */
