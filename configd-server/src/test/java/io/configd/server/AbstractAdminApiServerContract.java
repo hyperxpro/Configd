@@ -14,16 +14,26 @@ import io.configd.observability.MetricsRegistry;
 import io.configd.observability.PrometheusExporter;
 import io.configd.store.ReadResult;
 import io.configd.store.VersionedConfigStore;
+import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 
+import javax.net.ssl.KeyManagerFactory;
 import javax.net.ssl.SSLContext;
+import javax.net.ssl.TrustManagerFactory;
 import java.io.IOException;
+import java.io.InputStream;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.security.KeyStore;
+import java.time.Duration;
+import java.util.Comparator;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -831,5 +841,209 @@ abstract class AbstractAdminApiServerContract {
         assertEquals(200, resp.statusCode(),
                 "an ordinary path must remain ordinary regardless of query params");
         assertEquals("on", resp.body(), "the query string must not redirect to the strong key's value");
+    }
+
+    // =======================================================================
+    // Section 5 — C7: the /metrics Bearer gate (F-0055). The incumbent proved
+    // this only on a direct JDK server (ConfigdServerTest#find0055); production
+    // has cut over to NettyHttpApiServer, so it must hold on Netty + NIO too.
+    // The handler's /metrics gate checks the authInterceptor ONLY (no ACL), so
+    // any VALID token is 200 regardless of grants.
+    // =======================================================================
+
+    /** Spec for the metrics gate: the two-principal authInterceptor, no ACL, a metrics-bearing exporter. */
+    private int startMetricsGate() throws Exception {
+        MetricsRegistry registry = new MetricsRegistry();
+        return start(new ServerSpec(null, new HealthService(), new PrometheusExporter(registry),
+                new VersionedConfigStore(), /* writeService */ null, /* readService */ null,
+                authInterceptor(), /* aclService */ null, StrongReadPolicy.defaultPolicy(),
+                () -> NodeId.of(1), /* auditLog */ null, /* replayGuard */ null));
+    }
+
+    @Test
+    void metricsRequiresBearerTokenWhenAuthConfigured() throws Exception {
+        // F-0055: with auth configured, an unauthenticated scrape leaks the exposition (a
+        // reconnaissance surface), so /metrics must 401 + advertise Bearer. This is authentication
+        // (no ACL for scraping), so any valid token is then accepted.
+        int port = startMetricsGate();
+
+        // No Authorization header -> 401 + WWW-Authenticate: Bearer.
+        HttpResponse<String> noTok = client.send(HttpRequest.newBuilder()
+                        .uri(URI.create("http://127.0.0.1:" + port + "/metrics")).GET().build(),
+                HttpResponse.BodyHandlers.ofString());
+        assertEquals(401, noTok.statusCode(), "F-0055: /metrics must return 401 without an auth header");
+        assertEquals("Bearer", noTok.headers().firstValue("WWW-Authenticate").orElse(null),
+                "a 401 MUST carry a WWW-Authenticate: Bearer challenge (RFC 7235 §3.1)");
+
+        // A valid token -> 200 + the Prometheus exposition (the gate checks auth only, not ACL).
+        HttpResponse<String> authed = client.send(HttpRequest.newBuilder()
+                        .uri(URI.create("http://127.0.0.1:" + port + "/metrics"))
+                        .header("Authorization", "Bearer good-reader").GET().build(),
+                HttpResponse.BodyHandlers.ofString());
+        assertEquals(200, authed.statusCode(), "F-0055: /metrics must return 200 with a valid bearer token");
+        assertTrue(authed.headers().firstValue("Content-Type").orElse("").startsWith("text/plain"),
+                "the metrics exposition is text/plain: " + authed.headers().firstValue("Content-Type").orElse(""));
+    }
+
+    // =======================================================================
+    // Section 6 — C9: overloaded write -> 429 + Retry-After (S6/D-1, RR-110).
+    // The §11 write-overload contract: a bounded-queue 429 carrying a Retry-After
+    // backoff. Modelled by a proposer that returns ProposeCommitResult.Overloaded.
+    // =======================================================================
+
+    /** A write service whose proposer always reports backpressure (Overloaded). */
+    private static ConfigWriteService overloadedWriteService() {
+        ConfigWriteService.RaftProposer proposer =
+                (scope, command) -> new ConfigWriteService.ProposeCommitResult.Overloaded();
+        return new ConfigWriteService(proposer, null, null);
+    }
+
+    @Test
+    void overloadedWriteIsRejectedWith429AndRetryAfter() throws Exception {
+        VersionedConfigStore store = new VersionedConfigStore();
+        MetricsRegistry registry = new MetricsRegistry();
+        int port = start(new ServerSpec(null, new HealthService(), new PrometheusExporter(registry),
+                store, overloadedWriteService(), /* readService */ null, authInterceptor(), aclService(),
+                StrongReadPolicy.defaultPolicy(), () -> NodeId.of(1), /* auditLog */ null, /* replayGuard */ null));
+
+        // Authorized writer, non-empty body, but the proposer is overloaded -> 429 + Retry-After: 1.
+        HttpResponse<String> put = send(port, "PUT", "/v1/config/app/feature", "good-writer", "off");
+        assertEquals(429, put.statusCode(), "a backpressured write must be rejected with 429 Overloaded");
+        assertEquals("1", put.headers().firstValue("Retry-After").orElse(null),
+                "the 429 MUST carry a Retry-After backoff signal (§11 write-overload contract)");
+    }
+
+    // =======================================================================
+    // Section 7 — C10: method 405. An unsupported method on the config endpoint,
+    // and a non-GET on a fixed endpoint, are both 405 Method Not Allowed.
+    // =======================================================================
+
+    @Test
+    void unsupportedMethodOnConfigEndpointIs405() throws Exception {
+        int port = start(authSpec());
+        // PATCH is not GET/PUT/DELETE -> the config() switch default -> 405 (even for a valid writer).
+        HttpResponse<String> patch = send(port, "PATCH", "/v1/config/app/feature", "good-writer", "x");
+        assertEquals(405, patch.statusCode(), "an unsupported method on /v1/config/{key} must be 405");
+    }
+
+    @Test
+    void nonGetOnFixedEndpointIs405() throws Exception {
+        int port = start(authSpec());
+        // A fixed health endpoint is GET-only -> a POST is 405.
+        HttpResponse<String> post = send(port, "POST", "/health/live", "good-writer", "x");
+        assertEquals(405, post.statusCode(), "a non-GET on a fixed endpoint (/health/live) must be 405");
+    }
+
+    // =======================================================================
+    // Section 8 — C11: server-side TLS. Exercises the Netty SslHandler path and
+    // regression-proves the JDK HttpsServer path: a server SSLContext (self-signed
+    // cert) is passed via ServerSpec.sslContext (the JDK adapter wraps it in an
+    // HttpsServer; the Netty adapter wraps it in a server-mode SslHandler — both
+    // server-side, no client auth). A trusting client GETs the PUBLIC /health/live
+    // over HTTPS -> 200. The keystore/truststore are generated ONCE per subclass
+    // (@BeforeAll runs once per concrete test container in JUnit 5) via the SAME
+    // keytool fixture the repo uses (NOT io.netty SelfSignedCertificate, which has
+    // JDK-25 module-access issues). The cert carries a SAN for 127.0.0.1 so the JDK
+    // HttpClient's default HTTPS endpoint identification succeeds.
+    // =======================================================================
+
+    private static final char[] TLS_PASS = "changeit".toCharArray();
+    private static Path tlsFixtureDir;
+    private static Path tlsKeyStore;
+    private static Path tlsTrustStore;
+
+    @BeforeAll
+    static void generateTlsFixture() throws Exception {
+        tlsFixtureDir = Files.createTempDirectory("configd-admin-tls-");
+        tlsKeyStore = tlsFixtureDir.resolve("server-ks.p12");
+        tlsTrustStore = tlsFixtureDir.resolve("server-ts.p12");
+        Path serverCert = tlsFixtureDir.resolve("server.pem");
+        // EC keypair, CN=localhost + SAN dns:localhost,ip:127.0.0.1 so HTTPS hostname
+        // verification of 127.0.0.1 passes (the repo's FanOutServerMtlsTest pattern).
+        runKeytool("keytool", "-genkeypair", "-alias", "server",
+                "-keyalg", "EC", "-groupname", "secp256r1",
+                "-sigalg", "SHA256withECDSA", "-validity", "1",
+                "-dname", "CN=localhost,O=configd-test", "-ext", "san=dns:localhost,ip:127.0.0.1",
+                "-storetype", "PKCS12", "-keystore", tlsKeyStore.toString(),
+                "-storepass", "changeit", "-keypass", "changeit");
+        runKeytool("keytool", "-exportcert", "-alias", "server",
+                "-keystore", tlsKeyStore.toString(), "-storepass", "changeit",
+                "-rfc", "-file", serverCert.toString());
+        runKeytool("keytool", "-importcert", "-alias", "server", "-file", serverCert.toString(),
+                "-keystore", tlsTrustStore.toString(), "-storepass", "changeit",
+                "-storetype", "PKCS12", "-noprompt");
+    }
+
+    @AfterAll
+    static void deleteTlsFixture() throws Exception {
+        if (tlsFixtureDir == null) {
+            return;
+        }
+        try (var paths = Files.walk(tlsFixtureDir)) {
+            paths.sorted(Comparator.reverseOrder()).forEach(p -> {
+                try {
+                    Files.deleteIfExists(p);
+                } catch (IOException ignored) {
+                    // best-effort cleanup of a temp fixture
+                }
+            });
+        }
+    }
+
+    @Test
+    void serverSideTlsServesHealthOverHttps() throws Exception {
+        // Server context = the keystore (server identity); client context = the truststore (trusts it).
+        SSLContext serverCtx = serverSslContext(tlsKeyStore);
+        SSLContext clientCtx = trustingClientContext(tlsTrustStore);
+
+        MetricsRegistry registry = new MetricsRegistry();
+        int port = start(new ServerSpec(serverCtx, new HealthService(), new PrometheusExporter(registry),
+                new VersionedConfigStore(), /* writeService */ null, /* readService */ null,
+                /* auth */ null, /* acl */ null, StrongReadPolicy.defaultPolicy(),
+                () -> NodeId.of(1), /* auditLog */ null, /* replayGuard */ null));
+
+        // A dedicated HttpClient that trusts the server cert. /health/live is public (no auth fixture).
+        try (HttpClient tlsClient = HttpClient.newBuilder()
+                .sslContext(clientCtx).connectTimeout(Duration.ofSeconds(5)).build()) {
+            HttpResponse<String> resp = tlsClient.send(HttpRequest.newBuilder()
+                            .uri(URI.create("https://127.0.0.1:" + port + "/health/live"))
+                            .GET().timeout(Duration.ofSeconds(10)).build(),
+                    HttpResponse.BodyHandlers.ofString());
+            assertEquals(200, resp.statusCode(), "server-side TLS must serve /health/live over HTTPS: 200");
+            assertTrue(resp.body().contains("\"healthy\":true"), "the health body is returned: " + resp.body());
+        }
+    }
+
+    /** A server-side SSLContext keyed by {@code keyStore} (server identity; no client-auth trust needed). */
+    private static SSLContext serverSslContext(Path keyStore) throws Exception {
+        KeyStore ks = loadStore(keyStore);
+        KeyManagerFactory kmf = KeyManagerFactory.getInstance(KeyManagerFactory.getDefaultAlgorithm());
+        kmf.init(ks, TLS_PASS);
+        SSLContext ctx = SSLContext.getInstance("TLSv1.3");
+        ctx.init(kmf.getKeyManagers(), null, null);
+        return ctx;
+    }
+
+    /** A client SSLContext that trusts {@code trustStore} and presents no client cert. */
+    private static SSLContext trustingClientContext(Path trustStore) throws Exception {
+        KeyStore ts = loadStore(trustStore);
+        TrustManagerFactory tmf = TrustManagerFactory.getInstance(TrustManagerFactory.getDefaultAlgorithm());
+        tmf.init(ts);
+        SSLContext ctx = SSLContext.getInstance("TLSv1.3");
+        ctx.init(null, tmf.getTrustManagers(), null);
+        return ctx;
+    }
+
+    private static KeyStore loadStore(Path p) throws Exception {
+        KeyStore ks = KeyStore.getInstance("PKCS12");
+        try (InputStream in = Files.newInputStream(p)) {
+            ks.load(in, TLS_PASS);
+        }
+        return ks;
+    }
+
+    private static void runKeytool(String... command) throws Exception {
+        int rc = new ProcessBuilder(command).redirectErrorStream(true).inheritIO().start().waitFor();
+        assertEquals(0, rc, "keytool failed: " + String.join(" ", command));
     }
 }
