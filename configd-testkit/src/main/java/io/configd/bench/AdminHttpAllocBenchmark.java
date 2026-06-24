@@ -7,6 +7,7 @@ import io.configd.common.NodeId;
 import io.configd.observability.MetricsRegistry;
 import io.configd.observability.PrometheusExporter;
 import io.configd.server.HttpApiServer;
+import io.configd.server.NettyHttpApiServer;
 import io.configd.server.StrongReadPolicy;
 import io.configd.store.VersionedConfigStore;
 import org.openjdk.jmh.annotations.*;
@@ -62,11 +63,21 @@ public class AdminHttpAllocBenchmark {
     @Param({"off", "on"})
     String authMode;
 
+    /**
+     * The transport under test. {@code jdk} = the incumbent {@code com.sun.net.httpserver}
+     * {@link HttpApiServer}; {@code netty} = the M2 {@link NettyHttpApiServer} (ADR-0043). The client,
+     * key set, value size and shell are identical across both legs, so the {@code configGet} B/op
+     * DELTA between {@code jdk} and {@code netty} is the server-side transport allocation difference.
+     */
+    @Param({"jdk", "netty"})
+    String serverType;
+
     private static final int KEY_COUNT = 256;
     private static final int VALUE_BYTES = 64;
     private static final String READER_TOKEN = "good-reader";
 
-    private HttpApiServer server;
+    private HttpApiServer jdkServer;
+    private NettyHttpApiServer nettyServer;
     private HttpClient client;
     private HttpRequest[] configRequests; // pre-built, rotated, to focus on the round trip
     private HttpRequest healthRequest;
@@ -95,12 +106,24 @@ public class AdminHttpAllocBenchmark {
             acl.grant("app/", "reader", Set.of(AclService.Permission.READ));
         }
 
-        server = new HttpApiServer(
-                0, /* sslContext */ null, new HealthService(), new PrometheusExporter(registry),
-                store, /* writeService */ null, /* readService */ null,
-                authInterceptor, acl, StrongReadPolicy.defaultPolicy(), () -> NodeId.of(1));
-        server.start();
-        String base = "http://127.0.0.1:" + server.port();
+        int port;
+        if ("netty".equals(serverType)) {
+            nettyServer = new NettyHttpApiServer(
+                    0, /* sslContext */ null, new HealthService(), new PrometheusExporter(registry),
+                    store, /* writeService */ null, /* readService */ null,
+                    authInterceptor, acl, StrongReadPolicy.defaultPolicy(), () -> NodeId.of(1),
+                    /* auditLog */ null, /* replayGuard */ null);
+            nettyServer.start();
+            port = nettyServer.port();
+        } else {
+            jdkServer = new HttpApiServer(
+                    0, /* sslContext */ null, new HealthService(), new PrometheusExporter(registry),
+                    store, /* writeService */ null, /* readService */ null,
+                    authInterceptor, acl, StrongReadPolicy.defaultPolicy(), () -> NodeId.of(1));
+            jdkServer.start();
+            port = jdkServer.port();
+        }
+        String base = "http://127.0.0.1:" + port;
 
         client = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(5)).build();
         configRequests = new HttpRequest[KEY_COUNT];
@@ -126,8 +149,11 @@ public class AdminHttpAllocBenchmark {
 
     @TearDown(Level.Trial)
     public void tearDown() {
-        if (server != null) {
-            server.stop(0);
+        if (jdkServer != null) {
+            jdkServer.stop(0);
+        }
+        if (nettyServer != null) {
+            nettyServer.stop();
         }
     }
 
