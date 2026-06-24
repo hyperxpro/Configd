@@ -237,3 +237,32 @@ local repo** (all prior builds were full-reactor, where the parent is always in-
 artifact's **managed** transitive versions (`configd-netty`'s netty deps came back version-less),
 surfacing as "POM invalid, transitive dependencies will not be available". `./mvnw -o install -N`
 (install the parent pom) fixes it; full-reactor and CI builds are unaffected.
+
+## DR-N7 — Admin-API routing tightened to exact-match (the DR-N4 edge decision, applied to admin)
+**Date:** 2026-06-24 · **Type:** technical · **Status:** decided · **Owning stage:** M2
+
+The incumbent JDK `HttpApiServer` registered four `createContext` handlers, which match by longest
+path **prefix** (a framework artifact) — so suffix variants of the fixed endpoints (`/metricsZ`,
+`/health/livez`) were served by their handler. The extracted `AdminApiHandler` (both transports
+delegate to it) routes the fixed endpoints (`/health/live`, `/health/ready`, `/metrics`) by **exact**
+`path.equals(...)` and `/v1/config/` by prefix; an unmatched path returns 404 `"Not Found"`. This is
+the **DR-N4 edge tightening applied to the admin surface**: safer (a `/metricsZ` can no longer reach
+the Prometheus exposition) and uniform across JDK + Netty. **No existing test relied on the
+prefix-match looseness** — every admin test uses an exact path (verified by grep before the change).
+**Guard:** the routing is exercised by every endpoint test on all three transports; the C10 method-405
+cases and the C7 `/metrics` Bearer gate pin the fixed-endpoint behaviour. No dropped control — a
+deliberate, tested tightening, recorded like DR-N4.
+
+## DR-N8 — M2 SBOM delta is exactly `+configd-netty` (zero new external CVE surface)
+**Date:** 2026-06-24 · **Type:** process/supply-chain · **Status:** decided (gate-7 / DR-N5 rule)
+
+Per the DR-N5 rule (a surface that changes the production dependency graph regenerates the committed
+CycloneDX SBOM in the same commit), the M2 SBOM was regenerated
+(`cyclonedx-maven-plugin:2.9.0:makeAggregateBom`) and **set-diffed** against the committed one. The
+delta is **exactly one added component — `pkg:maven/io.configd/configd-netty@0.1.0-SNAPSHOT`** — with
+**0 removed and 0 new external/third-party components**. The 16 `io.netty` 4.2.15.Final components
+were already recorded (M1/edge-node, DR-N5); `configd-server` now reaches them transitively via
+`configd-netty`, but they were already in the graph, so **M2 adds no new CVE surface**. This is
+DR-N6's footprint-containment realised: Netty enters the build only through the shared module already
+present since M1. (CVE/gitleaks remain nightly-only — the merge-gate precondition, not a stage-close
+check; a nightly run on this branch is the supply-chain checkpoint before merge.)

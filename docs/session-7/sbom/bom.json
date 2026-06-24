@@ -649,460 +649,12 @@
     },
     {
       "type" : "library",
-      "bom-ref" : "pkg:maven/io.configd/configd-consensus-core@0.1.0-SNAPSHOT?type=jar",
+      "bom-ref" : "pkg:maven/io.configd/configd-netty@0.1.0-SNAPSHOT?type=jar",
       "group" : "io.configd",
-      "name" : "configd-consensus-core",
+      "name" : "configd-netty",
       "version" : "0.1.0-SNAPSHOT",
       "licenses" : [ ],
-      "purl" : "pkg:maven/io.configd/configd-consensus-core@0.1.0-SNAPSHOT?type=jar"
-    },
-    {
-      "type" : "library",
-      "bom-ref" : "pkg:maven/org.jctools/jctools-core@4.0.5?type=jar",
-      "group" : "org.jctools",
-      "name" : "jctools-core",
-      "version" : "4.0.5",
-      "description" : "Java Concurrency Tools Core Library",
-      "scope" : "required",
-      "hashes" : [
-        {
-          "alg" : "MD5",
-          "content" : "4ec497e79923de658526ef2dcb61a641"
-        },
-        {
-          "alg" : "SHA-1",
-          "content" : "9ab38ca19877236986db4894ef1400a7ca23db80"
-        },
-        {
-          "alg" : "SHA-256",
-          "content" : "d65e5f38bcd0984e26f87187687f1f70dd52740c4d5e046f8d104e01ab5db95f"
-        },
-        {
-          "alg" : "SHA-512",
-          "content" : "3f95bd58dd68e80544aae685d3edbf1d80490dbac562ca7cb454e48bcba89a345b7973466b79373c219c1888dcdead25f0dcf105670ce6fc9f648bfc77b93d74"
-        },
-        {
-          "alg" : "SHA-384",
-          "content" : "aae4390c3ee4f995b6e1767c18cbc0ad7af6344384637ee8633212c31d857616508ec5aebf0adca5943417fc7b35bd18"
-        },
-        {
-          "alg" : "SHA3-384",
-          "content" : "61bbdf154142213ef755b53c8c55232bcfec3c4f0d8dc0367d20358278f125504507dc87ffc9b42b683f53b1a2637ec1"
-        },
-        {
-          "alg" : "SHA3-256",
-          "content" : "f616d29bd080645a709fc23e33f1f493f7dbf3beabc13629a834412c77e450f5"
-        },
-        {
-          "alg" : "SHA3-512",
-          "content" : "b667ac9af64a01c076000eebdace73b74fabb2f15cd97dd04a23abcde94f8ab4eb67f78cd2b346280447aac6408f5b9267cb21031b2ede91d271cb209d097ff6"
-        }
-      ],
-      "licenses" : [
-        {
-          "license" : {
-            "id" : "Apache-2.0"
-          }
-        }
-      ],
-      "purl" : "pkg:maven/org.jctools/jctools-core@4.0.5?type=jar",
-      "externalReferences" : [
-        {
-          "type" : "website",
-          "url" : "https://github.com/JCTools"
-        },
-        {
-          "type" : "distribution-intake",
-          "url" : "https://oss.sonatype.org/service/local/staging/deploy/maven2/"
-        },
-        {
-          "type" : "vcs",
-          "url" : "https://github.com/JCTools/JCTools"
-        }
-      ]
-    },
-    {
-      "type" : "library",
-      "bom-ref" : "pkg:maven/io.configd/configd-config-store@0.1.0-SNAPSHOT?type=jar",
-      "group" : "io.configd",
-      "name" : "configd-config-store",
-      "version" : "0.1.0-SNAPSHOT",
-      "licenses" : [ ],
-      "purl" : "pkg:maven/io.configd/configd-config-store@0.1.0-SNAPSHOT?type=jar"
-    },
-    {
-      "type" : "library",
-      "bom-ref" : "pkg:maven/io.configd/configd-observability@0.1.0-SNAPSHOT?type=jar",
-      "group" : "io.configd",
-      "name" : "configd-observability",
-      "version" : "0.1.0-SNAPSHOT",
-      "licenses" : [ ],
-      "purl" : "pkg:maven/io.configd/configd-observability@0.1.0-SNAPSHOT?type=jar"
-    },
-    {
-      "type" : "library",
-      "bom-ref" : "pkg:maven/org.hdrhistogram/HdrHistogram@2.2.2?type=jar",
-      "group" : "org.hdrhistogram",
-      "name" : "HdrHistogram",
-      "version" : "2.2.2",
-      "description" : "HdrHistogram supports the recording and analyzing sampled data value counts across a configurable integer value range with configurable value precision within the range. Value precision is expressed as the number of significant digits in the value recording, and provides control over value quantization behavior across the value range and the subsequent value resolution at any given level.",
-      "scope" : "required",
-      "hashes" : [
-        {
-          "alg" : "MD5",
-          "content" : "41f807bf0c681d6f692c408a6e217eaf"
-        },
-        {
-          "alg" : "SHA-1",
-          "content" : "7959933ebcc0f05b2eaa5af0a0c8689fa257b15c"
-        },
-        {
-          "alg" : "SHA-256",
-          "content" : "22d1d4316c4ec13a68b559e98c8256d69071593731da96136640f864fa14fad8"
-        },
-        {
-          "alg" : "SHA-512",
-          "content" : "fb28f1bc3a3d4430474ea87a0833d56dc3d1303c98918122d93c630ebdb0d1323bbf8feb9ffdc7dddd1908105858e6959bdfdd3889ca5803cecde93a974ab6b7"
-        },
-        {
-          "alg" : "SHA-384",
-          "content" : "fa19cf4674dee37cb5114689cccafeadbb7989e17768b814cb431806a0f69c7b37093b6e100430bd571a45d87a319758"
-        },
-        {
-          "alg" : "SHA3-384",
-          "content" : "fc0a9e2e5284bc2f911c5e2fdf9eec6cfa1973b6cfb1362822580d6c8768c73ebd1c8056b6e4e5302940f6b5ec4c74b7"
-        },
-        {
-          "alg" : "SHA3-256",
-          "content" : "79af553410abf4d3bbfa64374dfdf8777ce49d28b4c67a615e6d4a78e97d0498"
-        },
-        {
-          "alg" : "SHA3-512",
-          "content" : "5b2b1795ed1ea55b5a3566bb1f4170a4367b7893256809fdb428df9405857c8454196badf3681abaf536260ed6f293c096a3f3c9d72f0f04830e8fe71d49410a"
-        }
-      ],
-      "licenses" : [
-        {
-          "license" : {
-            "id" : "CC0-1.0"
-          }
-        },
-        {
-          "license" : {
-            "id" : "BSD-2-Clause",
-            "url" : "https://opensource.org/licenses/BSD-2-Clause"
-          }
-        }
-      ],
-      "purl" : "pkg:maven/org.hdrhistogram/HdrHistogram@2.2.2?type=jar",
-      "externalReferences" : [
-        {
-          "type" : "website",
-          "url" : "http://hdrhistogram.github.io/HdrHistogram/"
-        },
-        {
-          "type" : "issue-tracker",
-          "url" : "https://github.com/HdrHistogram/HdrHistogram/issues"
-        },
-        {
-          "type" : "vcs",
-          "url" : "scm:git:git://github.com/HdrHistogram/HdrHistogram.git"
-        }
-      ]
-    },
-    {
-      "type" : "library",
-      "bom-ref" : "pkg:maven/io.micrometer/micrometer-core@1.14.4?type=jar",
-      "group" : "io.micrometer",
-      "name" : "micrometer-core",
-      "version" : "1.14.4",
-      "description" : "Core module of Micrometer containing instrumentation API and implementation",
-      "scope" : "required",
-      "hashes" : [
-        {
-          "alg" : "MD5",
-          "content" : "806daa9b1b3cf1ba3af3b57ecb43cae5"
-        },
-        {
-          "alg" : "SHA-1",
-          "content" : "05686f90bba1d2f7ba0d3adb14f90b95659a6461"
-        },
-        {
-          "alg" : "SHA-256",
-          "content" : "d163c69b38e2f9f9a14b3d1b36e5a89d7b8cf247a41fc44afd5072c3cd64e516"
-        },
-        {
-          "alg" : "SHA-512",
-          "content" : "37aa7f881b96832d6bf106499cd680f80b79400dca6590b9e8f69e574961200a08453124af127c2c5b7687b99f3aa9ebe7709d244b23c57d7c4a93de89cbac2c"
-        },
-        {
-          "alg" : "SHA-384",
-          "content" : "e4a37bf8dccc6df21c7ef09e81732c995f5615f6af06c7ee93f1b7c90d55486ab652f1f1bb0cb8e10b3e61dcbc852391"
-        },
-        {
-          "alg" : "SHA3-384",
-          "content" : "a35e14775ba18521cfbfa6db0688e7160682ccfcbbc36ca4b1de7438dde7a2aa13739583da0937fe330e62a253e42b7b"
-        },
-        {
-          "alg" : "SHA3-256",
-          "content" : "f2733d036f84287ce948226d59d8d25c67fb6ad448abcc3f46cb4ebb85f5d573"
-        },
-        {
-          "alg" : "SHA3-512",
-          "content" : "23c0c36f24306411bd14c13f92811192494dc409769712f595e382b0b928763bdc1ceaf70315b8fdff64a6faa350d73fdf846c318ab126dff57cde726977c6c7"
-        }
-      ],
-      "licenses" : [
-        {
-          "license" : {
-            "id" : "Apache-2.0"
-          }
-        }
-      ],
-      "purl" : "pkg:maven/io.micrometer/micrometer-core@1.14.4?type=jar",
-      "externalReferences" : [
-        {
-          "type" : "website",
-          "url" : "https://github.com/micrometer-metrics/micrometer"
-        }
-      ]
-    },
-    {
-      "type" : "library",
-      "bom-ref" : "pkg:maven/io.micrometer/micrometer-commons@1.14.4?type=jar",
-      "group" : "io.micrometer",
-      "name" : "micrometer-commons",
-      "version" : "1.14.4",
-      "description" : "Module containing common code",
-      "scope" : "required",
-      "hashes" : [
-        {
-          "alg" : "MD5",
-          "content" : "d73264aa56c497931f40b5d9de391653"
-        },
-        {
-          "alg" : "SHA-1",
-          "content" : "3664f95586514d8f9adc81a5f7a5ef9f66b65599"
-        },
-        {
-          "alg" : "SHA-256",
-          "content" : "6bb0f56fb88f65ddb4b080e3d80165eeb1740f2227ba0b8ac386109969f7e9bf"
-        },
-        {
-          "alg" : "SHA-512",
-          "content" : "c7e746de814502ede6d7d675ad25a8a75009b2801b295ec9bb17c2af70bc7cb25d50551065ef7ee2f27257fd11a57c67cd15b57a0b310d44e9ea5cce4c119ee3"
-        },
-        {
-          "alg" : "SHA-384",
-          "content" : "cb621c80eb541fb2d9dbe447c6076f43f5483fcc55f84a161ee4c046e15a180e53a03907dbcfe1d54e4090fb385e4a93"
-        },
-        {
-          "alg" : "SHA3-384",
-          "content" : "602fe602ed3f52cb848870259fd5a8412ef9d9248ed6aa6f93effc190a9f2dee27c1fd19c6cf336e61cd96487bc33d20"
-        },
-        {
-          "alg" : "SHA3-256",
-          "content" : "d9cd8cec1dc7a20458eb00ad66b22aaf00d412672ce0e6dda2431166bea32d72"
-        },
-        {
-          "alg" : "SHA3-512",
-          "content" : "76c817981a64d576e0283c9a63849290d6e9f9423423f9fbaa3a1f299eb0da485ffb6d7dff64e3536c550ae50809559e09ecb34c6a4dd2b63addd47874cc00dd"
-        }
-      ],
-      "licenses" : [
-        {
-          "license" : {
-            "id" : "Apache-2.0"
-          }
-        }
-      ],
-      "purl" : "pkg:maven/io.micrometer/micrometer-commons@1.14.4?type=jar",
-      "externalReferences" : [
-        {
-          "type" : "website",
-          "url" : "https://github.com/micrometer-metrics/micrometer"
-        }
-      ]
-    },
-    {
-      "type" : "library",
-      "bom-ref" : "pkg:maven/io.micrometer/micrometer-observation@1.14.4?type=jar",
-      "group" : "io.micrometer",
-      "name" : "micrometer-observation",
-      "version" : "1.14.4",
-      "description" : "Module containing Observation related code",
-      "scope" : "required",
-      "hashes" : [
-        {
-          "alg" : "MD5",
-          "content" : "eb49f0faa9a26e2435cf75874f23ad6f"
-        },
-        {
-          "alg" : "SHA-1",
-          "content" : "c17efe9e6695a0a849a95d0e77422516a345e779"
-        },
-        {
-          "alg" : "SHA-256",
-          "content" : "28dd4b001c14fc13b0bc48535621214916518895924e3ce528a604205b1ff0a1"
-        },
-        {
-          "alg" : "SHA-512",
-          "content" : "70941056771716492f36b4cfd58b967d5e55186167372d23f1b077952cb39443c9ac64ff852f48af5c11422f2bbe16ef43a0d56df81a0398d8581c60bd3681db"
-        },
-        {
-          "alg" : "SHA-384",
-          "content" : "ab88dda98524c158117101ca9c8d25ac4012e31981bd26eb069e8423fe50386e97f802193107483ea9f5a879e78a2b01"
-        },
-        {
-          "alg" : "SHA3-384",
-          "content" : "705634df363333ae5281f80a01b653ddc6fdeba8e69253924d6604e1523abd57034b1b20deeec5cdeab7ac9bc51c644d"
-        },
-        {
-          "alg" : "SHA3-256",
-          "content" : "a89a60b98b3993b6c4e16cf1677cda9ff91ffa0e999e748c7e7fcc8993e854ae"
-        },
-        {
-          "alg" : "SHA3-512",
-          "content" : "1453648caa480dc0d7375d5be3c4a554eca58b015035046e4764afa07db6057813b1f50a051797636145f44a4fe87e82c2b7c0ba1afbdd3463a925cc604132ea"
-        }
-      ],
-      "licenses" : [
-        {
-          "license" : {
-            "id" : "Apache-2.0"
-          }
-        }
-      ],
-      "purl" : "pkg:maven/io.micrometer/micrometer-observation@1.14.4?type=jar",
-      "externalReferences" : [
-        {
-          "type" : "website",
-          "url" : "https://github.com/micrometer-metrics/micrometer"
-        }
-      ]
-    },
-    {
-      "type" : "library",
-      "bom-ref" : "pkg:maven/org.latencyutils/LatencyUtils@2.0.3?type=jar",
-      "group" : "org.latencyutils",
-      "name" : "LatencyUtils",
-      "version" : "2.0.3",
-      "description" : "LatencyUtils is a package that provides latency recording and reporting utilities.",
-      "scope" : "required",
-      "hashes" : [
-        {
-          "alg" : "MD5",
-          "content" : "2ad12e1ef7614cecfb0483fa9ac6da73"
-        },
-        {
-          "alg" : "SHA-1",
-          "content" : "769c0b82cb2421c8256300e907298a9410a2a3d3"
-        },
-        {
-          "alg" : "SHA-256",
-          "content" : "a32a9ffa06b2f4e01c5360f8f9df7bc5d9454a5d373cd8f361347fa5a57165ec"
-        },
-        {
-          "alg" : "SHA-512",
-          "content" : "bb81a42498c65389366205f4e07cee336920e2f05cc0daae213f2784b1d0ce9a908b038daec20478f23eb00b2bf704f96c5b00f63c99615193ab2a3cc4a9f890"
-        },
-        {
-          "alg" : "SHA-384",
-          "content" : "16ca4640dc9d848e6c6d15441897e1b5a9f27f34207b0bb456dd54d8f267b73b348092e548e78634144de44ba3515205"
-        },
-        {
-          "alg" : "SHA3-384",
-          "content" : "406c2b5c6f64b0c090568e479b5e6136a04a4e77f8eea65d32b4e2b01deebcdf6a0a851240cdb740c25b5a5e61e6c179"
-        },
-        {
-          "alg" : "SHA3-256",
-          "content" : "50ae828358301033542fd7c412e86ee318d5451f89a182e2a679aaf18099d26d"
-        },
-        {
-          "alg" : "SHA3-512",
-          "content" : "456c337b9fb385579aae707409ed6a04d08e5fc87b1a46733dca617c22c625bf253dc4747e0cdbf5e7d8b48102d2938cb482b6b688a79aab645a7459c592258f"
-        }
-      ],
-      "licenses" : [
-        {
-          "license" : {
-            "id" : "CC0-1.0"
-          }
-        }
-      ],
-      "purl" : "pkg:maven/org.latencyutils/LatencyUtils@2.0.3?type=jar",
-      "externalReferences" : [
-        {
-          "type" : "website",
-          "url" : "http://latencyutils.github.io/LatencyUtils/"
-        },
-        {
-          "type" : "distribution-intake",
-          "url" : "https://oss.sonatype.org/service/local/staging/deploy/maven2/"
-        },
-        {
-          "type" : "issue-tracker",
-          "url" : "https://github.com/LatencyUtils/LatencyUtils/issues"
-        },
-        {
-          "type" : "vcs",
-          "url" : "scm:git:git://github.com/LatencyUtils/LatencyUtils.git"
-        }
-      ]
-    },
-    {
-      "type" : "library",
-      "bom-ref" : "pkg:maven/io.configd/configd-distribution-service@0.1.0-SNAPSHOT?type=jar",
-      "group" : "io.configd",
-      "name" : "configd-distribution-service",
-      "version" : "0.1.0-SNAPSHOT",
-      "licenses" : [ ],
-      "purl" : "pkg:maven/io.configd/configd-distribution-service@0.1.0-SNAPSHOT?type=jar"
-    },
-    {
-      "type" : "library",
-      "bom-ref" : "pkg:maven/io.configd/configd-edge-cache@0.1.0-SNAPSHOT?type=jar",
-      "group" : "io.configd",
-      "name" : "configd-edge-cache",
-      "version" : "0.1.0-SNAPSHOT",
-      "licenses" : [ ],
-      "purl" : "pkg:maven/io.configd/configd-edge-cache@0.1.0-SNAPSHOT?type=jar"
-    },
-    {
-      "type" : "library",
-      "bom-ref" : "pkg:maven/io.configd/configd-replication-engine@0.1.0-SNAPSHOT?type=jar",
-      "group" : "io.configd",
-      "name" : "configd-replication-engine",
-      "version" : "0.1.0-SNAPSHOT",
-      "licenses" : [ ],
-      "purl" : "pkg:maven/io.configd/configd-replication-engine@0.1.0-SNAPSHOT?type=jar"
-    },
-    {
-      "type" : "library",
-      "bom-ref" : "pkg:maven/io.configd/configd-control-plane-api@0.1.0-SNAPSHOT?type=jar",
-      "group" : "io.configd",
-      "name" : "configd-control-plane-api",
-      "version" : "0.1.0-SNAPSHOT",
-      "licenses" : [ ],
-      "purl" : "pkg:maven/io.configd/configd-control-plane-api@0.1.0-SNAPSHOT?type=jar"
-    },
-    {
-      "type" : "library",
-      "bom-ref" : "pkg:maven/io.configd/configd-server@0.1.0-SNAPSHOT?type=jar",
-      "group" : "io.configd",
-      "name" : "configd-server",
-      "version" : "0.1.0-SNAPSHOT",
-      "licenses" : [ ],
-      "purl" : "pkg:maven/io.configd/configd-server@0.1.0-SNAPSHOT?type=jar"
-    },
-    {
-      "type" : "library",
-      "bom-ref" : "pkg:maven/io.configd/configd-edge-node@0.1.0-SNAPSHOT?type=jar",
-      "group" : "io.configd",
-      "name" : "configd-edge-node",
-      "version" : "0.1.0-SNAPSHOT",
-      "licenses" : [ ],
-      "purl" : "pkg:maven/io.configd/configd-edge-node@0.1.0-SNAPSHOT?type=jar"
+      "purl" : "pkg:maven/io.configd/configd-netty@0.1.0-SNAPSHOT?type=jar"
     },
     {
       "type" : "library",
@@ -1964,6 +1516,463 @@
     },
     {
       "type" : "library",
+      "bom-ref" : "pkg:maven/io.configd/configd-consensus-core@0.1.0-SNAPSHOT?type=jar",
+      "group" : "io.configd",
+      "name" : "configd-consensus-core",
+      "version" : "0.1.0-SNAPSHOT",
+      "licenses" : [ ],
+      "purl" : "pkg:maven/io.configd/configd-consensus-core@0.1.0-SNAPSHOT?type=jar"
+    },
+    {
+      "type" : "library",
+      "bom-ref" : "pkg:maven/org.jctools/jctools-core@4.0.5?type=jar",
+      "group" : "org.jctools",
+      "name" : "jctools-core",
+      "version" : "4.0.5",
+      "description" : "Java Concurrency Tools Core Library",
+      "scope" : "required",
+      "hashes" : [
+        {
+          "alg" : "MD5",
+          "content" : "4ec497e79923de658526ef2dcb61a641"
+        },
+        {
+          "alg" : "SHA-1",
+          "content" : "9ab38ca19877236986db4894ef1400a7ca23db80"
+        },
+        {
+          "alg" : "SHA-256",
+          "content" : "d65e5f38bcd0984e26f87187687f1f70dd52740c4d5e046f8d104e01ab5db95f"
+        },
+        {
+          "alg" : "SHA-512",
+          "content" : "3f95bd58dd68e80544aae685d3edbf1d80490dbac562ca7cb454e48bcba89a345b7973466b79373c219c1888dcdead25f0dcf105670ce6fc9f648bfc77b93d74"
+        },
+        {
+          "alg" : "SHA-384",
+          "content" : "aae4390c3ee4f995b6e1767c18cbc0ad7af6344384637ee8633212c31d857616508ec5aebf0adca5943417fc7b35bd18"
+        },
+        {
+          "alg" : "SHA3-384",
+          "content" : "61bbdf154142213ef755b53c8c55232bcfec3c4f0d8dc0367d20358278f125504507dc87ffc9b42b683f53b1a2637ec1"
+        },
+        {
+          "alg" : "SHA3-256",
+          "content" : "f616d29bd080645a709fc23e33f1f493f7dbf3beabc13629a834412c77e450f5"
+        },
+        {
+          "alg" : "SHA3-512",
+          "content" : "b667ac9af64a01c076000eebdace73b74fabb2f15cd97dd04a23abcde94f8ab4eb67f78cd2b346280447aac6408f5b9267cb21031b2ede91d271cb209d097ff6"
+        }
+      ],
+      "licenses" : [
+        {
+          "license" : {
+            "id" : "Apache-2.0"
+          }
+        }
+      ],
+      "purl" : "pkg:maven/org.jctools/jctools-core@4.0.5?type=jar",
+      "externalReferences" : [
+        {
+          "type" : "website",
+          "url" : "https://github.com/JCTools"
+        },
+        {
+          "type" : "distribution-intake",
+          "url" : "https://oss.sonatype.org/service/local/staging/deploy/maven2/"
+        },
+        {
+          "type" : "vcs",
+          "url" : "https://github.com/JCTools/JCTools"
+        }
+      ]
+    },
+    {
+      "type" : "library",
+      "bom-ref" : "pkg:maven/io.configd/configd-config-store@0.1.0-SNAPSHOT?type=jar",
+      "group" : "io.configd",
+      "name" : "configd-config-store",
+      "version" : "0.1.0-SNAPSHOT",
+      "licenses" : [ ],
+      "purl" : "pkg:maven/io.configd/configd-config-store@0.1.0-SNAPSHOT?type=jar"
+    },
+    {
+      "type" : "library",
+      "bom-ref" : "pkg:maven/io.configd/configd-observability@0.1.0-SNAPSHOT?type=jar",
+      "group" : "io.configd",
+      "name" : "configd-observability",
+      "version" : "0.1.0-SNAPSHOT",
+      "licenses" : [ ],
+      "purl" : "pkg:maven/io.configd/configd-observability@0.1.0-SNAPSHOT?type=jar"
+    },
+    {
+      "type" : "library",
+      "bom-ref" : "pkg:maven/org.hdrhistogram/HdrHistogram@2.2.2?type=jar",
+      "group" : "org.hdrhistogram",
+      "name" : "HdrHistogram",
+      "version" : "2.2.2",
+      "description" : "HdrHistogram supports the recording and analyzing sampled data value counts across a configurable integer value range with configurable value precision within the range. Value precision is expressed as the number of significant digits in the value recording, and provides control over value quantization behavior across the value range and the subsequent value resolution at any given level.",
+      "scope" : "required",
+      "hashes" : [
+        {
+          "alg" : "MD5",
+          "content" : "41f807bf0c681d6f692c408a6e217eaf"
+        },
+        {
+          "alg" : "SHA-1",
+          "content" : "7959933ebcc0f05b2eaa5af0a0c8689fa257b15c"
+        },
+        {
+          "alg" : "SHA-256",
+          "content" : "22d1d4316c4ec13a68b559e98c8256d69071593731da96136640f864fa14fad8"
+        },
+        {
+          "alg" : "SHA-512",
+          "content" : "fb28f1bc3a3d4430474ea87a0833d56dc3d1303c98918122d93c630ebdb0d1323bbf8feb9ffdc7dddd1908105858e6959bdfdd3889ca5803cecde93a974ab6b7"
+        },
+        {
+          "alg" : "SHA-384",
+          "content" : "fa19cf4674dee37cb5114689cccafeadbb7989e17768b814cb431806a0f69c7b37093b6e100430bd571a45d87a319758"
+        },
+        {
+          "alg" : "SHA3-384",
+          "content" : "fc0a9e2e5284bc2f911c5e2fdf9eec6cfa1973b6cfb1362822580d6c8768c73ebd1c8056b6e4e5302940f6b5ec4c74b7"
+        },
+        {
+          "alg" : "SHA3-256",
+          "content" : "79af553410abf4d3bbfa64374dfdf8777ce49d28b4c67a615e6d4a78e97d0498"
+        },
+        {
+          "alg" : "SHA3-512",
+          "content" : "5b2b1795ed1ea55b5a3566bb1f4170a4367b7893256809fdb428df9405857c8454196badf3681abaf536260ed6f293c096a3f3c9d72f0f04830e8fe71d49410a"
+        }
+      ],
+      "licenses" : [
+        {
+          "license" : {
+            "id" : "CC0-1.0"
+          }
+        },
+        {
+          "license" : {
+            "id" : "BSD-2-Clause",
+            "url" : "https://opensource.org/licenses/BSD-2-Clause"
+          }
+        }
+      ],
+      "purl" : "pkg:maven/org.hdrhistogram/HdrHistogram@2.2.2?type=jar",
+      "externalReferences" : [
+        {
+          "type" : "website",
+          "url" : "http://hdrhistogram.github.io/HdrHistogram/"
+        },
+        {
+          "type" : "issue-tracker",
+          "url" : "https://github.com/HdrHistogram/HdrHistogram/issues"
+        },
+        {
+          "type" : "vcs",
+          "url" : "scm:git:git://github.com/HdrHistogram/HdrHistogram.git"
+        }
+      ]
+    },
+    {
+      "type" : "library",
+      "bom-ref" : "pkg:maven/io.micrometer/micrometer-core@1.14.4?type=jar",
+      "group" : "io.micrometer",
+      "name" : "micrometer-core",
+      "version" : "1.14.4",
+      "description" : "Core module of Micrometer containing instrumentation API and implementation",
+      "scope" : "required",
+      "hashes" : [
+        {
+          "alg" : "MD5",
+          "content" : "806daa9b1b3cf1ba3af3b57ecb43cae5"
+        },
+        {
+          "alg" : "SHA-1",
+          "content" : "05686f90bba1d2f7ba0d3adb14f90b95659a6461"
+        },
+        {
+          "alg" : "SHA-256",
+          "content" : "d163c69b38e2f9f9a14b3d1b36e5a89d7b8cf247a41fc44afd5072c3cd64e516"
+        },
+        {
+          "alg" : "SHA-512",
+          "content" : "37aa7f881b96832d6bf106499cd680f80b79400dca6590b9e8f69e574961200a08453124af127c2c5b7687b99f3aa9ebe7709d244b23c57d7c4a93de89cbac2c"
+        },
+        {
+          "alg" : "SHA-384",
+          "content" : "e4a37bf8dccc6df21c7ef09e81732c995f5615f6af06c7ee93f1b7c90d55486ab652f1f1bb0cb8e10b3e61dcbc852391"
+        },
+        {
+          "alg" : "SHA3-384",
+          "content" : "a35e14775ba18521cfbfa6db0688e7160682ccfcbbc36ca4b1de7438dde7a2aa13739583da0937fe330e62a253e42b7b"
+        },
+        {
+          "alg" : "SHA3-256",
+          "content" : "f2733d036f84287ce948226d59d8d25c67fb6ad448abcc3f46cb4ebb85f5d573"
+        },
+        {
+          "alg" : "SHA3-512",
+          "content" : "23c0c36f24306411bd14c13f92811192494dc409769712f595e382b0b928763bdc1ceaf70315b8fdff64a6faa350d73fdf846c318ab126dff57cde726977c6c7"
+        }
+      ],
+      "licenses" : [
+        {
+          "license" : {
+            "id" : "Apache-2.0"
+          }
+        }
+      ],
+      "purl" : "pkg:maven/io.micrometer/micrometer-core@1.14.4?type=jar",
+      "externalReferences" : [
+        {
+          "type" : "website",
+          "url" : "https://github.com/micrometer-metrics/micrometer"
+        }
+      ]
+    },
+    {
+      "type" : "library",
+      "bom-ref" : "pkg:maven/io.micrometer/micrometer-commons@1.14.4?type=jar",
+      "group" : "io.micrometer",
+      "name" : "micrometer-commons",
+      "version" : "1.14.4",
+      "description" : "Module containing common code",
+      "scope" : "required",
+      "hashes" : [
+        {
+          "alg" : "MD5",
+          "content" : "d73264aa56c497931f40b5d9de391653"
+        },
+        {
+          "alg" : "SHA-1",
+          "content" : "3664f95586514d8f9adc81a5f7a5ef9f66b65599"
+        },
+        {
+          "alg" : "SHA-256",
+          "content" : "6bb0f56fb88f65ddb4b080e3d80165eeb1740f2227ba0b8ac386109969f7e9bf"
+        },
+        {
+          "alg" : "SHA-512",
+          "content" : "c7e746de814502ede6d7d675ad25a8a75009b2801b295ec9bb17c2af70bc7cb25d50551065ef7ee2f27257fd11a57c67cd15b57a0b310d44e9ea5cce4c119ee3"
+        },
+        {
+          "alg" : "SHA-384",
+          "content" : "cb621c80eb541fb2d9dbe447c6076f43f5483fcc55f84a161ee4c046e15a180e53a03907dbcfe1d54e4090fb385e4a93"
+        },
+        {
+          "alg" : "SHA3-384",
+          "content" : "602fe602ed3f52cb848870259fd5a8412ef9d9248ed6aa6f93effc190a9f2dee27c1fd19c6cf336e61cd96487bc33d20"
+        },
+        {
+          "alg" : "SHA3-256",
+          "content" : "d9cd8cec1dc7a20458eb00ad66b22aaf00d412672ce0e6dda2431166bea32d72"
+        },
+        {
+          "alg" : "SHA3-512",
+          "content" : "76c817981a64d576e0283c9a63849290d6e9f9423423f9fbaa3a1f299eb0da485ffb6d7dff64e3536c550ae50809559e09ecb34c6a4dd2b63addd47874cc00dd"
+        }
+      ],
+      "licenses" : [
+        {
+          "license" : {
+            "id" : "Apache-2.0"
+          }
+        }
+      ],
+      "purl" : "pkg:maven/io.micrometer/micrometer-commons@1.14.4?type=jar",
+      "externalReferences" : [
+        {
+          "type" : "website",
+          "url" : "https://github.com/micrometer-metrics/micrometer"
+        }
+      ]
+    },
+    {
+      "type" : "library",
+      "bom-ref" : "pkg:maven/io.micrometer/micrometer-observation@1.14.4?type=jar",
+      "group" : "io.micrometer",
+      "name" : "micrometer-observation",
+      "version" : "1.14.4",
+      "description" : "Module containing Observation related code",
+      "scope" : "required",
+      "hashes" : [
+        {
+          "alg" : "MD5",
+          "content" : "eb49f0faa9a26e2435cf75874f23ad6f"
+        },
+        {
+          "alg" : "SHA-1",
+          "content" : "c17efe9e6695a0a849a95d0e77422516a345e779"
+        },
+        {
+          "alg" : "SHA-256",
+          "content" : "28dd4b001c14fc13b0bc48535621214916518895924e3ce528a604205b1ff0a1"
+        },
+        {
+          "alg" : "SHA-512",
+          "content" : "70941056771716492f36b4cfd58b967d5e55186167372d23f1b077952cb39443c9ac64ff852f48af5c11422f2bbe16ef43a0d56df81a0398d8581c60bd3681db"
+        },
+        {
+          "alg" : "SHA-384",
+          "content" : "ab88dda98524c158117101ca9c8d25ac4012e31981bd26eb069e8423fe50386e97f802193107483ea9f5a879e78a2b01"
+        },
+        {
+          "alg" : "SHA3-384",
+          "content" : "705634df363333ae5281f80a01b653ddc6fdeba8e69253924d6604e1523abd57034b1b20deeec5cdeab7ac9bc51c644d"
+        },
+        {
+          "alg" : "SHA3-256",
+          "content" : "a89a60b98b3993b6c4e16cf1677cda9ff91ffa0e999e748c7e7fcc8993e854ae"
+        },
+        {
+          "alg" : "SHA3-512",
+          "content" : "1453648caa480dc0d7375d5be3c4a554eca58b015035046e4764afa07db6057813b1f50a051797636145f44a4fe87e82c2b7c0ba1afbdd3463a925cc604132ea"
+        }
+      ],
+      "licenses" : [
+        {
+          "license" : {
+            "id" : "Apache-2.0"
+          }
+        }
+      ],
+      "purl" : "pkg:maven/io.micrometer/micrometer-observation@1.14.4?type=jar",
+      "externalReferences" : [
+        {
+          "type" : "website",
+          "url" : "https://github.com/micrometer-metrics/micrometer"
+        }
+      ]
+    },
+    {
+      "type" : "library",
+      "bom-ref" : "pkg:maven/org.latencyutils/LatencyUtils@2.0.3?type=jar",
+      "group" : "org.latencyutils",
+      "name" : "LatencyUtils",
+      "version" : "2.0.3",
+      "description" : "LatencyUtils is a package that provides latency recording and reporting utilities.",
+      "scope" : "required",
+      "hashes" : [
+        {
+          "alg" : "MD5",
+          "content" : "2ad12e1ef7614cecfb0483fa9ac6da73"
+        },
+        {
+          "alg" : "SHA-1",
+          "content" : "769c0b82cb2421c8256300e907298a9410a2a3d3"
+        },
+        {
+          "alg" : "SHA-256",
+          "content" : "a32a9ffa06b2f4e01c5360f8f9df7bc5d9454a5d373cd8f361347fa5a57165ec"
+        },
+        {
+          "alg" : "SHA-512",
+          "content" : "bb81a42498c65389366205f4e07cee336920e2f05cc0daae213f2784b1d0ce9a908b038daec20478f23eb00b2bf704f96c5b00f63c99615193ab2a3cc4a9f890"
+        },
+        {
+          "alg" : "SHA-384",
+          "content" : "16ca4640dc9d848e6c6d15441897e1b5a9f27f34207b0bb456dd54d8f267b73b348092e548e78634144de44ba3515205"
+        },
+        {
+          "alg" : "SHA3-384",
+          "content" : "406c2b5c6f64b0c090568e479b5e6136a04a4e77f8eea65d32b4e2b01deebcdf6a0a851240cdb740c25b5a5e61e6c179"
+        },
+        {
+          "alg" : "SHA3-256",
+          "content" : "50ae828358301033542fd7c412e86ee318d5451f89a182e2a679aaf18099d26d"
+        },
+        {
+          "alg" : "SHA3-512",
+          "content" : "456c337b9fb385579aae707409ed6a04d08e5fc87b1a46733dca617c22c625bf253dc4747e0cdbf5e7d8b48102d2938cb482b6b688a79aab645a7459c592258f"
+        }
+      ],
+      "licenses" : [
+        {
+          "license" : {
+            "id" : "CC0-1.0"
+          }
+        }
+      ],
+      "purl" : "pkg:maven/org.latencyutils/LatencyUtils@2.0.3?type=jar",
+      "externalReferences" : [
+        {
+          "type" : "website",
+          "url" : "http://latencyutils.github.io/LatencyUtils/"
+        },
+        {
+          "type" : "distribution-intake",
+          "url" : "https://oss.sonatype.org/service/local/staging/deploy/maven2/"
+        },
+        {
+          "type" : "issue-tracker",
+          "url" : "https://github.com/LatencyUtils/LatencyUtils/issues"
+        },
+        {
+          "type" : "vcs",
+          "url" : "scm:git:git://github.com/LatencyUtils/LatencyUtils.git"
+        }
+      ]
+    },
+    {
+      "type" : "library",
+      "bom-ref" : "pkg:maven/io.configd/configd-distribution-service@0.1.0-SNAPSHOT?type=jar",
+      "group" : "io.configd",
+      "name" : "configd-distribution-service",
+      "version" : "0.1.0-SNAPSHOT",
+      "licenses" : [ ],
+      "purl" : "pkg:maven/io.configd/configd-distribution-service@0.1.0-SNAPSHOT?type=jar"
+    },
+    {
+      "type" : "library",
+      "bom-ref" : "pkg:maven/io.configd/configd-edge-cache@0.1.0-SNAPSHOT?type=jar",
+      "group" : "io.configd",
+      "name" : "configd-edge-cache",
+      "version" : "0.1.0-SNAPSHOT",
+      "licenses" : [ ],
+      "purl" : "pkg:maven/io.configd/configd-edge-cache@0.1.0-SNAPSHOT?type=jar"
+    },
+    {
+      "type" : "library",
+      "bom-ref" : "pkg:maven/io.configd/configd-replication-engine@0.1.0-SNAPSHOT?type=jar",
+      "group" : "io.configd",
+      "name" : "configd-replication-engine",
+      "version" : "0.1.0-SNAPSHOT",
+      "licenses" : [ ],
+      "purl" : "pkg:maven/io.configd/configd-replication-engine@0.1.0-SNAPSHOT?type=jar"
+    },
+    {
+      "type" : "library",
+      "bom-ref" : "pkg:maven/io.configd/configd-control-plane-api@0.1.0-SNAPSHOT?type=jar",
+      "group" : "io.configd",
+      "name" : "configd-control-plane-api",
+      "version" : "0.1.0-SNAPSHOT",
+      "licenses" : [ ],
+      "purl" : "pkg:maven/io.configd/configd-control-plane-api@0.1.0-SNAPSHOT?type=jar"
+    },
+    {
+      "type" : "library",
+      "bom-ref" : "pkg:maven/io.configd/configd-server@0.1.0-SNAPSHOT?type=jar",
+      "group" : "io.configd",
+      "name" : "configd-server",
+      "version" : "0.1.0-SNAPSHOT",
+      "licenses" : [ ],
+      "purl" : "pkg:maven/io.configd/configd-server@0.1.0-SNAPSHOT?type=jar"
+    },
+    {
+      "type" : "library",
+      "bom-ref" : "pkg:maven/io.configd/configd-edge-node@0.1.0-SNAPSHOT?type=jar",
+      "group" : "io.configd",
+      "name" : "configd-edge-node",
+      "version" : "0.1.0-SNAPSHOT",
+      "licenses" : [ ],
+      "purl" : "pkg:maven/io.configd/configd-edge-node@0.1.0-SNAPSHOT?type=jar"
+    },
+    {
+      "type" : "library",
       "bom-ref" : "pkg:maven/io.configd/configd-testkit@0.1.0-SNAPSHOT?type=jar",
       "group" : "io.configd",
       "name" : "configd-testkit",
@@ -2732,6 +2741,7 @@
       "dependsOn" : [
         "pkg:maven/io.configd/configd-common@0.1.0-SNAPSHOT?type=jar",
         "pkg:maven/io.configd/configd-transport@0.1.0-SNAPSHOT?type=jar",
+        "pkg:maven/io.configd/configd-netty@0.1.0-SNAPSHOT?type=jar",
         "pkg:maven/io.configd/configd-consensus-core@0.1.0-SNAPSHOT?type=jar",
         "pkg:maven/io.configd/configd-config-store@0.1.0-SNAPSHOT?type=jar",
         "pkg:maven/io.configd/configd-observability@0.1.0-SNAPSHOT?type=jar",
@@ -2764,123 +2774,8 @@
       ]
     },
     {
-      "ref" : "pkg:maven/io.configd/configd-consensus-core@0.1.0-SNAPSHOT?type=jar",
+      "ref" : "pkg:maven/io.configd/configd-netty@0.1.0-SNAPSHOT?type=jar",
       "dependsOn" : [
-        "pkg:maven/io.configd/configd-common@0.1.0-SNAPSHOT?type=jar",
-        "pkg:maven/io.configd/configd-transport@0.1.0-SNAPSHOT?type=jar",
-        "pkg:maven/org.agrona/agrona@1.23.1?type=jar",
-        "pkg:maven/org.jctools/jctools-core@4.0.5?type=jar"
-      ]
-    },
-    {
-      "ref" : "pkg:maven/org.jctools/jctools-core@4.0.5?type=jar",
-      "dependsOn" : [ ]
-    },
-    {
-      "ref" : "pkg:maven/io.configd/configd-config-store@0.1.0-SNAPSHOT?type=jar",
-      "dependsOn" : [
-        "pkg:maven/io.configd/configd-common@0.1.0-SNAPSHOT?type=jar",
-        "pkg:maven/io.configd/configd-consensus-core@0.1.0-SNAPSHOT?type=jar",
-        "pkg:maven/org.agrona/agrona@1.23.1?type=jar"
-      ]
-    },
-    {
-      "ref" : "pkg:maven/io.configd/configd-observability@0.1.0-SNAPSHOT?type=jar",
-      "dependsOn" : [
-        "pkg:maven/io.configd/configd-common@0.1.0-SNAPSHOT?type=jar",
-        "pkg:maven/org.hdrhistogram/HdrHistogram@2.2.2?type=jar",
-        "pkg:maven/io.micrometer/micrometer-core@1.14.4?type=jar"
-      ]
-    },
-    {
-      "ref" : "pkg:maven/org.hdrhistogram/HdrHistogram@2.2.2?type=jar",
-      "dependsOn" : [ ]
-    },
-    {
-      "ref" : "pkg:maven/io.micrometer/micrometer-core@1.14.4?type=jar",
-      "dependsOn" : [
-        "pkg:maven/io.micrometer/micrometer-commons@1.14.4?type=jar",
-        "pkg:maven/io.micrometer/micrometer-observation@1.14.4?type=jar",
-        "pkg:maven/org.hdrhistogram/HdrHistogram@2.2.2?type=jar",
-        "pkg:maven/org.latencyutils/LatencyUtils@2.0.3?type=jar"
-      ]
-    },
-    {
-      "ref" : "pkg:maven/io.micrometer/micrometer-commons@1.14.4?type=jar",
-      "dependsOn" : [ ]
-    },
-    {
-      "ref" : "pkg:maven/io.micrometer/micrometer-observation@1.14.4?type=jar",
-      "dependsOn" : [
-        "pkg:maven/io.micrometer/micrometer-commons@1.14.4?type=jar"
-      ]
-    },
-    {
-      "ref" : "pkg:maven/org.latencyutils/LatencyUtils@2.0.3?type=jar",
-      "dependsOn" : [ ]
-    },
-    {
-      "ref" : "pkg:maven/io.configd/configd-distribution-service@0.1.0-SNAPSHOT?type=jar",
-      "dependsOn" : [
-        "pkg:maven/io.configd/configd-common@0.1.0-SNAPSHOT?type=jar",
-        "pkg:maven/io.configd/configd-config-store@0.1.0-SNAPSHOT?type=jar",
-        "pkg:maven/io.configd/configd-transport@0.1.0-SNAPSHOT?type=jar",
-        "pkg:maven/org.agrona/agrona@1.23.1?type=jar",
-        "pkg:maven/org.jctools/jctools-core@4.0.5?type=jar"
-      ]
-    },
-    {
-      "ref" : "pkg:maven/io.configd/configd-edge-cache@0.1.0-SNAPSHOT?type=jar",
-      "dependsOn" : [
-        "pkg:maven/io.configd/configd-common@0.1.0-SNAPSHOT?type=jar",
-        "pkg:maven/io.configd/configd-config-store@0.1.0-SNAPSHOT?type=jar",
-        "pkg:maven/io.configd/configd-observability@0.1.0-SNAPSHOT?type=jar",
-        "pkg:maven/io.configd/configd-distribution-service@0.1.0-SNAPSHOT?type=jar"
-      ]
-    },
-    {
-      "ref" : "pkg:maven/io.configd/configd-replication-engine@0.1.0-SNAPSHOT?type=jar",
-      "dependsOn" : [
-        "pkg:maven/io.configd/configd-common@0.1.0-SNAPSHOT?type=jar",
-        "pkg:maven/io.configd/configd-consensus-core@0.1.0-SNAPSHOT?type=jar",
-        "pkg:maven/io.configd/configd-transport@0.1.0-SNAPSHOT?type=jar",
-        "pkg:maven/org.agrona/agrona@1.23.1?type=jar",
-        "pkg:maven/org.jctools/jctools-core@4.0.5?type=jar"
-      ]
-    },
-    {
-      "ref" : "pkg:maven/io.configd/configd-control-plane-api@0.1.0-SNAPSHOT?type=jar",
-      "dependsOn" : [
-        "pkg:maven/io.configd/configd-common@0.1.0-SNAPSHOT?type=jar",
-        "pkg:maven/io.configd/configd-consensus-core@0.1.0-SNAPSHOT?type=jar",
-        "pkg:maven/io.configd/configd-replication-engine@0.1.0-SNAPSHOT?type=jar",
-        "pkg:maven/io.configd/configd-config-store@0.1.0-SNAPSHOT?type=jar",
-        "pkg:maven/io.configd/configd-observability@0.1.0-SNAPSHOT?type=jar"
-      ]
-    },
-    {
-      "ref" : "pkg:maven/io.configd/configd-server@0.1.0-SNAPSHOT?type=jar",
-      "dependsOn" : [
-        "pkg:maven/io.configd/configd-common@0.1.0-SNAPSHOT?type=jar",
-        "pkg:maven/io.configd/configd-consensus-core@0.1.0-SNAPSHOT?type=jar",
-        "pkg:maven/io.configd/configd-config-store@0.1.0-SNAPSHOT?type=jar",
-        "pkg:maven/io.configd/configd-replication-engine@0.1.0-SNAPSHOT?type=jar",
-        "pkg:maven/io.configd/configd-distribution-service@0.1.0-SNAPSHOT?type=jar",
-        "pkg:maven/io.configd/configd-transport@0.1.0-SNAPSHOT?type=jar",
-        "pkg:maven/io.configd/configd-control-plane-api@0.1.0-SNAPSHOT?type=jar",
-        "pkg:maven/io.configd/configd-edge-cache@0.1.0-SNAPSHOT?type=jar",
-        "pkg:maven/io.configd/configd-observability@0.1.0-SNAPSHOT?type=jar"
-      ]
-    },
-    {
-      "ref" : "pkg:maven/io.configd/configd-edge-node@0.1.0-SNAPSHOT?type=jar",
-      "dependsOn" : [
-        "pkg:maven/io.configd/configd-common@0.1.0-SNAPSHOT?type=jar",
-        "pkg:maven/io.configd/configd-transport@0.1.0-SNAPSHOT?type=jar",
-        "pkg:maven/io.configd/configd-config-store@0.1.0-SNAPSHOT?type=jar",
-        "pkg:maven/io.configd/configd-edge-cache@0.1.0-SNAPSHOT?type=jar",
-        "pkg:maven/io.configd/configd-distribution-service@0.1.0-SNAPSHOT?type=jar",
-        "pkg:maven/io.configd/configd-observability@0.1.0-SNAPSHOT?type=jar",
         "pkg:maven/io.netty/netty-transport@4.2.15.Final?type=jar",
         "pkg:maven/io.netty/netty-buffer@4.2.15.Final?type=jar",
         "pkg:maven/io.netty/netty-codec-http@4.2.15.Final?type=jar",
@@ -2998,6 +2893,128 @@
         "pkg:maven/io.netty/netty-transport@4.2.15.Final?type=jar",
         "pkg:maven/io.netty/netty-transport-native-unix-common@4.2.15.Final?type=jar",
         "pkg:maven/io.netty/netty-transport-classes-io_uring@4.2.15.Final?type=jar"
+      ]
+    },
+    {
+      "ref" : "pkg:maven/io.configd/configd-consensus-core@0.1.0-SNAPSHOT?type=jar",
+      "dependsOn" : [
+        "pkg:maven/io.configd/configd-common@0.1.0-SNAPSHOT?type=jar",
+        "pkg:maven/io.configd/configd-transport@0.1.0-SNAPSHOT?type=jar",
+        "pkg:maven/org.agrona/agrona@1.23.1?type=jar",
+        "pkg:maven/org.jctools/jctools-core@4.0.5?type=jar"
+      ]
+    },
+    {
+      "ref" : "pkg:maven/org.jctools/jctools-core@4.0.5?type=jar",
+      "dependsOn" : [ ]
+    },
+    {
+      "ref" : "pkg:maven/io.configd/configd-config-store@0.1.0-SNAPSHOT?type=jar",
+      "dependsOn" : [
+        "pkg:maven/io.configd/configd-common@0.1.0-SNAPSHOT?type=jar",
+        "pkg:maven/io.configd/configd-consensus-core@0.1.0-SNAPSHOT?type=jar",
+        "pkg:maven/org.agrona/agrona@1.23.1?type=jar"
+      ]
+    },
+    {
+      "ref" : "pkg:maven/io.configd/configd-observability@0.1.0-SNAPSHOT?type=jar",
+      "dependsOn" : [
+        "pkg:maven/io.configd/configd-common@0.1.0-SNAPSHOT?type=jar",
+        "pkg:maven/org.hdrhistogram/HdrHistogram@2.2.2?type=jar",
+        "pkg:maven/io.micrometer/micrometer-core@1.14.4?type=jar"
+      ]
+    },
+    {
+      "ref" : "pkg:maven/org.hdrhistogram/HdrHistogram@2.2.2?type=jar",
+      "dependsOn" : [ ]
+    },
+    {
+      "ref" : "pkg:maven/io.micrometer/micrometer-core@1.14.4?type=jar",
+      "dependsOn" : [
+        "pkg:maven/io.micrometer/micrometer-commons@1.14.4?type=jar",
+        "pkg:maven/io.micrometer/micrometer-observation@1.14.4?type=jar",
+        "pkg:maven/org.hdrhistogram/HdrHistogram@2.2.2?type=jar",
+        "pkg:maven/org.latencyutils/LatencyUtils@2.0.3?type=jar"
+      ]
+    },
+    {
+      "ref" : "pkg:maven/io.micrometer/micrometer-commons@1.14.4?type=jar",
+      "dependsOn" : [ ]
+    },
+    {
+      "ref" : "pkg:maven/io.micrometer/micrometer-observation@1.14.4?type=jar",
+      "dependsOn" : [
+        "pkg:maven/io.micrometer/micrometer-commons@1.14.4?type=jar"
+      ]
+    },
+    {
+      "ref" : "pkg:maven/org.latencyutils/LatencyUtils@2.0.3?type=jar",
+      "dependsOn" : [ ]
+    },
+    {
+      "ref" : "pkg:maven/io.configd/configd-distribution-service@0.1.0-SNAPSHOT?type=jar",
+      "dependsOn" : [
+        "pkg:maven/io.configd/configd-common@0.1.0-SNAPSHOT?type=jar",
+        "pkg:maven/io.configd/configd-config-store@0.1.0-SNAPSHOT?type=jar",
+        "pkg:maven/io.configd/configd-transport@0.1.0-SNAPSHOT?type=jar",
+        "pkg:maven/org.agrona/agrona@1.23.1?type=jar",
+        "pkg:maven/org.jctools/jctools-core@4.0.5?type=jar"
+      ]
+    },
+    {
+      "ref" : "pkg:maven/io.configd/configd-edge-cache@0.1.0-SNAPSHOT?type=jar",
+      "dependsOn" : [
+        "pkg:maven/io.configd/configd-common@0.1.0-SNAPSHOT?type=jar",
+        "pkg:maven/io.configd/configd-config-store@0.1.0-SNAPSHOT?type=jar",
+        "pkg:maven/io.configd/configd-observability@0.1.0-SNAPSHOT?type=jar",
+        "pkg:maven/io.configd/configd-distribution-service@0.1.0-SNAPSHOT?type=jar"
+      ]
+    },
+    {
+      "ref" : "pkg:maven/io.configd/configd-replication-engine@0.1.0-SNAPSHOT?type=jar",
+      "dependsOn" : [
+        "pkg:maven/io.configd/configd-common@0.1.0-SNAPSHOT?type=jar",
+        "pkg:maven/io.configd/configd-consensus-core@0.1.0-SNAPSHOT?type=jar",
+        "pkg:maven/io.configd/configd-transport@0.1.0-SNAPSHOT?type=jar",
+        "pkg:maven/org.agrona/agrona@1.23.1?type=jar",
+        "pkg:maven/org.jctools/jctools-core@4.0.5?type=jar"
+      ]
+    },
+    {
+      "ref" : "pkg:maven/io.configd/configd-control-plane-api@0.1.0-SNAPSHOT?type=jar",
+      "dependsOn" : [
+        "pkg:maven/io.configd/configd-common@0.1.0-SNAPSHOT?type=jar",
+        "pkg:maven/io.configd/configd-consensus-core@0.1.0-SNAPSHOT?type=jar",
+        "pkg:maven/io.configd/configd-replication-engine@0.1.0-SNAPSHOT?type=jar",
+        "pkg:maven/io.configd/configd-config-store@0.1.0-SNAPSHOT?type=jar",
+        "pkg:maven/io.configd/configd-observability@0.1.0-SNAPSHOT?type=jar"
+      ]
+    },
+    {
+      "ref" : "pkg:maven/io.configd/configd-server@0.1.0-SNAPSHOT?type=jar",
+      "dependsOn" : [
+        "pkg:maven/io.configd/configd-common@0.1.0-SNAPSHOT?type=jar",
+        "pkg:maven/io.configd/configd-consensus-core@0.1.0-SNAPSHOT?type=jar",
+        "pkg:maven/io.configd/configd-config-store@0.1.0-SNAPSHOT?type=jar",
+        "pkg:maven/io.configd/configd-replication-engine@0.1.0-SNAPSHOT?type=jar",
+        "pkg:maven/io.configd/configd-distribution-service@0.1.0-SNAPSHOT?type=jar",
+        "pkg:maven/io.configd/configd-transport@0.1.0-SNAPSHOT?type=jar",
+        "pkg:maven/io.configd/configd-control-plane-api@0.1.0-SNAPSHOT?type=jar",
+        "pkg:maven/io.configd/configd-edge-cache@0.1.0-SNAPSHOT?type=jar",
+        "pkg:maven/io.configd/configd-observability@0.1.0-SNAPSHOT?type=jar",
+        "pkg:maven/io.configd/configd-netty@0.1.0-SNAPSHOT?type=jar"
+      ]
+    },
+    {
+      "ref" : "pkg:maven/io.configd/configd-edge-node@0.1.0-SNAPSHOT?type=jar",
+      "dependsOn" : [
+        "pkg:maven/io.configd/configd-common@0.1.0-SNAPSHOT?type=jar",
+        "pkg:maven/io.configd/configd-transport@0.1.0-SNAPSHOT?type=jar",
+        "pkg:maven/io.configd/configd-netty@0.1.0-SNAPSHOT?type=jar",
+        "pkg:maven/io.configd/configd-config-store@0.1.0-SNAPSHOT?type=jar",
+        "pkg:maven/io.configd/configd-edge-cache@0.1.0-SNAPSHOT?type=jar",
+        "pkg:maven/io.configd/configd-distribution-service@0.1.0-SNAPSHOT?type=jar",
+        "pkg:maven/io.configd/configd-observability@0.1.0-SNAPSHOT?type=jar"
       ]
     },
     {
