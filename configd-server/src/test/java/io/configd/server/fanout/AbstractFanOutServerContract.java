@@ -293,6 +293,20 @@ abstract class AbstractFanOutServerContract {
                 10_000L, 2, 10, 60_000L, 60_000L, 3, 3_600_000L, 3_600_000L, 4_096);
     }
 
+    /**
+     * Permissive policy for the propagation test: demote/gap/quarantine limits are effectively
+     * unbounded so the no-ack flood demotes -> snapshots -> resumes WITHOUT ever quarantining.
+     * With the production-faithful {@code policyConfig()} (demoteLimit=2) the {@code tinyQueueConfig}
+     * (queueFrames=2) flood would trip a SECOND overflow demotion -> QUARANTINED -> connection close,
+     * racing the snapshot read (a fast runner loses the race: "stream closed while waiting for
+     * SnapshotBegin"). Quarantine-on-repeat-demotion is proven by the dedicated quarantine tests; the
+     * propagation test isolates the demotion -> snapshot -> resume RECOVERY path.
+     */
+    private static SlowConsumerPolicyConfig propagationPolicyConfig() {
+        return new SlowConsumerPolicyConfig(
+                10_000L, 1_000_000, 1_000_000, 60_000L, 60_000L, 1_000_000, 3_600_000L, 3_600_000L, 4_096);
+    }
+
     private int startServer() throws IOException {
         return startServer(policyConfig());
     }
@@ -640,7 +654,7 @@ abstract class AbstractFanOutServerContract {
     void propagationDeliversVerbatimOrderedNotifiesAndRecovers() throws Exception {
         clock = new MutableClock(T0); // unused by a system-Clock server, but keeps state coherent
         governorMetrics = new RecordingGovernorMetrics();
-        governor = new SlowConsumerGovernor(policyConfig(), governorMetrics);
+        governor = new SlowConsumerGovernor(propagationPolicyConfig(), governorMetrics);
         buffer = new FanOutBuffer(10_000);
         MetricsRegistry registry = new MetricsRegistry();
         // queueFrames=2 (tiny) so the no-ack flood overflows promptly into a demotion; the default

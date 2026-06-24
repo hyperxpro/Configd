@@ -330,8 +330,11 @@ The JDK transport's secondary backpressure is an `ArrayBlockingQueue<>(transport
 `TransportSink.offer(frame)` reproduces this **exactly**: it bounds in-flight (written-not-yet-
 flushed) frames at `transportQueueFrames` via an `AtomicInteger` + a write-completion listener that
 decrements, returning false at the bound; accepted frames are `writeAndFlush`-ed (the **in-pipeline
-`ByteBufFrameSink` encoder** does the single-pass pooled encode **on the event loop**). A
-`WriteBufferWaterMark` gives a byte-level safety net. The session's **primary** bound (`queueFrames`,
+`ByteBufFrameSink` encoder** does the single-pass pooled encode **on the event loop**). The bound is
+**frame-count only — deliberately**, matching the JDK `ArrayBlockingQueue<byte[]>(transportQueueFrames)`
+(also a frame count), rather than adding a Netty byte-level `WriteBufferWaterMark` that would make
+the Netty path *more* conservative than the JDK baseline it must mirror. The session's **primary**
+bound (`queueFrames`,
 in the unchanged core) is transport-independent and is what the slow-consumer tests actually pin —
 so the precise demotion→quarantine semantics are preserved by construction; the transport bound is
 only the secondary would-block. Ordering is preserved: `offer` is called only from the single
