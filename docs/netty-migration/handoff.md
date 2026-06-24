@@ -6,6 +6,97 @@
 
 ---
 
+## Session 4 — M3 (fan-out streaming) → Netty — DONE on branch, Verifier APPROVED, NOT merged
+
+**CI: ALL 12 jobs GREEN — run `28135923407`** (build-and-test/JDK25, tlc, gate-1..7, gate-phase0,
+gate-B, wire-compat). The first run (`28134729234`) was 11/12: **gate-7 caught a real test flake** —
+the NEW `propagationDeliversVerbatimOrderedNotifiesAndRecovers` contract test used the strict
+`policyConfig()` (demoteLimit=2) with `tinyQueueConfig()` (queueFrames=2), so the 300-publish no-ack
+flood tripped a SECOND overflow demotion → QUARANTINED → connection close, racing the snapshot read
+(a fast CI runner lost it: "stream closed while waiting for SnapshotBegin"; the slow 2-vCPU box won
+it, and even build-and-test won it on the same run — a genuine race). Fixed in `06974d4` with a
+permissive `propagationPolicyConfig()` so the demotion→snapshot→**resume** recovery path is
+deterministic (quarantine-on-repeat keeps its own dedicated tests). The gate working as designed.
+
+**Surface:** the edge fan-out streaming SERVER (`configd-server` `FanOutServer`, JDK
+`SSLServerSocket` + 3 virtual threads/connection) → Netty 4.2. The edge CLIENT (`EdgeStreamClient`)
+stays JDK (DR-N9): the measured win (the NOTIFY encode floor) + the slow-consumer policy are
+server-side; mTLS "both directions" = mutual-auth enforced server-side; interop is preserved by the
+shared byte-identical codec.
+
+### Done (verified end-to-end, evidence each)
+
+| Slice | What | Evidence |
+|---|---|---|
+| A (`500c313`) | Single-pass `EdgeFrameCodec.encodeInto(EdgeFrame, FrameSink)` (DR-N10) + `HeapFrameSink`; `encode()` delegates | `EdgeFrameCodecGoldenFixtureTest` green (byte-identical) |
+| A | `-prof gc` floor proof | `m3-fanout-gc-proof.md`: prod `encodeInto` reused-heap **25,520.1 ≡ floor**; pooled-`ByteBuf` **25,760** (floor+240); baseline 69,492 |
+| B (`5ff66fa`) | `FanOutConnectionDriver` extracted (session loop + governor feed + admission + cert-identity binding); JDK `FanOutServer` → thin adapter (DR-N11) | JDK contract 15/15 (faithful extraction) |
+| C (`34284a7`) | `NettyFanOutServer` on `configd-netty`: SslHandler mTLS (DR-N13), `ByteToEdgeFrameDecoder` (peekLength), `EdgeFrameToByteEncoder` (in-pipeline pooled encode), bounded-in-flight sink (DR-N12) | compiles + contract |
+| D (`9ad6a98`) | `AbstractFanOutServerContract` (15 methods) on JDK + Netty(io_uring) + Netty(forced-NIO); gate-7 repointed | **15 / 15 / 16** green |
+| E (`eeb8955`) | `ConfigdServer` cut over to `NettyFanOutServer` (production fan-out = Netty); field typed `FanOutEndpoint` (DR-N14) | `FanOutServerIntegrationTest` 3/3 + `ConfigdServerTest` 22/22 on Netty |
+
+**Re-proven IDENTICAL on the Netty pipeline, zero waivers:** mTLS negative (plaintext / no-cert /
+untrusted-CA / expired-cert / TLSv1.2-downgrade all rejected; trusted accepted), the slow-consumer
+state machine (demotion→catch-up→quarantine→disconnect→refuse→forced-rebootstrap; sustained-warn→
+SLOW; quarantine→UNHEALTHY; per-identity isolation), admission `maxSessions` (refuse-before-handshake
++ counted), and the S2–S4 surface (verbatim ordered NOTIFY, version monotonicity / no-stale-overwrite,
+demotion→chunked-snapshot→resume). Each runs on all three transports (15/subclass). The 4 incumbent
+JDK fan-out test classes were folded VERBATIM into the contract. The real JDK `EdgeStreamClient`
+interoperates with the Netty server (`EdgeNodeIntegrationTest` 3 + monotonicity/re-bootstrap legs).
+
+### Second-agent (fresh-context Verifier): APPROVE — 0 must-fix, 0 should-fix, 1 nit (fixed)
+Independently re-ran the contract from clean (JDK 15 / Netty-io_uring 15 / Netty-NIO 16 — confirmed
+the host has io_uring=epoll=nio so the auto tier genuinely exercised **io_uring**, not a silent NIO
+downgrade), re-measured the floor (prod `encodeInto` 25,520.1 ≡ floor; pooled 25,760.1; baseline
+69,480), `comm -23`-diffed the 4 deleted test classes vs the contract → **fold is verbatim** (zero
+assertions dropped), confirmed scope clean (zero pom.xml, no consensus/Raft/replication file touched,
+`configd-distribution-service` Netty-free), and hunted for under-load divergence (backpressure
+frame-count bound == JDK; mTLS identity = verified cert principal, fail-closed; peekLength bounds
+before alloc; teardown idempotent + paired metrics; maxSessions before handshake) — **none found**.
+The 1 nit (DR-N12 doc claimed a `WriteBufferWaterMark` the code doesn't configure) was corrected in
+`06974d4` (the frame-count bound is the deliberate JDK-faithful backpressure).
+
+### Performance (measured)
+**Allocation (the load-bearing axis):** the production single-pass `encodeInto` hits the
+**25,520 B/op message-building floor** byte-for-byte on a reused heap sink; idiomatic Netty (pooled
+direct `ByteBuf`, in-pipeline `MessageToByteEncoder`) ties at **25,760** (floor + 240 holder
+bookkeeping). The 69 KB→floor win is the codec rewrite (transport-independent); Netty removes none of
+the floor and adds none of the 63% churn — exactly the head-to-head Surface-3 framing. Throughput is
+a same-box wash (verdict). io_uring deferred to Phase V.
+
+### Honest residuals
+- **CVE/gitleaks not yet run on this branch** (nightly-only; the merge-gate precondition, shared with
+  M1/M2). M3 adds **no new external dependency** (SBOM delta = **zero**; M3 changed **zero pom.xml**) —
+  the `io.netty` modules `NettyFanOutServer` uses (handler/codec/ssl) were already resolved via
+  `configd-netty` since M2. (Even cleaner than M2's `+configd-netty`.)
+- **io_uring unmeasured** on this surface (Phase V); auto-selected here.
+- **gc-proof ns/op is relative** (2-vCPU); the allocation floor is the trustworthy axis.
+- **Edge CLIENT stays JDK** (DR-N9) — a deliberate scope choice, not a gap; the mutual-auth
+  enforcement re-proven is server-side.
+
+### Branch-vs-`main` truth
+M3 is on the **branch** `netty-migration`, NOT merged. Production fan-out is Netty on the branch only;
+`main` still runs the JDK fan-out server. Merge is the human gate.
+
+### Documented fast-revert
+`git revert eeb8955` (the slice-E cutover) restores `ConfigdServer` to constructing
+`new FanOutServer(...)` (the JDK transport is retained, fully tested by the contract's JDK subclass,
+and a drop-in `FanOutEndpoint`). Verification:
+`./mvnw -o -pl configd-server test -Dtest='JdkFanOutServerContractTest,FanOutServerIntegrationTest'`.
+
+### ADRs / DRs
+ADR-0043 ratified further (fan-out migrated). DR-N9 (scope), DR-N10 (FrameSink single-pass), DR-N11
+(FanOutConnectionDriver extraction), DR-N12 (Netty backpressure), DR-N13 (Netty mTLS), DR-N14
+(FanOutEndpoint) — all in `decision-log.md`.
+
+### Next stage
+**M4 (consensus wire)** — the most dangerous: M3-coalesced-heartbeat timing, full S2–S4 +
+no-spurious-election sweep on Netty, four-way rigor, ~0 B/op idiomatic encode. Keep `configd-netty`
+out of consensus until M4. **Phase V** (io_uring measurement, EC2-gated) follows. Run a nightly
+CVE/gitleaks on `netty-migration` before the merge gate (shared M1/M2/M3 precondition).
+
+---
+
 ## Session 3 — M2 (admin / control-plane API) → Netty — DONE on branch, second-agent APPROVED, NOT merged
 
 **Surface:** the admin / control-plane HTTP API (`configd-server` `HttpApiServer`, JDK
