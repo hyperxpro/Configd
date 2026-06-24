@@ -1,4 +1,4 @@
-package io.configd.edge.node;
+package io.configd.netty;
 
 import io.netty.channel.epoll.Epoll;
 import io.netty.channel.uring.IoUring;

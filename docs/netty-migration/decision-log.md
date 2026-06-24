@@ -194,3 +194,46 @@ removed** (the 8 declared + standard transitives). CI re-ran **GREEN: run 280532
 **Rule for M2–M4:** every surface that adds/changes a production dependency must regenerate this SBOM
 in the same commit, or gate-7 fails. (CVE/gitleaks/full-repro are nightly-only — they did NOT run on
 this push/PR dispatch; a nightly run is the next supply-chain checkpoint for the Netty CVE surface.)
+
+---
+
+# Netty-migration M2 (admin API) — transport → Netty
+
+> M2 migrates the admin / control-plane HTTP API (`configd-server` `HttpApiServer`) to Netty 4.2,
+> re-proving the **full S7 control set** on the new pipeline — authn (Bearer/401), authz (ACL/403),
+> audit (tamper-evident, no-token-leak), replay (401/409), 429 overload, strong-read fail-closed
+> (ADR-0030 INV-1 incl. the path-normalization attack set), the `/metrics` Bearer gate, method 405,
+> and — the delta from the plaintext edge surface — **server-side TLS (C11)**. Append-only; the
+> entries above (DR-1..5, DR-M0, DR-N1..5) are unchanged.
+
+## DR-N6 — Shared Netty selector promoted to a new `configd-netty` platform module
+**Date:** 2026-06-24 · **Type:** structural/technical · **Status:** decided (operator-approved) · **Owning stage:** M2 (slice A)
+
+M2 (admin API, `configd-server`) needs the same generic 3-tier io_uring→Epoll→NIO selector M1 placed
+in `configd-edge-node` (`io.configd.edge.node.NettyTransport`). The class is fully transport-agnostic
+(only its package tied it to edge). Three homes were weighed; the operator approved option 1:
+
+- **(chosen) New `configd-netty` platform module.** Owns `NettyTransport` (now `io.configd.netty.
+  NettyTransport`) **and** declares the Netty 4.2 HTTP-transport dependency closure once (compile
+  scope → transitive). Migrated surfaces (`configd-edge-node` = M1, `configd-server` = M2+) depend on
+  `configd-netty` and declare **no** direct `io.netty` deps. Single source of truth for the selector;
+  Netty enters the build **only** via this module + the migrated modules that depend on it.
+- *(rejected) Promote to `configd-transport`* — that module is depended on by the not-yet-migrated
+  consensus/replication surfaces, so Netty (and its CVE surface) would leak transitively into surfaces
+  M3/M4 have not verified. Protecting M4's clean-surface requirement + the supply-chain discipline
+  (smaller closure = smaller CVE surface) rules this out.
+- *(rejected) Duplicate in `configd-server`* — two selector copies violate the single-source-of-truth
+  that M1's equivalence-by-construction rests on.
+
+**Guard / evidence (faithful relocation, zero behaviour change):** `NettyTransportTest` (8, 1
+env-skip) runs in its new home; the **full edge-node suite re-ran green after the re-point** — 97
+(edge-node) + 8 (`configd-netty`) = **105**, identical to M1's pre-move 105 with the same single
+io_uring-unavailable skip, 0 failures / 0 errors. The footprint boundary (no module **other than**
+`configd-netty` + migrated surfaces pulls `io.netty`) is enforced at the gate-7 SBOM review.
+
+**Incidental finding (recorded for M3/M4):** the build's parent pom had **never been installed to the
+local repo** (all prior builds were full-reactor, where the parent is always in-reactor). A partial
+`-pl <module>` build that resolves an inter-module artifact *externally* therefore drops that
+artifact's **managed** transitive versions (`configd-netty`'s netty deps came back version-less),
+surfacing as "POM invalid, transitive dependencies will not be available". `./mvnw -o install -N`
+(install the parent pom) fixes it; full-reactor and CI builds are unaffected.

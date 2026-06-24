@@ -2,6 +2,7 @@ package io.configd.edge.node;
 
 import io.configd.edge.EdgeClientCore;
 import io.configd.edge.StrongReadKeyClass;
+import io.configd.netty.NettyTransport;
 import io.configd.observability.PrometheusExporter;
 import io.netty.bootstrap.ServerBootstrap;
 import io.netty.buffer.ByteBuf;

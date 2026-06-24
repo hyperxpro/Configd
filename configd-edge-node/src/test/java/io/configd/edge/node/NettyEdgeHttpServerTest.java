@@ -10,7 +10,7 @@ import io.configd.observability.PrometheusExporter;
  * ({@link EdgeHttpServerTest}) — re-proving every read-governance + S7 control (cursor/staleness,
  * strong-read fail-close, not-subscribed/cursor-behind refusal, {@code /metrics} Bearer gate, method
  * validation, INV-M1 seam) on the migrated pipeline. The transport auto-selects io_uring→Epoll→NIO;
- * CI forces the fallback tiers ({@link NettyTransportTest}, gate).
+ * CI forces the fallback tiers (the configd-netty {@code NettyTransportTest} + the gate).
  */
 class NettyEdgeHttpServerTest extends AbstractEdgeReadServerContract {
 

@@ -2,6 +2,7 @@ package io.configd.edge.node;
 
 import io.configd.edge.EdgeClientCore;
 import io.configd.edge.StrongReadKeyClass;
+import io.configd.netty.NettyTransport;
 import io.configd.observability.PrometheusExporter;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -15,8 +16,8 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
  * this dev box happens to pick. (Forcing the tier in-process avoids depending on surefire forwarding
  * a {@code -D} to the test fork.)
  *
- * <p>An epoll-forced equivalent isn't a separate class: {@link NettyTransportTest} proves epoll
- * resolves where available, and the auto-selected suite ({@link NettyEdgeHttpServerTest}) already
+ * <p>An epoll-forced equivalent isn't a separate class: the configd-netty {@code NettyTransportTest}
+ * proves epoll resolves where available, and the auto-selected suite ({@link NettyEdgeHttpServerTest}) already
  * exercises the best available tier (epoll or io_uring) on this box.
  */
 class NettyEdgeHttpServerNioFallbackTest extends AbstractEdgeReadServerContract {

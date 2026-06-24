@@ -19,60 +19,23 @@
       (configd-distribution-service), Ed25519 verification (configd-config-store,
       via edge-cache), metrics/invariants (configd-observability).
 
-      Netty transport (ADR-0043, supersedes ADR-0037): M1 migrates the edge-read HTTP
-      surface (EdgeHttpServer) to Netty 4.2, so Netty is now a PRODUCTION (compile-scope)
-      dependency here — the one new third-party runtime dependency ADR-0043 deliberately
-      prices in. HTTP-codec + transport + the Epoll (tier 2) and io_uring (tier 1) native
-      transports; NIO (tier 3) is in netty-transport (no extra artifact). The native
-      binaries are linux-x86_64; non-Linux / sandboxed runs fall through to NIO at runtime
-      (netty42-api.md §1). Versions managed in the root pom dependencyManagement.
+      Netty transport (ADR-0043, supersedes ADR-0037): M1 migrated the edge-read HTTP
+      surface (EdgeHttpServer) to Netty 4.2. The Netty selector + the HTTP-transport
+      dependency closure now live in the shared configd-netty platform module (DR-N6,
+      added in M2 so configd-server reuses the same selector); this module depends on it
+      and gets the io_uring→Epoll→NIO transport + HTTP codec transitively — no direct
+      io.netty declarations here. Native binaries are linux-x86_64; non-Linux / sandboxed
+      runs fall through to NIO at runtime (netty42-api.md §1).
     -->
     <dependencies>
         <dependency><groupId>io.configd</groupId><artifactId>configd-common</artifactId><version>${project.version}</version></dependency>
         <dependency><groupId>io.configd</groupId><artifactId>configd-transport</artifactId><version>${project.version}</version></dependency>
+        <!-- Netty 4.2 platform: transport selector + full HTTP-transport dep closure (ADR-0043, DR-N6). -->
+        <dependency><groupId>io.configd</groupId><artifactId>configd-netty</artifactId><version>${project.version}</version></dependency>
         <dependency><groupId>io.configd</groupId><artifactId>configd-config-store</artifactId><version>${project.version}</version></dependency>
         <dependency><groupId>io.configd</groupId><artifactId>configd-edge-cache</artifactId><version>${project.version}</version></dependency>
         <dependency><groupId>io.configd</groupId><artifactId>configd-distribution-service</artifactId><version>${project.version}</version></dependency>
         <dependency><groupId>io.configd</groupId><artifactId>configd-observability</artifactId><version>${project.version}</version></dependency>
-
-        <!-- Netty 4.2 transport platform (ADR-0043) — PRODUCTION scope (M1 edge-read HTTP). -->
-        <dependency>
-            <groupId>io.netty</groupId>
-            <artifactId>netty-transport</artifactId>
-        </dependency>
-        <dependency>
-            <groupId>io.netty</groupId>
-            <artifactId>netty-buffer</artifactId>
-        </dependency>
-        <dependency>
-            <groupId>io.netty</groupId>
-            <artifactId>netty-codec-http</artifactId>
-        </dependency>
-        <!-- IdleStateHandler (slowloris/idle reaping); SslHandler later for fan-out/consensus mTLS. -->
-        <dependency>
-            <groupId>io.netty</groupId>
-            <artifactId>netty-handler</artifactId>
-        </dependency>
-        <!-- Tier 2: Epoll (Linux). Classes (portable) + native binary (linux-x86_64). -->
-        <dependency>
-            <groupId>io.netty</groupId>
-            <artifactId>netty-transport-classes-epoll</artifactId>
-        </dependency>
-        <dependency>
-            <groupId>io.netty</groupId>
-            <artifactId>netty-transport-native-epoll</artifactId>
-            <classifier>linux-x86_64</classifier>
-        </dependency>
-        <!-- Tier 1: io_uring (Linux ≥5.9). Classes (portable) + native binary (linux-x86_64). -->
-        <dependency>
-            <groupId>io.netty</groupId>
-            <artifactId>netty-transport-classes-io_uring</artifactId>
-        </dependency>
-        <dependency>
-            <groupId>io.netty</groupId>
-            <artifactId>netty-transport-native-io_uring</artifactId>
-            <classifier>linux-x86_64</classifier>
-        </dependency>
 
         <!--
           TEST-ONLY: the process-level tests (EdgeNodeIntegrationTest, EdgeFailoverTest,

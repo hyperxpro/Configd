@@ -1,4 +1,4 @@
-package io.configd.edge.node;
+package io.configd.netty;
 
 import io.netty.channel.IoHandlerFactory;
 import io.netty.channel.ServerChannel;
