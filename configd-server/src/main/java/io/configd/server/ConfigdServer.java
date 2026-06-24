@@ -127,7 +127,7 @@ public final class ConfigdServer {
     private final ScheduledExecutorService tlsReloadExecutor;
     private final MultiRaftDriver driver;
     private final ConfigStateMachine stateMachine;
-    private final HttpApiServer httpApiServer;
+    private final NettyHttpApiServer httpApiServer; // ADR-0043 M2: admin API on Netty (was HttpApiServer)
     private final TcpRaftTransport tcpTransport; // nullable when peer addresses not configured
     /** C1 fan-out edge endpoint (ADR-0037); null when {@code --edge-port} is absent. */
     private final io.configd.server.fanout.FanOutServer fanOutServer;
@@ -149,7 +149,7 @@ public final class ConfigdServer {
                           OwnerExecutorPool ownerPool,
                           ScheduledExecutorService readDispatchExecutor,
                           ScheduledExecutorService tlsReloadExecutor,
-                          HttpApiServer httpApiServer,
+                          NettyHttpApiServer httpApiServer,
                           TcpRaftTransport tcpTransport,
                           io.configd.server.fanout.FanOutServer fanOutServer,
                           WatchService watchService,
@@ -773,9 +773,13 @@ public final class ConfigdServer {
                     + "ms, nonce cap " + ReplayGuard.DEFAULT_MAX_NONCES + ")");
         }
 
-        HttpApiServer httpApiServer;
+        // ADR-0043 M2: the admin / control-plane HTTP API now runs on Netty (NettyHttpApiServer),
+        // delegating to the same AdminApiHandler the JDK HttpApiServer used. Documented fast-revert:
+        // change `new NettyHttpApiServer(` back to `new HttpApiServer(` (identical arg list) — the
+        // JDK adapter is retained and CI-green as the revert target.
+        NettyHttpApiServer httpApiServer;
         try {
-            httpApiServer = new HttpApiServer(
+            httpApiServer = new NettyHttpApiServer(
                     config.apiPort(), sslContext, healthService, prometheusExporter,
                     configStore, writeService, readService, authInterceptor, aclService,
                     strongReadPolicy, () -> raftNode.leaderId(), auditLog, replayGuard);
@@ -964,7 +968,7 @@ public final class ConfigdServer {
             fanOutServer.close();
         }
         if (httpApiServer != null) {
-            httpApiServer.stop(2);
+            httpApiServer.stop();
         }
         // Stop accepting new read marshals first (so nothing new is enqueued onto an owner).
         shutdownExecutor(readDispatchExecutor, "read-dispatch", 2);

@@ -83,14 +83,8 @@ class InvariantNetMetricTest {
 
     /** Scrapes the running server's /metrics endpoint (public in the minimal, no-auth config). */
     private static String scrapeMetrics(ConfigdServer server) throws Exception {
-        Field hf = ConfigdServer.class.getDeclaredField("httpApiServer");
-        hf.setAccessible(true);
-        HttpApiServer api = (HttpApiServer) hf.get(server);
-        assertNotNull(api, "httpApiServer must be wired");
-        Field sf = HttpApiServer.class.getDeclaredField("server");
-        sf.setAccessible(true);
-        com.sun.net.httpserver.HttpServer hs = (com.sun.net.httpserver.HttpServer) sf.get(api);
-        int port = hs.getAddress().getPort();
+        // ADR-0043 M2: admin server is now Netty; the public bound-port accessor is transport-agnostic.
+        int port = server.apiPort();
 
         HttpResponse<String> resp = HttpClient.newHttpClient().send(
                 HttpRequest.newBuilder()
