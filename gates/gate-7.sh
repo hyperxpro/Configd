@@ -121,11 +121,15 @@ echo "GATE-7 pa2021: OK"
 # --- (b) mTLS negatives (both planes) ----------------------------------------
 echo "GATE-7 mtls: plaintext/expired/wrong-SAN/downgrade refused on both planes..."
 ML="$LOGDIR/mtls.txt"
-run_tests mtls "RaftTransportMtlsAttackTest,FanOutServerMtlsAttackTest,EdgeTransportSanMismatchTest,FanOutServerMtlsTest,EdgeTransportMtlsTest,TlsManagerTest" "$ML"
+run_tests mtls "RaftTransportMtlsAttackTest,JdkFanOutServerContractTest,NettyFanOutServerContractTest,NettyFanOutServerNioContractTest,EdgeTransportSanMismatchTest,EdgeTransportMtlsTest,TlsManagerTest" "$ML"
 assert_class_green "$ML" "RaftTransportMtlsAttackTest"  # control plane: plaintext/expired/downgrade
-assert_class_green "$ML" "FanOutServerMtlsAttackTest"   # data plane: plaintext/expired/downgrade
+# Data-plane fan-out mTLS (M3): the FanOutServerMtls*Test classes were folded into the
+# AbstractFanOutServerContract, so the negatives (plaintext/no-cert/untrusted-CA/expired/downgrade
+# refused; trusted accepted) are now gated on the JDK + production-Netty + forced-NIO transports.
+assert_class_green "$ML" "JdkFanOutServerContractTest"        # data plane mTLS on the JDK transport
+assert_class_green "$ML" "NettyFanOutServerContractTest"      # ...re-proven on the production Netty transport
+assert_class_green "$ML" "NettyFanOutServerNioContractTest"   # ...and on the forced-NIO fallback tier
 assert_class_green "$ML" "EdgeTransportSanMismatchTest" # data plane: wrong-SAN refused by client
-assert_class_green "$ML" "FanOutServerMtlsTest"         # existing: no-cert/untrusted refused
 assert_class_green "$ML" "EdgeTransportMtlsTest"        # existing: untrusted client/server refused
 echo "GATE-7 mtls: OK"
 
