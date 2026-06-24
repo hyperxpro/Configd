@@ -1,0 +1,535 @@
+WARNING: A terminally deprecated method in sun.misc.Unsafe has been called
+WARNING: sun.misc.Unsafe::objectFieldOffset has been called by org.openjdk.jmh.util.Utils (file:/home/ubuntu/Code/Configd/configd-testkit/target/benchmarks.jar)
+WARNING: Please consider reporting this to the maintainers of class org.openjdk.jmh.util.Utils
+WARNING: sun.misc.Unsafe::objectFieldOffset will be removed in a future release
+# JMH version: 1.37
+# VM version: JDK 25, OpenJDK 64-Bit Server VM, 25+36-LTS
+# VM invoker: /home/ubuntu/.sdkman/candidates/java/25-amzn/bin/java
+# VM options: --enable-preview --enable-native-access=ALL-UNNAMED -Dio.netty.leakDetection.level=DISABLED -Dio.netty.allocator.numDirectArenas=2
+# Blackhole mode: compiler (auto-detected, use -Djmh.blackhole.autoDetect=false to disable)
+# Warmup: 5 iterations, 1 s each
+# Measurement: 5 iterations, 1 s each
+# Timeout: 10 min per iteration
+# Threads: 1 thread, will synchronize iterations
+# Benchmark mode: Average time, time/op
+# Benchmark: io.configd.jdkvsnetty.FanOutEncodeIntoBenchmark.legacyMultiPassEncode
+# Parameters: (notifyCount = 64)
+
+# Run progress: 0.00% complete, ETA 00:01:20
+# Fork: 1 of 2
+WARNING: A terminally deprecated method in sun.misc.Unsafe has been called
+WARNING: sun.misc.Unsafe::objectFieldOffset has been called by org.openjdk.jmh.util.Utils (file:/home/ubuntu/Code/Configd/configd-testkit/target/benchmarks.jar)
+WARNING: Please consider reporting this to the maintainers of class org.openjdk.jmh.util.Utils
+WARNING: sun.misc.Unsafe::objectFieldOffset will be removed in a future release
+# Warmup Iteration   1: 59072.002 ns/op
+# Warmup Iteration   2: 29739.870 ns/op
+# Warmup Iteration   3: 24943.270 ns/op
+# Warmup Iteration   4: 27251.544 ns/op
+# Warmup Iteration   5: 25135.178 ns/op
+Iteration   1: 24795.707 ns/op
+                 gc.alloc.rate:      2667.826 MB/sec
+                 gc.alloc.rate.norm: 69480.173 B/op
+                 gc.count:           7.000 counts
+                 gc.time:            11.000 ms
+
+Iteration   2: 25145.564 ns/op
+                 gc.alloc.rate:      2633.928 MB/sec
+                 gc.alloc.rate.norm: 69480.176 B/op
+                 gc.count:           7.000 counts
+                 gc.time:            10.000 ms
+
+Iteration   3: 25021.713 ns/op
+                 gc.alloc.rate:      2642.880 MB/sec
+                 gc.alloc.rate.norm: 69480.173 B/op
+                 gc.count:           8.000 counts
+                 gc.time:            8.000 ms
+
+Iteration   4: 25535.432 ns/op
+                 gc.alloc.rate:      2586.652 MB/sec
+                 gc.alloc.rate.norm: 69480.178 B/op
+                 gc.count:           7.000 counts
+                 gc.time:            9.000 ms
+
+Iteration   5: 25609.571 ns/op
+                 gc.alloc.rate:      2582.140 MB/sec
+                 gc.alloc.rate.norm: 69480.178 B/op
+                 gc.count:           7.000 counts
+                 gc.time:            8.000 ms
+
+
+# Run progress: 12.50% complete, ETA 00:01:19
+# Fork: 2 of 2
+WARNING: A terminally deprecated method in sun.misc.Unsafe has been called
+WARNING: sun.misc.Unsafe::objectFieldOffset has been called by org.openjdk.jmh.util.Utils (file:/home/ubuntu/Code/Configd/configd-testkit/target/benchmarks.jar)
+WARNING: Please consider reporting this to the maintainers of class org.openjdk.jmh.util.Utils
+WARNING: sun.misc.Unsafe::objectFieldOffset will be removed in a future release
+# Warmup Iteration   1: 58937.209 ns/op
+# Warmup Iteration   2: 27180.555 ns/op
+# Warmup Iteration   3: 22783.291 ns/op
+# Warmup Iteration   4: 22383.849 ns/op
+# Warmup Iteration   5: 22447.545 ns/op
+Iteration   1: 22653.208 ns/op
+                 gc.alloc.rate:      2922.943 MB/sec
+                 gc.alloc.rate.norm: 69504.158 B/op
+                 gc.count:           8.000 counts
+                 gc.time:            13.000 ms
+
+Iteration   2: 22442.240 ns/op
+                 gc.alloc.rate:      2952.565 MB/sec
+                 gc.alloc.rate.norm: 69504.155 B/op
+                 gc.count:           7.000 counts
+                 gc.time:            7.000 ms
+
+Iteration   3: 21955.870 ns/op
+                 gc.alloc.rate:      3014.372 MB/sec
+                 gc.alloc.rate.norm: 69504.154 B/op
+                 gc.count:           8.000 counts
+                 gc.time:            8.000 ms
+
+Iteration   4: 22982.447 ns/op
+                 gc.alloc.rate:      2877.427 MB/sec
+                 gc.alloc.rate.norm: 69504.161 B/op
+                 gc.count:           8.000 counts
+                 gc.time:            9.000 ms
+
+Iteration   5: 22359.173 ns/op
+                 gc.alloc.rate:      2959.810 MB/sec
+                 gc.alloc.rate.norm: 69504.156 B/op
+                 gc.count:           8.000 counts
+                 gc.time:            10.000 ms
+
+
+
+Result "io.configd.jdkvsnetty.FanOutEncodeIntoBenchmark.legacyMultiPassEncode":
+  23850.093 ±(99.9%) 2245.818 ns/op [Average]
+  (min, avg, max) = (21955.870, 23850.093, 25609.571), stdev = 1485.469
+  CI (99.9%): [21604.275, 26095.910] (assumes normal distribution)
+
+Secondary result "io.configd.jdkvsnetty.FanOutEncodeIntoBenchmark.legacyMultiPassEncode:gc.alloc.rate":
+  2784.054 ±(99.9%) 264.781 MB/sec [Average]
+  (min, avg, max) = (2582.140, 2784.054, 3014.372), stdev = 175.136
+  CI (99.9%): [2519.273, 3048.836] (assumes normal distribution)
+
+Secondary result "io.configd.jdkvsnetty.FanOutEncodeIntoBenchmark.legacyMultiPassEncode:gc.alloc.rate.norm":
+  69492.166 ±(99.9%) 19.108 B/op [Average]
+  (min, avg, max) = (69480.173, 69492.166, 69504.161), stdev = 12.639
+  CI (99.9%): [69473.058, 69511.275] (assumes normal distribution)
+
+Secondary result "io.configd.jdkvsnetty.FanOutEncodeIntoBenchmark.legacyMultiPassEncode:gc.count":
+  75.000 ±(99.9%) 0.001 counts [Sum]
+  (min, avg, max) = (7.000, 7.500, 8.000), stdev = 0.527
+  CI (99.9%): [75.000, 75.000] (assumes normal distribution)
+
+Secondary result "io.configd.jdkvsnetty.FanOutEncodeIntoBenchmark.legacyMultiPassEncode:gc.time":
+  93.000 ±(99.9%) 0.001 ms [Sum]
+  (min, avg, max) = (7.000, 9.300, 13.000), stdev = 1.767
+  CI (99.9%): [93.000, 93.000] (assumes normal distribution)
+
+
+# JMH version: 1.37
+# VM version: JDK 25, OpenJDK 64-Bit Server VM, 25+36-LTS
+# VM invoker: /home/ubuntu/.sdkman/candidates/java/25-amzn/bin/java
+# VM options: --enable-preview --enable-native-access=ALL-UNNAMED -Dio.netty.leakDetection.level=DISABLED -Dio.netty.allocator.numDirectArenas=2
+# Blackhole mode: compiler (auto-detected, use -Djmh.blackhole.autoDetect=false to disable)
+# Warmup: 5 iterations, 1 s each
+# Measurement: 5 iterations, 1 s each
+# Timeout: 10 min per iteration
+# Threads: 1 thread, will synchronize iterations
+# Benchmark mode: Average time, time/op
+# Benchmark: io.configd.jdkvsnetty.FanOutEncodeIntoBenchmark.messageBuildingFloor
+# Parameters: (notifyCount = 64)
+
+# Run progress: 25.00% complete, ETA 00:01:07
+# Fork: 1 of 2
+WARNING: A terminally deprecated method in sun.misc.Unsafe has been called
+WARNING: sun.misc.Unsafe::objectFieldOffset has been called by org.openjdk.jmh.util.Utils (file:/home/ubuntu/Code/Configd/configd-testkit/target/benchmarks.jar)
+WARNING: Please consider reporting this to the maintainers of class org.openjdk.jmh.util.Utils
+WARNING: sun.misc.Unsafe::objectFieldOffset will be removed in a future release
+# Warmup Iteration   1: 21990.512 ns/op
+# Warmup Iteration   2: 11377.400 ns/op
+# Warmup Iteration   3: 9037.978 ns/op
+# Warmup Iteration   4: 9197.956 ns/op
+# Warmup Iteration   5: 9355.708 ns/op
+Iteration   1: 9213.691 ns/op
+                 gc.alloc.rate:      2638.226 MB/sec
+                 gc.alloc.rate.norm: 25520.064 B/op
+                 gc.count:           7.000 counts
+                 gc.time:            13.000 ms
+
+Iteration   2: 9179.118 ns/op
+                 gc.alloc.rate:      2650.388 MB/sec
+                 gc.alloc.rate.norm: 25520.064 B/op
+                 gc.count:           7.000 counts
+                 gc.time:            9.000 ms
+
+Iteration   3: 9226.857 ns/op
+                 gc.alloc.rate:      2632.716 MB/sec
+                 gc.alloc.rate.norm: 25520.064 B/op
+                 gc.count:           7.000 counts
+                 gc.time:            9.000 ms
+
+Iteration   4: 9090.536 ns/op
+                 gc.alloc.rate:      2675.770 MB/sec
+                 gc.alloc.rate.norm: 25520.063 B/op
+                 gc.count:           7.000 counts
+                 gc.time:            8.000 ms
+
+Iteration   5: 9378.068 ns/op
+                 gc.alloc.rate:      2593.099 MB/sec
+                 gc.alloc.rate.norm: 25520.065 B/op
+                 gc.count:           6.000 counts
+                 gc.time:            7.000 ms
+
+
+# Run progress: 37.50% complete, ETA 00:00:56
+# Fork: 2 of 2
+WARNING: A terminally deprecated method in sun.misc.Unsafe has been called
+WARNING: sun.misc.Unsafe::objectFieldOffset has been called by org.openjdk.jmh.util.Utils (file:/home/ubuntu/Code/Configd/configd-testkit/target/benchmarks.jar)
+WARNING: Please consider reporting this to the maintainers of class org.openjdk.jmh.util.Utils
+WARNING: sun.misc.Unsafe::objectFieldOffset will be removed in a future release
+# Warmup Iteration   1: 21754.967 ns/op
+# Warmup Iteration   2: 12132.210 ns/op
+# Warmup Iteration   3: 9173.848 ns/op
+# Warmup Iteration   4: 8971.145 ns/op
+# Warmup Iteration   5: 9103.913 ns/op
+Iteration   1: 8926.432 ns/op
+                 gc.alloc.rate:      2724.276 MB/sec
+                 gc.alloc.rate.norm: 25520.062 B/op
+                 gc.count:           7.000 counts
+                 gc.time:            9.000 ms
+
+Iteration   2: 8938.359 ns/op
+                 gc.alloc.rate:      2721.027 MB/sec
+                 gc.alloc.rate.norm: 25520.062 B/op
+                 gc.count:           6.000 counts
+                 gc.time:            7.000 ms
+
+Iteration   3: 8954.977 ns/op
+                 gc.alloc.rate:      2713.215 MB/sec
+                 gc.alloc.rate.norm: 25520.062 B/op
+                 gc.count:           7.000 counts
+                 gc.time:            8.000 ms
+
+Iteration   4: 9000.763 ns/op
+                 gc.alloc.rate:      2692.296 MB/sec
+                 gc.alloc.rate.norm: 25520.063 B/op
+                 gc.count:           7.000 counts
+                 gc.time:            8.000 ms
+
+Iteration   5: 9106.759 ns/op
+                 gc.alloc.rate:      2667.325 MB/sec
+                 gc.alloc.rate.norm: 25520.063 B/op
+                 gc.count:           6.000 counts
+                 gc.time:            6.000 ms
+
+
+
+Result "io.configd.jdkvsnetty.FanOutEncodeIntoBenchmark.messageBuildingFloor":
+  9101.556 ±(99.9%) 225.287 ns/op [Average]
+  (min, avg, max) = (8926.432, 9101.556, 9378.068), stdev = 149.013
+  CI (99.9%): [8876.270, 9326.843] (assumes normal distribution)
+
+Secondary result "io.configd.jdkvsnetty.FanOutEncodeIntoBenchmark.messageBuildingFloor:gc.alloc.rate":
+  2670.834 ±(99.9%) 65.019 MB/sec [Average]
+  (min, avg, max) = (2593.099, 2670.834, 2724.276), stdev = 43.006
+  CI (99.9%): [2605.814, 2735.853] (assumes normal distribution)
+
+Secondary result "io.configd.jdkvsnetty.FanOutEncodeIntoBenchmark.messageBuildingFloor:gc.alloc.rate.norm":
+  25520.063 ±(99.9%) 0.002 B/op [Average]
+  (min, avg, max) = (25520.062, 25520.063, 25520.065), stdev = 0.001
+  CI (99.9%): [25520.062, 25520.065] (assumes normal distribution)
+
+Secondary result "io.configd.jdkvsnetty.FanOutEncodeIntoBenchmark.messageBuildingFloor:gc.count":
+  67.000 ±(99.9%) 0.001 counts [Sum]
+  (min, avg, max) = (6.000, 6.700, 7.000), stdev = 0.483
+  CI (99.9%): [67.000, 67.000] (assumes normal distribution)
+
+Secondary result "io.configd.jdkvsnetty.FanOutEncodeIntoBenchmark.messageBuildingFloor:gc.time":
+  84.000 ±(99.9%) 0.001 ms [Sum]
+  (min, avg, max) = (6.000, 8.400, 13.000), stdev = 1.897
+  CI (99.9%): [84.000, 84.000] (assumes normal distribution)
+
+
+# JMH version: 1.37
+# VM version: JDK 25, OpenJDK 64-Bit Server VM, 25+36-LTS
+# VM invoker: /home/ubuntu/.sdkman/candidates/java/25-amzn/bin/java
+# VM options: --enable-preview --enable-native-access=ALL-UNNAMED -Dio.netty.leakDetection.level=DISABLED -Dio.netty.allocator.numDirectArenas=2
+# Blackhole mode: compiler (auto-detected, use -Djmh.blackhole.autoDetect=false to disable)
+# Warmup: 5 iterations, 1 s each
+# Measurement: 5 iterations, 1 s each
+# Timeout: 10 min per iteration
+# Threads: 1 thread, will synchronize iterations
+# Benchmark mode: Average time, time/op
+# Benchmark: io.configd.jdkvsnetty.FanOutEncodeIntoBenchmark.prodEncodeIntoByteBufPooled
+# Parameters: (notifyCount = 64)
+
+# Run progress: 50.00% complete, ETA 00:00:45
+# Fork: 1 of 2
+WARNING: A terminally deprecated method in sun.misc.Unsafe has been called
+WARNING: sun.misc.Unsafe::objectFieldOffset has been called by org.openjdk.jmh.util.Utils (file:/home/ubuntu/Code/Configd/configd-testkit/target/benchmarks.jar)
+WARNING: Please consider reporting this to the maintainers of class org.openjdk.jmh.util.Utils
+WARNING: sun.misc.Unsafe::objectFieldOffset will be removed in a future release
+# Warmup Iteration   1: 78295.461 ns/op
+# Warmup Iteration   2: 31422.577 ns/op
+# Warmup Iteration   3: 26607.521 ns/op
+# Warmup Iteration   4: 23119.761 ns/op
+# Warmup Iteration   5: 21745.557 ns/op
+Iteration   1: 22106.153 ns/op
+                 gc.alloc.rate:      1110.803 MB/sec
+                 gc.alloc.rate.norm: 25760.154 B/op
+                 gc.count:           5.000 counts
+                 gc.time:            7.000 ms
+
+Iteration   2: 22338.136 ns/op
+                 gc.alloc.rate:      1097.645 MB/sec
+                 gc.alloc.rate.norm: 25760.156 B/op
+                 gc.count:           4.000 counts
+                 gc.time:            5.000 ms
+
+Iteration   3: 21768.746 ns/op
+                 gc.alloc.rate:      1126.882 MB/sec
+                 gc.alloc.rate.norm: 25760.152 B/op
+                 gc.count:           4.000 counts
+                 gc.time:            4.000 ms
+
+Iteration   4: 21761.114 ns/op
+                 gc.alloc.rate:      1125.873 MB/sec
+                 gc.alloc.rate.norm: 25760.152 B/op
+                 gc.count:           5.000 counts
+                 gc.time:            6.000 ms
+
+Iteration   5: 21939.646 ns/op
+                 gc.alloc.rate:      1119.258 MB/sec
+                 gc.alloc.rate.norm: 25760.154 B/op
+                 gc.count:           4.000 counts
+                 gc.time:            5.000 ms
+
+
+# Run progress: 62.50% complete, ETA 00:00:33
+# Fork: 2 of 2
+WARNING: A terminally deprecated method in sun.misc.Unsafe has been called
+WARNING: sun.misc.Unsafe::objectFieldOffset has been called by org.openjdk.jmh.util.Utils (file:/home/ubuntu/Code/Configd/configd-testkit/target/benchmarks.jar)
+WARNING: Please consider reporting this to the maintainers of class org.openjdk.jmh.util.Utils
+WARNING: sun.misc.Unsafe::objectFieldOffset will be removed in a future release
+# Warmup Iteration   1: 67695.353 ns/op
+# Warmup Iteration   2: 28657.835 ns/op
+# Warmup Iteration   3: 25130.084 ns/op
+# Warmup Iteration   4: 22228.622 ns/op
+# Warmup Iteration   5: 22100.554 ns/op
+Iteration   1: 21904.501 ns/op
+                 gc.alloc.rate:      1121.118 MB/sec
+                 gc.alloc.rate.norm: 25760.153 B/op
+                 gc.count:           5.000 counts
+                 gc.time:            5.000 ms
+
+Iteration   2: 21983.233 ns/op
+                 gc.alloc.rate:      1117.150 MB/sec
+                 gc.alloc.rate.norm: 25760.154 B/op
+                 gc.count:           5.000 counts
+                 gc.time:            6.000 ms
+
+Iteration   3: 21708.368 ns/op
+                 gc.alloc.rate:      1131.236 MB/sec
+                 gc.alloc.rate.norm: 25760.150 B/op
+                 gc.count:           5.000 counts
+                 gc.time:            5.000 ms
+
+Iteration   4: 21887.554 ns/op
+                 gc.alloc.rate:      1121.483 MB/sec
+                 gc.alloc.rate.norm: 25760.153 B/op
+                 gc.count:           5.000 counts
+                 gc.time:            7.000 ms
+
+Iteration   5: 22196.182 ns/op
+                 gc.alloc.rate:      1106.427 MB/sec
+                 gc.alloc.rate.norm: 25760.153 B/op
+                 gc.count:           5.000 counts
+                 gc.time:            5.000 ms
+
+
+
+Result "io.configd.jdkvsnetty.FanOutEncodeIntoBenchmark.prodEncodeIntoByteBufPooled":
+  21959.363 ±(99.9%) 306.070 ns/op [Average]
+  (min, avg, max) = (21708.368, 21959.363, 22338.136), stdev = 202.446
+  CI (99.9%): [21653.293, 22265.433] (assumes normal distribution)
+
+Secondary result "io.configd.jdkvsnetty.FanOutEncodeIntoBenchmark.prodEncodeIntoByteBufPooled:gc.alloc.rate":
+  1117.787 ±(99.9%) 15.450 MB/sec [Average]
+  (min, avg, max) = (1097.645, 1117.787, 1131.236), stdev = 10.219
+  CI (99.9%): [1102.338, 1133.237] (assumes normal distribution)
+
+Secondary result "io.configd.jdkvsnetty.FanOutEncodeIntoBenchmark.prodEncodeIntoByteBufPooled:gc.alloc.rate.norm":
+  25760.153 ±(99.9%) 0.003 B/op [Average]
+  (min, avg, max) = (25760.150, 25760.153, 25760.156), stdev = 0.002
+  CI (99.9%): [25760.150, 25760.156] (assumes normal distribution)
+
+Secondary result "io.configd.jdkvsnetty.FanOutEncodeIntoBenchmark.prodEncodeIntoByteBufPooled:gc.count":
+  47.000 ±(99.9%) 0.001 counts [Sum]
+  (min, avg, max) = (4.000, 4.700, 5.000), stdev = 0.483
+  CI (99.9%): [47.000, 47.000] (assumes normal distribution)
+
+Secondary result "io.configd.jdkvsnetty.FanOutEncodeIntoBenchmark.prodEncodeIntoByteBufPooled:gc.time":
+  55.000 ±(99.9%) 0.001 ms [Sum]
+  (min, avg, max) = (4.000, 5.500, 7.000), stdev = 0.972
+  CI (99.9%): [55.000, 55.000] (assumes normal distribution)
+
+
+# JMH version: 1.37
+# VM version: JDK 25, OpenJDK 64-Bit Server VM, 25+36-LTS
+# VM invoker: /home/ubuntu/.sdkman/candidates/java/25-amzn/bin/java
+# VM options: --enable-preview --enable-native-access=ALL-UNNAMED -Dio.netty.leakDetection.level=DISABLED -Dio.netty.allocator.numDirectArenas=2
+# Blackhole mode: compiler (auto-detected, use -Djmh.blackhole.autoDetect=false to disable)
+# Warmup: 5 iterations, 1 s each
+# Measurement: 5 iterations, 1 s each
+# Timeout: 10 min per iteration
+# Threads: 1 thread, will synchronize iterations
+# Benchmark mode: Average time, time/op
+# Benchmark: io.configd.jdkvsnetty.FanOutEncodeIntoBenchmark.prodEncodeIntoHeapReused
+# Parameters: (notifyCount = 64)
+
+# Run progress: 75.00% complete, ETA 00:00:22
+# Fork: 1 of 2
+WARNING: A terminally deprecated method in sun.misc.Unsafe has been called
+WARNING: sun.misc.Unsafe::objectFieldOffset has been called by org.openjdk.jmh.util.Utils (file:/home/ubuntu/Code/Configd/configd-testkit/target/benchmarks.jar)
+WARNING: Please consider reporting this to the maintainers of class org.openjdk.jmh.util.Utils
+WARNING: sun.misc.Unsafe::objectFieldOffset will be removed in a future release
+# Warmup Iteration   1: 28500.093 ns/op
+# Warmup Iteration   2: 20365.822 ns/op
+# Warmup Iteration   3: 18145.268 ns/op
+# Warmup Iteration   4: 15625.990 ns/op
+# Warmup Iteration   5: 15833.836 ns/op
+Iteration   1: 15753.972 ns/op
+                 gc.alloc.rate:      1544.362 MB/sec
+                 gc.alloc.rate.norm: 25520.110 B/op
+                 gc.count:           5.000 counts
+                 gc.time:            6.000 ms
+
+Iteration   2: 15928.779 ns/op
+                 gc.alloc.rate:      1526.703 MB/sec
+                 gc.alloc.rate.norm: 25520.111 B/op
+                 gc.count:           5.000 counts
+                 gc.time:            5.000 ms
+
+Iteration   3: 15684.776 ns/op
+                 gc.alloc.rate:      1548.891 MB/sec
+                 gc.alloc.rate.norm: 25520.110 B/op
+                 gc.count:           6.000 counts
+                 gc.time:            7.000 ms
+
+Iteration   4: 15543.154 ns/op
+                 gc.alloc.rate:      1563.156 MB/sec
+                 gc.alloc.rate.norm: 25520.109 B/op
+                 gc.count:           5.000 counts
+                 gc.time:            6.000 ms
+
+Iteration   5: 15715.730 ns/op
+                 gc.alloc.rate:      1545.382 MB/sec
+                 gc.alloc.rate.norm: 25520.110 B/op
+                 gc.count:           5.000 counts
+                 gc.time:            6.000 ms
+
+
+# Run progress: 87.50% complete, ETA 00:00:11
+# Fork: 2 of 2
+WARNING: A terminally deprecated method in sun.misc.Unsafe has been called
+WARNING: sun.misc.Unsafe::objectFieldOffset has been called by org.openjdk.jmh.util.Utils (file:/home/ubuntu/Code/Configd/configd-testkit/target/benchmarks.jar)
+WARNING: Please consider reporting this to the maintainers of class org.openjdk.jmh.util.Utils
+WARNING: sun.misc.Unsafe::objectFieldOffset will be removed in a future release
+# Warmup Iteration   1: 30963.568 ns/op
+# Warmup Iteration   2: 19790.926 ns/op
+# Warmup Iteration   3: 18571.165 ns/op
+# Warmup Iteration   4: 15702.007 ns/op
+# Warmup Iteration   5: 15775.695 ns/op
+Iteration   1: 15710.477 ns/op
+                 gc.alloc.rate:      1548.579 MB/sec
+                 gc.alloc.rate.norm: 25520.109 B/op
+                 gc.count:           5.000 counts
+                 gc.time:            5.000 ms
+
+Iteration   2: 15692.450 ns/op
+                 gc.alloc.rate:      1549.847 MB/sec
+                 gc.alloc.rate.norm: 25520.110 B/op
+                 gc.count:           5.000 counts
+                 gc.time:            5.000 ms
+
+Iteration   3: 15632.693 ns/op
+                 gc.alloc.rate:      1555.283 MB/sec
+                 gc.alloc.rate.norm: 25520.109 B/op
+                 gc.count:           6.000 counts
+                 gc.time:            6.000 ms
+
+Iteration   4: 16972.473 ns/op
+                 gc.alloc.rate:      1430.994 MB/sec
+                 gc.alloc.rate.norm: 25520.119 B/op
+                 gc.count:           5.000 counts
+                 gc.time:            5.000 ms
+
+Iteration   5: 15784.707 ns/op
+                 gc.alloc.rate:      1539.520 MB/sec
+                 gc.alloc.rate.norm: 25520.110 B/op
+                 gc.count:           5.000 counts
+                 gc.time:            7.000 ms
+
+
+
+Result "io.configd.jdkvsnetty.FanOutEncodeIntoBenchmark.prodEncodeIntoHeapReused":
+  15841.921 ±(99.9%) 619.262 ns/op [Average]
+  (min, avg, max) = (15543.154, 15841.921, 16972.473), stdev = 409.604
+  CI (99.9%): [15222.659, 16461.183] (assumes normal distribution)
+
+Secondary result "io.configd.jdkvsnetty.FanOutEncodeIntoBenchmark.prodEncodeIntoHeapReused:gc.alloc.rate":
+  1535.272 ±(99.9%) 57.245 MB/sec [Average]
+  (min, avg, max) = (1430.994, 1535.272, 1563.156), stdev = 37.864
+  CI (99.9%): [1478.027, 1592.517] (assumes normal distribution)
+
+Secondary result "io.configd.jdkvsnetty.FanOutEncodeIntoBenchmark.prodEncodeIntoHeapReused:gc.alloc.rate.norm":
+  25520.111 ±(99.9%) 0.004 B/op [Average]
+  (min, avg, max) = (25520.109, 25520.111, 25520.119), stdev = 0.003
+  CI (99.9%): [25520.106, 25520.115] (assumes normal distribution)
+
+Secondary result "io.configd.jdkvsnetty.FanOutEncodeIntoBenchmark.prodEncodeIntoHeapReused:gc.count":
+  52.000 ±(99.9%) 0.001 counts [Sum]
+  (min, avg, max) = (5.000, 5.200, 6.000), stdev = 0.422
+  CI (99.9%): [52.000, 52.000] (assumes normal distribution)
+
+Secondary result "io.configd.jdkvsnetty.FanOutEncodeIntoBenchmark.prodEncodeIntoHeapReused:gc.time":
+  58.000 ±(99.9%) 0.001 ms [Sum]
+  (min, avg, max) = (5.000, 5.800, 7.000), stdev = 0.789
+  CI (99.9%): [58.000, 58.000] (assumes normal distribution)
+
+
+# Run complete. Total time: 00:01:30
+
+REMEMBER: The numbers below are just data. To gain reusable insights, you need to follow up on
+why the numbers are the way they are. Use profilers (see -prof, -lprof), design factorial
+experiments, perform baseline and negative tests that provide experimental control, make sure
+the benchmarking environment is safe on JVM/OS/HW level, ask for reviews from the domain experts.
+Do not assume the numbers tell you what you want them to tell.
+
+NOTE: Current JVM experimentally supports Compiler Blackholes, and they are in use. Please exercise
+extra caution when trusting the results, look into the generated code to check the benchmark still
+works, and factor in a small probability of new VM bugs. Additionally, while comparisons between
+different JVMs are already problematic, the performance difference caused by different Blackhole
+modes can be very significant. Please make sure you use the consistent Blackhole mode for comparisons.
+
+Benchmark                                                                 (notifyCount)  Mode  Cnt      Score      Error   Units
+FanOutEncodeIntoBenchmark.legacyMultiPassEncode                                      64  avgt   10  23850.093 ± 2245.818   ns/op
+FanOutEncodeIntoBenchmark.legacyMultiPassEncode:gc.alloc.rate                        64  avgt   10   2784.054 ±  264.781  MB/sec
+FanOutEncodeIntoBenchmark.legacyMultiPassEncode:gc.alloc.rate.norm                   64  avgt   10  69492.166 ±   19.108    B/op
+FanOutEncodeIntoBenchmark.legacyMultiPassEncode:gc.count                             64  avgt   10     75.000             counts
+FanOutEncodeIntoBenchmark.legacyMultiPassEncode:gc.time                              64  avgt   10     93.000                 ms
+FanOutEncodeIntoBenchmark.messageBuildingFloor                                       64  avgt   10   9101.556 ±  225.287   ns/op
+FanOutEncodeIntoBenchmark.messageBuildingFloor:gc.alloc.rate                         64  avgt   10   2670.834 ±   65.019  MB/sec
+FanOutEncodeIntoBenchmark.messageBuildingFloor:gc.alloc.rate.norm                    64  avgt   10  25520.063 ±    0.002    B/op
+FanOutEncodeIntoBenchmark.messageBuildingFloor:gc.count                              64  avgt   10     67.000             counts
+FanOutEncodeIntoBenchmark.messageBuildingFloor:gc.time                               64  avgt   10     84.000                 ms
+FanOutEncodeIntoBenchmark.prodEncodeIntoByteBufPooled                                64  avgt   10  21959.363 ±  306.070   ns/op
+FanOutEncodeIntoBenchmark.prodEncodeIntoByteBufPooled:gc.alloc.rate                  64  avgt   10   1117.787 ±   15.450  MB/sec
+FanOutEncodeIntoBenchmark.prodEncodeIntoByteBufPooled:gc.alloc.rate.norm             64  avgt   10  25760.153 ±    0.003    B/op
+FanOutEncodeIntoBenchmark.prodEncodeIntoByteBufPooled:gc.count                       64  avgt   10     47.000             counts
+FanOutEncodeIntoBenchmark.prodEncodeIntoByteBufPooled:gc.time                        64  avgt   10     55.000                 ms
+FanOutEncodeIntoBenchmark.prodEncodeIntoHeapReused                                   64  avgt   10  15841.921 ±  619.262   ns/op
+FanOutEncodeIntoBenchmark.prodEncodeIntoHeapReused:gc.alloc.rate                     64  avgt   10   1535.272 ±   57.245  MB/sec
+FanOutEncodeIntoBenchmark.prodEncodeIntoHeapReused:gc.alloc.rate.norm                64  avgt   10  25520.111 ±    0.004    B/op
+FanOutEncodeIntoBenchmark.prodEncodeIntoHeapReused:gc.count                          64  avgt   10     52.000             counts
+FanOutEncodeIntoBenchmark.prodEncodeIntoHeapReused:gc.time                           64  avgt   10     58.000                 ms
