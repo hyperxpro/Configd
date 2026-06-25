@@ -1,15 +1,19 @@
 package io.configd.netty;
 
+import io.netty.channel.Channel;
 import io.netty.channel.IoHandlerFactory;
 import io.netty.channel.ServerChannel;
 import io.netty.channel.epoll.Epoll;
 import io.netty.channel.epoll.EpollIoHandler;
 import io.netty.channel.epoll.EpollServerSocketChannel;
+import io.netty.channel.epoll.EpollSocketChannel;
 import io.netty.channel.nio.NioIoHandler;
 import io.netty.channel.socket.nio.NioServerSocketChannel;
+import io.netty.channel.socket.nio.NioSocketChannel;
 import io.netty.channel.uring.IoUring;
 import io.netty.channel.uring.IoUringIoHandler;
 import io.netty.channel.uring.IoUringServerSocketChannel;
+import io.netty.channel.uring.IoUringSocketChannel;
 
 import java.util.Locale;
 
@@ -43,13 +47,21 @@ public final class NettyTransport {
     }
 
     /**
-     * The resolved transport: a tier name plus the coherent ({@link IoHandlerFactory},
-     * server-channel class) pair to bootstrap with. The same factory instance is shared by the boss
-     * and worker groups (it is a factory of per-thread handlers).
+     * The resolved transport: a tier name plus the coherent ({@link IoHandlerFactory}, server-channel,
+     * client-channel) triple to bootstrap with. The same factory instance is shared by the boss and
+     * worker groups (it is a factory of per-thread handlers).
+     *
+     * <p>{@code serverChannelClass} is used by surfaces that accept connections (M1 edge-read, M2
+     * admin, M3 fan-out); {@code clientChannelClass} (M4 / DR-N19) is the matching outbound
+     * {@code SocketChannel} for the consensus transport, which is the first surface that also
+     * <em>connects out</em> to peers. Both are paired with the same {@link IoHandlerFactory} — pairing
+     * a factory with a channel from a different tier is the #1 Netty 4.2 migration bug, so the
+     * coherent set is decided here, in one place.
      */
     public record Selection(String tier,
                             IoHandlerFactory ioHandlerFactory,
-                            Class<? extends ServerChannel> serverChannelClass) {
+                            Class<? extends ServerChannel> serverChannelClass,
+                            Class<? extends Channel> clientChannelClass) {
     }
 
     /** Resolves the transport per the override / io_uring→Epoll→NIO order. */
@@ -89,15 +101,17 @@ public final class NettyTransport {
 
     private static Selection ioUring() {
         return new Selection("io_uring", IoUringIoHandler.newFactory(),
-                IoUringServerSocketChannel.class);
+                IoUringServerSocketChannel.class, IoUringSocketChannel.class);
     }
 
     private static Selection epoll() {
-        return new Selection("epoll", EpollIoHandler.newFactory(), EpollServerSocketChannel.class);
+        return new Selection("epoll", EpollIoHandler.newFactory(),
+                EpollServerSocketChannel.class, EpollSocketChannel.class);
     }
 
     private static Selection nio() {
-        return new Selection("nio", NioIoHandler.newFactory(), NioServerSocketChannel.class);
+        return new Selection("nio", NioIoHandler.newFactory(),
+                NioServerSocketChannel.class, NioSocketChannel.class);
     }
 
     private static IllegalStateException unavailable(String tier, Throwable cause) {

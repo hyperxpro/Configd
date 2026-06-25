@@ -24,13 +24,27 @@
 
       Footprint containment (charter §supply-chain): Netty enters the build ONLY through this module
       and the migrated modules that depend on it (configd-edge-node = M1, configd-server = M2+). It is
-      deliberately NOT placed in configd-transport/configd-common — those are depended on by the not-
-      yet-migrated consensus/replication surfaces, and pulling Netty there would leak it (and its CVE
-      surface) into surfaces M3/M4 have not yet verified. A smaller closure is a smaller CVE surface.
+      deliberately NOT placed in configd-transport/configd-common — those are depended on by the
+      consensus/replication algorithm modules, and pulling Netty there would leak it (and its CVE
+      surface) into them. A smaller closure is a smaller CVE surface.
+
+      M4 (DR-N16): this module now also depends on configd-transport — the REVERSE direction of the
+      rejected option above (configd-netty -> configd-transport, never the inverse), so configd-transport
+      (and thus configd-consensus-core / configd-replication-engine) stays Netty-free while NettyRaftTransport
+      can reuse the shared FrameCodec / TlsManager / RaftWireProtocol / RaftTransportEndpoint. No cycle:
+      configd-transport does not depend on configd-netty.
 
       Versions are pinned in the root pom <dependencyManagement> (<netty.version>).
     -->
     <dependencies>
+        <!-- M4 (DR-N16): the Netty-free consensus-wire core (FrameCodec, TlsManager, RaftWireProtocol,
+             the RaftTransport/RaftTransportEndpoint interfaces, InboundMessage) NettyRaftTransport reuses.
+             configd-transport pulls configd-common (NodeId, Clock) transitively. -->
+        <dependency>
+            <groupId>io.configd</groupId>
+            <artifactId>configd-transport</artifactId>
+            <version>${project.version}</version>
+        </dependency>
         <!-- Transport core + buffers (NIO tier 3 lives in netty-transport; no extra artifact). -->
         <dependency>
             <groupId>io.netty</groupId>
