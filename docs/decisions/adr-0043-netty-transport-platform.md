@@ -13,6 +13,21 @@
   (independently reproduced; [verification.md](../jdk-vs-netty/verification.md)); API research
   [docs/netty-migration/netty42-api.md](../netty-migration/netty42-api.md).
 - **Decision log:** [docs/netty-migration/decision-log.md](../netty-migration/decision-log.md).
+- **Migration status (2026-06-25): COMPLETE — all four surfaces migrated.** M1 edge-read + M2 admin
+  (PR #2) and M3 fan-out (PR #3) are on `main`; **M4 consensus wire** is on branch `netty-migration-m4`
+  (PR pending; CI 12/12 green; four-way verified — implementer + diff-review + independent re-run +
+  adversarial red-team (SAFE TO MERGE) + fresh-context Verifier (APPROVE, 0 must-fix)). With M4, the
+  inter-node Raft transport (`TcpRaftTransport`) is replaced in production by `NettyRaftTransport`, the
+  last surface — so **ADR-0037 is now FULLY superseded** (not merely in principle: the
+  JDK-socket/SSLSocket consensus transport it ratified no longer runs in production). The honest
+  rationale is unchanged — **io_uring substrate + platform uniformity + the measured edge-read 8.7×
+  win**, explicitly **accepting measured-neutral performance on the consensus/fan-out wire codecs**:
+  M4's gc-proof confirms the production consensus encoder allocates **~0 B/op** (not the 160 microbench
+  artifact) because the send is driven from the event loop (DR-N17), exactly as this ADR's consensus
+  risk note required; the M3 no-spurious-election timing re-closes on the real Netty wire (the
+  load-bearing proof). The JDK `TcpRaftTransport` is retained as the M4 contract's JDK baseline + the
+  documented fast-revert. The ONLY remaining Netty-arc item is **Phase V** (io_uring syscall-reduction
+  measurement, EC2-gated).
 
 ## Context
 

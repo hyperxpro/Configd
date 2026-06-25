@@ -6,6 +6,140 @@
 
 ---
 
+## Session 5 — M4 (inter-node consensus wire) → Netty — DONE on branch, four-way verified, NOT merged
+
+**The most dangerous surface, migrated.** M4 moves the inter-node Raft consensus transport
+(`configd-transport` `TcpRaftTransport`, JDK `SSLSocket`/`SSLServerSocket` mTLS + `FrameCodec`
+framing + the M3 coalesced-heartbeat timing) to Netty 4.2 — the surface the entire Phase-0 safety arc
+rides. Branch `netty-migration-m4` off `origin/main` (M1+M2+M3 merged; DR-N15). Seven slices A–G;
+**CI 12/12 GREEN** (run `28196796312` on the cutover; final-HEAD re-dispatch after the four-way fixes);
+four-way rigor (implementer + diff-review + independent re-run + adversarial red-team + fresh-context
+Verifier).
+
+### Done (verified end-to-end, evidence each)
+
+| Slice | What | Evidence |
+|---|---|---|
+| A (`190faa2`) | Extract the Netty-free consensus-wire core: `RaftWireProtocol` (`[4B senderId][FrameCodec frame]` encode + bounds-before-alloc length predicate + RR-002/F-S7-FUZZ-1 policy), `RaftTransportEndpoint` interface, top-level `InboundMessage`; `TcpRaftTransport` → thin JDK adapter (DR-N16) | configd-transport **135/135** green — faithful extraction |
+| B (`13a3e7f`) | `NettyRaftTransport` on `configd-netty`: in-pipeline `NettyConsensusFrameEncoder` (~0 B/op, DR-N17), event-loop-driven drain (writability-gated drop-on-overflow), mTLS both directions (DR-N18: server `setNeedClientAuth`+TLSv1.3, NEW client `SslHandler` with F-0051 hostname verification), admission cap + `IdleStateHandler` slowloris deadline, RR-002 non-blocking send; `NettyTransport.Selection` + client channel (DR-N19) | `AbstractRaftTransportContract` JDK / Netty(io_uring) / Netty(NIO) = **18 / 18 / 18** |
+| C (`d3e3f6a`) | `RaftTransportAdapter` generalized to the `RaftTransport` interface (DR-N20) — the cutover seam | configd-server compiles; loopback adapter test green |
+| D (`6a1ed55`) | `NettyConsensusLivenessTest` — the **real-wire no-spurious-election sweep** (3-node cluster, per-node owner threads, coalescing active on the real wire) + non-vacuity leg | THE PROOF + non-vacuity + fidelity, **3× non-flaky** (re-run independently) |
+| E (`1777511`) | Cut `ConfigdServer` over to `NettyRaftTransport` (one construction line via `RaftTransportEndpoint`); SBOM regenerated | configd-server **334/334**; SBOM delta = **exactly** the `configd-netty→configd-transport` edge, 0 new components |
+| F (`855d061`) | gc-proof: production encoder ~0 B/op (not 160) + byte-identity test | `idiomatic=12 B/op` (event loop) vs `naive=172` (plain thread); byte-identity 72 cases |
+| G | Four-way fixes (red/green): the two red-team/Verifier LOW findings | handshake-timeout test green; contract 18/18/18 + sweep 3/3 + ConfigdServerTest 22/22 still green |
+
+### The load-bearing proof (charter §2.2 / §3) — re-run on the Netty transport
+`NettyConsensusLivenessTest` is the real-wire analog of the sim `CoalescedHeartbeatLivenessTest`: a
+genuinely-concurrent 3-node cluster, each node on its own owner thread behind its own
+`NettyRaftTransport`, all wired through the M3 coalesce→drain pipeline (coalescing **active** on the
+wire). **THE PROOF:** a stable leader holds its term across a sustained-load window AND a sustained-idle
+window (idle = the coalesced heartbeat is the sole liveness signal) — no spurious election (re-run
+independently 3×: leader held term=1 across ~238 load + ~239 idle observations). **NON-VACUITY:**
+severing the leader's coalesced heartbeats drives a real term advance (2→3 every run) — the harness
+detects heartbeat starvation, so the proof is not vacuous. **FIDELITY:** 200 heartbeat-sized frames
+over a real connection arrive all-in-order (strict per-peer FIFO, 0 reorders) at 13–19× margin under
+the election floor — the empirical basis that the generous election budget is for 2-vCPU robustness,
+not masking transport slowness.
+
+### Full S2–S4 surface re-closed on Netty
+The S2–S4 surface (linearizability/version-monotonicity/no-stale-overwrite/durable-prefix/
+leader-completeness/log-matching/state-machine-safety) runs on the deterministic `SimulatedNetwork` and
+is transport-agnostic; M4 touched **neither consensus-core, the sim, nor the `FrameCodec` wire
+semantics**, so the surface re-closes by (a) the sim surface staying green — CI **build-and-test**
+(CertificationTest, SeedSweepTest, ConsistencyPropertyTests), **gate-3** (edge adversarial seed-sweeps),
+**gate-4** (PartitionMatrix / OverloadChaos / MiniJepsen) all GREEN — plus (b) the **real-wire delivery
+faithfulness** proven by the contract (slice B) + the no-spurious-election sweep (slice D), plus (c) the
+**wire-compat golden bytes** (slice A, unchanged). No correctness regression.
+
+### Consensus mTLS re-proven by negative test on Netty (DR-N18)
+The `AbstractRaftTransportContract` mTLS negatives run on JDK + Netty + forced-NIO and each performs the
+attack + asserts ZERO inbound delivery: **plaintext** rejected, **expired** CA-signed end-entity
+rejected, **untrusted-CA** rejected, **no-cert** rejected (server `setNeedClientAuth(true)`),
+**TLSv1.2 downgrade** rejected (TLSv1.3-only), **wrong-SAN** rejected (client F-0051 hostname
+verification). Mutual auth enforced both directions — server demands+verifies the client cert; the new
+Netty client verifies the server's hostname.
+
+### Idiomatic encode — ~0 B/op, not the 160 trap (DR-N17)
+`docs/netty-migration/m4-consensus-gc-proof.md`: the production `NettyConsensusFrameEncoder` driven
+in-pipeline ON the event loop allocates **~0 B/op** (12, the `getThreadAllocatedBytes` floor); the
+naive manual alloc/release loop OFF the event loop allocates **172** (the head-to-head's "160"). The
+2×2 pins the mechanism — the cliff is the `FastThreadLocalThread` (Netty's pooled-`ByteBuf` Recycler
+only engages on an event-loop thread), and `NettyRaftTransport.drain()` always writes ON the event loop,
+so production is ~0 by construction. Byte-identical to `RaftWireProtocol.encodeWire` (72-case test).
+Corroborates + sharpens verdict.md §Surface 4.
+
+### Four-way verification (charter §3, elevated from the M1–M3 Verifier pass)
+1. **Implementer** — slices A–F, each behind the existing/new tests.
+2. **Diff-review** — the contract was authored + line-by-line diff-reviewed against the incumbent JDK
+   tests (faithful transcription, zero assertion dropped; the JDK contract subclass passing proves the
+   harness encodes real JDK behaviour). The diff-review **caught a real bug**: `NettyRaftTransport.close()`
+   fired `serverChannel.close()` fire-and-forget then tore down the event-loop groups → on io_uring the
+   abandoned close SQE left the listen FD lingering → same-port rebind failed. Fixed **red/green** by
+   awaiting the listen-socket close (restoring JDK synchronous-close semantics); the io_uring contract
+   subclass went 17→18 green.
+3. **Independent re-run** — the contract (54), the no-spurious-election sweep (3×), and the gc-proof were
+   re-run from clean; CI 12/12 is the full clean re-run of the whole surface.
+4. **Adversarial red-team — SAFE TO MERGE** (no Critical/High; consensus safety, per-peer FIFO across
+   reconnect, drop-on-overflow, the lock-free drain, and mTLS all hold). Two **LOW** findings, both
+   **fixed red/green** (slice G): (i) the Netty `SslHandler`s didn't apply the shared
+   `HANDSHAKE_TIMEOUT_MS` (2 s) — defaulting to Netty's 10 s, contradicting DR-N16's "same numbers"
+   (liveness-only; RR-002 holds since the handshake is off the tick thread) → now set on both handlers,
+   pinned by `NettyRaftTransportHandshakeTimeoutTest`; (ii) `scheduleDrain`'s `eventLoop().execute(...)`
+   was unguarded → a close/send race could throw `RejectedExecutionException` onto the tick thread →
+   now guarded (reset the flag), mirroring `scheduleConnect`. Two INFO items are by-design/pre-existing
+   (wire-`senderId` not cert-bound — documented DR-N18, identical to JDK, non-Byzantine model;
+   empty-TLS-config guard — shared with JDK, fail-closed in prod).
+   **Fresh-context Verifier — APPROVE, 0 must-fix.** Independently verified all 8 claim areas, re-ran the
+   sweep (3/3) + gc-proof (2/2) green, tested the fast-revert live, confirmed CI 12/12. Its one
+   should-fix was the SAME `scheduleDrain` REE guard (fixed); two nits accepted as documented choices
+   (server always-mTLS matches the M3 fan-out DR-N13 + is the more-secure direction; outbound
+   fire-and-forget close — the listen socket IS awaited, the leaked ephemeral FD is negligible).
+
+### Performance (measured)
+Allocation (the trustworthy axis): the production consensus encoder is **~0 B/op** idiomatic — it TIES
+the JDK into-variant floor (verdict.md §Surface 4), neither winning nor regressing, exactly the
+measured-neutral trade ADR-0043 accepted for the wire codecs. The migration's value here is
+**uniformity + the io_uring substrate**, not a wire-codec speedup. io_uring deferred to Phase V.
+
+### Honest residuals
+- **CVE not yet run on this branch** (the standing env-blocked residual; charter §9). M4 adds **no new
+  external dependency** — the SBOM delta is exactly one internal reactor edge (`configd-netty →
+  configd-transport`, DR-N16), **0 new components**; the `io.netty` closure is unchanged since M1. The
+  pre-production go/no-go still owes a real CVE scan (`NVD_API_KEY` + a network run) — noted, not ridden
+  to the finish silently.
+- **io_uring unmeasured** on this surface (Phase V); auto-selected here (the contract proves the
+  forced-NIO fallback green too).
+- **gc-proof ns/op is relative** (2-vCPU); allocation (B/op) is the trustworthy axis.
+- **The no-spurious-election sweep uses a generous election budget** (1000–2000 ms, 20× the heartbeat
+  tick ratio) for 2-vCPU robustness; the FIDELITY leg shows actual loopback delivery is 13–19× under
+  that floor, so the budget is not masking transport slowness. Plaintext (TLS delivery is proven
+  separately by the contract's mTLS legs; the timing proof isolates delivery).
+
+### Branch-vs-`main` truth
+M4 is on the **branch** `netty-migration-m4`, **NOT merged**. Production consensus is Netty on the
+branch only; `main` still runs the JDK `TcpRaftTransport`. Merge is the human gate.
+
+### Documented fast-revert
+`git revert 1777511` (slice E) restores `ConfigdServer` to `new TcpRaftTransport(...)` — the field is
+typed `RaftTransportEndpoint`, so the one construction line reverts cleanly; the JDK transport is
+retained and fully tested by the contract's JDK subclass (Verifier tested this live). Verify:
+`./mvnw -o -pl configd-server test -Dtest='ConfigdServerTest,JdkRaftTransportContractTest'`.
+
+### ADRs / DRs
+**ADR-0037 now FULLY superseded** (migration complete — all four surfaces on Netty); ADR-0043 updated
+with the migration-complete status. DR-N15 (baseline), DR-N16 (extraction + module placement), DR-N17
+(idiomatic ~0 encode + event-loop write), DR-N18 (mTLS both ways), DR-N19 (selector client channel),
+DR-N20 (adapter generalization) — all in `decision-log.md`.
+
+### Next stage
+**Phase V** (io_uring syscall-reduction measurement, EC2-gated → spends money) is the ONLY remaining
+Netty-arc item — preconditions: an io_uring-capable box, `strace`/`perf` syscall counts vs Epoll on the
+high-volume surfaces (edge-read + fan-out), the honest delivered-now / latent-at-scale verdict. Do not
+start it (deliberate stop). Also still owed (standing, pre-existing): configure `NVD_API_KEY` + run a
+real CVE scan before the final production go/no-go.
+
+---
+
 ## Session 4 — M3 (fan-out streaming) → Netty — DONE on branch, Verifier APPROVED, NOT merged
 
 **CI: ALL 12 jobs GREEN — run `28135923407`** (build-and-test/JDK25, tlc, gate-1..7, gate-phase0,

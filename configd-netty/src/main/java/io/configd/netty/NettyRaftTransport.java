@@ -36,6 +36,7 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -291,14 +292,15 @@ public final class NettyRaftTransport implements RaftTransportEndpoint {
 
     // ---- mTLS handlers (DR-N18) ----
 
-    /** Server-mode mTLS handler — same SSLContext/protocols/ciphers as the JDK server (DR-N13). */
-    private SslHandler newServerSslHandler() {
+    /** Server-mode mTLS handler — same SSLContext/protocols/ciphers as the JDK server (DR-N13).
+     *  Package-private for the handshake-timeout regression test. */
+    SslHandler newServerSslHandler() {
         SSLContext ctx = tlsManager.currentContext();
         SSLEngine engine = ctx.createSSLEngine();
         engine.setUseClientMode(false);
         engine.setNeedClientAuth(true); // mTLS REQUIRED: a peer with no/expired/untrusted cert is rejected
         applyTlsConfig(engine);
-        return new SslHandler(engine);
+        return boundedHandshake(new SslHandler(engine));
     }
 
     /**
@@ -307,7 +309,7 @@ public final class NettyRaftTransport implements RaftTransportEndpoint {
      * {@code createClientSocket}. Without the {@code HTTPS} algorithm any trust-store-signed cert is
      * accepted, defeating peer pinning.
      */
-    private SslHandler newClientSslHandler(InetSocketAddress peer) {
+    SslHandler newClientSslHandler(InetSocketAddress peer) {
         SSLContext ctx = tlsManager.currentContext();
         SSLEngine engine = ctx.createSSLEngine(peer.getHostString(), peer.getPort());
         engine.setUseClientMode(true);
@@ -315,7 +317,21 @@ public final class NettyRaftTransport implements RaftTransportEndpoint {
         SSLParameters params = engine.getSSLParameters();
         params.setEndpointIdentificationAlgorithm("HTTPS"); // F-0051 hostname verification
         engine.setSSLParameters(params);
-        return new SslHandler(engine);
+        return boundedHandshake(new SslHandler(engine));
+    }
+
+    /**
+     * Applies the SHARED bounded TLS handshake timeout ({@link RaftWireProtocol#HANDSHAKE_TIMEOUT_MS})
+     * that the JDK transport enforces via {@code setSoTimeout(...)} around {@code startHandshake()}
+     * (DR-N16: both transports apply the same numbers). Without it the Netty default (10s) would apply,
+     * so a peer that completes the TCP connect but stalls mid-handshake would hold the connect slot ~10s
+     * instead of ~2s. The handshake runs on a worker event loop, never the consensus/tick thread, so
+     * this is a liveness bound only — RR-002 (the caller never blocks) is unaffected. (Red-team finding,
+     * fixed red/green; pinned by {@code NettyRaftTransportHandshakeTimeoutTest}.)
+     */
+    private static SslHandler boundedHandshake(SslHandler handler) {
+        handler.setHandshakeTimeoutMillis(RaftWireProtocol.HANDSHAKE_TIMEOUT_MS);
+        return handler;
     }
 
     private void applyTlsConfig(SSLEngine engine) {
@@ -438,7 +454,16 @@ public final class NettyRaftTransport implements RaftTransportEndpoint {
         /** CAS-gated wake of the event loop: at most one drain in flight, so under load this is ~0 alloc. */
         private void scheduleDrain(Channel ch) {
             if (drainScheduled.compareAndSet(false, true)) {
-                ch.eventLoop().execute(() -> drain(ch));
+                try {
+                    ch.eventLoop().execute(() -> drain(ch));
+                } catch (RejectedExecutionException rejected) {
+                    // The worker event loop is shutting down (a send() racing close(): send passed the
+                    // running.get() check, then close() set running=false + shut the group down). Relinquish
+                    // the flag so send() never throws onto the consensus/tick thread (RR-002 — the JDK send
+                    // only offers, never executes) and a later send can re-arm. Mirrors scheduleConnect's
+                    // guard. (Red-team + Verifier finding, fixed red/green.)
+                    drainScheduled.set(false);
+                }
             }
         }
 
