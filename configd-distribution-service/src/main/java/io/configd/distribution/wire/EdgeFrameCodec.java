@@ -118,11 +118,27 @@ public final class EdgeFrameCodec {
     }
 
     // -----------------------------------------------------------------------
-    // Encode
+    // Encode (single pass into a FrameSink — the head-to-head Surface-3 floor win)
     // -----------------------------------------------------------------------
 
     /**
-     * Encodes a frame to a newly allocated byte array.
+     * One reused {@link CRC32C} per thread for the trailer. The status-quo {@code new CRC32C()}
+     * per encode is escape-analyzed to zero only when the buffer never escapes (the JDK
+     * reused-buffer case); a pooled {@code ByteBuf} escapes into {@code release()}, so a thread
+     * local guarantees the trailer adds no per-frame allocation on <b>either</b> backend — the
+     * same device the head-to-head's best-Netty encoder used to keep the comparison honest.
+     */
+    private static final ThreadLocal<CRC32C> TRAILER_CRC = ThreadLocal.withInitial(CRC32C::new);
+
+    /** Default initial capacity for the convenience {@link #encode(EdgeFrame)} heap sink. */
+    private static final int ENCODE_INITIAL_CAPACITY = 256;
+
+    /**
+     * Encodes a frame to a newly allocated byte array (convenience / cold path: golden + property
+     * tests, the JDK edge client, teardown {@code ERROR_CLOSE}). Delegates to {@link #encodeInto}
+     * so there is exactly ONE wire-format implementation — the golden fixtures therefore guard the
+     * single-pass encoder for free. The hot fan-out path uses {@link #encodeInto} with a
+     * reused/pooled {@link FrameSink} to reach the message-building floor.
      *
      * @param frame the frame to encode
      * @return the wire bytes (length includes header + payload + CRC trailer)
@@ -131,178 +147,164 @@ public final class EdgeFrameCodec {
      */
     public static byte[] encode(EdgeFrame frame) {
         Objects.requireNonNull(frame, "frame must not be null");
-        byte[] payload = encodePayload(frame);
+        HeapFrameSink sink = new HeapFrameSink(ENCODE_INITIAL_CAPACITY);
+        encodeInto(frame, sink);
+        return sink.toByteArray();
+    }
 
-        long total = (long) HEADER_SIZE + payload.length + TRAILER_SIZE;
+    /**
+     * Encodes one frame <b>in a single pass</b> directly into {@code sink}, with no intermediate
+     * {@code List<byte[]>}, per-notification {@code ByteBuffer}, or payload-then-out double array.
+     * The 4-byte length prefix is written as a placeholder and back-patched once the payload length
+     * is known; the CRC32C trailer is computed over the written {@code [start, end-of-payload)}
+     * region via {@link FrameSink#crc32cInto}. Byte-identical to the status-quo layout (proven by
+     * {@code EdgeFrameCodecGoldenFixtureTest}, which exercises this path through {@link #encode}).
+     *
+     * <p>When {@code sink} is reused (the JDK writer's per-connection {@link HeapFrameSink}) or
+     * pooled (the Netty in-pipeline {@code ByteBuf} sink), the only per-frame allocation that
+     * remains is the codec-internal message-building floor ({@code CommandCodec.encodeBatch} +
+     * signature/nonce clones) — the 25,520 B/op (batch 64) the head-to-head measured as
+     * transport-independent.
+     *
+     * @param frame the frame to encode
+     * @param sink  the destination (its current {@link FrameSink#writerIndex()} is the frame start)
+     * @throws CodecException if the frame exceeds {@link #MAX_EDGE_FRAME_SIZE} or a NOTIFY batch
+     *                        exceeds its caps (the sink may hold a partial frame; the caller
+     *                        discards/releases it)
+     */
+    public static void encodeInto(EdgeFrame frame, FrameSink sink) {
+        Objects.requireNonNull(frame, "frame must not be null");
+        Objects.requireNonNull(sink, "sink must not be null");
+        final int start = sink.writerIndex();
+        sink.writeInt(0); // total-length placeholder, back-patched below
+        sink.writeByte(EDGE_WIRE_VERSION);
+        sink.writeByte((byte) frame.type().code());
+
+        encodePayloadInto(frame, sink);
+
+        final int payloadEnd = sink.writerIndex();
+        long total = (long) (payloadEnd - start) + TRAILER_SIZE;
         if (total > MAX_EDGE_FRAME_SIZE) {
             throw new CodecException(ErrorCode.FRAME_TOO_LARGE,
                     "encoded frame " + total + " bytes exceeds MAX_EDGE_FRAME_SIZE="
                             + MAX_EDGE_FRAME_SIZE + " (type " + frame.type() + ")");
         }
         int totalLen = (int) total;
-
-        byte[] out = new byte[totalLen];
-        ByteBuffer buf = ByteBuffer.wrap(out);
-        buf.putInt(totalLen);
-        buf.put(EDGE_WIRE_VERSION);
-        buf.put((byte) frame.type().code());
-        buf.put(payload);
-
-        CRC32C crc = new CRC32C();
-        crc.update(out, 0, totalLen - TRAILER_SIZE);
-        buf.putInt((int) crc.getValue());
-        return out;
+        sink.setInt(start, totalLen); // back-patch the length prefix
+        CRC32C crc = TRAILER_CRC.get();
+        crc.reset();
+        sink.crc32cInto(crc, start, payloadEnd - start); // CRC over [length .. end-of-payload)
+        sink.writeInt((int) crc.getValue());
     }
 
-    private static byte[] encodePayload(EdgeFrame frame) {
-        return switch (frame) {
-            case EdgeFrame.Subscribe f -> encodeSubscribe(f);
-            case EdgeFrame.SubscribeOk f -> encodeSubscribeOk(f);
-            case EdgeFrame.Notify f -> encodeNotify(f);
-            case EdgeFrame.SnapshotBegin f -> encodeSnapshotBegin(f);
-            case EdgeFrame.SnapshotChunk f -> encodeSnapshotChunk(f);
-            case EdgeFrame.SnapshotEnd f -> encodeSnapshotEnd(f);
-            case EdgeFrame.CursorAck f -> encodeCursorAck(f);
-            case EdgeFrame.Heartbeat f -> encodeHeartbeat(f);
-            case EdgeFrame.ErrorClose f -> encodeErrorClose(f);
-        };
+    private static void encodePayloadInto(EdgeFrame frame, FrameSink sink) {
+        switch (frame) {
+            case EdgeFrame.Subscribe f -> encodeSubscribeInto(f, sink);
+            case EdgeFrame.SubscribeOk f -> encodeSubscribeOkInto(f, sink);
+            case EdgeFrame.Notify f -> encodeNotifyInto(f, sink);
+            case EdgeFrame.SnapshotBegin f -> encodeSnapshotBeginInto(f, sink);
+            case EdgeFrame.SnapshotChunk f -> encodeSnapshotChunkInto(f, sink);
+            case EdgeFrame.SnapshotEnd f -> sink.writeLong(f.snapshotSeq());
+            case EdgeFrame.CursorAck f -> sink.writeLong(f.seq());
+            case EdgeFrame.Heartbeat f -> encodeHeartbeatInto(f, sink);
+            case EdgeFrame.ErrorClose f -> encodeErrorCloseInto(f, sink);
+        }
     }
 
-    private static byte[] encodeSubscribe(EdgeFrame.Subscribe f) {
-        List<byte[]> prefixBytes = new ArrayList<>(f.prefixes().size());
-        int prefixTotal = 0;
+    private static void encodeSubscribeInto(EdgeFrame.Subscribe f, FrameSink sink) {
+        // [1B fullStore][4B prefixCount][prefixes][8B resume][8B failoverResume][4B edgeIdLen][edgeId]
+        sink.writeByte(f.fullStore() ? 1 : 0);
+        sink.writeInt(f.prefixes().size());
         for (String p : f.prefixes()) {
             byte[] b = p.getBytes(StandardCharsets.UTF_8);
-            prefixBytes.add(b);
-            prefixTotal += 4 + b.length;
+            sink.writeInt(b.length);
+            sink.writeBytes(b);
         }
+        sink.writeLong(f.resumeCursor());
+        sink.writeLong(f.failoverResumeCursor());
         byte[] edgeId = f.edgeId().getBytes(StandardCharsets.UTF_8);
-        // [1B fullStore][4B prefixCount][prefixes][8B resume][8B failoverResume][4B edgeIdLen][edgeId]
-        ByteBuffer buf = ByteBuffer.allocate(1 + 4 + prefixTotal + 8 + 8 + 4 + edgeId.length);
-        buf.put((byte) (f.fullStore() ? 1 : 0));
-        buf.putInt(prefixBytes.size());
-        for (byte[] b : prefixBytes) {
-            buf.putInt(b.length);
-            buf.put(b);
-        }
-        buf.putLong(f.resumeCursor());
-        buf.putLong(f.failoverResumeCursor());
-        buf.putInt(edgeId.length);
-        buf.put(edgeId);
-        return buf.array();
+        sink.writeInt(edgeId.length);
+        sink.writeBytes(edgeId);
     }
 
-    private static byte[] encodeSubscribeOk(EdgeFrame.SubscribeOk f) {
-        ByteBuffer buf = ByteBuffer.allocate(8 + 1);
-        buf.putLong(f.latestSeq());
-        buf.put((byte) f.mode().ordinal());
-        return buf.array();
+    private static void encodeSubscribeOkInto(EdgeFrame.SubscribeOk f, FrameSink sink) {
+        sink.writeLong(f.latestSeq());
+        sink.writeByte(f.mode().ordinal());
     }
 
-    private static byte[] encodeNotify(EdgeFrame.Notify f) {
+    private static void encodeNotifyInto(EdgeFrame.Notify f, FrameSink sink) {
         List<CommitNotification> ns = f.notifications();
         if (ns.size() > MAX_NOTIFY_BATCH) {
             throw new CodecException(ErrorCode.FRAME_TOO_LARGE,
                     "NOTIFY batch " + ns.size() + " exceeds MAX_NOTIFY_BATCH=" + MAX_NOTIFY_BATCH);
         }
-        // Encode each notification, accumulating into a growable buffer.
-        List<byte[]> encoded = new ArrayList<>(ns.size());
-        int total = 4; // count
+        final int payloadStart = sink.writerIndex();
+        sink.writeInt(ns.size());
         for (CommitNotification n : ns) {
-            byte[] nb = encodeNotification(n);
-            encoded.add(nb);
-            total += nb.length;
+            encodeNotificationInto(n, sink);
         }
-        if (total > MAX_NOTIFY_BATCH_BYTES) {
+        int payloadBytes = sink.writerIndex() - payloadStart;
+        if (payloadBytes > MAX_NOTIFY_BATCH_BYTES) {
             throw new CodecException(ErrorCode.FRAME_TOO_LARGE,
-                    "NOTIFY payload " + total + " bytes exceeds MAX_NOTIFY_BATCH_BYTES="
+                    "NOTIFY payload " + payloadBytes + " bytes exceeds MAX_NOTIFY_BATCH_BYTES="
                             + MAX_NOTIFY_BATCH_BYTES);
         }
-        ByteBuffer buf = ByteBuffer.allocate(total);
-        buf.putInt(ns.size());
-        for (byte[] nb : encoded) {
-            buf.put(nb);
-        }
-        return buf.array();
     }
 
-    private static byte[] encodeNotification(CommitNotification n) {
+    private static void encodeNotificationInto(CommitNotification n, FrameSink sink) {
         ConfigDelta d = n.delta();
-        // Mutations: re-encoded with the SAME CommandCodec.encodeBatch bytes that
-        // ConfigDelta.signingPayload() hashes — so signingPayload round-trips byte-identical.
-        // encodeBatch throws on empty; a mutating-apply delta always has >= 1 mutation.
+        // Message-building floor (codec-internal; not removed by buffer reuse — head-to-head
+        // Surface 3): the mutation blob re-encoded with the SAME CommandCodec.encodeBatch bytes
+        // ConfigDelta.signingPayload() hashes (so signingPayload round-trips byte-identical), plus
+        // the signature/nonce defensive clones. encodeBatch throws on empty; a mutating-apply delta
+        // always has >= 1 mutation.
         byte[] batch = CommandCodec.encodeBatch(d.mutations());
         byte[] sig = d.signature(); // defensive copy; null if unsigned
         byte[] nonce = d.nonce();   // never null (empty = legacy)
-
-        int size = 8 + 8                // seq, commitTs
-                + 8 + 8                 // fromVersion, toVersion
-                + 4 + batch.length      // mutations blob
-                + 4 + (sig == null ? 0 : sig.length) // signature (len -1 = null sentinel handled below)
-                + 8                     // epoch
-                + 4 + nonce.length;     // nonce
-        ByteBuffer buf = ByteBuffer.allocate(size);
-        buf.putLong(n.seq());
-        buf.putLong(n.commitTimestampMillis());
-        buf.putLong(d.fromVersion());
-        buf.putLong(d.toVersion());
-        buf.putInt(batch.length);
-        buf.put(batch);
+        sink.writeLong(n.seq());
+        sink.writeLong(n.commitTimestampMillis());
+        sink.writeLong(d.fromVersion());
+        sink.writeLong(d.toVersion());
+        sink.writeInt(batch.length);
+        sink.writeBytes(batch);
         if (sig == null) {
-            buf.putInt(-1); // explicit null sentinel (distinct from empty)
+            sink.writeInt(-1); // explicit null sentinel (distinct from empty)
         } else {
-            buf.putInt(sig.length);
-            buf.put(sig);
+            sink.writeInt(sig.length);
+            sink.writeBytes(sig);
         }
-        buf.putLong(d.epoch());
-        buf.putInt(nonce.length);
-        buf.put(nonce);
-        return buf.array();
+        sink.writeLong(d.epoch());
+        sink.writeInt(nonce.length);
+        sink.writeBytes(nonce);
     }
 
-    private static byte[] encodeSnapshotBegin(EdgeFrame.SnapshotBegin f) {
-        ByteBuffer buf = ByteBuffer.allocate(8 + 4 + 8);
-        buf.putLong(f.snapshotSeq());
-        buf.putInt(f.chunkCount());
-        buf.putLong(f.totalBytes());
-        return buf.array();
+    private static void encodeSnapshotBeginInto(EdgeFrame.SnapshotBegin f, FrameSink sink) {
+        sink.writeLong(f.snapshotSeq());
+        sink.writeInt(f.chunkCount());
+        sink.writeLong(f.totalBytes());
     }
 
-    private static byte[] encodeSnapshotChunk(EdgeFrame.SnapshotChunk f) {
+    private static void encodeSnapshotChunkInto(EdgeFrame.SnapshotChunk f, FrameSink sink) {
         byte[] bytes = f.bytesUnsafe();
         if (bytes.length > MAX_SNAPSHOT_CHUNK_BYTES) {
             throw new CodecException(ErrorCode.FRAME_TOO_LARGE,
                     "snapshot chunk " + bytes.length + " bytes exceeds MAX_SNAPSHOT_CHUNK_BYTES="
                             + MAX_SNAPSHOT_CHUNK_BYTES);
         }
-        ByteBuffer buf = ByteBuffer.allocate(4 + bytes.length);
-        buf.putInt(f.index());
-        buf.put(bytes);
-        return buf.array();
+        sink.writeInt(f.index());
+        sink.writeBytes(bytes);
     }
 
-    private static byte[] encodeSnapshotEnd(EdgeFrame.SnapshotEnd f) {
-        return ByteBuffer.allocate(8).putLong(f.snapshotSeq()).array();
+    private static void encodeHeartbeatInto(EdgeFrame.Heartbeat f, FrameSink sink) {
+        sink.writeLong(f.latestSeq());
+        sink.writeLong(f.serverNowMillis());
     }
 
-    private static byte[] encodeCursorAck(EdgeFrame.CursorAck f) {
-        return ByteBuffer.allocate(8).putLong(f.seq()).array();
-    }
-
-    private static byte[] encodeHeartbeat(EdgeFrame.Heartbeat f) {
-        ByteBuffer buf = ByteBuffer.allocate(8 + 8);
-        buf.putLong(f.latestSeq());
-        buf.putLong(f.serverNowMillis());
-        return buf.array();
-    }
-
-    private static byte[] encodeErrorClose(EdgeFrame.ErrorClose f) {
+    private static void encodeErrorCloseInto(EdgeFrame.ErrorClose f, FrameSink sink) {
         byte[] msg = f.message().getBytes(StandardCharsets.UTF_8);
-        ByteBuffer buf = ByteBuffer.allocate(1 + 4 + msg.length);
-        buf.put((byte) f.code().code());
-        buf.putInt(msg.length);
-        buf.put(msg);
-        return buf.array();
+        sink.writeByte(f.code().code());
+        sink.writeInt(msg.length);
+        sink.writeBytes(msg);
     }
 
     // -----------------------------------------------------------------------

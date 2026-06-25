@@ -4,6 +4,7 @@ import io.configd.common.Clock;
 import io.configd.distribution.CommitNotificationSource;
 import io.configd.distribution.ReplaySource;
 import io.configd.distribution.fanout.FanOutConfig;
+import io.configd.distribution.fanout.FanOutConnectionDriver;
 import io.configd.distribution.fanout.FanOutSessionCore;
 import io.configd.distribution.fanout.SlowConsumerGovernor;
 import io.configd.distribution.fanout.SlowConsumerPolicyConfig;
@@ -67,7 +68,7 @@ import java.util.logging.Logger;
  * unbounded; no work ever runs on the Raft apply path (the session only reads
  * {@code readSince}/{@code replaySource}).
  */
-public final class FanOutServer {
+public final class FanOutServer implements FanOutEndpoint {
 
     private static final Logger LOG = Logger.getLogger(FanOutServer.class.getName());
 
@@ -96,15 +97,6 @@ public final class FanOutServer {
     private final SlowConsumerGovernor governor;
     private final RegistryFanOutSessionMetrics metrics;
     private final Clock clock;
-
-    /**
-     * Cadence (ms) for the governor's time-driven HEALTHY→SLOW evaluation while a
-     * session's queue is at/above warn. Coarse on purpose: the policy windows are tens of
-     * seconds, and the busy drain loop must pay at most one {@code long} comparison per
-     * iteration for it (hot-path law). Capped below the warn window so a short test
-     * window is still promotable.
-     */
-    private final long governorEvalCadenceMs;
 
     private final ExecutorService executor = Executors.newVirtualThreadPerTaskExecutor();
     private final Set<Socket> liveSockets = ConcurrentHashMap.newKeySet();
@@ -172,8 +164,6 @@ public final class FanOutServer {
         this.governor = java.util.Objects.requireNonNull(governor, "governor");
         this.metrics = java.util.Objects.requireNonNull(metrics, "metrics");
         this.clock = java.util.Objects.requireNonNull(clock, "clock");
-        this.governorEvalCadenceMs = Math.max(1L,
-                Math.min(1_000L, governor.config().queueWarnWindowMs() / 2));
     }
 
     /** The slow-consumer governor this endpoint enforces (C4; for tests/diagnostics). */
@@ -343,8 +333,11 @@ public final class FanOutServer {
     // -----------------------------------------------------------------------
 
     /**
-     * One edge subscriber connection: owns the reader / writer / session virtual threads, the
-     * bounded outbound queue, and the {@link FanOutSessionCore}.
+     * One edge subscriber connection: owns the socket, the reader / writer / session virtual
+     * threads, and the bounded outbound queue. All session logic — inbound routing, cert-identity
+     * binding, C4 admission, the tick + governor-feed loop, demotion handling — lives in the shared
+     * {@link FanOutConnectionDriver}, identical to the Netty fan-out transport's (DR-N11). This
+     * class is the JDK-socket <em>body</em>; the driver is the transport-agnostic <em>brain</em>.
      */
     private final class Connection implements TransportSink {
 
@@ -353,25 +346,8 @@ public final class FanOutServer {
         private final ArrayBlockingQueue<byte[]> outbound;
         private final AtomicBoolean alive = new AtomicBoolean(true);
 
-        /**
-         * Inbound session commands posted by the reader thread and drained by the session
-         * thread. {@link FanOutSessionCore} is single-threaded-per-instance, so EVERY call into
-         * it ({@code onSubscribe} / {@code onCursorAck} / {@code tick}) happens ONLY on the
-         * session thread — the reader never touches the session directly. This is the
-         * R-01-style single-writer discipline applied to the session.
-         */
-        private final java.util.Queue<java.util.function.Consumer<FanOutSessionCore>> sessionCommands =
-                new java.util.concurrent.ConcurrentLinkedQueue<>();
-
-        private volatile FanOutSessionCore session;
-
-        /**
-         * The governor identity this connection is bound to (the cert principal over mTLS;
-         * the wire edgeId over plaintext). Set by the reader at SUBSCRIBE, read by the
-         * session thread (demotion listener / loop feed) — null until subscribed, and a
-         * demotion is impossible before the subscribe command has run.
-         */
-        private volatile String governorIdentity;
+        /** The transport-agnostic session brain (created in {@link #run()} before the reader runs). */
+        private volatile FanOutConnectionDriver driver;
 
         Connection(Socket socket, String edgeIdentity) {
             this.socket = socket;
@@ -380,17 +356,17 @@ public final class FanOutServer {
         }
 
         void run() {
-            // The session uses THIS connection as its TransportSink. Created before the reader
-            // sees SUBSCRIBE so onSubscribe (drained on the session thread) can emit SUBSCRIBE_OK.
-            // The demotion listener feeds the C4 governor: when a demotion trips a window
-            // limit, the identity is QUARANTINED/UNHEALTHY and the connection is torn down
-            // with the on-wire ErrorCode.QUARANTINED (code 8) + socket close.
-            this.session = new FanOutSessionCore(source, replaySource, this, config, metrics,
-                    clock, this::onDemotionEvent);
+            // The driver uses THIS connection as its TransportSink + teardown hook. Created before
+            // the reader sees SUBSCRIBE so onSubscribe (run on the session thread) can emit
+            // SUBSCRIBE_OK; the driver's demotion arm tears the connection down with the on-wire
+            // ErrorCode.QUARANTINED (code 8) + socket close when policy trips.
+            this.driver = new FanOutConnectionDriver(source, replaySource, this, config, metrics,
+                    clock, governor, edgeIdentity, this::teardown);
             metrics.onSubscriberConnected();
 
             Thread writer = Thread.ofVirtual().name("edge-writer-" + edgeIdentity).unstarted(this::writerLoop);
-            Thread sessionThread = Thread.ofVirtual().name("edge-session-" + edgeIdentity).unstarted(this::sessionLoop);
+            Thread sessionThread = Thread.ofVirtual().name("edge-session-" + edgeIdentity)
+                    .unstarted(() -> driver.runSessionLoop(() -> alive.get() && running.get()));
             writer.start();
             sessionThread.start();
             try {
@@ -403,57 +379,17 @@ public final class FanOutServer {
             }
         }
 
-        // ---- reader thread (NEVER touches the session directly — posts commands) ----
+        // ---- reader thread (decode only; routing is the driver's, never touches the session) ----
 
         private void readerLoop() {
             try {
                 DataInputStream in = new DataInputStream(socket.getInputStream());
-                boolean subscribed = false;
                 while (alive.get() && running.get()) {
                     EdgeFrame frame = readFrame(in);
                     if (frame == null) {
                         return; // EOF
                     }
-                    if (!subscribed) {
-                        if (!(frame instanceof EdgeFrame.Subscribe sub)) {
-                            close(ErrorCode.PROTOCOL_VIOLATION, "expected SUBSCRIBE first, got " + frame.type());
-                            return;
-                        }
-                        subscribed = true;
-                        EdgeFrame.Subscribe bound = bindIdentity(sub);
-                        // C4 admission control (design §3): the governor rules on the
-                        // BOUND identity (the cert principal — a reconnect storm cannot
-                        // dodge it by re-dialing). REFUSE → ErrorCode.QUARANTINED + close;
-                        // post-cooldown readmission → resume cursor rebound to 0 so the C3
-                        // decideMode cursor-0 rule forces the snapshot re-bootstrap
-                        // (§7 "must re-bootstrap via catch-up protocol" — reused, not
-                        // duplicated).
-                        governorIdentity = bound.edgeId();
-                        SlowConsumerGovernor.Admission admission =
-                                governor.admit(bound.edgeId(), clock.currentTimeMillis());
-                        switch (admission.decision()) {
-                            case REFUSE -> {
-                                close(ErrorCode.QUARANTINED, "subscribe refused: identity is "
-                                        + admission.state() + "; cooldown remaining "
-                                        + admission.cooldownRemainingMs() + " ms");
-                                return;
-                            }
-                            case ALLOW_FORCE_SNAPSHOT -> bound = new EdgeFrame.Subscribe(
-                                    bound.fullStore(), bound.prefixes(), 0L, -1L, bound.edgeId());
-                            case ALLOW -> { /* admit as requested */ }
-                        }
-                        EdgeFrame.Subscribe admitted = bound;
-                        sessionCommands.add(s -> s.onSubscribe(admitted));
-                    } else {
-                        switch (frame) {
-                            case EdgeFrame.CursorAck ack -> sessionCommands.add(s -> s.onCursorAck(ack.seq()));
-                            // The edge must not send server→edge frames or a second SUBSCRIBE.
-                            default -> {
-                                close(ErrorCode.PROTOCOL_VIOLATION, "unexpected frame for state: " + frame.type());
-                                return;
-                            }
-                        }
-                    }
+                    driver.onInboundFrame(frame);
                 }
             } catch (EdgeFrameCodec.CodecException e) {
                 close(e.code(), "decode error: " + e.getMessage());
@@ -463,22 +399,6 @@ public final class FanOutServer {
                     LOG.fine(() -> "edge reader I/O end: " + e.getMessage());
                 }
             }
-        }
-
-        /**
-         * Binds the wire SUBSCRIBE's edgeId to the authoritative cert identity (mTLS) — the wire
-         * field stays advisory. Over plaintext the wire edgeId is used as-is.
-         */
-        private EdgeFrame.Subscribe bindIdentity(EdgeFrame.Subscribe wire) {
-            if ("plaintext".equals(edgeIdentity)) {
-                return wire;
-            }
-            if (!edgeIdentity.equals(wire.edgeId())) {
-                LOG.fine(() -> "SUBSCRIBE edgeId '" + wire.edgeId() + "' overridden by cert identity '"
-                        + edgeIdentity + "'");
-            }
-            return new EdgeFrame.Subscribe(wire.fullStore(), wire.prefixes(), wire.resumeCursor(),
-                    wire.failoverResumeCursor(), edgeIdentity);
         }
 
         /**
@@ -531,107 +451,6 @@ public final class FanOutServer {
             }
         }
 
-        // ---- demotion listener (runs on the session thread, inside the core's demote) ----
-
-        /**
-         * Feeds every C1 {@code DemotionEvent} to the C4 governor. When the demotion trips
-         * a window limit the governor answers QUARANTINED/UNHEALTHY and this connection is
-         * torn down: the wire sees {@code ERROR_CLOSE} with {@link ErrorCode#QUARANTINED}
-         * (code 8) and the socket closes; the session loop exits before the owed snapshot
-         * transfer runs (no wasted transfer to a quarantined consumer). Subsequent
-         * SUBSCRIBEs from the identity hit the admission refusal until the cooldown.
-         */
-        private void onDemotionEvent(io.configd.distribution.fanout.DemotionEvent event) {
-            String id = governorIdentity;
-            if (id == null) {
-                return; // demotion before SUBSCRIBE cannot happen; defensive
-            }
-            SlowConsumerGovernor.ConsumerState state =
-                    governor.onDemotion(id, event, clock.currentTimeMillis());
-            if (state == SlowConsumerGovernor.ConsumerState.QUARANTINED
-                    || state == SlowConsumerGovernor.ConsumerState.UNHEALTHY) {
-                teardown(ErrorCode.QUARANTINED, "slow-consumer policy: " + state
-                        + " (" + event.reason() + ", cursor=" + event.cursor()
-                        + ", lastAckedSeq=" + event.lastAckedSeq() + ")");
-            }
-        }
-
-        // ---- session thread ----
-
-        private void sessionLoop() {
-            long idleParkNanos = 0;
-            // C4 governor feed state (session-thread-local; one comparison per iteration
-            // on the busy path — hot-path law).
-            long lastAckSeen = session.lastAckedSeq();
-            boolean aboveWarn = false;
-            // The next clock time at which the time-driven evaluation may run. The
-            // MIN_VALUE sentinel is compared with `>=` directly — NEVER by subtraction:
-            // `nowMillis - Long.MIN_VALUE` overflows negative for any nowMillis >= 0,
-            // which silently disabled the evaluation forever (the C4 sign-off P1, C4-A:
-            // HEALTHY→SLOW was unreachable on this loop; the sustained-warn leg of
-            // FanOutServerQuarantineTest now pins it at the live server).
-            long nextGovernorEvalMillis = Long.MIN_VALUE;
-            final int warnThreshold = config.queueWarnThresholdFrames();
-            try {
-                while (alive.get() && running.get()) {
-                    // Drain inbound session commands (subscribe / cursor-ack) FIRST so every
-                    // session mutation happens on THIS thread (single-writer; the session is not
-                    // thread-safe). A posted command counts as progress.
-                    boolean drainedCommand = false;
-                    java.util.function.Consumer<FanOutSessionCore> cmd;
-                    while ((cmd = sessionCommands.poll()) != null) {
-                        cmd.accept(session);
-                        drainedCommand = true;
-                    }
-
-                    int beforeDepth = session.inFlightFrames();
-                    long beforeCursor = session.cursor();
-                    long nowMillis = clock.currentTimeMillis();
-                    session.tick(nowMillis);
-                    if (session.state() == FanOutSessionCore.SessionState.CLOSED) {
-                        return;
-                    }
-
-                    // C4 governor feed: ack progress (resolves CATCHUP), queue-pressure
-                    // EDGES (warn-window arming), and the ≤1 Hz time-driven evaluation
-                    // while warned. All calls are edge/cadence-gated — never per-frame.
-                    String id = governorIdentity;
-                    if (id != null && alive.get()) {
-                        long acked = session.lastAckedSeq();
-                        if (acked > lastAckSeen) {
-                            lastAckSeen = acked;
-                            governor.onAckProgress(id, session.cursor(), acked, nowMillis);
-                        }
-                        boolean above = warnThreshold > 0
-                                && session.inFlightFrames() >= warnThreshold;
-                        if (above != aboveWarn) {
-                            aboveWarn = above;
-                            governor.onQueuePressure(id, above, session.cursor(), acked, nowMillis);
-                        }
-                        if (above && nowMillis >= nextGovernorEvalMillis) {
-                            nextGovernorEvalMillis = nowMillis + governorEvalCadenceMs;
-                            governor.evaluate(id, nowMillis);
-                        }
-                    }
-
-                    boolean madeProgress = drainedCommand
-                            || session.cursor() != beforeCursor
-                            || session.inFlightFrames() != beforeDepth;
-                    if (madeProgress) {
-                        idleParkNanos = 0; // active: immediate re-poll
-                    } else {
-                        // Idle: adaptive backoff capped at idlePollMs (design §4).
-                        long capNanos = config.idlePollMs() * 1_000_000L;
-                        idleParkNanos = Math.min(capNanos,
-                                idleParkNanos == 0 ? 100_000L : idleParkNanos * 2);
-                        java.util.concurrent.locks.LockSupport.parkNanos(idleParkNanos);
-                    }
-                }
-            } finally {
-                teardown(ErrorCode.SERVER_SHUTDOWN, "session ended");
-            }
-        }
-
         // ---- TransportSink (the only boundary; socket lives here, not in the session) ----
 
         @Override
@@ -662,7 +481,8 @@ public final class FanOutServer {
             if (!alive.compareAndSet(true, false)) {
                 return; // already torn down
             }
-            FanOutSessionCore s = session;
+            FanOutConnectionDriver d = driver;
+            FanOutSessionCore s = (d != null) ? d.session() : null;
             if (s != null && s.state() != FanOutSessionCore.SessionState.CLOSED) {
                 // Best-effort: try to push a final ERROR_CLOSE before the socket dies.
                 try {

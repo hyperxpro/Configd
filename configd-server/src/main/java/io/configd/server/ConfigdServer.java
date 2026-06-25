@@ -130,7 +130,7 @@ public final class ConfigdServer {
     private final NettyHttpApiServer httpApiServer; // ADR-0043 M2: admin API on Netty (was HttpApiServer)
     private final TcpRaftTransport tcpTransport; // nullable when peer addresses not configured
     /** C1 fan-out edge endpoint (ADR-0037); null when {@code --edge-port} is absent. */
-    private final io.configd.server.fanout.FanOutServer fanOutServer;
+    private final io.configd.server.fanout.FanOutEndpoint fanOutServer;
 
     // Distribution layer
     private final WatchService watchService;
@@ -151,7 +151,7 @@ public final class ConfigdServer {
                           ScheduledExecutorService tlsReloadExecutor,
                           NettyHttpApiServer httpApiServer,
                           TcpRaftTransport tcpTransport,
-                          io.configd.server.fanout.FanOutServer fanOutServer,
+                          io.configd.server.fanout.FanOutEndpoint fanOutServer,
                           WatchService watchService,
                           FanOutBuffer fanOutBuffer,
                           Compactor compactor,
@@ -795,7 +795,7 @@ public final class ConfigdServer {
         // path. Reuses the Raft TlsManager (REQUIRED mTLS when TLS is on;
         // plaintext for single-node/test, matching the Raft transport policy).
         // ---------------------------------------------------------------
-        io.configd.server.fanout.FanOutServer fanOutServer = null;
+        io.configd.server.fanout.FanOutEndpoint fanOutServer = null;
         if (config.edgeEnabled()) {
             io.configd.server.fanout.RegistryFanOutSessionMetrics fanOutMetrics =
                     new io.configd.server.fanout.RegistryFanOutSessionMetrics(metricsRegistry);
@@ -808,7 +808,10 @@ public final class ConfigdServer {
                     new io.configd.distribution.fanout.SlowConsumerGovernor(
                             io.configd.distribution.fanout.SlowConsumerPolicyConfig.defaults(),
                             fanOutMetrics);
-            fanOutServer = new io.configd.server.fanout.FanOutServer(
+            // ADR-0043 M3 cutover (slice E): production edge fan-out is the Netty transport. The
+            // fast-revert is `git revert` of this commit — restoring `new FanOutServer(...)` (the JDK
+            // transport is retained, fully tested by the contract, and a drop-in FanOutEndpoint).
+            fanOutServer = new io.configd.server.fanout.NettyFanOutServer(
                     new InetSocketAddress(config.bindAddress(), config.edgePort()),
                     tlsManager, fanOutBuffer, edgeReplaySource,
                     io.configd.distribution.fanout.FanOutConfig.defaults(),
@@ -1484,7 +1487,7 @@ public final class ConfigdServer {
      * The C1 fan-out edge endpoint (ADR-0037), or {@code null} when {@code --edge-port} is
      * absent. Exposed for tests and operational checks.
      */
-    public io.configd.server.fanout.FanOutServer fanOutServer() {
+    public io.configd.server.fanout.FanOutEndpoint fanOutServer() {
         return fanOutServer;
     }
 

@@ -266,3 +266,98 @@ were already recorded (M1/edge-node, DR-N5); `configd-server` now reaches them t
 DR-N6's footprint-containment realised: Netty enters the build only through the shared module already
 present since M1. (CVE/gitleaks remain nightly-only — the merge-gate precondition, not a stage-close
 check; a nightly run on this branch is the supply-chain checkpoint before merge.)
+
+## DR-N9 — M3 scope: migrate the fan-out SERVER to Netty; the edge CLIENT stays JDK
+**Date:** 2026-06-24 · **Type:** scope/structural · **Status:** decided · **Owning stage:** M3
+
+The fan-out surface has a server (`configd-server` `FanOutServer`, JDK `SSLServerSocket` + 3
+virtual threads/connection) and a client (`configd-edge-node` `EdgeStreamClient`, JDK `SSLSocket`).
+M3 migrates the **server** to Netty and leaves the **client** (and the test `EdgeProtocolClient`)
+on the JDK stack. Rationale:
+- The measured win (the fan-out NOTIFY **encode** floor, head-to-head Surface 3) and the
+  **slow-consumer / backpressure policy** both live **server-side** (server→edge NOTIFY encode; the
+  per-session demotion→quarantine machinery). The client only *decodes*.
+- mTLS "both directions" is **mutual auth enforced server-side**: the server REQUIRES + VERIFIES a
+  client cert (`setNeedClientAuth(true)` + PKIX + TLSv1.3-only) and binds identity to the cert
+  principal. The negative tests (plaintext / no-cert / wrong-CA / expired / downgrade rejected) are
+  all **server enforcement** — exactly what re-proving on the Netty pipeline must show. The client
+  presenting its cert is unchanged.
+- Surgical (one transport adapter per milestone, the M1/M2 shape). Migrating the client too adds
+  no measured win and expands the surface/risk.
+- **Interop preserved by construction:** the shared byte-identical `EdgeFrameCodec` means a JDK
+  `EdgeStreamClient` ↔ Netty server speak the same wire; the integration tests (client ↔ server)
+  prove it on the Netty server.
+
+## DR-N10 — Single-pass codec rewrite via a `FrameSink` seam (one wire source, two buffer backends)
+**Date:** 2026-06-24 · **Type:** technical (the floor win) · **Status:** decided · **Owning stage:** M3
+
+The head-to-head proved the fan-out 69 KB→floor win is the **single-pass into-buffer encode** with a
+**reused/pooled** output buffer (`jdkBestEncodeInto ≡ messageBuildingFloor = 25,520 B/op` at batch
+64; `nettyBestEncodePooled = 25,776`), and that it is **codec-internal, transport-independent**.
+Realised as ONE `EdgeFrameCodec.encodeInto(EdgeFrame, FrameSink)` — the single source of truth for
+the v1 wire — with a minimal `FrameSink` (append + `setInt` back-patch + `crc32cInto`) implemented
+twice:
+- **`HeapFrameSink`** (growable `byte[]`, in `configd-distribution-service` — stays **netty-free**):
+  the JDK path + golden/property/fuzz tests + the floor-bench's reused-buffer leg.
+- **`ByteBufFrameSink`** (Netty pooled `ByteBuf`, in `configd-server`): the in-pipeline encoder.
+
+`encode(EdgeFrame): byte[]` is reimplemented to delegate to `encodeInto` (a fresh `HeapFrameSink` →
+exact bytes), so **the golden fixtures prove byte-identity of the single-pass rewrite for free**
+(any drift fails `EdgeFrameCodecGoldenFixtureTest`). The decode path + `peekLength`
+(bounds-before-allocation, the adversary-facing discipline) are **unchanged**. The floor is proven
+by repointing the `FanOutWireH2HBenchmark` `jdkBestEncodeInto` / `nettyBestEncodePooled` legs at the
+**production** `encodeInto` (reused `HeapFrameSink` / pooled `ByteBufFrameSink`).
+
+## DR-N11 — Extract `FanOutConnectionDriver` (transport-agnostic session driving + admission)
+**Date:** 2026-06-24 · **Type:** structural (equivalence by construction) · **Status:** decided · **Owning stage:** M3
+
+`FanOutSessionCore` was already transport-agnostic (driven through the `TransportSink` seam). The
+remaining transport-coupled logic in `FanOutServer.Connection` — the tick + governor-feed loop
+(ack-progress / queue-pressure-edge / ≤1 Hz time-driven eval / adaptive idle backoff), inbound-frame
+routing (SUBSCRIBE-first, CURSOR_ACK→command, protocol-violation close), the C4 admission +
+demotion→QUARANTINED/UNHEALTHY teardown, and the **cert-identity binding decision** (cert principal
+authoritative, wire `edgeId` advisory) — is extracted into a `FanOutConnectionDriver` in
+`configd-distribution-service`. The transport supplies only the **verified principal** + a
+`TransportSink` + teardown hook; the driver makes the security decision. Both `FanOutServer` (JDK)
+and `NettyFanOutServer` delegate to it (M1's `EdgeReadHandler` / M2's `AdminApiHandler` shape). The
+unchanged JDK `FanOutServer` tests staying green proves the extraction faithful.
+
+## DR-N12 — Netty fan-out backpressure: bounded in-flight frame count == the JDK queue bound
+**Date:** 2026-06-24 · **Type:** technical · **Status:** decided · **Owning stage:** M3
+
+The JDK transport's secondary backpressure is an `ArrayBlockingQueue<>(transportQueueFrames=64)`;
+`offer` returns false when full → the session demotes (`REASON_TRANSPORT_BLOCK`). The Netty
+`TransportSink.offer(frame)` reproduces this **exactly**: it bounds in-flight (written-not-yet-
+flushed) frames at `transportQueueFrames` via an `AtomicInteger` + a write-completion listener that
+decrements, returning false at the bound; accepted frames are `writeAndFlush`-ed (the **in-pipeline
+`ByteBufFrameSink` encoder** does the single-pass pooled encode **on the event loop**). The bound is
+**frame-count only — deliberately**, matching the JDK `ArrayBlockingQueue<byte[]>(transportQueueFrames)`
+(also a frame count), rather than adding a Netty byte-level `WriteBufferWaterMark` that would make
+the Netty path *more* conservative than the JDK baseline it must mirror. The session's **primary**
+bound (`queueFrames`,
+in the unchanged core) is transport-independent and is what the slow-consumer tests actually pin —
+so the precise demotion→quarantine semantics are preserved by construction; the transport bound is
+only the secondary would-block. Ordering is preserved: `offer` is called only from the single
+session thread, so the writes reach the event loop in submission order.
+
+## DR-N13 — Netty mTLS: reuse the JDK `TlsManager`/`SSLContext`, enforce on the `SslHandler`
+**Date:** 2026-06-24 · **Type:** security · **Status:** decided · **Owning stage:** M3
+
+The Netty fan-out pipeline's first handler is an `SslHandler` built from the **same**
+`TlsManager.currentContext()` `SSLEngine` the JDK `FanOutServer` + Raft transport use, configured
+identically: `setUseClientMode(false)`, `setNeedClientAuth(true)`, and the `TlsConfig`
+protocols (TLSv1.3-only) + ciphers. Identity = the verified client-cert Subject DN read from the
+post-handshake `SSLSession.getPeerPrincipal()` (captured on `SslHandshakeCompletionEvent`); the wire
+`edgeId` stays advisory (the DR-N9 / incumbent security decision). No `TlsManager` ⇒ plaintext (no
+`SslHandler`), matching the JDK server. Because the TLS material is the identical SSLEngine, the
+mTLS negative tests (plaintext / no-cert / wrong-CA / expired / TLSv1.2-downgrade rejected) re-prove
+the **enforcement** on the Netty pipeline rather than re-testing JSSE.
+
+## DR-N14 — `FanOutEndpoint` interface so the prod swap flips one construction line
+**Date:** 2026-06-24 · **Type:** structural (fast-revert) · **Status:** decided · **Owning stage:** M3
+
+Both `FanOutServer` and `NettyFanOutServer` implement a minimal `FanOutEndpoint`
+(`start()` / `localPort()` / `close()` / `governor()`). `ConfigdServer`'s field is typed
+`FanOutEndpoint`, so the production cutover (slice E) changes a **single construction line**
+(`new FanOutServer(...)` → `new NettyFanOutServer(...)`) — the documented fast-revert is `git revert`
+of that one commit. The contract builds either implementation behind the same factory.
