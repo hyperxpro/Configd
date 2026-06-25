@@ -91,30 +91,33 @@ import java.util.function.Consumer;
  * TLSv1.3 via {@link SSLSocket}/{@link SSLServerSocket}. If the
  * TlsManager is null, plaintext sockets are used (testing only).
  */
-public final class TcpRaftTransport implements RaftTransport, AutoCloseable {
+public final class TcpRaftTransport implements RaftTransportEndpoint {
 
     /**
      * Bounded TCP connect timeout (ms). Replaces the timeout-less
      * {@code new Socket(addr, port)} whose only bound was the ~127 s OS SYN
      * timeout. Kept short because consensus traffic is intra-cluster (low RTT)
      * and a stuck connect simply causes a re-attempt on the next tick.
+     * <p>M4 (DR-N16): the value is owned by {@link RaftWireProtocol} so the JDK and
+     * Netty transports apply the identical bound.
      */
-    static final int CONNECT_TIMEOUT_MS = 1_000;
+    static final int CONNECT_TIMEOUT_MS = RaftWireProtocol.CONNECT_TIMEOUT_MS;
 
     /**
      * Bounded TLS handshake timeout (ms), applied via {@code setSoTimeout}
      * for the duration of {@code startHandshake()} and then cleared. Without
      * it a peer that completes the TCP connect but stalls mid-handshake would
-     * park the connector thread indefinitely.
+     * park the connector thread indefinitely. Shared via {@link RaftWireProtocol}.
      */
-    static final int HANDSHAKE_TIMEOUT_MS = 2_000;
+    static final int HANDSHAKE_TIMEOUT_MS = RaftWireProtocol.HANDSHAKE_TIMEOUT_MS;
 
     /**
      * Per-peer bounded outbound queue capacity (frames). When full, the oldest
      * undeliverable frames are dropped (counted) rather than blocking the
      * caller. Sized to absorb a short replication burst without unbounded growth.
+     * Shared via {@link RaftWireProtocol}.
      */
-    static final int OUTBOUND_QUEUE_CAPACITY = 1_024;
+    static final int OUTBOUND_QUEUE_CAPACITY = RaftWireProtocol.OUTBOUND_QUEUE_CAPACITY;
 
     private final NodeId self;
     private final InetSocketAddress bindAddress;
@@ -156,32 +159,17 @@ public final class TcpRaftTransport implements RaftTransport, AutoCloseable {
      * steady-state heartbeat interval, so a healthy peer never trips it; tunable via
      * {@code -Dconfigd.raft.inboundReadTimeoutMs} (the test sets a short value).
      */
-    private final int inboundReadTimeoutMs =
-            Integer.getInteger("configd.raft.inboundReadTimeoutMs", 15_000);
+    private final int inboundReadTimeoutMs = RaftWireProtocol.inboundReadTimeoutMs();
 
     /**
      * F-S7-FUZZ-1: max concurrent accepted inbound connections before the accept loop refuses (closes
      * + counts) a new socket — bounds FD/vthread blast radius. Mirrors {@code FanOutServer}'s
      * admission cap; tunable via {@code -Dconfigd.raft.maxInboundConnections} (default 1024).
      */
-    private final int maxInboundConnections =
-            Integer.getInteger("configd.raft.maxInboundConnections", 1_024);
+    private final int maxInboundConnections = RaftWireProtocol.maxInboundConnections();
 
     private volatile ServerSocket serverSocket;
     private volatile RaftTransport.MessageHandler messageHandler;
-
-    /**
-     * An inbound message with the sender's identity and the decoded frame.
-     *
-     * @param from  the sending node
-     * @param frame the decoded wire frame
-     */
-    public record InboundMessage(NodeId from, FrameCodec.Frame frame) {
-        public InboundMessage {
-            Objects.requireNonNull(from, "from must not be null");
-            Objects.requireNonNull(frame, "frame must not be null");
-        }
-    }
 
     /**
      * Creates a new TCP Raft transport.
@@ -408,8 +396,9 @@ public final class TcpRaftTransport implements RaftTransport, AutoCloseable {
 
                 // Read frame length (first 4 bytes of FrameCodec frame)
                 int frameLength = in.readInt();
-                if (frameLength < FrameCodec.HEADER_SIZE + FrameCodec.TRAILER_SIZE
-                        || frameLength > FrameCodec.MAX_FRAME_SIZE) {
+                // Shared bounds-before-allocation check (RaftWireProtocol / DR-N16): identical to
+                // the Netty decoder's predicate, so a lying length prefix is rejected the same way.
+                if (!RaftWireProtocol.isValidFrameLength(frameLength)) {
                     throw new IOException("Invalid frame length: " + frameLength);
                 }
 
@@ -497,18 +486,13 @@ public final class TcpRaftTransport implements RaftTransport, AutoCloseable {
         return new PeerConnection(target, addr);
     }
 
-    /** Pre-encodes a frame into its on-wire byte sequence (sender id + frame). */
+    /**
+     * Pre-encodes a frame into its on-wire byte sequence (sender id + frame), delegating to the
+     * shared {@link RaftWireProtocol#encodeWire} so the JDK and Netty transports are byte-identical
+     * by construction (M4 / DR-N16).
+     */
     private byte[] encodeWire(FrameCodec.Frame frame) {
-        byte[] encoded = FrameCodec.encode(
-                frame.messageType(), frame.groupId(), frame.term(), frame.payload());
-        byte[] wire = new byte[4 + encoded.length];
-        int id = self.id();
-        wire[0] = (byte) (id >>> 24);
-        wire[1] = (byte) (id >>> 16);
-        wire[2] = (byte) (id >>> 8);
-        wire[3] = (byte) id;
-        System.arraycopy(encoded, 0, wire, 4, encoded.length);
-        return wire;
+        return RaftWireProtocol.encodeWire(self.id(), frame);
     }
 
     /**

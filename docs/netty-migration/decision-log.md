@@ -361,3 +361,109 @@ Both `FanOutServer` and `NettyFanOutServer` implement a minimal `FanOutEndpoint`
 `FanOutEndpoint`, so the production cutover (slice E) changes a **single construction line**
 (`new FanOutServer(...)` → `new NettyFanOutServer(...)`) — the documented fast-revert is `git revert`
 of that one commit. The contract builds either implementation behind the same factory.
+
+---
+
+# Netty-migration M4 (consensus wire) — transport → Netty (the most dangerous surface)
+
+> M4 migrates the **inter-node consensus transport** (`configd-transport` `TcpRaftTransport`,
+> `SSLSocket`/`SSLServerSocket` mTLS, `FrameCodec` framing) to Netty 4.2. This is the surface the
+> whole Phase-0 safety arc rides: a transport that drops/delays/reorders/mistimes a coalesced
+> heartbeat can trip a follower election (the exact churn-collapse Phase 0 removed), and the S2–S4
+> linearizability/durability surface was proven on the JDK transport. It therefore gets **four-way
+> rigor** (implementer + diff-review + independent re-run + adversarial red-team), not just the
+> M1–M3 Verifier pass. Append-only; the entries above (DR-1..5, DR-M0, DR-N1..N14) are unchanged.
+
+## DR-N15 — M4 baseline = `main` (M1+M2+M3 merged); branch `netty-migration-m4` off `origin/main`
+**Date:** 2026-06-25 · **Type:** scope/sequencing · **Status:** decided · **Owning stage:** M4 (recon)
+
+The charter says "resume from `main` (M1+M2+M3 merged)". Verified against the remote, not assumed:
+`gh pr list` shows **PR #1/#2/#3 all MERGED**; `origin/main` HEAD is `c5537fc` ("Netty-migration M3
+… (#3)"), the squash-merge of M3. The local `netty-migration-m3` branch (`20ff8bb`) is the **stale
+pre-squash branch** — `git diff 20ff8bb origin/main` is **empty** (tree-identical; the squash lost
+nothing). So the charter premise holds. **Decision:** branch `netty-migration-m4` off `origin/main`
+(canonical merged state, linear history for the M4 PR), not off the stale local branch.
+
+## DR-N16 — Extraction + module placement: Netty-free core in `configd-transport`, `NettyRaftTransport` in `configd-netty`
+**Date:** 2026-06-25 · **Type:** structural (equivalence by construction) · **Status:** decided · **Owning stage:** M4
+
+The consensus layering is `RaftNode` → consensus-core `RaftTransport` → `RaftTransportAdapter`
+(encodes `RaftMessage`→`FrameCodec.Frame`) → **transport-module `RaftTransport`** (`TcpRaftTransport`,
+takes `Object`/`Frame`, writes `[4B senderId][FrameCodec frame]`). The transport-module
+`RaftTransport` interface is the clean seam (its Javadoc already names "Netty (production)"). Plan:
+- **Transport-agnostic core → `configd-transport` (stays Netty-free):** `RaftWireProtocol` (the
+  `[senderId][frame]` encode + the `[senderId][len][frame]` inbound parse + frame discipline:
+  peekLength bounds, decode-first→drop-on-desync, handler-throw-doesn't-desync), a
+  `RaftTransportEndpoint` interface (`start`/`localPort`/`close`/`tlsManager`/`framesDropped`/
+  `inboundConnectionsRefused` + the `RaftTransport` send/registerHandler), and `InboundMessage`
+  promoted from a `TcpRaftTransport` nested record to a top-level `io.configd.transport` type (the
+  shared inbound type both adapters' `Consumer<InboundMessage>` constructor takes). `ConnectionManager`
+  / `MessageRouter` / `FrameCodec` / `TlsManager` are already transport-agnostic and reused as-is.
+- **`NettyRaftTransport` → `configd-netty`** (+ a NEW `configd-netty → configd-transport` pom edge).
+- **Why not Netty in `configd-transport`:** `configd-consensus-core` and `configd-replication-engine`
+  depend on `configd-transport`; putting Netty there would leak it (and its CVE surface) into the
+  algorithm modules. This is the **opposite direction** of DR-N6's rejected option — `configd-netty
+  → configd-transport` keeps `configd-transport` (and thus consensus-core/replication) Netty-free; no
+  cycle (`configd-transport` does not depend on `configd-netty`). Netty enters production consensus
+  only at the `configd-server` wiring layer (which already depends on both).
+- **Faithful-extraction proof (DR-N2 shape):** `TcpRaftTransport` is refactored to a thin JDK adapter
+  delegating to `RaftWireProtocol`; the **unchanged consensus tests staying green** proves the
+  extraction faithful, *before* the Netty adapter is built on the same core. (Mechanical churn only:
+  `TcpRaftTransport.InboundMessage` → `io.configd.transport.InboundMessage`; zero assertion change.)
+
+## DR-N17 — Idiomatic Netty consensus encode is ~0 via in-pipeline encoder + **event-loop-driven** write
+**Date:** 2026-06-25 · **Type:** technical (the ~0-B/op requirement) · **Status:** decided · **Owning stage:** M4
+
+The head-to-head ([verdict.md](../jdk-vs-netty/verdict.md) §Surface 4) proved: (a) the **160 B/op**
+"Netty loses" number was a **microbench artifact** — a non-recycled `PooledByteBuf` *holder* in a
+manual `alloc→release` per-op loop; the **in-pipeline `MessageToByteEncoder`** (framework recycles
+the holder on the event loop) encodes at **~0**; (b) the residual **~40 B/msg `WriteTask`** appears
+**only on off-event-loop writes** (`AbstractChannelHandlerContext.write` wraps a `WriteTask` only on
+its `!inEventLoop()` branch); driving the write **from the event loop** drops it to **0.0 B/msg at
+4096 / ~14 at the heartbeat**. For tiny heartbeat frames the WriteTask would *dominate* (≫ the ~0
+JDK floor), so to genuinely **tie** JDK at ~0 (charter §2.1; "naive 160 is a DEFECT") the consensus
+write must be event-loop-driven, not the simple off-loop `writeAndFlush` M3 fan-out used (there the
+25 KB NOTIFY floor dwarfs the WriteTask, so M3 didn't need this). **Decision:**
+- **Encoder:** productionize `NettyConsensusFrameEncoder` (the proven head-to-head prototype) into
+  `configd-netty`: `MessageToByteEncoder<FrameCodec.Frame>`, `super(true)` (pooled direct), exact
+  `allocateBuffer` = `4 + frameSize` (no realloc-grow churn), CRC over `internalNioBuffer` (cached
+  view, no per-message `DirectByteBuffer`), reused `ThreadLocal<CRC32C>`. Sender id folded into the
+  same buffer — one allocation, fixing the DR-5 #2 double-alloc (`encodeWire`'s second `byte[]`).
+  Byte-identical to `TcpRaftTransport.encodeWire` (golden-bytes test).
+- **Write path:** per-peer bounded `ArrayBlockingQueue<FrameCodec.Frame>` (== the JDK
+  `OUTBOUND_QUEUE_CAPACITY` ring; `offer` allocation-free, drop-oldest on full, count `framesDropped`)
+  drained by a **lock-free re-arming task on the channel's event loop** (`drainScheduled` CAS gate →
+  one `eventLoop.execute` per idle→active transition, amortizing to ~0 under sustained load; the
+  drain writes each frame inline = no `WriteTask`, then one batched `flush`). Preserves RR-002 (send
+  is a non-blocking `offer` + at most one CAS-gated wake on the tick thread; **never** touches a
+  socket), FIFO per peer (single drainer), and Raft's drop-tolerance.
+
+## DR-N18 — Netty consensus mTLS: server reuses DR-N13; **NEW client `SslHandler`** with F-0051 hostname verification
+**Date:** 2026-06-25 · **Type:** security · **Status:** decided · **Owning stage:** M4
+
+Consensus is the **first bidirectional Netty surface** (M1 edge-read = server only; M2 admin = server
+only; M3 fan-out = server only, the client stayed JDK per DR-N9). So both directions need an mTLS
+`SslHandler` built from the same `TlsManager.currentContext()` `SSLEngine`:
+- **Server side (inbound accepts):** the DR-N13 pattern verbatim — `setUseClientMode(false)`,
+  `setNeedClientAuth(true)`, TLSv1.3-only protocols + ciphers from `TlsConfig`; identity is irrelevant
+  to consensus routing (the 4-byte wire sender id is authoritative for *which peer*, but the cert is
+  what gates admission — a peer with no/expired/untrusted/wrong-version cert never completes the
+  handshake, so no frame is decoded; re-proven by the mTLS-attack contract).
+- **Client side (outbound connects) — the new bit:** `setUseClientMode(true)` + the **F-0051**
+  hostname check `SSLParameters.setEndpointIdentificationAlgorithm("HTTPS")` against the peer host
+  (engine created with the advisory peer host/port for SNI + identification), mirroring the JDK
+  `createClientSocket`. Without it any trust-store-signed cert is accepted, defeating peer pinning —
+  `find0051` (SAN mismatch → handshake fails → no frame) re-proves it on the Netty client.
+- No `TlsManager` ⇒ plaintext (no `SslHandler`), matching the JDK transport (test-only). Reusing the
+  identical `SSLContext` means the negatives re-prove **enforcement on the Netty pipeline**, not JSSE.
+
+## DR-N19 — `NettyTransport.Selection` extended with the client `SocketChannel` class (additive)
+**Date:** 2026-06-25 · **Type:** technical · **Status:** decided · **Owning stage:** M4
+
+M1–M3 only ever *accepted* connections, so `NettyTransport.Selection` carried only the
+`serverChannelClass`. Consensus also *connects out* to peers, so the coherent transport triple needs
+the matching client channel class (`IoUringSocketChannel` / `EpollSocketChannel` / `NioSocketChannel`,
+paired with the same `IoHandlerFactory`). **Decision:** add `clientChannelClass` to `Selection`
+(additive — no existing caller breaks; the server surfaces ignore it). The 3-tier io_uring→Epoll→NIO
+order, the fail-loud forced-tier override, and the availability report are unchanged. This is the one
+place the (factory, server-channel, client-channel) coherence is decided — same rationale as DR-N6.

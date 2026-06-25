@@ -104,7 +104,7 @@ class TcpRaftTransportTest {
         NodeId nodeB = NodeId.of(2);
 
         CountDownLatch receivedLatch = new CountDownLatch(1);
-        var receivedMessages = new CopyOnWriteArrayList<TcpRaftTransport.InboundMessage>();
+        var receivedMessages = new CopyOnWriteArrayList<InboundMessage>();
 
         // Create transport B first so we know its port
         TcpRaftTransport transportB = createTransport(
@@ -136,7 +136,7 @@ class TcpRaftTransportTest {
         assertTrue(receivedLatch.await(5, TimeUnit.SECONDS), "Message should be received within 5 seconds");
         assertEquals(1, receivedMessages.size());
 
-        TcpRaftTransport.InboundMessage received = receivedMessages.getFirst();
+        InboundMessage received = receivedMessages.getFirst();
         assertEquals(nodeA, received.from());
         assertEquals(MessageType.HEARTBEAT, received.frame().messageType());
         assertEquals(1, received.frame().groupId());
@@ -151,8 +151,8 @@ class TcpRaftTransportTest {
 
         CountDownLatch latchA = new CountDownLatch(1);
         CountDownLatch latchB = new CountDownLatch(1);
-        var receivedByA = new CopyOnWriteArrayList<TcpRaftTransport.InboundMessage>();
-        var receivedByB = new CopyOnWriteArrayList<TcpRaftTransport.InboundMessage>();
+        var receivedByA = new CopyOnWriteArrayList<InboundMessage>();
+        var receivedByB = new CopyOnWriteArrayList<InboundMessage>();
 
         // Bind both to ephemeral ports; we need to create them in stages
         // Step 1: Create B with no peers, start it to get its port
@@ -198,7 +198,7 @@ class TcpRaftTransportTest {
 
         CountDownLatch firstReceived = new CountDownLatch(1);
         CountDownLatch secondReceived = new CountDownLatch(2);
-        var receivedMessages = new CopyOnWriteArrayList<TcpRaftTransport.InboundMessage>();
+        var receivedMessages = new CopyOnWriteArrayList<InboundMessage>();
 
         // Create B
         TcpRaftTransport transportB = createTransport(
@@ -276,7 +276,7 @@ class TcpRaftTransportTest {
 
         int messageCount = 50;
         CountDownLatch allReceived = new CountDownLatch(messageCount);
-        var receivedMessages = Collections.synchronizedList(new ArrayList<TcpRaftTransport.InboundMessage>());
+        var receivedMessages = Collections.synchronizedList(new ArrayList<InboundMessage>());
 
         TcpRaftTransport transportB = createTransport(
                 nodeB,
@@ -419,7 +419,7 @@ class TcpRaftTransportTest {
         NodeId nodeB = NodeId.of(2);
 
         CountDownLatch received = new CountDownLatch(1);
-        var receivedMessages = new CopyOnWriteArrayList<TcpRaftTransport.InboundMessage>();
+        var receivedMessages = new CopyOnWriteArrayList<InboundMessage>();
 
         TcpRaftTransport transportB = createTransport(
                 nodeB,
@@ -535,7 +535,7 @@ class TcpRaftTransportTest {
             NodeId self,
             InetSocketAddress bindAddress,
             Map<NodeId, InetSocketAddress> peers,
-            Consumer<TcpRaftTransport.InboundMessage> handler
+            Consumer<InboundMessage> handler
     ) {
         TcpRaftTransport transport = new TcpRaftTransport(
                 self, bindAddress, peers, null, handler);
