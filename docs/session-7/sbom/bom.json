@@ -2776,6 +2776,7 @@
     {
       "ref" : "pkg:maven/io.configd/configd-netty@0.1.0-SNAPSHOT?type=jar",
       "dependsOn" : [
+        "pkg:maven/io.configd/configd-transport@0.1.0-SNAPSHOT?type=jar",
         "pkg:maven/io.netty/netty-transport@4.2.15.Final?type=jar",
         "pkg:maven/io.netty/netty-buffer@4.2.15.Final?type=jar",
         "pkg:maven/io.netty/netty-codec-http@4.2.15.Final?type=jar",

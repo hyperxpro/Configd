@@ -48,6 +48,8 @@ import io.configd.store.ConfigStateMachine;
 import io.configd.store.HamtMap;
 import io.configd.store.SigningKeyStore;
 import io.configd.store.VersionedConfigStore;
+import io.configd.netty.NettyRaftTransport;
+import io.configd.transport.RaftTransportEndpoint;
 import io.configd.transport.TcpRaftTransport;
 import io.configd.transport.TlsConfig;
 import io.configd.transport.TlsManager;
@@ -128,7 +130,7 @@ public final class ConfigdServer {
     private final MultiRaftDriver driver;
     private final ConfigStateMachine stateMachine;
     private final NettyHttpApiServer httpApiServer; // ADR-0043 M2: admin API on Netty (was HttpApiServer)
-    private final TcpRaftTransport tcpTransport; // nullable when peer addresses not configured
+    private final RaftTransportEndpoint tcpTransport; // M4: Netty consensus transport; nullable when peer addresses not configured
     /** C1 fan-out edge endpoint (ADR-0037); null when {@code --edge-port} is absent. */
     private final io.configd.server.fanout.FanOutEndpoint fanOutServer;
 
@@ -150,7 +152,7 @@ public final class ConfigdServer {
                           ScheduledExecutorService readDispatchExecutor,
                           ScheduledExecutorService tlsReloadExecutor,
                           NettyHttpApiServer httpApiServer,
-                          TcpRaftTransport tcpTransport,
+                          RaftTransportEndpoint tcpTransport,
                           io.configd.server.fanout.FanOutEndpoint fanOutServer,
                           WatchService watchService,
                           FanOutBuffer fanOutBuffer,
@@ -325,20 +327,24 @@ public final class ConfigdServer {
 
         // Wire real TCP transport when peer addresses are configured,
         // otherwise fall back to no-op for single-node / test scenarios.
-        TcpRaftTransport tcpTransport = null;
+        RaftTransportEndpoint tcpTransport = null;
         RaftTransport transport;
 
         Map<NodeId, InetSocketAddress> peerAddresses = config.peerAddresses();
         if (peerAddresses != null && !peerAddresses.isEmpty()) {
             InetSocketAddress bindAddr = new InetSocketAddress(config.bindAddress(), config.bindPort());
-            tcpTransport = new TcpRaftTransport(
+            // ADR-0043 M4 (DR-N16/N17/N18): production consensus transport is now Netty. The
+            // byte-identical RaftWireProtocol wire + the RaftTransportEndpoint interface (DR-N20) make
+            // this the single-line swap from `new TcpRaftTransport(...)`; the JDK TcpRaftTransport
+            // remains the documented fast-revert (git revert of this commit).
+            tcpTransport = new NettyRaftTransport(
                     config.nodeId(), bindAddr, peerAddresses, tlsManager, null);
             // F-0050 fix: fail-closed — refuse to start if the operator asked
             // for TLS but the transport did not receive a TlsManager. This
             // catches accidental regressions of the wiring.
             if (config.tlsEnabled() && tcpTransport.tlsManager() == null) {
                 throw new IllegalStateException(
-                        "TLS is enabled on the CLI but TcpRaftTransport has no TlsManager — "
+                        "TLS is enabled on the CLI but the Netty Raft transport has no TlsManager — "
                                 + "refusing to start to avoid plaintext Raft traffic");
             }
             RaftTransportAdapter adapter = new RaftTransportAdapter(tcpTransport, DEFAULT_RAFT_GROUP);
@@ -395,7 +401,7 @@ public final class ConfigdServer {
         // sharding, when the coalesced wire frame is added). Enabled only on the real transport — inert in
         // single-node/test mode (no peers ⇒ nothing to coalesce). See D-020 / design.md.
         if (tcpTransport != null && transport instanceof CoalescingRaftTransport coalescingTransport) {
-            final TcpRaftTransport tcp = tcpTransport;
+            final RaftTransportEndpoint tcp = tcpTransport;
             driver.enableHeartbeatCoalescing((peer, groupHeartbeats) -> {
                 // Frame each group's empty AppendEntries onto the node-level transport. At N=1 this is the
                 // single group → one normal AppendEntries frame (wire unchanged). >1 frames each group
@@ -1445,13 +1451,14 @@ public final class ConfigdServer {
     }
 
     /**
-     * Returns the underlying {@link TcpRaftTransport} when peer addresses
-     * were configured, or {@code null} for single-node / test mode.
+     * Returns the underlying consensus transport (M4: a {@link NettyRaftTransport}; the JDK
+     * {@link TcpRaftTransport} is the fast-revert) when peer addresses were configured, or
+     * {@code null} for single-node / test mode.
      * <p>
      * Exposed so integration tests (F-0050 regression) can verify that the
      * transport holds a non-null {@link TlsManager} when TLS is enabled.
      */
-    public TcpRaftTransport tcpTransport() {
+    public RaftTransportEndpoint tcpTransport() {
         return tcpTransport;
     }
 
