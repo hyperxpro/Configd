@@ -467,3 +467,15 @@ paired with the same `IoHandlerFactory`). **Decision:** add `clientChannelClass`
 (additive — no existing caller breaks; the server surfaces ignore it). The 3-tier io_uring→Epoll→NIO
 order, the fail-loud forced-tier override, and the availability report are unchanged. This is the one
 place the (factory, server-channel, client-channel) coherence is decided — same rationale as DR-N6.
+
+## DR-N20 — `RaftTransportAdapter` generalized to the `RaftTransport` interface (the cutover seam)
+**Date:** 2026-06-25 · **Type:** structural · **Status:** decided · **Owning stage:** M4
+
+`RaftTransportAdapter` (the consensus-core ↔ transport-module bridge) held its delegate as the
+concrete `TcpRaftTransport`, but uses only `send(NodeId,Object)` + `registerHandler` — both on the
+`io.configd.transport.RaftTransport` interface. **Decision:** widen the field/ctor to that interface
+so the production cutover (`ConfigdServer`) swaps `new TcpRaftTransport(...)` → `new
+NettyRaftTransport(...)` with **zero change to the adapter** (and the real-wire no-spurious-election
+sweep can wire the adapter onto either transport). Backward-compatible: both existing construction
+sites pass a `TcpRaftTransport`, which is-a `RaftTransport`; `RaftTransportAdapterLoopbackTest` stays
+green. The adapter remains transport-agnostic by construction (DR-N2 shape).

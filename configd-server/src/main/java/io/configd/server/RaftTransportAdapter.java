@@ -23,17 +23,20 @@ import io.configd.transport.TcpRaftTransport;
  */
 public final class RaftTransportAdapter implements RaftTransport {
 
-    private final TcpRaftTransport tcpTransport;
+    private final io.configd.transport.RaftTransport transport;
     private final int groupId;
 
     /**
      * Creates an adapter.
      *
-     * @param tcpTransport the underlying TCP transport
-     * @param groupId      the Raft group ID to use in frame headers
+     * @param transport the underlying transport-module transport — the JDK {@link TcpRaftTransport}
+     *                  or the Netty {@code NettyRaftTransport} (M4 / DR-N20: the adapter depends only on
+     *                  the {@code io.configd.transport.RaftTransport} send/registerHandler seam, so the
+     *                  production cutover swaps the implementation without touching this class)
+     * @param groupId   the Raft group ID to use in frame headers
      */
-    public RaftTransportAdapter(TcpRaftTransport tcpTransport, int groupId) {
-        this.tcpTransport = tcpTransport;
+    public RaftTransportAdapter(io.configd.transport.RaftTransport transport, int groupId) {
+        this.transport = transport;
         this.groupId = groupId;
     }
 
@@ -47,7 +50,7 @@ public final class RaftTransportAdapter implements RaftTransport {
         // successful send — the transport adapter has no view of
         // inflightCount and cannot decide that itself.
         FrameCodec.Frame frame = RaftMessageCodec.encode(message, groupId);
-        tcpTransport.send(target, frame);
+        transport.send(target, frame);
     }
 
     /**
@@ -59,7 +62,7 @@ public final class RaftTransportAdapter implements RaftTransport {
      * @param handler consumer of decoded inbound messages
      */
     public void registerInboundHandler(java.util.function.BiConsumer<NodeId, RaftMessage> handler) {
-        tcpTransport.registerHandler((from, rawMessage) -> {
+        transport.registerHandler((from, rawMessage) -> {
             if (rawMessage instanceof FrameCodec.Frame frame) {
                 try {
                     RaftMessage raftMessage = RaftMessageCodec.decode(frame);
