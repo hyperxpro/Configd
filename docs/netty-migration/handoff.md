@@ -6,6 +6,53 @@
 
 ---
 
+## Session 6 — Phase V (io_uring measurement) — COMPLETE. The honest close of the migration.
+
+**The io_uring rationale is MEASURED and NOT validated — latent at best, a ~2× throughput regression
+at high fan-out.** Full verdict + tables: [phase-v-io-uring.md](phase-v-io-uring.md); raw evidence in
+[phase-v-evidence/](phase-v-evidence/) (m6i strace summaries + matrix run log + tables). ADR-0043's
+io_uring rationale (point 1) updated "expected/bet" → "measured: not validated".
+
+### What was measured (apples-to-apples, only the forced tier varies; io_uring confirmed ACTIVE)
+- **Free dev-box de-risk first** (kernel 7.0, io_uring active): built + proved the whole matrix, then
+  **one operator-gated m6i.4xlarge** (16 vCPU, kernel 6.18 AL2023) ran the LOCKED matrix; an
+  independent 2nd agent reproduced all four headlines on the box before teardown. **Cost ≈ $0.47**
+  (33 min, torn down on capture).
+- **Methodology finding (load-bearing):** io_uring batches **per event loop**, and Netty runs one
+  loop per core. So the dev box (2 loops) showed edge-read **7.6×** fewer syscalls at conn64 while the
+  m6i (16 loops) showed **1.1×** at the same point — the multi-core box is the honest number; the
+  dev box *overstated* the benefit. And: a **traced** throughput comparison INVERTS (strace penalises
+  epoll's higher syscall count) — only UNTRACED runs answer throughput. Both pitfalls handled.
+
+### The measured verdict (m6i, independently reproduced)
+- **Edge-read:** io_uring 1.1–1.5× fewer syscalls (worse below ~8 conns); **throughput + p99 TIED**
+  io_uring-vs-epoll at every connection count (1→1024). Processing-bound, not syscall-bound.
+- **Fan-out:** io_uring up to **5.3× fewer syscalls at 1024 subs** — but throughput TIED to 256 subs
+  then at 1024 io_uring **REGRESSES ~2× (2.04M vs 4.02M notif/s) and tail ~8× (p99 24s vs 3s)**.
+  Real deficit: identical 81.92M delivered, io_uring 41.5s vs epoll 21.7s wall, **0 demotions both**.
+- **Consensus (1 conn):** io_uring **~2× WORSE** on syscalls (can't batch one in-flight frame).
+- **Net:** io_uring delivers **no measured throughput/tail benefit** at Configd's workload, and a
+  **throughput regression at growth scale**. Migration stands on its other two MEASURED grounds
+  (edge-read allocation 8.7× + uniformity); io_uring stays auto-selected with Epoll the proven —
+  and here *faster* — fallback. Scope: io_uring *as deployed* (Netty 4.2 defaults, no SQPOLL); tuning
+  unexplored. Recommendation (operator): don't rely on io_uring for perf; consider preferring Epoll
+  for fan-out pending investigation of the 1024-sub deficit.
+
+### Harness (new, on branch `netty-migration-phase-v`)
+- `configd-testkit` mains: `io.configd.fanout.{FanOutPushServerMain,FanOutLoadClientMain}` (fan-out
+  push load, transport-isolated governor), `io.configd.consensus.ConsensusSendMain` (single-link Raft
+  send via the production `NettyConsensusFrameEncoder`, synchronous connect).
+- `docs/netty-migration/scripts/`: `phase-v-matrix.sh` (the LOCKED matrix, PROFILE=dev|m6i),
+  `phase-v-parse.py`, `ec2-{provision,run,teardown}.sh`.
+
+### Honest residuals / next
+- **NOT merged** (human gate). Phase V is on branch `netty-migration-phase-v` (off M4); M4 itself
+  (PR #4) still unmerged. The io_uring fan-out deficit is a flagged operator decision, not actioned.
+- **Standing CVE scan still owed** (NVD_API_KEY + a real dependency-check over the full tree) before
+  production go/no-go — Phase V closes the migration's *rationale*, not this security gate.
+
+---
+
 ## Session 5 — M4 (inter-node consensus wire) → Netty — DONE on branch, four-way verified, NOT merged
 
 **The most dangerous surface, migrated.** M4 moves the inter-node Raft consensus transport

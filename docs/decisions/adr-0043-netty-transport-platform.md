@@ -26,8 +26,12 @@
   artifact) because the send is driven from the event loop (DR-N17), exactly as this ADR's consensus
   risk note required; the M3 no-spurious-election timing re-closes on the real Netty wire (the
   load-bearing proof). The JDK `TcpRaftTransport` is retained as the M4 contract's JDK baseline + the
-  documented fast-revert. The ONLY remaining Netty-arc item is **Phase V** (io_uring syscall-reduction
-  measurement, EC2-gated).
+  documented fast-revert. **Phase V (io_uring measurement) is now COMPLETE** (2026-06-26, m6i.4xlarge):
+  the io_uring rationale is **measured as NOT validated** — latent at best, a ~2× throughput
+  regression at high fan-out — see the honest-rationale point 1 below and
+  [phase-v-io-uring.md](../netty-migration/phase-v-io-uring.md). The migration stands on its other two
+  measured grounds (edge-read allocation 8.7× + uniformity); io_uring stays an auto-selected tier with
+  Epoll the proven, faster fallback.
 
 ## Context
 
@@ -69,13 +73,26 @@ that surface's S7 controls by negative test and re-closes its S2–S4 / M3-timin
 
 Netty is adopted for **three** reasons, of which only one is a measured per-surface performance win:
 
-1. **io_uring (the platform unlock — a *bet*, validated in Phase V, not yet measured).** Netty 4.2
+1. **io_uring (the platform unlock — the *bet*, now MEASURED in Phase V: NOT validated).** Netty 4.2
    makes io_uring a first-class transport (`io.netty.channel.uring`). io_uring's benefit is
    **syscall reduction** via batched submission/completion rings — an axis the allocation
-   benchmarks could not see (they measure bytes, not syscalls). This is the stated core
-   justification and is therefore **measured, not asserted** (Phase V, EC2-gated). Honest possible
-   verdicts: *delivered now* at Configd's workload, or *latent* (realized only at higher
-   connection/IO volume) — still a valid forward bet, but recorded for what it is.
+   benchmarks could not see. This was the stated core justification, and Phase V measured it
+   honestly (m6i.4xlarge, 16 vCPU, io_uring confirmed active; both transports apples-to-apples;
+   independently reproduced — see [phase-v-io-uring.md](../netty-migration/phase-v-io-uring.md)).
+   **The measured verdict is *latent at best, a regression at scale*:** the syscall reduction is real
+   but (a) **smaller than expected on multi-core hardware** — io_uring batches per-event-loop, and
+   Netty runs one loop per core, so at Configd's connection scale the per-loop density (hence
+   batching) is low (edge-read ~1.1–1.5× fewer syscalls on 16 cores, not the dev box's 7.6×); (b) it
+   **does not translate to throughput or tail latency** anywhere measured (edge-read tied
+   io_uring-vs-epoll at every connection count); and (c) at **high fan-out (1024 subscriber streams)
+   io_uring REGRESSES throughput ~2× and tail ~8×** vs Epoll, despite 5× fewer syscalls (identical
+   delivered counts, ~2× wall-time, zero demotions). Consensus (few connections) is ~2× worse on
+   syscalls. **So io_uring delivers no measured performance benefit at Configd's workload, and a
+   throughput regression at growth scale.** It remains a runtime-auto-selected tier with Epoll the
+   proven — and here *faster* — fallback; the migration does **not** rest on it (it rests on #2/#3).
+   Honest scope: this is io_uring *as deployed* (Netty 4.2 defaults, no SQPOLL); whether tuning
+   recovers a benefit is unexplored. Recommendation: do not rely on io_uring for performance, and
+   consider preferring Epoll for the fan-out surface pending investigation of the deficit.
 2. **Platform uniformity (an engineering judgment).** One transport stack across all surfaces is
    simpler to reason about, staff, review, and extend (HTTP/2, finer backpressure, connection
    scaling past ADR-0037's threshold) than four bespoke JDK-socket implementations. This is a
