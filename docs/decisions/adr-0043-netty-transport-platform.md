@@ -91,8 +91,11 @@ Netty is adopted for **three** reasons, of which only one is a measured per-surf
    throughput regression at growth scale.** It remains a runtime-auto-selected tier with Epoll the
    proven — and here *faster* — fallback; the migration does **not** rest on it (it rests on #2/#3).
    Honest scope: this is io_uring *as deployed* (Netty 4.2 defaults, no SQPOLL); whether tuning
-   recovers a benefit is unexplored. Recommendation: do not rely on io_uring for performance, and
-   consider preferring Epoll for the fan-out surface pending investigation of the deficit.
+   recovers a benefit is unexplored. **ACTIONED (2026-06-26):** the `NettyTransport.select()` auto
+   default is flipped to **Epoll → NIO; io_uring is now opt-in** via
+   `-Dconfigd.netty.transport=io_uring` — the auto path no longer selects the transport measured
+   slower (epoll is the proven-faster fallback). io_uring stays a first-class, fail-loud opt-in for
+   operators whose workload has the per-event-loop connection density to benefit.
 2. **Platform uniformity (an engineering judgment).** One transport stack across all surfaces is
    simpler to reason about, staff, review, and extend (HTTP/2, finer backpressure, connection
    scaling past ADR-0037's threshold) than four bespoke JDK-socket implementations. This is a
@@ -118,9 +121,11 @@ Netty is adopted for **three** reasons, of which only one is a measured per-surf
 - **Security preserved, re-proven by negative test per surface.** Every S7 control that applied to
   a surface must hold on its new Netty pipeline AND be proven by the test that proves the attack
   fails. A silently-dropped control is the worst outcome of a transport migration.
-- **io_uring → Epoll → NIO, runtime-detected, fallback CI-proven.** io_uring is a performance tier,
-  never a correctness dependency; Epoll/NIO are the always-correct fallback the CI runners exercise
-  (netty42-api.md §1/§3).
+- **Auto-select Epoll → NIO; io_uring opt-in, fail-loud, fallback CI-proven.** io_uring is a
+  performance tier, never a correctness dependency; Epoll/NIO are the always-correct (and, per Phase
+  V, *faster*) default the CI runners exercise (netty42-api.md §1/§3). *(Originally io_uring → Epoll
+  → NIO; flipped to Epoll-default + io_uring-opt-in after Phase V measured io_uring slower — see the
+  honest-rationale point 1 above.)*
 - **Allocation proven by `-prof gc` per surface:** the edge-read 8.7× holds; the wire codecs stay
   at their ~0 floor (idiomatic in-pipeline encode mandatory — naive Netty usage that regresses the
   floor is a defect, not "Netty being slower").

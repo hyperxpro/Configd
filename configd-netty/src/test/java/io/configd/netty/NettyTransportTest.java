@@ -10,6 +10,7 @@ import org.junit.jupiter.api.Test;
 import java.util.Locale;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -51,10 +52,13 @@ class NettyTransportTest {
     }
 
     @Test
-    void autoSelectPrefersBestAvailableTier() {
-        // io_uring → epoll → nio: the auto pick must be the highest available tier.
-        String expected = IoUring.isAvailable() ? "io_uring" : Epoll.isAvailable() ? "epoll" : "nio";
+    void autoSelectPrefersEpollAndNeverIoUring() {
+        // Phase V (ADR-0043): io_uring is NOT auto-selected (measured no throughput benefit + a ~2×
+        // fan-out regression; epoll proven faster). Auto picks epoll → nio; io_uring is opt-in only.
+        String expected = Epoll.isAvailable() ? "epoll" : "nio";
         assertEquals(expected, NettyTransport.select().tier());
+        assertNotEquals("io_uring", NettyTransport.select().tier(),
+                "io_uring must not be auto-selected — it is opt-in via the override (Phase V)");
     }
 
     @Test
