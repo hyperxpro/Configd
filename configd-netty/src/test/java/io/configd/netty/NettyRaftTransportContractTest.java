@@ -11,7 +11,7 @@ import java.util.function.Consumer;
 
 /**
  * The {@link AbstractRaftTransportContract} bound to the Netty {@link NettyRaftTransport} with the
- * transport tier AUTO-selected ({@code io_uring → epoll → nio}) at construction. Proves the migrated
+ * transport tier AUTO-selected ({@code Epoll → NIO; io_uring opt-in (Phase V)}) at construction. Proves the migrated
  * consensus transport reproduces every behaviour the JDK subclass does on whatever native tier the
  * host offers.
  */

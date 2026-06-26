@@ -18,23 +18,25 @@ import io.netty.channel.uring.IoUringSocketChannel;
 import java.util.Locale;
 
 /**
- * The production three-tier Netty transport selector (ADR-0043 / charter §3.2;
+ * The production Netty transport selector (ADR-0043 / charter §3.2;
  * {@code docs/netty-migration/netty42-api.md} §1).
  *
- * <p>Runtime-detects the best available transport in the order <b>io_uring → Epoll → NIO</b> and
- * returns a <em>coherent triple</em> — the {@link IoHandlerFactory} <b>and</b> the matching
- * {@link ServerChannel} class. In Netty 4.2 the event-loop group no longer implies the channel type
- * (one generic {@code MultiThreadIoEventLoopGroup} takes any {@code IoHandlerFactory}); pairing a
- * factory with the wrong channel class is the #1 4.2 migration bug. Resolving both together here is
- * the single place that pairing is decided.
+ * <p>Auto-selects in the order <b>Epoll → NIO</b> and returns a <em>coherent triple</em> — the
+ * {@link IoHandlerFactory} <b>and</b> the matching {@link ServerChannel} class. In Netty 4.2 the
+ * event-loop group no longer implies the channel type (one generic {@code MultiThreadIoEventLoopGroup}
+ * takes any {@code IoHandlerFactory}); pairing a factory with the wrong channel class is the #1 4.2
+ * migration bug. Resolving both together here is the single place that pairing is decided.
  *
- * <p><b>io_uring is a performance tier, never a correctness dependency</b> (charter §3.2): its win
- * is syscall batching (validated in Phase V), and Epoll/NIO are the always-correct fallback that CI
- * runners — which frequently lack io_uring, and sometimes epoll — exercise. NIO (tier 3) is
- * pure-Java and available on every JVM/OS.
+ * <p><b>io_uring is OPT-IN, not auto-selected</b> (Phase V, ADR-0043). It is a performance tier,
+ * never a correctness dependency — and Phase V <em>measured</em> that at Configd's workload it
+ * delivers no throughput/tail benefit and a ~2× throughput <b>regression</b> at high fan-out, with
+ * Epoll the proven-faster transport (the default does not select the path measured slower). io_uring
+ * remains available for operators whose workload has the per-event-loop connection density to benefit,
+ * via the override below. NIO is pure-Java and available on every JVM/OS.
  *
- * <p><b>Override (CI-fallback proof, fail-loud).</b> {@code -Dconfigd.netty.transport=io_uring|epoll|nio}
- * forces a tier so CI can exercise the NIO and Epoll paths deterministically (and not depend on the
+ * <p><b>Override (opt-in / CI-fallback proof, fail-loud).</b>
+ * {@code -Dconfigd.netty.transport=io_uring|epoll|nio} forces a tier — the way to <em>opt into</em>
+ * io_uring, and the way CI exercises the NIO/Epoll paths deterministically (independent of the
  * runner's kernel). Forcing a tier that is <em>unavailable</em> on the host is a startup error, not a
  * silent downgrade — a silent downgrade is how a "we ran on io_uring/epoll" claim becomes fiction.
  */
@@ -64,14 +66,23 @@ public final class NettyTransport {
                             Class<? extends Channel> clientChannelClass) {
     }
 
-    /** Resolves the transport per the override / io_uring→Epoll→NIO order. */
+    /**
+     * Resolves the transport per the override, else auto-selects <b>Epoll → NIO</b>.
+     *
+     * <p><b>io_uring is NOT auto-selected</b> (Phase V, ADR-0043, 2026-06-26). Measured at Configd's
+     * workload, io_uring delivers <em>no</em> throughput/tail benefit (edge-read is tied
+     * io_uring-vs-Epoll at every connection count) and a <b>~2× throughput regression at high fan-out</b>
+     * (1024 subscriber streams), with Epoll the proven-faster transport — see
+     * {@code docs/netty-migration/phase-v-io-uring.md}. io_uring's syscall reduction is real but
+     * batches per event loop (one loop per core), so at Configd's connection scale the per-loop density
+     * is too low to help. The auto default is therefore the <em>measured-best available</em> tier;
+     * io_uring is <b>opt-in</b> via {@code -Dconfigd.netty.transport=io_uring} for operators whose
+     * workload has the per-loop density to benefit (still fail-loud if unavailable).
+     */
     public static Selection select() {
         String forced = System.getProperty(PROP);
         if (forced != null) {
-            return forced(forced);
-        }
-        if (IoUring.isAvailable()) {
-            return ioUring();
+            return forced(forced); // io_uring reachable here (opt-in), Epoll, or NIO
         }
         if (Epoll.isAvailable()) {
             return epoll();

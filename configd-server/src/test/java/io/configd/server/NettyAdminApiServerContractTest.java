@@ -6,7 +6,7 @@ package io.configd.server;
  * transport passes ({@link JdkAdminApiServerContractTest}). Because both adapters delegate to the same
  * {@link AdminApiHandler}, every S7 control — authn/authz/escalation, audit completeness + chain,
  * replay, strong-read fail-close, and the five C6 path-normalization evasion vectors — is re-proven on
- * the migrated pipeline. The transport auto-selects io_uring→Epoll→NIO; the forced-NIO floor is proven
+ * the migrated pipeline. The transport auto-selects Epoll→NIO (io_uring opt-in, Phase V); the forced-NIO floor is proven
  * by {@link NettyAdminApiServerNioFallbackTest}.
  */
 class NettyAdminApiServerContractTest extends AbstractAdminApiServerContract {
