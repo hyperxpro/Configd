@@ -3,6 +3,20 @@
 ## Status
 
 **Proposed** (Session M1, 2026-06-21). Not yet Accepted — awaits operator sign-off.
+
+> **Workstream C update (2026-06-26, MEASURED).** The per-shard knee — flagged below as "the single most
+> important number still owed to measurement" and as a "forward reference" — has now been **measured on
+> hardware** (m6id.4xlarge, the same instance type as S7.5; `docs/multiraft/workstream-c-throughput.md`).
+> Result: the **re-threaded** single group (Phase 0 owner-executor pool + coalesced heartbeats + Netty-Epoll
+> consensus wire) caps at **~800/s — unchanged from the S7.5 pre-Phase-0 baseline.** Phase 0 did not raise the
+> *single-group* knee and structurally could not: at N=1 a group binds to one owner thread; Phase 0's
+> parallelism is *across* groups and its heartbeat coalescing is a flat-in-N *aggregate* property. **The only
+> lever that lifts sustained throughput above ~800/s is sharding (multi-Raft Phase 1).** So `per_shard_knee` is
+> now a measured **~800/s** (co-location-confounded; dedicated-host re-measure still owed before freezing N),
+> and `N ≈ 10000/(800×0.75) ≈ 17` to reach 10k/s sustained. Admission control (`=16`) was re-validated on the
+> re-threaded code (churn-collapse → graceful `429`-shed, ~2× effective throughput under flood) — it stabilizes
+> the ~800/s knee under burst, it does not raise it. The v1-vs-v2 recommendation (ship the fast single group +
+> admission for v1, defer sharding to v2 unless 10k/s *sustained* is a hard contract) is in the verdict doc.
 Renegotiates a §0.1 target, which §0.1 requires be done via an ADR (precedent: ADR-0031, which
 renegotiated the write-*availability* target). Part of the multi-Raft arc; depends on
 `adr-multiraft-topology.md` (N derivation) and `configd-analysis.md` §3–§5 (the consensus-thread fix).
@@ -33,6 +47,7 @@ real hardware, not loopback.
 | Bound | Value | Source |
 |---|---|---|
 | As-built single group, co-located NVMe | **~800/s stable** (collapse ~1000/s) | S7.5 measured (`throughput-part2.md` §C), co-location-confounded |
+| **Re-threaded single group (Phase 0), co-located NVMe** | **~800/s stable** (collapse ~1000/s) — **UNCHANGED** | **Workstream C measured 2026-06-26** (`workstream-c-throughput.md`); Phase 0 lifts the *aggregate* via sharding, not the single-group knee |
 | Single group + group commit | flat (no change here) | fsync is free on instance-store NVMe (`f/s`=0); group commit is load-bearing on EBS/SAN/HDD |
 | Single group + admission control (mitigation) | ~864/s under a 2000/s flood (was 432/s), leader stable | S7.5 §G — *failure-mode* fix, not a ceiling raise |
 | **etcd, single group + batching** | **~10k/s** | public etcd evidence — the realistic *tuned single-group envelope ceiling* on dedicated hardware |
@@ -45,6 +60,15 @@ pool + per-tick broadcast-coalescing; `configd-analysis.md` §3) plus group comm
 per-shard knee is expected to rise materially above ~800/s on a dedicated host. **Where in
 [800/s, ~10k/s] it lands is the single most important number still owed to measurement** (dedicated,
 one-node-per-host, multi-box).
+
+> **MEASURED (Workstream C, 2026-06-26):** the expectation above was partly wrong, and the correction is the
+> key finding. The consensus-thread fix (coalesced heartbeats + owner-executor pool) did **NOT** raise the
+> *single-group* knee — it is still ~800/s, byte-for-byte the S7.5 curve — because at N=1 a single group is a
+> single owner thread; the fix's parallelism and flat-in-N heartbeat coalescing are *aggregate* (multi-group)
+> properties. So on *this co-located box* the per-shard knee landed at **~800/s, not higher**. The remaining
+> upside toward etcd's ~10k/s is (a) sharding (N groups, the multi-Raft thesis) and (b) a dedicated-host
+> re-measure of the single-group knee (still owed; co-location plausibly suppresses it). Group commit is a
+> no-op here (fsync free on instance-store NVMe, re-confirmed: 16,986 fdatasync IOPS).
 
 ## Decision
 
@@ -139,11 +163,14 @@ at N shards.
   to D-B's surviving critique* — mitigated by D-A hash spreading skew + per-principal limits +
   N-headroom; the genuine single-hot-key case is unsplittable by any sharding and is a per-key
   remediation.
-- **Every term in the formula is a forward reference (verified).** *Surviving.* The knee is
-  co-location-confounded; the threading fix (raises knee) and coalesced-HB overhead (lowers efficiency)
-  are both unbuilt (`RaftNode.propose():460`). A measured shortfall cannot be attributed to either until
-  both exist. Honest statement: **"10k/s is unvalidated against any built multi-shard system; this formula
-  is the plan to prove it,"** not "9.6k/s ≈ 10k/s."
+- **Every term in the formula is a forward reference (verified).** *Partly resolved (Workstream C,
+  2026-06-26).* The threading fix is now **built and measured**, and the embedded assumption "threading fix
+  raises [the single-group] knee" is **falsified**: it does not — the re-threaded single-group knee is still
+  ~800/s, because Phase 0 parallelizes *across* groups, not *within* one. So `per_shard_knee` is now a
+  **measured ~800/s** (no longer a forward reference, though still co-location-confounded pending a
+  dedicated-host re-measure), and the path to 10k/s is **N parallel shards**, not a higher single-group rate.
+  The honest statement stands for the *aggregate*: **"10k/s is still unvalidated against any built multi-shard
+  system; the per-shard term is now measured at ~800/s and N≈17 follows."**
 - **The aggregate assumes uniform load AND all-shards-live** — now carried into the headline as a range
   (node loss → `(2/3)N`; single-hot-key skew caps one shard at the knee).
 - **Is 10k/s even the right target?** *Surviving — flagged for the operator.* The renegotiation preserves
