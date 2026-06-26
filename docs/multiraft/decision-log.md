@@ -29,3 +29,23 @@ In-repo load-bearing claims were re-verified by the lead at `file:line` (the sea
 the BATCH codec, the wire header, the R-01 marshalling, the `research.md` rejections). External prior-art
 mechanisms/bugs are cited to public sources gathered by the research agents (`prior-art.md` citation
 list); they were not independently re-run. No production code was written or modified this session.
+
+---
+
+# Workstream C — the re-threaded single-group throughput MEASUREMENT (2026-06-26)
+
+> Resolves DL-M1-05/06's forward reference: the per-shard knee, measured on hardware.
+> Verdict: `docs/multiraft/workstream-c-throughput.md`. Captures: `docs/multiraft/captures/wsC-ladder/`.
+
+| ID | Self-resolved call | Basis | Reversible? |
+|---|---|---|---|
+| **DL-C-01** | Measured the **production binary** (current `main`: Phase 0 + Netty), **forcing `-Dconfigd.netty.transport=epoll`** and verifying `[tier=epoll]` at runtime — not a synthetic pre-Phase-0/pre-Netty isolation point | What ships is what to measure; the consensus wire is independently transport-neutral (`jdk-vs-netty/`), and forcing epoll removes the io_uring confound (Phase V: io_uring ~2× worse for consensus) | n/a (methodology) |
+| **DL-C-02** | Primary ladder at **production defaults** (admission OFF, ownerPoolSize=1, group-commit ON) | Exact apples-to-apples with the S7.5 no-admission ladder, so the delta is attributable to Phase 0 alone | n/a |
+| **DL-C-03** | **Same instance TYPE as S7.5** (m6id.4xlarge), co-location confound **deliberately retained** | Holds hardware constant ⇒ the throughput delta (≈0) is attributable to software (Phase 0), not the box; the shared co-location confound is honestly labelled and flagged for a dedicated-host re-measure | n/a |
+| **DL-C-04** | Reported the knee as **~800/s, UNCHANGED by Phase 0**, and attributed it to the single owner thread per group (case c reproduced) — Phase 0 lifts the *aggregate* (sharding), not the single-group knee | Ladder identical to S7.5 across 9 rates + 3-pass variance; fsync free, box ~75% idle, elections monotonic, 1–2 `configd-*` threads hot; thread-named + independently reproduced by a 2nd agent on-box | n/a (measured fact) |
+| **DL-C-05** | Recommendation **leans v2-deferral** (ship fast single group + admission for v1) **but did NOT unilaterally decide v1/v2** — presented the "10k/s-sustained-is-a-hard-contract ⇒ v1-sharding" branch and left the call to the operator | Real config workload ~hundreds/s, bursty (Quicksilver ~347/s global); the 10k/s legacy target is modeled/never-validated. Charter §1/§5: recommend with numbers, operator decides scope | Yes (operator decides) |
+| **DL-C-06** | Did **not fabricate a pass/fail target**; measured the honest knee and reported it against references (S7.5 ~800, etcd ~10k, Quicksilver ~347, config-burst) | Charter §1/§6.3 | n/a |
+
+**Autonomy exercised (charter §2):** provisioned/ran/tore-down one m6id.4xlarge on-demand (≤$5 ceiling),
+dry-run-green-on-the-free-box-first, verified teardown against the AWS API. Did not merge to main (left as the
+operator gate). Production code unchanged (measurement only; the harness `perf/wsC-ladder.sh` is additive).
