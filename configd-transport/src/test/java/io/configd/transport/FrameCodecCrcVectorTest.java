@@ -24,24 +24,28 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
  * trailer offset, or byte range, this test fails immediately and the
  * mismatch is provably an encoder bug, not a fixture bug.
  *
- * <p>The reference vector is the canonical {@code heartbeat.bin}
- * fixture (length=22, version=0x01, type=HEARTBEAT, groupId=0x01020304,
- * term=0x0A0B0C0D0E0F1011, no payload), CRC32C trailer 0x5AA34AE5.
+ * <p>The reference vector is the canonical v2 {@code heartbeat.bin}
+ * fixture (length=30, version=0x02, type=HEARTBEAT, groupId=0x01020304,
+ * term=0x0A0B0C0D0E0F1011, reserved epoch=0, no payload), CRC32C trailer
+ * 0xC7774A8C. (v1 was length=22/version=0x01/CRC 0x5AA34AE5, before the
+ * Seam-F reserved epoch field bumped the wire to v2.)
  */
 class FrameCodecCrcVectorTest {
 
-    /** Bytes 0..17 of the canonical heartbeat fixture (everything pre-trailer). */
+    /** Bytes 0..25 of the canonical v2 heartbeat fixture (everything pre-trailer). */
     private static final byte[] HEARTBEAT_PRE_TRAILER = new byte[] {
-            0x00, 0x00, 0x00, 0x16,             // length = 22
-            0x01,                               // version = 0x01
+            0x00, 0x00, 0x00, 0x1e,             // length = 30
+            0x02,                               // version = 0x02
             0x0E,                               // type    = HEARTBEAT (0x0E)
             0x01, 0x02, 0x03, 0x04,             // groupId = 0x01020304
             0x0A, 0x0B, 0x0C, 0x0D,             // term hi
-            0x0E, 0x0F, 0x10, 0x11              // term lo
+            0x0E, 0x0F, 0x10, 0x11,             // term lo
+            0x00, 0x00, 0x00, 0x00,             // epoch hi (v2 reserved, MBZ)
+            0x00, 0x00, 0x00, 0x00              // epoch lo (v2 reserved, MBZ)
     };
 
-    /** CRC32C(Castagnoli) over HEARTBEAT_PRE_TRAILER, hand-verified. */
-    private static final int EXPECTED_HEARTBEAT_CRC = 0x5AA34AE5;
+    /** CRC32C(Castagnoli) over HEARTBEAT_PRE_TRAILER, cross-checked by the live encoder. */
+    private static final int EXPECTED_HEARTBEAT_CRC = 0xC7774A8C;
 
     @Test
     void crc32cOverHeartbeatPreTrailerMatchesHandComputedReference() {

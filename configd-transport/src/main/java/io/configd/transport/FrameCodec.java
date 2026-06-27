@@ -8,13 +8,14 @@ import java.util.zip.CRC32C;
  * Encoder/decoder for the Configd wire protocol frame format
  * (ADR-0010 v0; ADR-0029 v1: version byte + CRC32C trailer).
  *
- * <p>Frame layout (v1):
+ * <p>Frame layout (v2):
  * <pre>
  *   [Length: 4 bytes]
  *   [Version: 1 byte]
  *   [Type: 1 byte]
  *   [GroupId: 4 bytes]
  *   [Term: 8 bytes]
+ *   [Epoch: 8 bytes]    (v2 — RESERVED; MBZ on send, ignored on receive)
  *   [Payload: variable]
  *   [CRC32C: 4 bytes]
  * </pre>
@@ -29,6 +30,11 @@ import java.util.zip.CRC32C;
  *   <li><b>Type</b> — {@link MessageType} code.</li>
  *   <li><b>GroupId</b> — Raft group identifier, big-endian.</li>
  *   <li><b>Term</b> — Raft term, big-endian.</li>
+ *   <li><b>Epoch</b> — v2 RESERVED field (Multi-Raft Phase 1, D1/DL-P1-04),
+ *       big-endian. <em>Dormant</em>: the encoder writes zero (MBZ) and the
+ *       decoder reads-but-ignores it, so a future v2.x sender that populates
+ *       epoch is still decodable here — activating it needs no further wire
+ *       bump. Not surfaced on {@link Frame} until it is used (DL-F-01).</li>
  *   <li><b>Payload</b> — message-specific bytes. May be empty.</li>
  *   <li><b>CRC32C</b> — Castagnoli polynomial checksum
  *       ({@link java.util.zip.CRC32C}) over <em>all preceding
@@ -57,20 +63,32 @@ public final class FrameCodec {
      * traffic terminates the connection.
      *
      * <p>Bumping this constant is a controlled action governed by the
-     * {@code wire-compat} CI job: any change to fixture bytes under
-     * {@code wire-fixtures/v<N>/} without a corresponding
-     * {@code WIRE_VERSION} bump fails CI.
+     * {@code wire-compat} CI job: any change to the {@code GoldenFixtures}
+     * bytes without a corresponding {@code WIRE_VERSION} bump fails CI.
+     *
+     * <p>v1→v2 (Multi-Raft Phase 1, Seam F): reserved the 8-byte epoch
+     * header field (D1) and defined {@link MessageType#RAFT_COALESCED_HEARTBEAT}
+     * (D2). One bump for both; a clean cutover (no external v1 deployments —
+     * the strict tripwire above means v1 and v2 never interoperate).
      */
-    public static final byte WIRE_VERSION = (byte) 0x01;
+    public static final byte WIRE_VERSION = (byte) 0x02;
 
     /**
      * Fixed header size: 4 (length) + 1 (version) + 1 (type) +
-     * 4 (groupId) + 8 (term) = 18 bytes.
+     * 4 (groupId) + 8 (term) + 8 (epoch) = 26 bytes (v2; was 18 at v1
+     * before the reserved epoch field).
      */
-    public static final int HEADER_SIZE = 18;
+    public static final int HEADER_SIZE = 26;
 
     /** Trailer size: 4 bytes for the CRC32C checksum. */
     public static final int TRAILER_SIZE = 4;
+
+    /**
+     * The value written into the reserved 8-byte epoch field (v2/D1). Zero
+     * = "no epoch" / MBZ. The field is dormant at static-N; this names the
+     * sentinel so the single place that activates epoch later is obvious.
+     */
+    private static final long RESERVED_EPOCH = 0L;
 
     /**
      * Hard upper bound on frame size, in bytes (16 MiB). Bounds any
@@ -156,9 +174,10 @@ public final class FrameCodec {
         buf.put((byte) messageType.code());
         buf.putInt(groupId);
         buf.putLong(term);
+        buf.putLong(RESERVED_EPOCH); // v2/D1 reserved epoch — MBZ (dormant)
         buf.put(payload);
 
-        // CRC32C over [length, version, type, groupId, term, payload].
+        // CRC32C over [length, version, type, groupId, term, epoch, payload].
         CRC32C crc = new CRC32C();
         crc.update(frame, 0, totalLength - TRAILER_SIZE);
         buf.putInt((int) crc.getValue());
@@ -201,6 +220,7 @@ public final class FrameCodec {
         buf.put((byte) messageType.code());
         buf.putInt(groupId);
         buf.putLong(term);
+        buf.putLong(RESERVED_EPOCH); // v2/D1 reserved epoch — MBZ (dormant)
         buf.put(payload);
 
         // CRC32C over the bytes we just wrote, excluding the trailer.
@@ -295,6 +315,7 @@ public final class FrameCodec {
         MessageType type = MessageType.fromCode(typeCode);
         int groupId = buf.getInt();
         long term = buf.getLong();
+        buf.getLong(); // v2/D1 reserved epoch — decode-but-ignore (dormant; forward-compatible)
 
         int payloadLen = data.length - HEADER_SIZE - TRAILER_SIZE;
         byte[] payload = new byte[payloadLen];

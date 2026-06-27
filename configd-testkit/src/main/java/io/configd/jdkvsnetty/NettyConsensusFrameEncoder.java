@@ -58,6 +58,7 @@ final class NettyConsensusFrameEncoder extends MessageToByteEncoder<FrameMsg> {
         out.writeByte((byte) m.type().code());
         out.writeInt(m.groupId());
         out.writeLong(m.term());
+        out.writeLong(0L); // v2/D1 reserved epoch — MBZ (dormant); byte-identical to FrameCodec.encode
         out.writeBytes(m.payload());
         CRC32C crc = CRC.get();
         crc.reset();

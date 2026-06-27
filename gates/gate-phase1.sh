@@ -36,8 +36,9 @@ MVN="$ROOT/mvnw -B"
 LOGDIR="${GATE_PHASE1_LOG_DIR:-$(mktemp -d /tmp/gate-phase1-XXXXXX)}"
 mkdir -p "$LOGDIR"
 
-# Modules whose sharding tests this gate exercises.
-MODULES="configd-common,configd-consensus-core,configd-replication-engine,configd-server,configd-testkit"
+# Modules whose sharding tests this gate exercises. (Seam F added configd-transport + configd-netty:
+# the wire bump's codec/byte-identity tests live there; both are already built as server deps via -am.)
+MODULES="configd-common,configd-consensus-core,configd-transport,configd-netty,configd-replication-engine,configd-server,configd-testkit"
 
 echo "=== gate-phase1 (Multi-Raft Phase 1: static-N sharding layer) — logs in $LOGDIR ==="
 
@@ -180,5 +181,30 @@ assert_file "docs/multiraft/phase1/seam-e-per-shard-metrics.md"
 assert_grep "docs/multiraft/phase1/server-wiring-decision-log.md" "DL-W-E-0"
 echo "gate-phase1 wiring-e: OK"
 
-echo "=== gate-phase1: GREEN — Multi-Raft Phase 1 sharding foundation + server-wiring A/B/C/D/E verified ==="
+# --- (h) Server-wiring Seam F: the WIRE_VERSION 0x01->0x02 bump (D1 epoch + D2 coalesced frame) ----
+# ONE intentional wire bump, both fields DORMANT at N=1. Non-vacuity: the epoch is reserved (encode 0 /
+# decode-ignore) and a v2 frame minus version+epoch is byte-for-byte the v1 frame (N=1 byte-identity);
+# the golden fixtures match v2 (the wire-compat intentional bump — a drift goes RED); the Netty
+# in-pipeline encoder is byte-identical to RaftWireProtocol.encodeWire at v2; the coalesced payload
+# codec round-trips and rejects every adversarial malformation; the inbound demux splits a coalesced
+# frame per-group; the send drain emits a coalesced frame only at >1 group (N=1 stays plain AppendEntries).
+echo "gate-phase1 wiring-f: WIRE_VERSION v2 bump — epoch reservation + coalesced-heartbeat frame (Seam F)..."
+WIRINGF="$LOGDIR/wiring-f.txt"
+run_tests wiring-f "FrameCodecEpochReservationTest,WireCompatGoldenBytesTest,MessageTypeTest,NettyConsensusFrameEncoderByteIdentityTest,CoalescedHeartbeatCodecTest,RaftTransportAdapterCoalescedInboundTest,HeartbeatDrainFramingTest" "$WIRINGF"
+assert_class_green "$WIRINGF" "FrameCodecEpochReservationTest"            # D1: epoch MBZ + N=1 byte-identity
+assert_class_green "$WIRINGF" "WireCompatGoldenBytesTest"                 # v2 golden bytes match (intentional bump)
+assert_class_green "$WIRINGF" "NettyConsensusFrameEncoderByteIdentityTest" # Netty encoder == encodeWire at v2
+assert_class_green "$WIRINGF" "CoalescedHeartbeatCodecTest"               # D2: coalesced codec round-trip + bounds
+assert_class_green "$WIRINGF" "RaftTransportAdapterCoalescedInboundTest"  # D2: inbound per-group demux
+assert_class_green "$WIRINGF" "HeartbeatDrainFramingTest"                 # D2: send drain dormant at N=1
+# The bump is INTENTIONAL: WIRE_VERSION is 0x02 and the header reserves the 8-byte epoch (HEADER_SIZE 26).
+assert_grep "configd-transport/src/main/java/io/configd/transport/FrameCodec.java" "WIRE_VERSION = \(byte\) 0x02"
+assert_grep "configd-transport/src/main/java/io/configd/transport/FrameCodec.java" "HEADER_SIZE = 26"
+assert_grep "configd-transport/src/main/java/io/configd/transport/MessageType.java" "RAFT_COALESCED_HEARTBEAT\(0x11\)"
+assert_file "configd-server/src/test/java/io/configd/server/CoalescedHeartbeatCodecTest.java"
+assert_file "docs/multiraft/phase1/seam-f-wire-bump.md"
+assert_grep "docs/multiraft/phase1/server-wiring-decision-log.md" "DL-F-0"
+echo "gate-phase1 wiring-f: OK"
+
+echo "=== gate-phase1: GREEN — Multi-Raft Phase 1 sharding foundation + server-wiring A/B/C/D/E/F verified ==="
 exit 0
