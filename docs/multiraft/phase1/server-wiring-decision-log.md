@@ -350,6 +350,62 @@ Implementer → diff-review → independent clean re-run → adversarial red-tea
 `RaftTransportAdapterCoalescedInboundTest` 3/0, `HeartbeatDrainFramingTest` 3/0, and the N=1
 boot/restart + metrics regressions). `gate-phase1` block (h)/wiring-f added (CI-wired, cumulative).
 
+## Seam G — the switch-flip (boot-guard removal LAST, gated on the integrated sweep)
+
+> G is the riskiest single action in the project. It proceeds G1 (fan-out) → G2 (live isolation) → G3
+> (integrated N>1 sweep — GATES G4) → G4 (remove the boot guard). The N>1 boot guard
+> (`resolveShardCount`) **stays** until G3 is green. Each sub-seam: four-way + N=1 byte-identity re-proven.
+
+### G1 — N-way fan-out merge/sequencer (DL-W-G1-01..04 + four-way)
+
+Design: `docs/multiraft/phase1/seam-g1-fanout-merge.md`. At N>1 the distribution node must ingest ALL N
+groups' committed streams, not just the primary's (the pre-G1 wiring bound the fan-out + watch listeners
+to the primary group only — ADR-D-A "surviving (verified)": *N shards = N owner threads writing one
+bounded buffer → an N-way merge/sequencer is required*).
+
+#### DL-W-G1-01 — ONE FanOutBuffer + Compactor + SnapshotReplaySource PER SHARD (not a global merge seq)
+`registerShardedFanOut(runtimes, clock, droppedCounter, capacity)` (static, testable) builds one
+`FanOutBuffer` + `Compactor` per shard and registers each group's commit listener (ConfigDelta → publish
++ addSnapshot) on THAT group's state machine. Faithful to ADR-D-A/D-C/ADR-0004/ADR-0035: the committed
+model is **per-shard sequences consumed via a per-shard cursor (a cursor vector)**, NOT a fabricated
+global order. **Thread-safety by construction:** a group's apply → `notifyListeners` runs only on that
+group's owner thread (R-01′), so each per-shard buffer has exactly ONE writer — the `FanOutBuffer`
+single-writer invariant holds per shard with NO lock (two groups on one owner write their distinct
+buffers serially). This deliberately avoids serializing N owner threads through one writer (a global merge
+seq would have done that AND implied a cross-shard order the contract denies). Per-shard monotonicity (no
+lost/dup/reorder-within-shard) is the existing single-buffer guarantee applied per shard.
+`ShardedFanOutTest` 6/0 (N=1 identity; isolation; per-shard monotonicity + independent seqs; concurrent
+N-thread publish no-corruption; per-shard replay floor; aggregate drop counter). *Reversible: revert.*
+
+#### DL-W-G1-02 — WatchService bound to the PRIMARY group only (cross-shard watch = v2 edge client)
+`WatchService` is single-threaded by contract (no synchronization) + a single version cursor that
+collides across shards, and has NO production `register()` path (dormant infra, like CM-033 BATCH). So
+`watchService::onConfigChange` stays on the primary group: byte-identical at N=1; single-owner-thread (no
+race) at N>1. Cross-shard watch aggregation (per-shard watch + cursor vector, ticked per-owner) rides the
+v2 sharded edge client (handoff §5). Not "half-wired N>1" — the **fan-out** (G1's mandate) is fully
+per-shard; watch is a separate dormant mechanism whose client is explicitly deferred, documented loudly.
+*Reversible: yes.*
+
+#### DL-W-G1-03 — edge endpoint serves the PRIMARY shard at N>1, with a loud startup warning
+`NettyFanOutServer`'s single-cursor wire protocol serves one shard; the cursor-vector sharded edge client
+is v2. The edge endpoint is OFF by default (`--edge-port`); at N>1 with it set, the server prints a loud
+`WARNING` that it serves the primary shard only. Observable, not a silent partial-view footgun. N=1: the
+primary is the only shard (full view). *Reversible: yes.*
+
+#### DL-W-G1-04 — shared LongAdder dropped counter (aggregate); per-shard compaction rider
+All shards share `fanout.buffer.dropped` (`LongAdder`-backed → thread-safe) so it stays the aggregate
+`fanout_buffer_dropped_total` (ADR-D-A cross-shard drop-amplification total); each per-shard buffer still
+evicts independently (asserted). The owner[0] periodic `compact()` rider compacts EVERY shard's compactor
+(`Compactor.compact()` is thread-safe). Per-shard `fanout.buffer.dropped.<gid>` (Seam-E style) is a noted
+minor follow-up. *Reversible: yes.*
+
+#### N=1 byte-identity (G1)
+At one shard, `registerShardedFanOut` builds exactly one buffer + compactor for the primary and registers
+exactly the prior single fan-out listener (identical delta/notification/publish/addSnapshot), in the same
+order (fan-out then watch); the downstream wiring + the `fanOutBuffer()`/`compactor()`/`replaySource()`
+accessors receive the same primary instances; the compact rider iterates one compactor. No consensus / WAL
+/ wire / read / write / tick change. (Full `configd-server` suite re-run for the regression.)
+
 ## Invariants held (re-checked each seam)
 - **N=1 byte-identical** to today (consensus behaviour, Raft WAL/snapshot format; the wire is identical
   EXCEPT the sanctioned version byte `01→02` + the 8 reserved epoch zero-bytes — charter §2 D1). The

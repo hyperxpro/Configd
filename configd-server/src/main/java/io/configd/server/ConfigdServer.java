@@ -580,9 +580,25 @@ public final class ConfigdServer {
         // of truth it replays from.
         MetricsRegistry.Counter fanOutDroppedCounter =
                 metricsRegistry.counter("fanout.buffer.dropped");
-        FanOutBuffer fanOutBuffer =
-                new FanOutBuffer(FANOUT_BUFFER_CAPACITY, fanOutDroppedCounter::increment);
-        Compactor compactor = new Compactor();
+        // Multi-Raft Phase 1 — Seam G1: PER-SHARD fan-out. Build one FanOutBuffer + Compactor per shard
+        // and register each group's commit listener (ConfigDelta -> publish + addSnapshot) on ITS OWN
+        // state machine, so each shard's committed stream feeds its own buffer ON ITS OWN OWNER THREAD —
+        // the FanOutBuffer single-writer invariant holds per shard with NO lock, because apply ->
+        // notifyListeners runs only on the group's owner thread (R-01'). Per-shard sequences + cursor
+        // vector; NO fabricated cross-shard global order (ADR-D-A/D-C; see
+        // docs/multiraft/phase1/seam-g1-fanout-merge.md). The shared dropped counter is LongAdder-backed
+        // (thread-safe) and stays the aggregate fanout_buffer_dropped_total. At N=1 this builds exactly
+        // ONE buffer + compactor for the primary group — byte-identical to the prior single-buffer wiring.
+        ShardedFanOut shardedFanOut =
+                registerShardedFanOut(runtimes, clock, fanOutDroppedCounter, FANOUT_BUFFER_CAPACITY);
+        Map<Integer, FanOutBuffer> shardFanOutBuffers = shardedFanOut.buffers();
+        Map<Integer, Compactor> shardCompactors = shardedFanOut.compactors();
+        // The primary group's buffer + compactor are the home for the not-yet-sharded edge endpoint, the
+        // ConfigdServer fields, and the fanOutBuffer()/compactor()/replaySource() accessors. At N=1 this
+        // is the only group => byte-identical; at N>1 the per-shard sources serve the v2 sharded edge
+        // client (handoff §5) and the edge endpoint warns it serves the primary shard only.
+        FanOutBuffer fanOutBuffer = shardFanOutBuffers.get(DEFAULT_RAFT_GROUP);
+        Compactor compactor = shardCompactors.get(DEFAULT_RAFT_GROUP);
         WatchService watchService = new WatchService(clock);
         SubscriptionManager subscriptionManager = new SubscriptionManager();
         // S6/WS-A: subscribed-prefix capacity gauge (sampled snapshot; benign-race size() read).
@@ -601,34 +617,15 @@ public final class ConfigdServer {
             }
         });
 
-        // Register state machine listener: build ConfigDelta and feed fan-out buffer + compactor
-        stateMachine.addListener((mutations, version) -> {
-            long fromVersion = version - 1;
-            byte[] signature = stateMachine.lastSignature();
-            // F-0052: attach the monotonic epoch + nonce bound into the
-            // signature so edges can reject replays.
-            long epoch = stateMachine.lastEpoch();
-            byte[] nonce = stateMachine.lastNonce();
-            ConfigDelta delta;
-            if (signature != null && nonce != null) {
-                delta = new ConfigDelta(fromVersion, version, mutations, signature, epoch, nonce);
-            } else {
-                delta = new ConfigDelta(fromVersion, version, mutations, signature);
-            }
-            // §4.6 / ADR-0034 + ADR-0035: publish the full commit notification.
-            // `version` is the ADR-0033 applied-mutation seq S (the listener fires
-            // only on mutating applies). The commit timestamp is the leader's wall
-            // clock captured here on the apply thread — the single authoritative
-            // §2 staleness clock ADR-0035 redefined (NOT a per-entry HLC). This
-            // runs on the leader's apply path, so `clock.currentTimeMillis()` is
-            // the leader-assigned commit timestamp the edge measures staleness
-            // against.
-            long commitTimestampMillis = clock.currentTimeMillis();
-            fanOutBuffer.publish(new CommitNotification(version, commitTimestampMillis, delta));
-            compactor.addSnapshot(configStore.snapshot());
-        });
+        // (The per-group fan-out commit listeners — ConfigDelta -> publish + addSnapshot, one per shard
+        // on its own buffer/compactor — were registered above by registerShardedFanOut. See Seam G1.)
 
-        // Register state machine listener: feed WatchService for push notifications
+        // Register state machine listener: feed WatchService for push notifications. Bound to the PRIMARY
+        // group ONLY. WatchService is single-threaded by contract (no synchronization) and uses a single
+        // version cursor that collides across shards, and it has no production register() path (dormant
+        // infrastructure). Binding it to the primary keeps onConfigChange on ONE owner thread (no race at
+        // N>1) and is byte-identical at N=1. Cross-shard watch aggregation (per-shard watch + a cursor
+        // vector, ticked per-owner) rides the v2 sharded edge client — Seam G1 / handoff §5.
         stateMachine.addListener(watchService::onConfigChange);
 
         // ---------------------------------------------------------------
@@ -893,6 +890,19 @@ public final class ConfigdServer {
         // ---------------------------------------------------------------
         io.configd.server.fanout.FanOutEndpoint fanOutServer = null;
         if (config.edgeEnabled()) {
+            // Seam G1: the C1 edge endpoint's single-cursor wire protocol serves ONE shard. At N>1 it
+            // serves the PRIMARY shard; the sharded edge client that multiplexes the N per-shard sources
+            // (a cursor vector — ADR-D-A/D-C) is v2 (handoff §5). Warn loudly so this is observable, not
+            // a silent partial-view footgun. At N=1 the primary is the only shard (full view).
+            if (shardCount > 1) {
+                System.err.println("WARNING: ************************************************************");
+                System.err.println("WARNING: --edge-port is set with shardCount=" + shardCount + " (N>1).");
+                System.err.println("WARNING: The edge endpoint serves the PRIMARY shard (group "
+                        + DEFAULT_RAFT_GROUP + ") ONLY.");
+                System.err.println("WARNING: The sharded edge client (multiplexing all " + shardCount
+                        + " per-shard streams) is v2.");
+                System.err.println("WARNING: ************************************************************");
+            }
             io.configd.server.fanout.RegistryFanOutSessionMetrics fanOutMetrics =
                     new io.configd.server.fanout.RegistryFanOutSessionMetrics(metricsRegistry);
             io.configd.distribution.ReplaySource edgeReplaySource =
@@ -1003,10 +1013,15 @@ public final class ConfigdServer {
                         watchService.tick();
                         plumtreeNode.tick();
 
-                        // Compact snapshot history every ~10 seconds.
+                        // Compact snapshot history every ~10 seconds. Seam G1: compact EVERY shard's
+                        // compactor (Compactor.compact() is thread-safe, so the owner[0] singleton rider
+                        // may compact sibling shards' history off their owner threads). At N=1 this is the
+                        // single primary compactor — byte-identical to the prior single-compactor rider.
                         tickCount[0]++;
                         if (tickCount[0] % COMPACTION_INTERVAL_TICKS == 0) {
-                            compactor.compact();
+                            for (Compactor shardCompactor : shardCompactors.values()) {
+                                shardCompactor.compact();
+                            }
                         }
                     }
                 } catch (Throwable t) {
@@ -1498,6 +1513,97 @@ public final class ConfigdServer {
                 return max;
             }
         };
+    }
+
+    /**
+     * Multi-Raft Phase 1 — Seam G1: the per-shard fan-out runtime — one {@link FanOutBuffer} and one
+     * {@link Compactor} per shard, returned keyed by group id. The primary group's
+     * entries (gid {@link #DEFAULT_RAFT_GROUP}) are the home for the not-yet-sharded edge endpoint and the
+     * server's {@code fanOutBuffer()}/{@code compactor()}/{@code replaySource()} accessors.
+     *
+     * @param buffers    gid -&gt; that shard's {@link FanOutBuffer} (the §4.6 {@link CommitNotificationSource})
+     * @param compactors gid -&gt; that shard's snapshot-retention {@link Compactor}
+     */
+    record ShardedFanOut(Map<Integer, FanOutBuffer> buffers, Map<Integer, Compactor> compactors) {
+    }
+
+    /**
+     * Multi-Raft Phase 1 — Seam G1: builds the PER-SHARD fan-out and registers each group's commit
+     * listener. For every shard it creates a {@link FanOutBuffer} (sharing the aggregate
+     * {@code fanout.buffer.dropped} counter) + a {@link Compactor}, and registers a
+     * {@link ConfigStateMachine.ConfigChangeListener} on THAT group's state machine that, on each mutating
+     * apply, builds the {@link ConfigDelta} (with the F-0052 signature/epoch/nonce when present), publishes
+     * a {@link CommitNotification} (seq = the shard's applied-mutation version; commit timestamp = the
+     * leader wall clock captured on the apply thread — ADR-0035) to THAT shard's buffer, and adds the
+     * shard's snapshot to THAT shard's compactor.
+     *
+     * <p><b>Thread-safety (Seam-G §3.3):</b> a group's apply -&gt; {@code notifyListeners} runs only on
+     * that group's owner thread (R-01'), so each per-shard buffer/compactor has exactly ONE writer — the
+     * {@link FanOutBuffer} single-writer invariant holds per shard with NO lock, even when several groups
+     * share an owner thread (they write their distinct buffers serially on that one thread). The shared
+     * dropped counter is {@code LongAdder}-backed (thread-safe). The listener touches only its own group's
+     * state machine + store — no cross-group {@link RaftNode} access.
+     *
+     * <p><b>N=1 byte-identity:</b> at a single shard this builds exactly one buffer + compactor for the
+     * primary group and registers exactly the prior single fan-out listener (identical delta/notification/
+     * publish/addSnapshot logic) — behaviourally identical to the pre-G1 single-buffer wiring.
+     *
+     * <p>Per-shard sequences + cursor vector; NO fabricated cross-shard global order (ADR-D-A/D-C). See
+     * {@code docs/multiraft/phase1/seam-g1-fanout-merge.md}. Package-private static so
+     * {@code ShardedFanOutTest} can drive it directly without standing up a whole server.
+     *
+     * @param runtimes       the per-shard runtimes (each supplies its group id, state machine, and store)
+     * @param clock          the wall clock for the ADR-0035 commit timestamp
+     * @param droppedCounter the aggregate {@code fanout.buffer.dropped} counter (shared across shards)
+     * @param bufferCapacity the per-shard ring capacity ({@link #FANOUT_BUFFER_CAPACITY})
+     * @return the per-shard {@link ShardedFanOut} (buffers + compactors), keyed by group id
+     */
+    static ShardedFanOut registerShardedFanOut(
+            List<RaftGroupRuntime> runtimes, Clock clock,
+            MetricsRegistry.Counter droppedCounter, int bufferCapacity) {
+        Map<Integer, FanOutBuffer> buffers = new java.util.LinkedHashMap<>();
+        Map<Integer, Compactor> compactors = new java.util.LinkedHashMap<>();
+        for (RaftGroupRuntime rt : runtimes) {
+            // Defensive (mirrors the primary-selection guard): a duplicate gid would orphan a buffer
+            // whose listener writes a buffer no accessor exposes. Unreachable with StaticShardMap's
+            // unique [0,N), but fail loud if a future ShardMap returns a duplicate.
+            if (buffers.containsKey(rt.groupId())) {
+                throw new IllegalStateException(
+                        "duplicate shard group id " + rt.groupId() + " in the bring-up runtimes — each"
+                                + " group must have exactly one fan-out buffer");
+            }
+            FanOutBuffer fanOut = new FanOutBuffer(bufferCapacity, droppedCounter::increment);
+            Compactor shardCompactor = new Compactor();
+            buffers.put(rt.groupId(), fanOut);
+            compactors.put(rt.groupId(), shardCompactor);
+            // Capture THIS group's state machine + store (final per-iteration so the listener binds to its
+            // own shard, never a loop-variable race).
+            ConfigStateMachine sm = rt.stateMachine();
+            VersionedConfigStore store = rt.configStore();
+            sm.addListener((mutations, version) -> {
+                long fromVersion = version - 1;
+                byte[] signature = sm.lastSignature();
+                // F-0052: bind the monotonic epoch + nonce into the signature so edges can reject replays.
+                long epoch = sm.lastEpoch();
+                byte[] nonce = sm.lastNonce();
+                ConfigDelta delta;
+                if (signature != null && nonce != null) {
+                    delta = new ConfigDelta(fromVersion, version, mutations, signature, epoch, nonce);
+                } else {
+                    delta = new ConfigDelta(fromVersion, version, mutations, signature);
+                }
+                // `version` is this shard's ADR-0033 applied-mutation seq S (the listener fires only on
+                // mutating applies). The commit timestamp is the leader's wall clock on the apply thread —
+                // the single authoritative §2 staleness clock (ADR-0035), captured per shard.
+                long commitTimestampMillis = clock.currentTimeMillis();
+                fanOut.publish(new CommitNotification(version, commitTimestampMillis, delta));
+                shardCompactor.addSnapshot(store.snapshot());
+            });
+        }
+        // Order-preserving immutable views (deterministic compact-rider / debug iteration by gid).
+        return new ShardedFanOut(
+                java.util.Collections.unmodifiableMap(buffers),
+                java.util.Collections.unmodifiableMap(compactors));
     }
 
     /**
@@ -1998,7 +2104,9 @@ public final class ConfigdServer {
     }
 
     /**
-     * Returns the fan-out buffer for delta distribution.
+     * Returns the fan-out buffer for delta distribution. Seam G1: at {@code N>1} this is the PRIMARY
+     * shard's buffer only; the per-shard sources (one buffer per shard) are the cursor-vector view the
+     * v2 sharded edge client consumes. At {@code N=1} it is the single buffer.
      */
     public FanOutBuffer fanOutBuffer() {
         return fanOutBuffer;
@@ -2030,7 +2138,8 @@ public final class ConfigdServer {
     /**
      * §4.6 / ADR-0034: the commit-notification boundary Session 3's data plane
      * consumes. Backed by {@link #fanOutBuffer()} (the bounded hot-path cache);
-     * cursor-based, replayable, with the drop-oldest overflow contract.
+     * cursor-based, replayable, with the drop-oldest overflow contract. Seam G1: at {@code N>1} this is
+     * the PRIMARY shard only (per-shard sources are the cursor-vector v2 client view).
      */
     public CommitNotificationSource commitNotificationSource() {
         return fanOutBuffer;
@@ -2039,7 +2148,9 @@ public final class ConfigdServer {
     /**
      * §4.6 / ADR-0034: the authoritative recovery seam a consumer replays from
      * on a {@link CommitNotificationSource#readSince(long)} GAP. A
-     * snapshot-equivalent replay over the live config store.
+     * snapshot-equivalent replay over the live config store. Seam G1: at {@code N>1} this is the PRIMARY
+     * shard's store only; each shard's per-shard replay is derived on demand from its own
+     * {@code configStore()::snapshot} (a per-shard cursor vector — the v2 sharded edge client).
      */
     public ReplaySource replaySource() {
         return new SnapshotReplaySource(stateMachine.store()::snapshot);
