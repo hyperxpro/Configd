@@ -194,6 +194,7 @@ class NettyConsensusFrameEncoderAllocationTest {
                     buf.writeByte((byte) frame.messageType().code());
                     buf.writeInt(frame.groupId());
                     buf.writeLong(frame.term());
+                    buf.writeLong(0L); // v2/D1 reserved epoch — keep the SAME field writes as production
                     buf.writeBytes(frame.payload());
                     CRC32C crc = CRC.get();
                     crc.reset();
