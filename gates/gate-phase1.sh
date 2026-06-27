@@ -131,12 +131,27 @@ echo "gate-phase1 wiring: server N-config (C4a) + inbound groupId demux (DL-P1-0
 WIRING="$LOGDIR/wiring.txt"
 run_tests wiring "ShardCountConfigTest,RaftInboundDemuxTest" "$WIRING"
 assert_class_green "$WIRING" "ShardCountConfigTest"   # C4a: range + N>1 guard (no marker poison) + reshard reject
-assert_class_green "$WIRING" "RaftInboundDemuxTest"   # DL-P1-06: gid=k -> group k (not 0); unknown gid dropped
+assert_class_green "$WIRING" "RaftInboundDemuxTest"   # DL-P1-06: gid=k -> group k (not 0); hostile gid dropped
 assert_file "configd-server/src/test/java/io/configd/server/ShardCountConfigTest.java"
 assert_file "configd-server/src/test/java/io/configd/server/RaftInboundDemuxTest.java"
 assert_file "docs/multiraft/phase1/server-wiring-decision-log.md"
 assert_grep "docs/multiraft/phase1/server-wiring-decision-log.md" "DL-W-0"
 echo "gate-phase1 wiring: OK"
 
-echo "=== gate-phase1: GREEN — Multi-Raft Phase 1 sharding foundation + server-wiring A/B verified ==="
+# --- (e) Server-wiring Seam C: N-group consensus bring-up (buildRaftGroup loop) ----
+# The single bring-up path used for EVERY shard. Non-vacuity: N=1 reuses the node-level Storage INSTANCE
+# (assertSame — byte-identity), N>1 groups bring up independently with per-shard storage/store isolation
+# + per-shard linearizability (the present/absent matrix goes RED on a shared-store leak), and each
+# group's outbound adapter stamps ITS gid (would go RED on a captured-constant-0). The hostile-gid demux
+# drop (MIN/MAX/negative/unregistered) is covered by RaftInboundDemuxTest in the wiring block above.
+echo "gate-phase1 wiring-c: N-group consensus bring-up (Seam C buildRaftGroup loop)..."
+WIRINGC="$LOGDIR/wiring-c.txt"
+run_tests wiring-c "MultiGroupBringupTest" "$WIRINGC"
+assert_class_green "$WIRINGC" "MultiGroupBringupTest"
+assert_file "configd-server/src/test/java/io/configd/server/MultiGroupBringupTest.java"
+assert_file "docs/multiraft/phase1/seam-c-multigroup-bringup.md"
+assert_grep "docs/multiraft/phase1/server-wiring-decision-log.md" "DL-W-C-0"
+echo "gate-phase1 wiring-c: OK"
+
+echo "=== gate-phase1: GREEN — Multi-Raft Phase 1 sharding foundation + server-wiring A/B/C verified ==="
 exit 0

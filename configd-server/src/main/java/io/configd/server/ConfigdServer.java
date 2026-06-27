@@ -10,6 +10,7 @@ import io.configd.api.RateLimiter;
 import io.configd.api.ReplayGuard;
 import io.configd.common.Clock;
 import io.configd.common.ConfigScope;
+import io.configd.common.IntegrityEnvelope;
 import io.configd.common.NodeId;
 import io.configd.common.Storage;
 import io.configd.distribution.CommitNotification;
@@ -59,6 +60,7 @@ import javax.net.ssl.SSLContext;
 import java.net.InetSocketAddress;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.EnumSet;
 import java.util.List;
 import java.util.Map;
@@ -103,6 +105,13 @@ public final class ConfigdServer {
     private static final int MAX_SHARD_COUNT = 16;
     /** Marker file under the data dir recording the deploy-time shard count N (fixed-at-deploy guard). */
     private static final String SHARD_COUNT_MARKER = "raft-shard-count.meta";
+    /**
+     * Per-group RNG seed stride (the SplitMix64 / golden-ratio increment). Each group's RaftNode RNG is
+     * seeded {@code nodeId*31 + gid*GID_RNG_STRIDE + nanoTime()} so the groups' election timeouts stagger
+     * (ADR D-B correlated-election-storm mitigation). At {@code gid == 0} the stride term is 0, so the
+     * seed FORMULA is identical to the pre-Seam-C single-group seed (N=1 byte-identity).
+     */
+    private static final long GID_RNG_STRIDE = 0x9E3779B97F4A7C15L;
     private static final int COMPACTION_INTERVAL_TICKS = 1000; // every ~10 seconds
     // RR-005: applied entries a Raft group may retain past its snapshot point before the tick
     // loop triggers Raft-LOG compaction (distinct from the snapshot-retention Compactor above).
@@ -254,10 +263,10 @@ public final class ConfigdServer {
             throw new RuntimeException("Failed to load or create Ed25519 signing key", e);
         }
 
-        // Initialize config store with empty initial snapshot
-        ConfigSnapshot initialSnapshot = new ConfigSnapshot(
-                HamtMap.empty(), 0L, clock.currentTimeMillis());
-        VersionedConfigStore configStore = new VersionedConfigStore(initialSnapshot, clock);
+        // Multi-Raft Phase 1 — Seam C: the config store + state machine are now PER-GROUP, built inside
+        // buildRaftGroup (one per shard). At N=1 the single group 0 reuses the node-level `storage`
+        // instance below, so its WAL/snapshot bytes are byte-identical to today. The singletons
+        // (fan-out/watch/read/write/http) bind to the PRIMARY group's store/SM after the bring-up loop.
 
         // ---------------------------------------------------------------
         // R-02: turn the runtime invariant safety net ON. Build the metrics
@@ -293,9 +302,8 @@ public final class ConfigdServer {
         ConfigdMetrics configdMetrics =
                 new ConfigdMetrics(metricsRegistry, pendingApplyEntries::get);
 
-        ConfigStateMachine stateMachine =
-                new ConfigStateMachine(configStore, clock, smInvariantChecker, configSigner,
-                        new ServerStateMachineMetrics(configdMetrics));
+        // (Seam C: the per-group ConfigStateMachine is built in buildRaftGroup, fed THIS configdMetrics
+        // via ServerStateMachineMetrics and the shared smInvariantChecker — identical to today at group 0.)
 
         // Initialize Raft with durable WAL storage.
         // RR-006: pass the real scheduler tick period (TICK_PERIOD_MS) so the
@@ -317,9 +325,12 @@ public final class ConfigdServer {
                 TICK_PERIOD_MS);
         System.out.println("  Raft timing  : election " + electionMinMs + "-" + electionMaxMs
                 + "ms, heartbeat " + heartbeatMs + "ms, maxInflightAppends " + maxInflight);
-        // PA-2021: the keyed integrity envelope authenticates the snapshot blob and
-        // WAL records written/recovered through this RaftLog.
-        RaftLog raftLog = new RaftLog(storage, raftIntegrity);
+        // PA-2021: the keyed integrity envelope authenticates the snapshot blob and WAL records of every
+        // group's RaftLog (built per-shard in buildRaftGroup). The envelope is node-level (the at-rest key
+        // is derived from the node signing key), shared across shards.
+        // (Seam C: `raftLog` is now per-group.) `random` stays here for the distribution overlay
+        // (HyParView); each RaftNode gets its OWN RandomGenerator in buildRaftGroup so no two groups share
+        // an RNG instance (a cross-owner-thread data race at N>1) and election timeouts stagger per shard.
         RandomGenerator random = RandomGeneratorFactory.getDefault().create(
                 config.nodeId().id() * 31L + System.nanoTime());
 
@@ -347,10 +358,12 @@ public final class ConfigdServer {
             tlsManager = null;
         }
 
-        // Wire real TCP transport when peer addresses are configured,
-        // otherwise fall back to no-op for single-node / test scenarios.
+        // Wire real TCP transport when peer addresses are configured. The transport is NODE-LEVEL (one
+        // bind/port for the whole node); inbound frames are demultiplexed to their group by groupId
+        // (Seam B), and each group gets its OWN outbound RaftTransportAdapter stamping its gid (Seam C —
+        // the DL-P1-06 outbound half). For single-node / test scenarios (no peers) each group's transport
+        // falls back to a no-op, handled in buildRaftGroup.
         RaftTransportEndpoint tcpTransport = null;
-        RaftTransport transport;
 
         Map<NodeId, InetSocketAddress> peerAddresses = config.peerAddresses();
         if (peerAddresses != null && !peerAddresses.isEmpty()) {
@@ -359,6 +372,12 @@ public final class ConfigdServer {
             // byte-identical RaftWireProtocol wire + the RaftTransportEndpoint interface (DR-N20) make
             // this the single-line swap from `new TcpRaftTransport(...)`; the JDK TcpRaftTransport
             // remains the documented fast-revert (git revert of this commit).
+            //
+            // Charter §3 (peer authentication): when TLS is enabled this is mTLS with client-auth
+            // (NettyRaftTransport.newServerSslHandler sets needClientAuth=true; the client handler sets
+            // EndpointIdentificationAlgorithm=HTTPS). So a frame's attacker-influenceable groupId is only
+            // ever demultiplexed for an AUTHENTICATED peer — an unauthenticated/untrusted-cert peer cannot
+            // complete the handshake, so its frames never reach the demux (proven by negative test).
             tcpTransport = new NettyRaftTransport(
                     config.nodeId(), bindAddr, peerAddresses, tlsManager, null);
             // F-0050 fix: fail-closed — refuse to start if the operator asked
@@ -369,24 +388,10 @@ public final class ConfigdServer {
                         "TLS is enabled on the CLI but the Netty Raft transport has no TlsManager — "
                                 + "refusing to start to avoid plaintext Raft traffic");
             }
-            RaftTransportAdapter adapter = new RaftTransportAdapter(tcpTransport, DEFAULT_RAFT_GROUP);
-            // Stage 2 M3: decorate the transport so the periodic empty-AppendEntries heartbeats coalesce
-            // (one message per peer per tick, flat in group count). At N=1 (production) this passes
-            // through unchanged until coalescing is enabled below. See docs/phase0-B-stage2-m3/design.md.
-            transport = new CoalescingRaftTransport(adapter, DEFAULT_RAFT_GROUP);
-        } else {
-            transport = (target, message) -> {
-                // No-op: peer addresses not configured (single-node or test mode)
-            };
         }
 
-        RaftNode raftNode = new RaftNode(
-                raftConfig, raftLog, transport, stateMachine,
-                random, storage, raftInvariantChecker, raftIntegrity);
-
-        // Initialize multi-raft driver
+        // Initialize multi-raft driver (groups are registered by the Seam C bring-up loop below).
         MultiRaftDriver driver = new MultiRaftDriver(config.nodeId(), clock);
-        driver.addGroup(DEFAULT_RAFT_GROUP, raftNode);
 
         // ---------------------------------------------------------------
         // Phase 0 — Workstream B (Stage 1B): the R-01 single-`configd-tick`-thread DELETION.
@@ -422,12 +427,12 @@ public final class ConfigdServer {
         // and the wire is byte-for-byte unchanged; coalescing only collapses sends at N>1 (Phase-1
         // sharding, when the coalesced wire frame is added). Enabled only on the real transport — inert in
         // single-node/test mode (no peers ⇒ nothing to coalesce). See D-020 / design.md.
-        if (tcpTransport != null && transport instanceof CoalescingRaftTransport coalescingTransport) {
+        if (tcpTransport != null) {
             final RaftTransportEndpoint tcp = tcpTransport;
             driver.enableHeartbeatCoalescing((peer, groupHeartbeats) -> {
                 // Frame each group's empty AppendEntries onto the node-level transport. At N=1 this is the
                 // single group → one normal AppendEntries frame (wire unchanged). >1 frames each group
-                // individually (a correct fallback; the single coalesced wire frame is Phase-1).
+                // individually (a correct fallback; the single coalesced wire frame is Phase-1 Seam F).
                 for (Map.Entry<Integer, AppendEntriesRequest> hb : groupHeartbeats.entrySet()) {
                     try {
                         tcp.send(peer, RaftMessageCodec.encode(hb.getValue(), hb.getKey()));
@@ -436,11 +441,9 @@ public final class ConfigdServer {
                     }
                 }
             });
-            // Resolve the CURRENT owner's coalescer on each record (rehoming-aware; at N=1 this is always
-            // owner 0). A fixed binding would, after a Phase-1 rehome, record into the OLD owner's
-            // coalescer — a cross-thread write the new owner never drains (D-020 review A2).
-            coalescingTransport.bindCoalescer(
-                    () -> driver.heartbeatCoalescer(driver.currentOwnerIndex(DEFAULT_RAFT_GROUP)));
+            // (Seam C: each group's CoalescingRaftTransport is bound to its owner's coalescer in the
+            // bring-up loop below — resolving the CURRENT owner's coalescer per record, rehoming-aware;
+            // at N=1 this is always owner 0, byte-identical to the prior single-group binding.)
         }
         ScheduledExecutorService readDispatchExecutor = Executors.newSingleThreadScheduledExecutor(r -> {
             Thread t = new Thread(r, "configd-read-dispatch");
@@ -454,80 +457,107 @@ public final class ConfigdServer {
         });
 
         // ---------------------------------------------------------------
-        // S7.5 PART 2 — group commit. Dispatch the coalescing durability flush onto the GROUP'S OWNER
-        // executor (R-01′: all of a group's RaftNode mutation stays on its one owner thread — Stage 1B
-        // retarget from the deleted single `tickExecutor` to `driver.ownerExecutor(gid)`). Entries
-        // proposed concurrently are appended no-sync (RaftNode.propose -> RaftLog.appendNoSync) and
-        // force-synced together by one flush task — amortizing the per-op force(true) that PART 1
-        // showed was serializing the consensus thread (heartbeat starvation -> election churn ->
-        // ~380 commits/s while the NVMe sat ~86% idle). Tunables (system properties) drive the
-        // sizing curve and an apples-to-apples before/after on THIS binary:
+        // S7.5 PART 2 — group commit (PER GROUP). Each group's coalescing durability flush dispatches onto
+        // THAT group's owner executor (R-01′: all of a group's RaftNode mutation stays on its one owner
+        // thread). Entries proposed concurrently are appended no-sync (RaftNode.propose ->
+        // RaftLog.appendNoSync) and force-synced together by one flush task — amortizing the per-op
+        // force(true) that PART 1 showed was serializing the consensus thread (heartbeat starvation ->
+        // election churn -> ~380 commits/s while the NVMe sat ~86% idle). Tunables (system properties) are
+        // read once and applied to every group (the setGroupCommit call itself is in buildRaftGroup):
         //   -Dconfigd.groupCommit.enabled=false -> keep synchronous per-op fsync (the PART 1 baseline)
         //   -Dconfigd.groupCommit.maxBatch=N     -> cap entries per fsync (default 4096; bounds latency)
         //   -Dconfigd.groupCommit.lingerMicros=T -> linger to grow the batch (default 0 = flush ASAP)
         // ---------------------------------------------------------------
-        // The owner executor for the default group — every marshalling hop below (flush, inbound,
-        // propose, read) targets THIS, expressed as ownerExecutor(gid), so the group's RaftNode is
-        // only ever touched on its bound owner thread (the assertOwnerThread() net backstops it).
-        ScheduledExecutorService defaultGroupOwner = driver.ownerExecutor(DEFAULT_RAFT_GROUP);
         boolean groupCommitEnabled = Boolean.parseBoolean(
                 System.getProperty("configd.groupCommit.enabled", "true"));
+        int groupCommitMaxBatch = Integer.getInteger("configd.groupCommit.maxBatch", 4096);
+        long groupCommitLingerMicros = Long.getLong("configd.groupCommit.lingerMicros", 0L);
         if (groupCommitEnabled) {
-            int groupCommitMaxBatch = Integer.getInteger("configd.groupCommit.maxBatch", 4096);
-            long groupCommitLingerMicros = Long.getLong("configd.groupCommit.lingerMicros", 0L);
-            raftNode.setGroupCommit(
-                    // Stage 2 M2 (FlushScheduler retarget): dispatch through the driver so the flush always
-                    // targets the group's CURRENT owner (rehoming-aware), not a captured executor that would
-                    // dispatch onto the OLD owner after a rehome (an off-owner touch of the unsynchronised
-                    // log). DORMANT in prod (single group never rehomes ⇒ always the static floorMod owner)
-                    // and behaviourally identical to the prior captured-executor dispatch at N=1.
-                    (flush, delayMicros) -> driver.dispatchFlush(DEFAULT_RAFT_GROUP, flush, delayMicros),
-                    groupCommitMaxBatch, groupCommitLingerMicros);
             System.out.println("  Group commit : ENABLED (maxBatch=" + groupCommitMaxBatch
                     + ", lingerMicros=" + groupCommitLingerMicros + ")");
         } else {
             System.out.println("  Group commit : DISABLED (synchronous per-op fsync — PART 1 baseline)");
         }
 
-        // RR-008 (S4): the inbound-routing handler needs the `configdMetrics` handle (built
-        // earlier, before the state machine — S6/WS-A) so a Throwable escaping
-        // driver.routeMessage (e.g. a disk write failing during applyCommitted -> apply on a
-        // follower) is surfaced as a counter + SEVERE log rather than swallowed by the executor
-        // (mute zombie). The handle is passed to the inbound handler registration below.
+        // ===============================================================
+        // Multi-Raft Phase 1 — Seam C: the N-group consensus bring-up loop. Build one RaftGroupRuntime
+        // per shard via the SINGLE buildRaftGroup path (no duplication of the intricate
+        // storage/log/store/SM/node/transport/group-commit wiring), register it on the driver, bind its
+        // owner thread, and bind its coalescer. At N=1 (the production default; N>1 is still refused at
+        // boot until Seam G) this runs EXACTLY ONCE for group 0 and is byte-identical to today's
+        // single-group bring-up. See docs/multiraft/phase1/seam-c-multigroup-bringup.md.
+        // ===============================================================
+        int[] gids = shardMap.shardIds().toArray(); // StaticShardMap: [0, N)
+        List<RaftGroupRuntime> runtimes = new ArrayList<>(gids.length);
+        for (int gid : gids) {
+            RaftGroupRuntime rt = buildRaftGroup(
+                    gid, shardCount, dataDir, storage, raftIntegrity, clock, configSigner,
+                    smInvariantChecker, raftInvariantChecker, configdMetrics, raftConfig, config.nodeId(),
+                    tcpTransport, groupCommitEnabled, groupCommitMaxBatch, groupCommitLingerMicros, driver);
+            driver.addGroup(gid, rt.raftNode());
+            // Stage 2 M3: bind this group's CoalescingRaftTransport to its CURRENT owner's coalescer
+            // (rehoming-aware; resolved per record). DORMANT for outbound at N=1 (owner 0). Only when a
+            // real TCP transport exists (peer mode) does the group carry a coalescing decorator.
+            if (rt.coalescingTransport() != null) {
+                rt.coalescingTransport().bindCoalescer(
+                        () -> driver.heartbeatCoalescer(driver.currentOwnerIndex(gid)));
+            }
+            // H-6 (Phase 0 B Stage 1B) — BIND THE OWNER. Submit bindOwnerThread() as the FIRST task on
+            // this group's owner executor, BEFORE the inbound demux is published (tcpTransport.start
+            // below) and BEFORE the per-owner tick loop is scheduled. Single-thread FIFO then orders any
+            // later inbound-routing / propose / tick task AFTER the bind — even a frame arriving the
+            // instant start() returns marshals BEHIND this already-submitted bind. NEVER bind in the
+            // constructor (it runs on `main` and legitimately touches state during recovery). After this
+            // task runs, assertOwnerThread() is ACTIVE for the group's RaftNode (the R-01′ net, live).
+            // (The bind + the addGroup ConcurrentHashMap put give the happens-before edge that keeps
+            // monitorView() non-null for the off-owner scrape — H-5.)
+            driver.ownerExecutor(gid).execute(rt.raftNode()::bindOwnerThread);
+            runtimes.add(rt);
+        }
 
-        // ---------------------------------------------------------------
-        // H-6 (Phase 0 B Stage 1B) — BIND THE OWNER. Submit raftNode.bindOwnerThread() as the FIRST
-        // task on the default group's owner executor, BEFORE the inbound handler is published (the
-        // transport accept loop below) and BEFORE the tick loop is scheduled (further down). Because
-        // the owner is a single-thread executor with FIFO ordering, this bind runs before any inbound
-        // routing / propose / tick task that is enqueued later — even an inbound message arriving the
-        // instant tcpTransport.start() returns marshals BEHIND this already-submitted bind. NEVER bind
-        // in the constructor (it runs on `main` and legitimately touches state during recovery).
-        // After this task runs, assertOwnerThread() is ACTIVE for this RaftNode: any off-owner entry
-        // trips `raft_owner_thread` (metric + SEVERE in prod, throw in sim) — the R-01′ net, live.
-        // (C2: the bind + the addGroup ConcurrentHashMap put give the happens-before edge that keeps
-        // monitorView() non-null for the off-owner scrape — H-5.)
-        defaultGroupOwner.execute(raftNode::bindOwnerThread);
+        // The PRIMARY group (DEFAULT_RAFT_GROUP = 0) is the home for the singletons not yet sharded —
+        // fan-out/watch listeners, the read/write services, the HTTP API, health, audit, snapshot replay.
+        // Seam D shards the read/write path; Seam G the fan-out. Rebinding these locals from the primary
+        // keeps every downstream wiring statement unchanged; at N=1 the primary is the only group, so the
+        // whole path is byte-identical to today. Selected by IDENTITY (groupId == DEFAULT_RAFT_GROUP), not
+        // list position, so the singletons can never split-brain onto a non-zero group even if a future
+        // ShardMap returned an unordered shardIds() (diff-review hardening; today shardIds()==[0,N)).
+        RaftGroupRuntime primaryGroup = null;
+        for (RaftGroupRuntime rt : runtimes) {
+            if (rt.groupId() == DEFAULT_RAFT_GROUP) {
+                primaryGroup = rt;
+                break;
+            }
+        }
+        if (primaryGroup == null) {
+            throw new IllegalStateException(
+                    "primary Raft group " + DEFAULT_RAFT_GROUP + " was not built — shardIds() must include "
+                            + DEFAULT_RAFT_GROUP);
+        }
+        ConfigStateMachine stateMachine = primaryGroup.stateMachine();
+        VersionedConfigStore configStore = primaryGroup.configStore();
+        RaftNode raftNode = primaryGroup.raftNode();
+        // The owner executor for the default group — the read path's marshalling hop targets THIS
+        // (expressed as ownerExecutor(gid)), so the group's RaftNode is only ever touched on its bound
+        // owner thread (the assertOwnerThread() net backstops it). Seam D re-resolves per read by shard.
+        ScheduledExecutorService defaultGroupOwner = driver.ownerExecutor(DEFAULT_RAFT_GROUP);
 
-        // Register inbound message handler on TCP transport.
-        // R-01′: marshal inbound routing onto the GROUP'S OWNER (driver.ownerExecutor(gid)) so
-        // node.handleMessage() (and applyCommitted -> stateMachine.apply) never runs concurrently
-        // with the per-owner tick on the non-synchronized RaftNode. Registration stays BEFORE start()
-        // so the handler is published (behind the bind task) before the accept loop begins.
+        // Register the inbound DEMULTIPLEXER ONCE on the shared node-level transport. RR-008 (S4): the
+        // handler carries `configdMetrics` so a Throwable escaping driver.routeMessage (e.g. a disk fault
+        // during applyCommitted -> apply on a follower) is surfaced as a counter + SEVERE log, not
+        // swallowed by the executor (mute zombie). DL-P1-06: it routes each frame to ITS group's owner by
+        // frame.groupId() (not a captured constant 0). Per-group adapters are OUTBOUND-only;
+        // registerInboundHandler delegates to the shared transport.registerHandler (which REPLACES), so
+        // ONE registration via the primary's adapter covers every group. Registered AFTER every group's
+        // owner bind and BEFORE start() publishes the accept loop, so an inbound frame marshals behind the
+        // binds. At N=1 every frame is group 0 ⇒ byte-identical to the prior single-group registration.
         if (tcpTransport != null) {
-            // transport is the M3 CoalescingRaftTransport wrapping the adapter (see above); the inbound
-            // handler is registered on the underlying adapter/TCP transport.
-            RaftTransportAdapter adapter = (RaftTransportAdapter) ((CoalescingRaftTransport) transport).delegate();
-            // Multi-Raft Phase 1 (DL-P1-06): DEMULTIPLEX inbound by the frame's groupId — route each
-            // message to ITS group's owner (driver.routeMessage(frame.groupId(), …) on
-            // ownerExecutor(frame.groupId())), not the captured constant 0. No wire-format change (the
-            // groupId is already in the frame header). At N=1 every frame is group 0, so this is
-            // byte-identical to the prior single-group registration.
-            adapter.registerInboundHandler(raftDemuxInboundHandler(driver, configdMetrics));
+            primaryGroup.adapter().registerInboundHandler(raftDemuxInboundHandler(driver, configdMetrics));
             try {
                 tcpTransport.start();
             } catch (Exception e) {
-                throw new RuntimeException("Failed to start TCP Raft transport on " + config.bindAddress() + ":" + config.bindPort(), e);
+                throw new RuntimeException("Failed to start TCP Raft transport on "
+                        + config.bindAddress() + ":" + config.bindPort(), e);
             }
         }
 
@@ -1280,6 +1310,118 @@ public final class ConfigdServer {
     }
 
     /**
+     * Multi-Raft Phase 1 — Seam C: the per-group consensus runtime bundle produced by
+     * {@link #buildRaftGroup}. Holds every object that is PER SHARD — its own durable log, store, state
+     * machine, node, and outbound transport. The node-level singletons (AuditLog, signing key, owner pool,
+     * driver, and the fan-out/read/write/HTTP wiring) are NOT here: they are shared across groups, and the
+     * not-yet-sharded ones are bound to the PRIMARY group in {@code start()} (Seam D/E/G re-point them).
+     *
+     * @param groupId             the shard / Raft group id
+     * @param storage             this group's durable {@link Storage} (the node-level instance at N=1; a
+     *                            per-shard {@code dataDir/shard-<gid>} directory at N&gt;1)
+     * @param raftLog             this group's WAL/snapshot log over {@code storage}
+     * @param configStore         this group's versioned config store
+     * @param stateMachine        this group's config state machine
+     * @param raftNode            this group's consensus node
+     * @param adapter             this group's OUTBOUND transport adapter (stamps {@code groupId});
+     *                            {@code null} in single-node/test mode (no peers)
+     * @param coalescingTransport this group's heartbeat-coalescing decorator over {@code adapter};
+     *                            {@code null} in single-node/test mode
+     */
+    record RaftGroupRuntime(
+            int groupId,
+            Storage storage,
+            RaftLog raftLog,
+            VersionedConfigStore configStore,
+            ConfigStateMachine stateMachine,
+            RaftNode raftNode,
+            RaftTransportAdapter adapter,
+            CoalescingRaftTransport coalescingTransport) {
+    }
+
+    /**
+     * Multi-Raft Phase 1 — Seam C: builds ONE group's consensus runtime. The single bring-up path used for
+     * EVERY shard, so the intricate storage/log/store/state-machine/node/transport/group-commit wiring is
+     * written once (handoff §2.C recommended structure). Package-private static so {@code
+     * MultiGroupBringupTest} can drive the real bring-up for N&gt;1 without standing up a whole server; the
+     * production loop in {@code start()} calls it once per shard.
+     *
+     * <p><b>N=1 byte-identity:</b> at {@code shardCount == 1} the group reuses the node-level
+     * {@code nodeStorage} instance (so its WAL/snapshot bytes and on-disk paths are unchanged), its
+     * outbound adapter stamps gid 0, and its group-commit dispatches on group 0 — byte-identical to the
+     * prior single-group bring-up. At {@code shardCount > 1} each group gets its own
+     * {@code dataDir/shard-<gid>} storage. The caller registers the returned node on the driver, binds its
+     * owner thread, and binds its coalescer.
+     *
+     * @return the fully-wired (but not-yet-registered, not-yet-owner-bound) group runtime
+     */
+    static RaftGroupRuntime buildRaftGroup(
+            int groupId, int shardCount, Path dataDir, Storage nodeStorage,
+            IntegrityEnvelope raftIntegrity, Clock clock, ConfigSigner configSigner,
+            ConfigStateMachine.InvariantChecker smInvariantChecker,
+            RaftNode.InvariantChecker raftInvariantChecker, ConfigdMetrics configdMetrics,
+            RaftConfig raftConfig, NodeId nodeId, RaftTransportEndpoint tcpTransport,
+            boolean groupCommitEnabled, int groupCommitMaxBatch, long groupCommitLingerMicros,
+            MultiRaftDriver driver) {
+        // Per-group storage: at N=1 reuse the node-level instance (byte-identical WAL/snapshot + paths); at
+        // N>1 isolate each shard under dataDir/shard-<gid>. AuditLog + signing key stay node-level.
+        Storage groupStorage = (shardCount == 1)
+                ? nodeStorage
+                : Storage.file(dataDir.resolve("shard-" + groupId));
+        // PA-2021: the node-level keyed integrity envelope authenticates this group's WAL + snapshot.
+        RaftLog raftLog = new RaftLog(groupStorage, raftIntegrity);
+
+        ConfigSnapshot initialSnapshot = new ConfigSnapshot(
+                HamtMap.empty(), 0L, clock.currentTimeMillis());
+        VersionedConfigStore configStore = new VersionedConfigStore(initialSnapshot, clock);
+        ConfigStateMachine stateMachine =
+                new ConfigStateMachine(configStore, clock, smInvariantChecker, configSigner,
+                        new ServerStateMachineMetrics(configdMetrics));
+
+        // Per-group RandomGenerator: distinct seed per (node, group). At gid 0 the `groupId * STRIDE` term
+        // is 0, so the seed FORMULA equals today's group-0 seed (nodeId*31 + nanoTime). No two groups share
+        // an RNG instance (avoiding a cross-owner-thread data race at N>1), and election timeouts STAGGER
+        // across shards (ADR D-B correlated-election-storm mitigation). RNG affects only election-timing
+        // jitter (already nanoTime-non-deterministic); the WAL/wire/snapshot FORMAT — the byte-identity bar
+        // — is unaffected.
+        RandomGenerator groupRandom = RandomGeneratorFactory.getDefault().create(
+                nodeId.id() * 31L + groupId * GID_RNG_STRIDE + System.nanoTime());
+
+        // Per-group OUTBOUND transport: each group stamps ITS gid (the DL-P1-06 outbound half), wrapped in
+        // a per-group CoalescingRaftTransport. The node-level tcpTransport is SHARED (one bind/port); the
+        // inbound demux (registered once in start()) routes each frame to its group. No peers ⇒ a no-op
+        // transport (single-node/test). At N=1 group 0 stamps gid 0 ⇒ byte-identical frames.
+        RaftTransportAdapter adapter = null;
+        CoalescingRaftTransport coalescingTransport = null;
+        RaftTransport transport;
+        if (tcpTransport != null) {
+            adapter = new RaftTransportAdapter(tcpTransport, groupId);
+            coalescingTransport = new CoalescingRaftTransport(adapter, groupId);
+            transport = coalescingTransport;
+        } else {
+            transport = (target, message) -> {
+                // No-op: peer addresses not configured (single-node or test mode)
+            };
+        }
+
+        RaftNode raftNode = new RaftNode(
+                raftConfig, raftLog, transport, stateMachine,
+                groupRandom, groupStorage, raftInvariantChecker, raftIntegrity);
+
+        // Group commit (per group): dispatch the flush onto the group's CURRENT owner via the driver
+        // (rehoming-aware; DORMANT in prod ⇒ always the static floorMod owner). Identical to the prior
+        // captured-executor dispatch at gid 0.
+        if (groupCommitEnabled) {
+            raftNode.setGroupCommit(
+                    (flush, delayMicros) -> driver.dispatchFlush(groupId, flush, delayMicros),
+                    groupCommitMaxBatch, groupCommitLingerMicros);
+        }
+
+        return new RaftGroupRuntime(groupId, groupStorage, raftLog, configStore, stateMachine,
+                raftNode, adapter, coalescingTransport);
+    }
+
+    /**
      * H-009 (iter-2): handles an unhandled throwable that escaped the tick
      * loop body. This is package-private static so the regression test
      * ({@code TickLoopThrowableHandlerTest}) can drive it directly without
@@ -1377,9 +1519,20 @@ public final class ConfigdServer {
      */
     static RaftTransportAdapter.InboundHandler raftDemuxInboundHandler(
             MultiRaftDriver driver, ConfigdMetrics metrics) {
-        return (from, groupId, message) ->
-                raftInboundHandler(driver, groupId, driver.ownerExecutor(groupId), metrics)
-                        .accept(from, message);
+        return (from, groupId, message) -> {
+            // Red-team hardening (Seam C): DROP a frame for an UNREGISTERED group on the inbound (Netty)
+            // thread — BEFORE marshalling it onto an owner executor. groupId is an attacker-influenceable
+            // field (the CRC32C is a checksum, not a MAC), so an authenticated-but-hostile peer could
+            // otherwise spam bogus / out-of-range gids to enqueue unbounded no-op routeMessage tasks on an
+            // owner thread. getGroup is a thread-safe ConcurrentHashMap read; driver.routeMessage re-checks
+            // (absent group → drop) as the backstop. At N=1 only group 0 is registered, so every legit
+            // frame (gid 0) proceeds exactly as before (byte-identical) and every other gid is dropped here.
+            if (driver.getGroup(groupId) == null) {
+                return;
+            }
+            raftInboundHandler(driver, groupId, driver.ownerExecutor(groupId), metrics)
+                    .accept(from, message);
+        };
     }
 
     /**

@@ -103,6 +103,35 @@ class RaftInboundDemuxTest {
         assertEquals(0, t0.sends.get(), "a frame for an unregistered group must be dropped (no send, no crash)");
     }
 
+    @Test
+    void hostileGroupIdsAreDroppedSafely() throws Exception {
+        // Red-team PoC, codified (Seam C): groupId is attacker-influenceable (CRC32C is a checksum, not a
+        // MAC). Drive the real demux with Integer.MIN_VALUE / MAX_VALUE / negative / large-unregistered
+        // gids — each must be dropped with NO throw and NO send (no AIOOBE on floorMod, no NPE, no routing
+        // to group 0), and the legit gid=0 path must still work afterward (the owner thread is not wedged).
+        pool = new OwnerExecutorPool(1);
+        MultiRaftDriver driver = new MultiRaftDriver(NodeId.of(1), Clock.system());
+        driver.setOwnerPool(pool);
+        RecordingTransport t0 = new RecordingTransport();
+        RaftNode node0 = buildLeaderOnOwner(driver.ownerExecutor(0), t0);
+        driver.addGroup(0, node0);
+
+        RaftTransportAdapter.InboundHandler demux = ConfigdServer.raftDemuxInboundHandler(driver, null);
+        for (int gid : new int[] {Integer.MIN_VALUE, -1, Integer.MAX_VALUE, 5, 999_999}) {
+            demux.accept(NodeId.of(2), gid, staleAppendEntries());
+        }
+        fence(driver.ownerExecutor(0));
+        assertEquals(0, t0.sends.get(),
+                "no hostile/unregistered gid may be routed to group 0 or cause a send");
+
+        // The legit group still works after the hostile barrage (the owner is not wedged/poisoned).
+        t0.arm();
+        demux.accept(NodeId.of(2), 0, staleAppendEntries());
+        assertTrue(t0.awaitSend(), "group 0 must still handle a legit gid=0 frame after the hostile barrage");
+        fence(driver.ownerExecutor(0));
+        assertEquals(1, t0.sends.get(), "exactly the one legit frame was handled");
+    }
+
     // ---- helpers ----------------------------------------------------------------------------
 
     /** Builds a single-node cluster bound to {@code owner}, ticked there until it self-elects LEADER. */

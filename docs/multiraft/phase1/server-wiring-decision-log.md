@@ -15,7 +15,7 @@
 |---|---|---|---|---|
 | **A — C4a config N-selection** | Step 1 | ✅ DONE | preserved | `ShardCountConfigTest` 8/0; `ConfigdServerTest` 22/0 (boot+restart) |
 | **B — adapter inbound groupId demux** | Step 3 (inbound) | ✅ DONE, four-way | preserved | `RaftInboundDemuxTest` 2/0; `NettyConsensusLivenessTest` 3/0; loopback+marshalling+owner-net+throwable all green |
-| **C — N-group consensus loop** | Step 2 | ⏳ DEFERRED (clean stop) | — | see `server-wiring-handoff.md` §2 |
+| **C — N-group consensus loop** | Step 2 | ✅ DONE, four-way | preserved | `MultiGroupBringupTest` 5/0; full `configd-server` 303/0 (incl. `NettyConsensusLivenessTest` real-wire N=1 + `ConfigdServerTest` boot/restart); `RaftInboundDemuxTest` 3/0; §3 mTLS negatives 5/0 on `NettyRaftTransport` |
 | **D — write/read routing + guard** | Step 4 | ⏳ DEFERRED | — | handoff §2 |
 | **E — per-shard observability** | Step 5 | ⏳ DEFERRED | — | handoff §2 |
 | **F — wire-format D1+D2** | Step 6 | ⏳ DEFERRED | — | handoff §2 |
@@ -99,6 +99,69 @@ While the server still registers a single group (pre-Seam-C), `resolveShardCount
 marker write, so a refused `N>1` boot never persists an `N>1` marker that would poison a later `N=1`
 boot (regression-tested: `nGreaterThanOneIsRefusedWhileWiringDormant`). This guard is REMOVED in Seam C
 when N groups are actually registered. *Reversible: yes — it is scaffolding.*
+
+## Seam C — N-group consensus bring-up (DL-W-C-01..04 + four-way)
+
+The single-group bring-up in `ConfigdServer.start()` is generalized to N groups via the extracted
+`buildRaftGroup(gid, …)` → `RaftGroupRuntime`, looped over `shardMap.shardIds()` on the Phase-0
+owner-executor pool. Design: `docs/multiraft/phase1/seam-c-multigroup-bringup.md`.
+
+### DL-W-C-01 — One `buildRaftGroup` path for every group (handoff §2.C recommended structure)
+The intricate per-shard wiring (storage → log → store → state-machine → node → per-group outbound
+adapter → group-commit) is written ONCE and used for all groups, then `driver.addGroup` + owner-bind +
+coalescer-bind in the loop. At N=1 the loop runs exactly once (group 0). *Reversible: it is a refactor;
+revert the commit.*
+
+### DL-W-C-02 — N=1 reuses the node-level `Storage` instance (byte-identity); N>1 isolates per shard
+`buildRaftGroup` uses the node-level `storage` instance when `shardCount == 1` (so the group-0 RaftLog
+and the node-level AuditLog share it, exactly as today — same WAL/snapshot bytes + paths) and
+`Storage.file(dataDir/shard-<gid>)` when `shardCount > 1`. AuditLog + signing key stay node-level.
+Both four-way reviewers confirmed N=1 byte-identity claim-by-claim. *Reversible: yes.*
+
+### DL-W-C-03 — Per-group RNG; HyParView RNG split off
+Each group's RaftNode gets its own `RandomGenerator` seeded `nodeId*31 + gid*GID_RNG_STRIDE + nanoTime`
+(at gid 0 the stride term is 0 ⇒ the seed FORMULA equals today's). This (a) avoids a cross-owner-thread
+RNG data race at N>1 and (b) staggers election timeouts per shard (ADR D-B). The node-level `random`
+(formerly shared with the group-0 RaftNode) now feeds HyParView only. RNG affects election-timing jitter
+only (already `nanoTime`-non-deterministic) — NOT the WAL/wire/snapshot FORMAT (the byte-identity bar).
+Both reviewers ruled this format-neutral and a latent-race improvement. *Reversible: yes.*
+
+### DL-W-C-04 — Inbound demux registered ONCE; hostile-gid dropped on the inbound thread
+The inbound demux is registered exactly once (per-group adapters are outbound-only; `registerHandler`
+replaces on the shared transport). Red-team hardening: `raftDemuxInboundHandler` now drops a frame for an
+UNREGISTERED group on the inbound (Netty) thread BEFORE marshalling onto an owner — closing an
+authenticated-but-hostile-peer no-op-task amplification on the owner thread (the `groupId` is an
+attacker-influenceable, non-MAC'd field). `driver.routeMessage` re-checks as the backstop. Byte-identical
+for legit frames (gid 0 at N=1). Codified by `RaftInboundDemuxTest#hostileGroupIdsAreDroppedSafely`
+(MIN_VALUE/MAX_VALUE/negative/large gids → no throw, no send, legit path survives). *Reversible: yes.*
+
+### Four-way review of Seam C (charter §4.1)
+- **Diff-review (java-distinguished-engineer): APPROVE-WITH-NITS.** "No way the N=1 production path
+  diverges" — verified claim-by-claim (storage instance, seed formula, group-commit, single
+  registration, primary selection). All happens-before edges re-confirmed after the reordering; no
+  shared-mutable-state leak at N>1; enhanced-for capture correct. NITs FIXED: defensive primary
+  selection (by groupId identity, not list position), `GID_RNG_STRIDE` constant, `IntegrityEnvelope`/
+  `ArrayList` imports.
+- **Red-team (redteam-auditor): SHIP.** Could not break the groupId trust boundary (mTLS+client-auth
+  enforced + negatively tested on the production `NettyRaftTransport`; hostile gids dropped safely —
+  PoC with MIN_VALUE/MAX_VALUE/−1/unregistered → no throw, 0 sends), the N=1 path (byte-identical,
+  validated end-to-end), ordering/isolation, or the N>1 boot guard (still refuses N∈{2,4,16}, no marker
+  poison). Actionable LOW FIXED: drop unknown gids before marshalling (DL-W-C-04) + codified PoC test.
+- **Independent re-run:** full `configd-server` 303/0 (incl. real-wire `NettyConsensusLivenessTest` +
+  `ConfigdServerTest` boot/restart); `MultiGroupBringupTest` 5/0; §3 mTLS negatives 5/0 on
+  `NettyRaftTransport`.
+
+### Seam-G-gated obligations carried forward (red-team NOTES — re-verify before lifting the N>1 guard)
+1. **Thread-safety of shared node-level deps at N>1** — `configSigner`, the two `InvariantChecker`s, and
+   `configdMetrics` are passed to every group and would be touched by multiple owner threads once N>1 is
+   live. Inert at N=1 (one owner). Audit `ConfigSigner` (any single `java.security.Signature`?) and the
+   checkers before Seam G removes the boot guard.
+2. **Partial-bring-up cleanup at N>1** — if `buildRaftGroup` throws for `gid=k>0`, groups `0..k-1` are
+   already registered + owner-bound + have opened `shard-<gid>` storage; the loop leaks them on a failed
+   boot. Unreachable at N=1; add close-on-failure when Seam G enables N>1.
+3. **`configdMetrics` is per-shard-blind** — counters conflate shards (the documented Seam E deferral).
+4. **mTLS is operator-optional** (pre-existing, whole-consensus exposure if TLS off) — the EC2 N×knee
+   run MUST set TLS on; consider making mTLS mandatory for the Raft transport.
 
 ## Invariants held (re-checked each seam)
 - **N=1 byte-identical** to today (consensus behaviour, wire bytes, Raft WAL/snapshot format). The
