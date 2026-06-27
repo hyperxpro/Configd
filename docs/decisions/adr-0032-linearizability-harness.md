@@ -2,11 +2,25 @@
 
 ## Status
 
-**Proposed** (2026-06-06) — output of Session A3-D (Opus design team: `distributed-systems-lens`,
-`consistency-lens`, `chaos-lens`, investigating independently then cross-examining; lead orchestrated
-ordering and assembled this ADR from their content). **STOP for human review before any implementation
-(A3-B).** Closes the design half of risk **R-04** ([ABSENT] linearizability checker). Sign-off: see
+**Accepted** (2026-06-27 — ratified in the pre-EC2 cleanup). Originally **Proposed** (2026-06-06) —
+output of Session A3-D (Opus design team: `distributed-systems-lens`, `consistency-lens`, `chaos-lens`,
+investigating independently then cross-examining; lead orchestrated ordering and assembled this ADR from
+their content). Closes the design half of risk **R-04** ([ABSENT] linearizability checker). Sign-off: see
 **Reviewers** (3 of 3).
+
+> **Ratification note (2026-06-27).** The original "STOP for human review before any implementation (A3-B)"
+> gate is **satisfied**: the harness specified here was built, reviewed, and has been operating in CI since.
+> Concretely — the bespoke Java orchestrator + the trusted `anishathalye/porcupine` checker live under
+> `configd-linz/` (the Go checker is `configd-linz/src/main/go/porcupine-check`, built by `gates/gate-1.sh`
+> when `PORCUPINE_BIN` is unset); the non-negotiable **checker self-test gate** (`CheckerSelfTest`,
+> `PORCUPINE_BIN`-gated, `gates/gate-1.sh` step b) plus discrimination (`scripts/run-discrimination.sh`) and
+> the replayable sim-history cross-check (`SimHistoryCheck`) are wired; `consistency-contract.md §7` maps
+> **INV-L1** onto exactly this harness. **One reality delta since authoring:** the wire path is now Netty
+> (**ADR-0043** supersedes the `TcpRaftTransport` named throughout §Decision/§Evidence), so the orchestrator
+> drives the real **Netty** server wire path; the tooling decision itself (bespoke Java orchestration +
+> **Porcupine** primary / **Elle** drop-in cross-check / Elle-primary-on-BATCH) is unchanged and is what is
+> Accepted here. The §Context/§Decision/§Evidence sections below describe the repository at authoring time
+> (2026-06-06); their `file:line` references are historical.
 
 ## Context
 
