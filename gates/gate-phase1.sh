@@ -167,5 +167,18 @@ assert_file "docs/multiraft/phase1/seam-d-live-routing.md"
 assert_grep "docs/multiraft/phase1/server-wiring-decision-log.md" "DL-W-D-0"
 echo "gate-phase1 wiring-d: OK"
 
-echo "=== gate-phase1: GREEN — Multi-Raft Phase 1 sharding foundation + server-wiring A/B/C/D verified ==="
+# --- (g) Server-wiring Seam E: per-shard observability (no longer group-0-only) ----
+# registerPerShardMetrics publishes per-group leader/term/commit-index/apply-lag + the per-node leader
+# count, read from monitorView(). Non-vacuity: at N>1 every shard's series is present + leader=1 +
+# leader_count=N; at N=1 ONLY the group-0 series exist (shard-1 absent).
+echo "gate-phase1 wiring-e: per-shard observability (Seam E)..."
+WIRINGE="$LOGDIR/wiring-e.txt"
+run_tests wiring-e "PerShardMetricsTest" "$WIRINGE"
+assert_class_green "$WIRINGE" "PerShardMetricsTest"
+assert_file "configd-server/src/test/java/io/configd/server/PerShardMetricsTest.java"
+assert_file "docs/multiraft/phase1/seam-e-per-shard-metrics.md"
+assert_grep "docs/multiraft/phase1/server-wiring-decision-log.md" "DL-W-E-0"
+echo "gate-phase1 wiring-e: OK"
+
+echo "=== gate-phase1: GREEN — Multi-Raft Phase 1 sharding foundation + server-wiring A/B/C/D/E verified ==="
 exit 0

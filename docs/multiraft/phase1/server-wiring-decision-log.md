@@ -17,7 +17,7 @@
 | **B — adapter inbound groupId demux** | Step 3 (inbound) | ✅ DONE, four-way | preserved | `RaftInboundDemuxTest` 2/0; `NettyConsensusLivenessTest` 3/0; loopback+marshalling+owner-net+throwable all green |
 | **C — N-group consensus loop** | Step 2 | ✅ DONE, four-way | preserved | `MultiGroupBringupTest` 5/0; full `configd-server` 303/0 (incl. `NettyConsensusLivenessTest` real-wire N=1 + `ConfigdServerTest` boot/restart); `RaftInboundDemuxTest` 3/0; §3 mTLS negatives 5/0 on `NettyRaftTransport` |
 | **D — write/read routing + guard** | Step 4 | ✅ DONE, four-way | preserved | `ShardedRoutingTest` 6/0; full `configd-server` 309/0; `configd-control-plane-api` 15/0; `ConfigdServerTest` 22/0 (N=1 boot/restart) |
-| **E — per-shard observability** | Step 5 | ⏳ DEFERRED | — | handoff §2 |
+| **E — per-shard observability** | Step 5 | ✅ DONE | additive | `PerShardMetricsTest` 3/0; full `configd-server` (N=1 metric-regression: existing series unchanged) |
 | **F — wire-format D1+D2** | Step 6 | ⏳ DEFERRED | — | handoff §2 |
 | **G — isolation sim + fan-out N>1** | Steps 7,8 | ⏳ DEFERRED | — | handoff §2 |
 
@@ -235,6 +235,38 @@ check. *Reversible: yes.*
 - **Independent re-run:** `ShardedRoutingTest` 6/0; full `configd-server` 309/0 (incl. real-wire
   `NettyConsensusLivenessTest` + admin API contracts on both transports + `ConfigdServerTest`
   boot/restart); `configd-control-plane-api` 15/0.
+
+## Seam E — per-shard observability (DL-W-E-01..02)
+
+The group-0-only metrics scrape is extended to PER-SHARD health. Design:
+`docs/multiraft/phase1/seam-e-per-shard-metrics.md`.
+
+### DL-W-E-01 — per-shard health via name-encoded pull gauges from `monitorView()`
+`ConfigdServer.registerPerShardMetrics` (package-private, testable) registers, for every shard,
+`raft.shard.{commit_index,last_applied,apply_lag,current_term,leader}.<gid>` + the node-level
+`raft.node.leader_count`. `MetricsRegistry` is name-only (not tag-capable), so the shard id is encoded in
+the metric NAME (`base.<gid>` — handoff §2.E; bounded ≤16×5 series). Each gauge is a null-safe pull that
+reads the group's `RaftNode.monitorView()` — the H-3 safe, never-torn, ≤one-tick-stale snapshot the
+Prometheus scrape thread already reads off-owner. The existing GLOBAL group-0 scrape
+(`raft_pending_apply_entries` + `raft_elections`) is UNCHANGED (back-compat). Additive at N=1 (registers
+exactly the group-0 series; the existing series + all consensus/wire/WAL behaviour untouched).
+*Reversible: yes.*
+
+### DL-W-E-02 — per-shard write-throughput / 429 DEFERRED (documented, dormant-until-N>1)
+Per-shard write-rate / admission-429 are recorded at the proposer site into a single shared
+`ConfigdMetrics`; making them per-shard means threading a per-gid handle through the just-four-way-reviewed
+write hot path, and they are DORMANT-until-N>1 (N>1 is boot-refused until Seam G) while the AGGREGATE
+series already exist. So Seam E delivers the per-shard HEALTH view (the operator's "see each shard's
+health"); the per-shard write-rate breakdown is wired alongside N>1 enablement in Seam G. *Reversible: yes.*
+
+### Review of Seam E (rigor proportional to risk)
+E is ADDITIVE observability — pull gauges off the hot path, reading the established-safe `monitorView()`
+snapshot; no consensus / wire / WAL / correctness surface. Implementer + independent re-run
+(`PerShardMetricsTest` 3/0 — per-shard health present + leader=1 + leader_count=N; N=1 registers only the
+group-0 series) + the full `configd-server` suite (N=1 metric-regression: `MetricsWiringContractTest` +
+the scrape contract unchanged). The full adversarial/diff four-way is folded into the final fresh-context
+Verifier (which reviews every seam) — there is no attack surface in read-only additive gauges to red-team
+in isolation.
 
 ## Invariants held (re-checked each seam)
 - **N=1 byte-identical** to today (consensus behaviour, wire bytes, Raft WAL/snapshot format). The

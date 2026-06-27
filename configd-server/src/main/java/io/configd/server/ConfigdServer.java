@@ -35,7 +35,9 @@ import io.configd.raft.AppendEntriesRequest;
 import io.configd.raft.CoalescingRaftTransport;
 import io.configd.raft.RaftConfig;
 import io.configd.raft.RaftLog;
+import io.configd.raft.RaftMetrics;
 import io.configd.raft.RaftNode;
+import io.configd.raft.RaftRole;
 import io.configd.raft.RaftTransport;
 import io.configd.raft.RaftMessage;
 import io.configd.raft.ProposeOutcome;
@@ -546,6 +548,11 @@ public final class ConfigdServer {
         for (RaftGroupRuntime rt : runtimes) {
             runtimesByGid.put(rt.groupId(), rt);
         }
+
+        // Seam E: per-shard health gauges (per-group leader/term/commit-index/apply-lag + the per-node
+        // leader count), read from each group's monitorView() on scrape (off the hot path). At N=1 this is
+        // exactly the group-0 series — purely additive; the existing global group-0 scrape is unchanged.
+        registerPerShardMetrics(metricsRegistry, driver, runtimes);
 
         // Register the inbound DEMULTIPLEXER ONCE on the shared node-level transport. RR-008 (S4): the
         // handler carries `configdMetrics` so a Throwable escaping driver.routeMessage (e.g. a disk fault
@@ -1493,6 +1500,51 @@ public final class ConfigdServer {
                 }
                 return max;
             }
+        };
+    }
+
+    /**
+     * Multi-Raft Phase 1 — Seam E: registers the PER-SHARD health gauges (no longer group-0-only). For
+     * every shard it publishes {@code raft.shard.{commit_index,last_applied,apply_lag,current_term,
+     * leader}.<gid>} plus the node-level {@code raft.node.leader_count}. Each gauge is pull-based and reads
+     * the group's {@link RaftNode#monitorView()} — the H-3 safe, never-torn, &lt;= one-tick-stale snapshot
+     * the Prometheus scrape thread reads off-owner (the same pattern as the existing global group-0
+     * scrape, which is unchanged). Null-safe: a removed/absent group reads {@code 0}. At {@code N=1} this
+     * registers exactly the group-0 series — purely additive (the existing series are untouched).
+     * Package-private static so {@code PerShardMetricsTest} can drive it directly.
+     */
+    static void registerPerShardMetrics(MetricsRegistry registry, MultiRaftDriver driver,
+            List<RaftGroupRuntime> runtimes) {
+        for (RaftGroupRuntime rt : runtimes) {
+            int gid = rt.groupId();
+            registry.gauge("raft.shard.commit_index." + gid, shardGauge(driver, gid, RaftMetrics::commitIndex));
+            registry.gauge("raft.shard.last_applied." + gid, shardGauge(driver, gid, RaftMetrics::lastApplied));
+            registry.gauge("raft.shard.apply_lag." + gid,
+                    shardGauge(driver, gid, v -> Math.max(0L, v.commitIndex() - v.lastApplied())));
+            registry.gauge("raft.shard.current_term." + gid, shardGauge(driver, gid, RaftMetrics::currentTerm));
+            registry.gauge("raft.shard.leader." + gid,
+                    shardGauge(driver, gid, v -> v.role() == RaftRole.LEADER ? 1L : 0L));
+        }
+        // Node-level: how many shards THIS node currently leads (the leader-count-per-node view).
+        registry.gauge("raft.node.leader_count", () -> {
+            long leaders = 0L;
+            for (RaftGroupRuntime rt : runtimes) {
+                RaftNode node = driver.getGroup(rt.groupId());
+                if (node != null && node.monitorView().role() == RaftRole.LEADER) {
+                    leaders++;
+                }
+            }
+            return leaders;
+        });
+    }
+
+    /** A null-safe per-shard gauge: reads {@code fn} off the group's {@link RaftNode#monitorView()}, or
+     *  {@code 0} if the group is absent. The monitorView read is the H-3 safe off-owner snapshot. */
+    private static java.util.function.LongSupplier shardGauge(
+            MultiRaftDriver driver, int gid, java.util.function.ToLongFunction<RaftMetrics> fn) {
+        return () -> {
+            RaftNode node = driver.getGroup(gid);
+            return node != null ? fn.applyAsLong(node.monitorView()) : 0L;
         };
     }
 
