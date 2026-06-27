@@ -55,12 +55,12 @@ public final class FrameCodec {
 
     /**
      * Current wire-format major version. The decoder rejects any other
-     * value with {@link UnsupportedWireVersionException} — at the v1
-     * milestone this is a strict tripwire, NOT a negotiation. The
-     * version byte exists so that v2 can land with a peer-side Hello
-     * handshake (ADR-0030+) and accept both v1 and v2 frames during a
-     * rolling upgrade. Until that handshake exists, mixed-version
-     * traffic terminates the connection.
+     * value with {@link UnsupportedWireVersionException} — this is a
+     * strict tripwire, NOT a negotiation. The version byte exists so a
+     * future version can land with a peer-side Hello handshake (ADR-0030+)
+     * that accepts two adjacent versions during a rolling upgrade. Until
+     * that handshake exists, mixed-version traffic terminates the
+     * connection (so every node must run the same {@code WIRE_VERSION}).
      *
      * <p>Bumping this constant is a controlled action governed by the
      * {@code wire-compat} CI job: any change to the {@code GoldenFixtures}

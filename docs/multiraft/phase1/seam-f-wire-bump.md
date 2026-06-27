@@ -92,6 +92,14 @@ Payload (all big-endian), a **count-bounded fixed-size-record** format:
 
 ## 3. Send + receive wiring (dormant at N=1)
 
+> **"Dormant at N=1" means EMISSION is dormant, not that the code is unreachable.** At N=1 the send
+> drain never produces a coalesced frame (one group per peer → plain AppendEntries). The *receive*
+> decode branch, however, is reachable in production today: a hostile/buggy peer can send a `0x11`
+> frame regardless of local N. That is fine — the decoder is fully bounds-hardened (DL-F-02) and each
+> demuxed heartbeat goes through the same unregistered-group drop as any AppendEntries, so an
+> unexpected coalesced frame is trust-equivalent to a plain heartbeat, never a new hole.
+
+
 - **Send** (`ConfigdServer` `enableHeartbeatCoalescing` drain): `groupHeartbeats.size() == 1` → the
   single normal `AppendEntries` frame (the **only** case at N=1 → wire byte-identical); `> 1` → ONE
   `encodeCoalescedHeartbeat` frame. The `>1` branch is unreachable at N=1 (one group per peer).

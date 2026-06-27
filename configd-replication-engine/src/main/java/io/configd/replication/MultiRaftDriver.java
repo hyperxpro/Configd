@@ -237,10 +237,18 @@ public final class MultiRaftDriver {
     /**
      * Stage 2 M3 — demultiplex a received {@link CoalescedHeartbeat} back into per-group inbound routing:
      * each group's empty AppendEntries is delivered via {@link #routeMessage}, exactly as if it had arrived
-     * un-coalesced (so each group's owner-thread marshalling, election-reset and rehoming check-and-bounce
-     * are identical). The production single-group path never receives one (a 1-group drain sends a plain
-     * AppendEntries); this is exercised by the N&gt;1 test surfaces and is the receive half Phase-1 wires onto
-     * the TCP transport.
+     * un-coalesced. Exercised by the N&gt;1 test surfaces.
+     *
+     * <p><b>@implNote — threading contract / NOT the production receive path.</b> This calls
+     * {@link #routeMessage} INLINE on the caller's thread, and {@code routeMessage} runs
+     * {@code node.handleMessage} on the calling thread for a non-rehomed group (every production group),
+     * which asserts the owner thread. So this is only safe when the caller's thread is the owner of EVERY
+     * group in {@code ch} — i.e. a single-owner sim / test, where all groups share one owner. A coalesced
+     * frame on the real wire can bundle groups with DIFFERENT owners at N&gt;1, so the production receive
+     * path does NOT call this: {@code RaftTransportAdapter.registerInboundHandler} decodes the frame and
+     * dispatches each group through its OWN owner executor (Phase 1 Seam F; see server-wiring-decision-log
+     * DL-F-03). Calling this from an inbound/IO thread at N&gt;1 would run {@code handleMessage} off-owner
+     * and trip {@code RaftNode.assertOwnerThread()}.
      *
      * @param from the node that sent the coalesced heartbeat (the AppendEntries also carry {@code leaderId})
      * @param ch   the coalesced heartbeat

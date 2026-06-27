@@ -190,13 +190,14 @@ echo "gate-phase1 wiring-e: OK"
 # frame per-group; the send drain emits a coalesced frame only at >1 group (N=1 stays plain AppendEntries).
 echo "gate-phase1 wiring-f: WIRE_VERSION v2 bump — epoch reservation + coalesced-heartbeat frame (Seam F)..."
 WIRINGF="$LOGDIR/wiring-f.txt"
-run_tests wiring-f "FrameCodecEpochReservationTest,WireCompatGoldenBytesTest,MessageTypeTest,NettyConsensusFrameEncoderByteIdentityTest,CoalescedHeartbeatCodecTest,RaftTransportAdapterCoalescedInboundTest,HeartbeatDrainFramingTest" "$WIRINGF"
+run_tests wiring-f "FrameCodecEpochReservationTest,WireCompatGoldenBytesTest,MessageTypeTest,NettyConsensusFrameEncoderByteIdentityTest,CoalescedHeartbeatCodecTest,RaftTransportAdapterCoalescedInboundTest,HeartbeatDrainFramingTest,RedTeamCoalescedWirePoCTest" "$WIRINGF"
 assert_class_green "$WIRINGF" "FrameCodecEpochReservationTest"            # D1: epoch MBZ + N=1 byte-identity
 assert_class_green "$WIRINGF" "WireCompatGoldenBytesTest"                 # v2 golden bytes match (intentional bump)
 assert_class_green "$WIRINGF" "NettyConsensusFrameEncoderByteIdentityTest" # Netty encoder == encodeWire at v2
 assert_class_green "$WIRINGF" "CoalescedHeartbeatCodecTest"               # D2: coalesced codec round-trip + bounds
 assert_class_green "$WIRINGF" "RaftTransportAdapterCoalescedInboundTest"  # D2: inbound per-group demux
 assert_class_green "$WIRINGF" "HeartbeatDrainFramingTest"                 # D2: send drain dormant at N=1
+assert_class_green "$WIRINGF" "RedTeamCoalescedWirePoCTest"               # D2: adversarial parser battery (red-team)
 # The bump is INTENTIONAL: WIRE_VERSION is 0x02 and the header reserves the 8-byte epoch (HEADER_SIZE 26).
 assert_grep "configd-transport/src/main/java/io/configd/transport/FrameCodec.java" "WIRE_VERSION = \(byte\) 0x02"
 assert_grep "configd-transport/src/main/java/io/configd/transport/FrameCodec.java" "HEADER_SIZE = 26"

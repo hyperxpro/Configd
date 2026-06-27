@@ -266,6 +266,13 @@ public final class RaftMessageCodec {
      *                                  duplicate group id, or trailing bytes)
      */
     public static Map<Integer, AppendEntriesRequest> decodeCoalescedHeartbeat(FrameCodec.Frame frame) {
+        // Defense-in-depth: the sole production caller routes by type, but a type guard here makes the
+        // method fail-closed against any future second caller (mirrors the directional throw in decode()).
+        if (frame.messageType() != MessageType.RAFT_COALESCED_HEARTBEAT) {
+            throw new IllegalArgumentException(
+                    "decodeCoalescedHeartbeat called on a " + frame.messageType()
+                            + " frame; expected RAFT_COALESCED_HEARTBEAT");
+        }
         ByteBuffer buf = ByteBuffer.wrap(frame.payload());
         checkRemaining(buf, 4, "CoalescedHeartbeat count");
         int n = buf.getInt();
