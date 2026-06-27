@@ -350,6 +350,183 @@ Implementer → diff-review → independent clean re-run → adversarial red-tea
 `RaftTransportAdapterCoalescedInboundTest` 3/0, `HeartbeatDrainFramingTest` 3/0, and the N=1
 boot/restart + metrics regressions). `gate-phase1` block (h)/wiring-f added (CI-wired, cumulative).
 
+## Seam G — the switch-flip (boot-guard removal LAST, gated on the integrated sweep)
+
+> G is the riskiest single action in the project. It proceeds G1 (fan-out) → G2 (live isolation) → G3
+> (integrated N>1 sweep — GATES G4) → G4 (remove the boot guard). The N>1 boot guard
+> (`resolveShardCount`) **stays** until G3 is green. Each sub-seam: four-way + N=1 byte-identity re-proven.
+
+### G1 — N-way fan-out merge/sequencer (DL-W-G1-01..04 + four-way)
+
+Design: `docs/multiraft/phase1/seam-g1-fanout-merge.md`. At N>1 the distribution node must ingest ALL N
+groups' committed streams, not just the primary's (the pre-G1 wiring bound the fan-out + watch listeners
+to the primary group only — ADR-D-A "surviving (verified)": *N shards = N owner threads writing one
+bounded buffer → an N-way merge/sequencer is required*).
+
+#### DL-W-G1-01 — ONE FanOutBuffer + Compactor + SnapshotReplaySource PER SHARD (not a global merge seq)
+`registerShardedFanOut(runtimes, clock, droppedCounter, capacity)` (static, testable) builds one
+`FanOutBuffer` + `Compactor` per shard and registers each group's commit listener (ConfigDelta → publish
++ addSnapshot) on THAT group's state machine. Faithful to ADR-D-A/D-C/ADR-0004/ADR-0035: the committed
+model is **per-shard sequences consumed via a per-shard cursor (a cursor vector)**, NOT a fabricated
+global order. **Thread-safety by construction:** a group's apply → `notifyListeners` runs only on that
+group's owner thread (R-01′), so each per-shard buffer has exactly ONE writer — the `FanOutBuffer`
+single-writer invariant holds per shard with NO lock (two groups on one owner write their distinct
+buffers serially). This deliberately avoids serializing N owner threads through one writer (a global merge
+seq would have done that AND implied a cross-shard order the contract denies). Per-shard monotonicity (no
+lost/dup/reorder-within-shard) is the existing single-buffer guarantee applied per shard.
+`ShardedFanOutTest` 6/0 (N=1 identity; isolation; per-shard monotonicity + independent seqs; concurrent
+N-thread publish no-corruption; per-shard replay floor; aggregate drop counter). *Reversible: revert.*
+
+#### DL-W-G1-02 — WatchService bound to the PRIMARY group only (cross-shard watch = v2 edge client)
+`WatchService` is single-threaded by contract (no synchronization) + a single version cursor that
+collides across shards, and has NO production `register()` path (dormant infra, like CM-033 BATCH). So
+`watchService::onConfigChange` stays on the primary group: byte-identical at N=1; single-owner-thread (no
+race) at N>1. Cross-shard watch aggregation (per-shard watch + cursor vector, ticked per-owner) rides the
+v2 sharded edge client (handoff §5). Not "half-wired N>1" — the **fan-out** (G1's mandate) is fully
+per-shard; watch is a separate dormant mechanism whose client is explicitly deferred, documented loudly.
+*Reversible: yes.*
+
+#### DL-W-G1-03 — edge endpoint serves the PRIMARY shard at N>1, with a loud startup warning
+`NettyFanOutServer`'s single-cursor wire protocol serves one shard; the cursor-vector sharded edge client
+is v2. The edge endpoint is OFF by default (`--edge-port`); at N>1 with it set, the server prints a loud
+`WARNING` that it serves the primary shard only. Observable, not a silent partial-view footgun. N=1: the
+primary is the only shard (full view). *Reversible: yes.*
+
+#### DL-W-G1-04 — shared LongAdder dropped counter (aggregate); per-shard compaction rider
+All shards share `fanout.buffer.dropped` (`LongAdder`-backed → thread-safe) so it stays the aggregate
+`fanout_buffer_dropped_total` (ADR-D-A cross-shard drop-amplification total); each per-shard buffer still
+evicts independently (asserted). The owner[0] periodic `compact()` rider compacts EVERY shard's compactor
+(`Compactor.compact()` is thread-safe). Per-shard `fanout.buffer.dropped.<gid>` (Seam-E style) is a noted
+minor follow-up. *Reversible: yes.*
+
+#### N=1 byte-identity (G1)
+At one shard, `registerShardedFanOut` builds exactly one buffer + compactor for the primary and registers
+exactly the prior single fan-out listener (identical delta/notification/publish/addSnapshot), in the same
+order (fan-out then watch); the downstream wiring + the `fanOutBuffer()`/`compactor()`/`replaySource()`
+accessors receive the same primary instances; the compact rider iterates one compactor. No consensus / WAL
+/ wire / read / write / tick change. (Full `configd-server` suite re-run for the regression.)
+
+### G2 — live shared-node isolation sim (DL-W-G2-01 + four-way)
+
+Design: `docs/multiraft/phase1/seam-g2-live-isolation.md`. Proves, on the REAL `MultiRaftDriver` +
+`OwnerExecutorPool`, the isolation the independent-harness V sim could not — the SF1 mandate.
+
+#### DL-W-G2-01 — the starvation class needs a per-group LIVENESS witness (assertOwnerThread can't catch it)
+`OwnerIsolationMultiOwnerTest` already covers the missed-hop class (a wrong-owner entry point trips
+`assertOwnerThread`). The new `SharedNodeFaultIsolationLiveTest` (replication-engine, 4 groups on 2 owners
+— genuine shared owners) adds the STARVATION class: a STUCK apply on group 0 blocks owner0's single thread
+(applyCommitted is synchronous on the owner thread), starving co-owned sibling group 2 — which no thread
+net can catch. A per-group liveness witness (fire-and-forget propose+tick, poll applied count) goes RED
+for group 2 (non-vacuous: baseline + recovery prove it CAN go GREEN), while groups on owner1 stay GREEN
+(the fault is owner-confined, not node-wide) and per-shard safety (monotone sequence, no cross-shard leak)
+survives the fault + concurrency. Releasing the apply recovers both starved groups (transient
+back-pressure, not corruption/deadlock). The RED is FIFO-deterministic on the single-thread owner (not
+sleep-timed) → no 2-vCPU flake. `SharedNodeFaultIsolationLiveTest` 2/0 (stable ×3). *Reversible: test-only.*
+
+### G3 — the integrated N>1 sweep (DL-W-G3-01) — GATES G4
+
+#### DL-W-G3-01 — the sweep is the proof that N>1 is correct end-to-end (the gate on lifting the guard)
+The component proofs each cover one surface; G3 closes the INTEGRATION gap and assembles the whole into
+the cumulative gate `wiring-g`. `MultiShardIntegratedSweepTest` (configd-server) drives the REAL
+production bring-up (`buildRaftGroup`) for N=4 groups on a SHARED-owner pool (P=2 — the production shape)
+and wires the REAL sharded fan-out (`registerShardedFanOut`) over those runtimes, proving they COMPOSE:
+a committed write to shard k lands in shard k's store AND shard k's fan-out buffer (per-shard seq 1) and
+in NO other shard's store or buffer (cross-shard isolation in both surfaces). The `wiring-g` gate block
+runs the full N>1 sweep — G1 (`ShardedFanOutTest`), G2 (`SharedNodeFaultIsolationLiveTest`), G3
+(`MultiShardIntegratedSweepTest`), the thread-safety net non-vacuous (`OwnerIsolationMultiOwnerTest` —
+missed-hop; the starvation class is in G2), and coalesced-HB flat-in-N (`HeartbeatCoalescingTest`, G≤256
+⊇ the N≤16 ceiling) — all GREEN. **This green sweep is the charter §3.4 gate that authorizes G4.**
+`MultiShardIntegratedSweepTest` 1/0. *Reversible: test/gate only.*
+
+#### Seam-G thread-safety audit (gating G4) — SAFE TO LIFT, no MUST-FIX races
+A fresh-context audit (java-distinguished-engineer) of every node-level object `buildRaftGroup` shares
+across owner threads at N>1: **`ConfigSigner`** uses a PER-CALL `Signature` (the feared single shared
+`Signature` does NOT exist) — SAFE; both **InvariantCheckers** (= `InvariantMonitor.check`) use
+`ConcurrentHashMap` + `LongAdder` — SAFE; **`ConfigdMetrics`/`MetricsRegistry`** is `LongAdder`/
+`AtomicLong`/`ConcurrentHashMap` throughout — SAFE; **`IntegrityEnvelope`** (per-call `Mac`/`CRC32C`),
+**`Clock`** (stateless), **`MultiRaftDriver`** (CHM/volatile/per-owner-disjoint tick; rehoming dormant),
+**`NettyRaftTransport.send`** (non-blocking per-peer ABQ+CAS), the per-group RNG (distinct), **`Compactor`**
+(`ConcurrentSkipListMap`, cross-thread `compact()` vs `addSnapshot` safe), **`FanOutBuffer`** (per-shard
+single-writer), **`WatchService`** (primary-only) — all SAFE. **Verdict: SAFE TO LIFT THE GUARD.** Two
+items to land WITH G4 (not blockers): (a) wrap the bring-up loop to close/`removeGroup` already-built
+groups + shut the owner pool on a partial-bring-up failure (defense-in-depth; no FD leak today since
+append channels are lazy + owner threads are daemon); (b) a startup WARNING when `N>1 && ownerPoolSize==1`
+(all groups would serialize on owner[0] — safe but no throughput gain; EC2 must set ownerPoolSize≥N).
+Two metric NITs (the global `raft_pending_apply_entries` is owner-0-only at N>1; per-shard gauges cover
+each shard) deferred.
+
+### G4 — the switch-flip: remove the N>1 boot guard (DL-W-G4-01..03) — gated on G3 green
+
+The LAST act, gated on the integrated sweep (`wiring-g`) being green (it is). The N>1 boot refusal in
+`resolveShardCount` is removed; N>1 now boots in production.
+
+#### DL-W-G4-01 — the boot guard is GONE; fixed-at-deploy now applies to N>1 too
+`resolveShardCount` no longer throws on `shardCount > 1`. N>1 boots: every shard is a registered Raft
+group (Seam C), routed per shard (Seam D), with its own fan-out (G1), proven shared-node isolation (G2),
+all shared node-level deps thread-safe (the audit). `enforceFixedShardCount` still runs (now for N>1):
+first boot persists N; a later boot with a different N is a loud reshard rejection, never silent
+mis-routing. `ShardCountConfigTest` flipped from `nGreaterThanOneIsRefusedWhileWiringDormant` to
+`nGreaterThanOneNowBootsAndIsFixedAtDeploy` (N∈{2,4,16} boot + persist + reshard-reject) +
+`n1StillBootsByteIdenticalAfterGuardRemoval`. **N=1 boot/run is byte-identical** (the guard removal
+touched only the N>1 branch; full `configd-server` suite re-run). *Reversible: re-add the throw.*
+
+#### DL-W-G4-02 — N>1 boot smoke on the REAL server
+`NGreaterThanOneBootSmokeTest`: `ConfigdServer.start()` with `configd.raft.shardCount=2` (single-node,
+`--peers ""`) BOOTS (before G4 it threw `IllegalStateException`); both shards self-elect LEADER; a propose
+to shard k commits+applies on shard k and advances ONLY shard k's applied index (live cross-shard
+isolation on the booted server); per-shard metrics (Seam E) for shard 1 are present. 1/0. (The per-shard
+write/read SEMANTICS are also proven on the real bring-up path by `MultiShardIntegratedSweepTest` +
+`MultiGroupBringupTest`.) *Reversible: test-only.*
+
+#### DL-W-G4-03 — thread-safety audit co-deliverables landed with the flip
+(a) The bring-up loop is wrapped: on a partial-bring-up failure (`buildRaftGroup` throws for gid=k>0) the
+already-built groups are `removeGroup`'d + the owner pool is shut down, then the original cause is
+rethrown — no leaked driver registrations / owner-bound nodes (defense-in-depth; unreachable at N=1).
+(b) A loud startup WARNING when `shardCount>1 && ownerPoolSize==1` (all shards would serialize on one
+owner thread — safe but no throughput gain; the EC2 run sets ownerPoolSize≥N). *Reversible: yes.*
+
+#### DL-W-G4-04 — edge endpoint at N>1 is FAIL-CLOSED (red-team MEDIUM), not a warning
+The G1 design served the PRIMARY shard at N>1 with a loud startup *warning*. The G4 red-team escalated:
+an edge subscriber has NO in-band signal of a partial view, so a downstream cache would silently believe
+it has the full keyspace. Consistent with the project's fail-closed discipline, `start()` now REFUSES
+N>1 + `--edge-port` together unless `-Dconfigd.edge.allowPartialShardView=true`. The check is FAIL-FAST
+(near the top of start(), before any allocation — no leak on the refusal path) AND ordered BEFORE
+`resolveShardCount` persists the fixed-at-deploy marker, preserving DL-W-05 (a refused boot never persists
+a marker that could poison a later boot — final-Verifier NIT). N=1 + edge is unaffected (full view); N>1
+without edge is unaffected. Pinned by
+`NGreaterThanOneBootSmokeTest#edgeEndpointAtNGreaterThanOneIsRefusedWithoutOptIn` (incl. the no-marker
+assertion). *Reversible: yes.*
+
+#### Four-way (G4 — the switch-flip)
+- **Diff-review (java-distinguished-engineer): APPROVE-WITH-NITS, 0 must-fix.** N=1 byte-identity verified
+  object-by-object (the deleted code was the N>1 branch only); N>1 genuinely safe to boot (all gids ∈
+  [0,N) registered before any route; ordering correct); the partial-bring-up cleanup correct (rethrows
+  original cause). NITs folded: catch `Throwable`; track the runtime right after `addGroup` (cleans a
+  register-but-fail-to-bind group); the P-vs-N warning broadened to `ownerPoolSize < N`; comment precision.
+- **Red-team (redteam-auditor): SHIP-WITH-FIXES, no CRITICAL/HIGH.** Could not break N=1, the N>1
+  consensus plane (writes can't reach an unregistered group), the cleanup, the marker durability, or the
+  smoke's non-vacuity. The one MEDIUM (silent edge partial view) is FIXED fail-closed (DL-W-G4-04). LOW
+  (cleanup completeness) partially folded.
+- **Independent re-run:** full `configd-server` 346/0 (N=1 byte-identity: boot/restart + real-wire
+  liveness + metrics regression); gate-phase1 GREEN end-to-end (wiring-g + wiring-g4).
+
+#### Tracked follow-ups (NOT in G4 — pre-existing or v2)
+- **`Storage` is not closed on `shutdown()`** (diff-review S1 / audit): pre-existing (N=1 already leaks the
+  single node storage; reclaimed at process exit), now ×N per-shard at N>1. Make `Storage` `AutoCloseable`
+  + close per-shard storage in `shutdown()` and the bring-up catch — a follow-up (touches the Storage API;
+  out of G4's scope). Matters for embedded/repeated `start()`, not the long-lived CLI daemon.
+- **Multi-NODE N>1 boot smoke**: the smoke uses `--peers ""` (single-node), so the N>1 real-wire demux +
+  coalesced-heartbeat EMIT path are covered by `MultiShardIntegratedSweepTest` + `RaftInboundDemuxTest` +
+  the Seam-F battery, not the boot smoke. A 2-node N>1 smoke is a nice-to-have for the EC2 session.
+- Metric semantics at N>1: the global `raft_pending_apply_entries` is owner-0/group-0 only (per-shard
+  `raft.shard.apply_lag.<gid>` cover each shard); per-shard `fanout.buffer.dropped.<gid>` (G1 follow-up).
+
+#### gate-phase1 wiring-g4
+Added AFTER `wiring-g` so the gate STRUCTURE encodes "guard removed only with the sweep green": the smoke
+(N>1 boots + per-shard commit + the edge fail-closed refusal) + the flipped `ShardCountConfigTest` + a
+non-vacuity grep that the old boot-refusal message is GONE from `ConfigdServer`. gate-phase1 GREEN
+end-to-end through wiring-g4.
+
 ## Invariants held (re-checked each seam)
 - **N=1 byte-identical** to today (consensus behaviour, Raft WAL/snapshot format; the wire is identical
   EXCEPT the sanctioned version byte `01→02` + the 8 reserved epoch zero-bytes — charter §2 D1). The

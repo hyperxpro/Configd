@@ -131,7 +131,7 @@ echo "gate-phase1 artifacts: OK"
 echo "gate-phase1 wiring: server N-config (C4a) + inbound groupId demux (DL-P1-06)..."
 WIRING="$LOGDIR/wiring.txt"
 run_tests wiring "ShardCountConfigTest,RaftInboundDemuxTest" "$WIRING"
-assert_class_green "$WIRING" "ShardCountConfigTest"   # C4a: range + N>1 guard (no marker poison) + reshard reject
+assert_class_green "$WIRING" "ShardCountConfigTest"   # C4a: range + N>1 BOOTS (Seam G4) + fixed-at-deploy reshard reject
 assert_class_green "$WIRING" "RaftInboundDemuxTest"   # DL-P1-06: gid=k -> group k (not 0); hostile gid dropped
 assert_file "configd-server/src/test/java/io/configd/server/ShardCountConfigTest.java"
 assert_file "configd-server/src/test/java/io/configd/server/RaftInboundDemuxTest.java"
@@ -207,5 +207,51 @@ assert_file "docs/multiraft/phase1/seam-f-wire-bump.md"
 assert_grep "docs/multiraft/phase1/server-wiring-decision-log.md" "DL-F-0"
 echo "gate-phase1 wiring-f: OK"
 
-echo "=== gate-phase1: GREEN — Multi-Raft Phase 1 sharding foundation + server-wiring A/B/C/D/E/F verified ==="
+# --- (i) Server-wiring Seam G: the integrated N>1 sweep (GATES the boot-guard removal) ----
+# The cumulative proof that N>1 is correct END-TO-END (charter §3.4/§6) — the gate on lifting the boot
+# guard. G1 (per-shard fan-out merge: monotone, isolated, concurrent-safe, no fabricated global order),
+# G2 (live shared-node isolation: a STUCK apply starves a co-owned sibling — coupling-leak RED — while
+# the other owner stays live, with per-shard safety preserved), G3 (the REAL production bring-up
+# buildRaftGroup COMPOSED with the sharded fan-out at N>1 on shared owners — per-shard isolation in BOTH
+# the store and the fan-out), the thread-safety net proven NON-VACUOUS at N>1 (missed-hop via
+# OwnerIsolationMultiOwnerTest), and the coalesced-heartbeat flat-in-N property (HeartbeatCoalescingTest,
+# G up to 256 ⊇ the Phase-1 N<=16 ceiling).
+echo "gate-phase1 wiring-g: integrated N>1 sweep (fan-out + live isolation + thread-safety net + coalesced-HB)..."
+WIRINGG="$LOGDIR/wiring-g.txt"
+run_tests wiring-g "ShardedFanOutTest,MultiShardIntegratedSweepTest,SharedNodeFaultIsolationLiveTest,OwnerIsolationMultiOwnerTest,HeartbeatCoalescingTest" "$WIRINGG"
+assert_class_green "$WIRINGG" "ShardedFanOutTest"                # G1: per-shard fan-out (monotone/isolated/concurrent-safe)
+assert_class_green "$WIRINGG" "MultiShardIntegratedSweepTest"    # G3: real bring-up + sharded fan-out compose at N>1
+assert_class_green "$WIRINGG" "SharedNodeFaultIsolationLiveTest" # G2: coupling-leak RED + cross-owner isolation GREEN
+assert_class_green "$WIRINGG" "OwnerIsolationMultiOwnerTest"     # thread-safety net non-vacuous (missed-hop)
+assert_class_green "$WIRINGG" "HeartbeatCoalescingTest"          # coalesced-heartbeat flat-in-N (covers N<=16)
+assert_file "configd-server/src/test/java/io/configd/server/ShardedFanOutTest.java"
+assert_file "configd-server/src/test/java/io/configd/server/MultiShardIntegratedSweepTest.java"
+assert_file "configd-replication-engine/src/test/java/io/configd/replication/SharedNodeFaultIsolationLiveTest.java"
+assert_file "docs/multiraft/phase1/seam-g1-fanout-merge.md"
+assert_file "docs/multiraft/phase1/seam-g2-live-isolation.md"
+assert_grep "docs/multiraft/phase1/server-wiring-decision-log.md" "DL-W-G1-0"
+assert_grep "docs/multiraft/phase1/server-wiring-decision-log.md" "DL-W-G2-0"
+echo "gate-phase1 wiring-g: OK"
+
+# --- (j) Server-wiring Seam G4: the SWITCH-FLIP — the N>1 boot guard is REMOVED ----
+# Ordered AFTER wiring-g (the integrated sweep) so the structure encodes the charter §3.4 gate: the guard
+# is removed ONLY with the sweep green. The smoke proves the REAL ConfigdServer.start() now BOOTS at N=2
+# (before G4 it threw), both shards self-elect, a propose to shard k commits+applies on shard k ONLY (live
+# cross-shard isolation), and per-shard metrics are live. ShardCountConfigTest (in wiring above) flipped
+# from "N>1 refused" to "N>1 boots + fixed-at-deploy". N=1 stays byte-identical (its own assertions).
+echo "gate-phase1 wiring-g4: the switch-flip — N>1 boots on the real server (boot guard removed)..."
+WIRINGG4="$LOGDIR/wiring-g4.txt"
+run_tests wiring-g4 "NGreaterThanOneBootSmokeTest" "$WIRINGG4"
+assert_class_green "$WIRINGG4" "NGreaterThanOneBootSmokeTest"   # G4: ConfigdServer.start() boots at N=2 + per-shard commit
+assert_file "configd-server/src/test/java/io/configd/server/NGreaterThanOneBootSmokeTest.java"
+# Non-vacuity: the temporary N>1 boot refusal is GONE from resolveShardCount (a regression that re-added
+# the throw would FAIL the smoke; this grep also fails loudly if the scaffold message creeps back). The
+# old guard's unique fragment was "is not enabled in this build".
+if grep -q "is not enabled in this build" "$ROOT/configd-server/src/main/java/io/configd/server/ConfigdServer.java"; then
+  fail wiring-g4 "the N>1 boot-refusal message is back in ConfigdServer — the switch-flip regressed"
+fi
+assert_grep "docs/multiraft/phase1/server-wiring-decision-log.md" "DL-W-G4-0"
+echo "gate-phase1 wiring-g4: OK"
+
+echo "=== gate-phase1: GREEN — Multi-Raft Phase 1 sharding foundation + server-wiring A/B/C/D/E/F/G (incl. G4 switch-flip) verified ==="
 exit 0

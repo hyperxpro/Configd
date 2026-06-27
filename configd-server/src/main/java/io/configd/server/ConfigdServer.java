@@ -228,6 +228,27 @@ public final class ConfigdServer {
         // consistent with the other `configd.raft.*` tunables), validated to [1, MAX_SHARD_COUNT], and
         // FIXED AT DEPLOY (see resolveShardCount). The StaticShardMap routes (scope,key)→shard.
         // ---------------------------------------------------------------
+        // Seam G1/G4 (red-team MEDIUM) — FAIL FAST, and BEFORE resolveShardCount persists the
+        // fixed-at-deploy marker (preserving DL-W-05: a refused boot never persists a marker). The C1 edge
+        // endpoint's single-cursor wire protocol serves ONE shard, so at N>1 a subscriber would silently
+        // receive only the PRIMARY shard's keys (a downstream cache believing it has the full keyspace).
+        // The sharded edge client that multiplexes the N per-shard streams (a cursor vector — ADR-D-A/D-C)
+        // is v2 (handoff §5). Consistent with the fail-closed discipline (a loud refusal, never silent
+        // partial data), REFUSE N>1 + the edge endpoint together unless the operator EXPLICITLY opts in.
+        // Never trips at N=1 (the primary is the only shard — full view).
+        int configuredShardCount = Integer.getInteger("configd.raft.shardCount", 1);
+        if (configuredShardCount > 1 && config.edgeEnabled()
+                && !Boolean.getBoolean("configd.edge.allowPartialShardView")) {
+            throw new IllegalStateException(
+                    "configd.raft.shardCount=" + configuredShardCount + " (N>1) with the edge endpoint"
+                            + " enabled (--edge-port): the edge endpoint serves the PRIMARY shard (group "
+                            + DEFAULT_RAFT_GROUP + ") ONLY — a subscriber would silently receive a SUBSET"
+                            + " of the keyspace (the sharded edge client that multiplexes all "
+                            + configuredShardCount + " per-shard streams is v2 — docs/multiraft/phase1)."
+                            + " Refusing to start to avoid a silent partial-view data plane. Either run the"
+                            + " edge endpoint at N=1, or set -Dconfigd.edge.allowPartialShardView=true to"
+                            + " accept the primary-shard-only edge view explicitly.");
+        }
         int shardCount = resolveShardCount(dataDir);
         StaticShardMap shardMap = new StaticShardMap(shardCount);
         System.out.println("  Shard map    : " + shardMap + " [Multi-Raft Phase 1 C4a; N fixed at deploy,"
@@ -489,31 +510,63 @@ public final class ConfigdServer {
         // single-group bring-up. See docs/multiraft/phase1/seam-c-multigroup-bringup.md.
         // ===============================================================
         int[] gids = shardMap.shardIds().toArray(); // StaticShardMap: [0, N)
+        // Seam G4 / thread-safety audit: a startup warning when N>1 groups would under-provision the owner
+        // pool (P < N) — they then serialize on too few owner threads. Safe (per-group single-writer
+        // holds), but it forfeits the sharding throughput gain — the EC2 N×knee run sets ownerPoolSize>=N.
+        // Loud, not silent.
+        if (shardCount > 1 && ownerPool.size() < shardCount) {
+            System.err.println("WARNING: ************************************************************");
+            System.err.println("WARNING: shardCount=" + shardCount + " (N>1) with ownerPoolSize="
+                    + ownerPool.size() + " (< N) — shards serialize on fewer owner threads than shards.");
+            System.err.println("WARNING: Set configd.raft.ownerPoolSize>=" + shardCount
+                    + " for the multi-shard throughput gain.");
+            System.err.println("WARNING: ************************************************************");
+        }
         List<RaftGroupRuntime> runtimes = new ArrayList<>(gids.length);
-        for (int gid : gids) {
-            RaftGroupRuntime rt = buildRaftGroup(
-                    gid, shardCount, dataDir, storage, raftIntegrity, clock, configSigner,
-                    smInvariantChecker, raftInvariantChecker, configdMetrics, raftConfig, config.nodeId(),
-                    tcpTransport, groupCommitEnabled, groupCommitMaxBatch, groupCommitLingerMicros, driver);
-            driver.addGroup(gid, rt.raftNode());
-            // Stage 2 M3: bind this group's CoalescingRaftTransport to its CURRENT owner's coalescer
-            // (rehoming-aware; resolved per record). DORMANT for outbound at N=1 (owner 0). Only when a
-            // real TCP transport exists (peer mode) does the group carry a coalescing decorator.
-            if (rt.coalescingTransport() != null) {
-                rt.coalescingTransport().bindCoalescer(
-                        () -> driver.heartbeatCoalescer(driver.currentOwnerIndex(gid)));
+        // Seam G4 (thread-safety audit, partial-bring-up cleanup): if a group's bring-up throws for gid=k>0,
+        // groups 0..k-1 are already registered + owner-bound. Release them on failure (remove from the
+        // driver + shut the owner pool) so a failed boot does not leak driver registrations / owner-bound
+        // nodes, then rethrow the original cause. At N=1 the prior-group cleanup loop is a no-op (one
+        // group), though the catch itself still runs on a failed single-group boot (harmless — it shuts the
+        // pool + rethrows the same cause). Catches Throwable so an Error mid-boot also cleans up.
+        try {
+            for (int gid : gids) {
+                RaftGroupRuntime rt = buildRaftGroup(
+                        gid, shardCount, dataDir, storage, raftIntegrity, clock, configSigner,
+                        smInvariantChecker, raftInvariantChecker, configdMetrics, raftConfig, config.nodeId(),
+                        tcpTransport, groupCommitEnabled, groupCommitMaxBatch, groupCommitLingerMicros, driver);
+                driver.addGroup(gid, rt.raftNode());
+                // Track the runtime the instant it is registered on the driver — BEFORE the binds below — so
+                // a throw from bindCoalescer/execute (register-but-fail-to-bind) is still cleaned up.
+                runtimes.add(rt);
+                // Stage 2 M3: bind this group's CoalescingRaftTransport to its CURRENT owner's coalescer
+                // (rehoming-aware; resolved per record). DORMANT for outbound at N=1 (owner 0). Only when a
+                // real TCP transport exists (peer mode) does the group carry a coalescing decorator.
+                if (rt.coalescingTransport() != null) {
+                    rt.coalescingTransport().bindCoalescer(
+                            () -> driver.heartbeatCoalescer(driver.currentOwnerIndex(gid)));
+                }
+                // H-6 (Phase 0 B Stage 1B) — BIND THE OWNER. Submit bindOwnerThread() as the FIRST task on
+                // this group's owner executor, BEFORE the inbound demux is published (tcpTransport.start
+                // below) and BEFORE the per-owner tick loop is scheduled. Single-thread FIFO then orders any
+                // later inbound-routing / propose / tick task AFTER the bind — even a frame arriving the
+                // instant start() returns marshals BEHIND this already-submitted bind. NEVER bind in the
+                // constructor (it runs on `main` and legitimately touches state during recovery). After this
+                // task runs, assertOwnerThread() is ACTIVE for the group's RaftNode (the R-01′ net, live).
+                // (The bind + the addGroup ConcurrentHashMap put give the happens-before edge that keeps
+                // monitorView() non-null for the off-owner scrape — H-5.)
+                driver.ownerExecutor(gid).execute(rt.raftNode()::bindOwnerThread);
             }
-            // H-6 (Phase 0 B Stage 1B) — BIND THE OWNER. Submit bindOwnerThread() as the FIRST task on
-            // this group's owner executor, BEFORE the inbound demux is published (tcpTransport.start
-            // below) and BEFORE the per-owner tick loop is scheduled. Single-thread FIFO then orders any
-            // later inbound-routing / propose / tick task AFTER the bind — even a frame arriving the
-            // instant start() returns marshals BEHIND this already-submitted bind. NEVER bind in the
-            // constructor (it runs on `main` and legitimately touches state during recovery). After this
-            // task runs, assertOwnerThread() is ACTIVE for the group's RaftNode (the R-01′ net, live).
-            // (The bind + the addGroup ConcurrentHashMap put give the happens-before edge that keeps
-            // monitorView() non-null for the off-owner scrape — H-5.)
-            driver.ownerExecutor(gid).execute(rt.raftNode()::bindOwnerThread);
-            runtimes.add(rt);
+        } catch (Throwable bringUpFailed) {
+            for (RaftGroupRuntime built : runtimes) {
+                try {
+                    driver.removeGroup(built.groupId());
+                } catch (RuntimeException ignored) {
+                    // best-effort cleanup — surface the ORIGINAL bring-up failure below
+                }
+            }
+            ownerPool.shutdown();
+            throw bringUpFailed;
         }
 
         // The PRIMARY group (DEFAULT_RAFT_GROUP = 0) is the home for the singletons not yet sharded —
@@ -580,9 +633,25 @@ public final class ConfigdServer {
         // of truth it replays from.
         MetricsRegistry.Counter fanOutDroppedCounter =
                 metricsRegistry.counter("fanout.buffer.dropped");
-        FanOutBuffer fanOutBuffer =
-                new FanOutBuffer(FANOUT_BUFFER_CAPACITY, fanOutDroppedCounter::increment);
-        Compactor compactor = new Compactor();
+        // Multi-Raft Phase 1 — Seam G1: PER-SHARD fan-out. Build one FanOutBuffer + Compactor per shard
+        // and register each group's commit listener (ConfigDelta -> publish + addSnapshot) on ITS OWN
+        // state machine, so each shard's committed stream feeds its own buffer ON ITS OWN OWNER THREAD —
+        // the FanOutBuffer single-writer invariant holds per shard with NO lock, because apply ->
+        // notifyListeners runs only on the group's owner thread (R-01'). Per-shard sequences + cursor
+        // vector; NO fabricated cross-shard global order (ADR-D-A/D-C; see
+        // docs/multiraft/phase1/seam-g1-fanout-merge.md). The shared dropped counter is LongAdder-backed
+        // (thread-safe) and stays the aggregate fanout_buffer_dropped_total. At N=1 this builds exactly
+        // ONE buffer + compactor for the primary group — byte-identical to the prior single-buffer wiring.
+        ShardedFanOut shardedFanOut =
+                registerShardedFanOut(runtimes, clock, fanOutDroppedCounter, FANOUT_BUFFER_CAPACITY);
+        Map<Integer, FanOutBuffer> shardFanOutBuffers = shardedFanOut.buffers();
+        Map<Integer, Compactor> shardCompactors = shardedFanOut.compactors();
+        // The primary group's buffer + compactor are the home for the not-yet-sharded edge endpoint, the
+        // ConfigdServer fields, and the fanOutBuffer()/compactor()/replaySource() accessors. At N=1 this
+        // is the only group => byte-identical; at N>1 the per-shard sources serve the v2 sharded edge
+        // client (handoff §5) and the edge endpoint warns it serves the primary shard only.
+        FanOutBuffer fanOutBuffer = shardFanOutBuffers.get(DEFAULT_RAFT_GROUP);
+        Compactor compactor = shardCompactors.get(DEFAULT_RAFT_GROUP);
         WatchService watchService = new WatchService(clock);
         SubscriptionManager subscriptionManager = new SubscriptionManager();
         // S6/WS-A: subscribed-prefix capacity gauge (sampled snapshot; benign-race size() read).
@@ -601,34 +670,15 @@ public final class ConfigdServer {
             }
         });
 
-        // Register state machine listener: build ConfigDelta and feed fan-out buffer + compactor
-        stateMachine.addListener((mutations, version) -> {
-            long fromVersion = version - 1;
-            byte[] signature = stateMachine.lastSignature();
-            // F-0052: attach the monotonic epoch + nonce bound into the
-            // signature so edges can reject replays.
-            long epoch = stateMachine.lastEpoch();
-            byte[] nonce = stateMachine.lastNonce();
-            ConfigDelta delta;
-            if (signature != null && nonce != null) {
-                delta = new ConfigDelta(fromVersion, version, mutations, signature, epoch, nonce);
-            } else {
-                delta = new ConfigDelta(fromVersion, version, mutations, signature);
-            }
-            // §4.6 / ADR-0034 + ADR-0035: publish the full commit notification.
-            // `version` is the ADR-0033 applied-mutation seq S (the listener fires
-            // only on mutating applies). The commit timestamp is the leader's wall
-            // clock captured here on the apply thread — the single authoritative
-            // §2 staleness clock ADR-0035 redefined (NOT a per-entry HLC). This
-            // runs on the leader's apply path, so `clock.currentTimeMillis()` is
-            // the leader-assigned commit timestamp the edge measures staleness
-            // against.
-            long commitTimestampMillis = clock.currentTimeMillis();
-            fanOutBuffer.publish(new CommitNotification(version, commitTimestampMillis, delta));
-            compactor.addSnapshot(configStore.snapshot());
-        });
+        // (The per-group fan-out commit listeners — ConfigDelta -> publish + addSnapshot, one per shard
+        // on its own buffer/compactor — were registered above by registerShardedFanOut. See Seam G1.)
 
-        // Register state machine listener: feed WatchService for push notifications
+        // Register state machine listener: feed WatchService for push notifications. Bound to the PRIMARY
+        // group ONLY. WatchService is single-threaded by contract (no synchronization) and uses a single
+        // version cursor that collides across shards, and it has no production register() path (dormant
+        // infrastructure). Binding it to the primary keeps onConfigChange on ONE owner thread (no race at
+        // N>1) and is byte-identical at N=1. Cross-shard watch aggregation (per-shard watch + a cursor
+        // vector, ticked per-owner) rides the v2 sharded edge client — Seam G1 / handoff §5.
         stateMachine.addListener(watchService::onConfigChange);
 
         // ---------------------------------------------------------------
@@ -893,6 +943,9 @@ public final class ConfigdServer {
         // ---------------------------------------------------------------
         io.configd.server.fanout.FanOutEndpoint fanOutServer = null;
         if (config.edgeEnabled()) {
+            // (Seam G1/G4: N>1 + the edge endpoint without -Dconfigd.edge.allowPartialShardView was already
+            // refused fail-fast at the top of start(), so here shardCount==1 OR the operator opted into the
+            // primary-shard-only view. The edge endpoint binds the primary shard's buffer/replay below.)
             io.configd.server.fanout.RegistryFanOutSessionMetrics fanOutMetrics =
                     new io.configd.server.fanout.RegistryFanOutSessionMetrics(metricsRegistry);
             io.configd.distribution.ReplaySource edgeReplaySource =
@@ -1003,10 +1056,15 @@ public final class ConfigdServer {
                         watchService.tick();
                         plumtreeNode.tick();
 
-                        // Compact snapshot history every ~10 seconds.
+                        // Compact snapshot history every ~10 seconds. Seam G1: compact EVERY shard's
+                        // compactor (Compactor.compact() is thread-safe, so the owner[0] singleton rider
+                        // may compact sibling shards' history off their owner threads). At N=1 this is the
+                        // single primary compactor — byte-identical to the prior single-compactor rider.
                         tickCount[0]++;
                         if (tickCount[0] % COMPACTION_INTERVAL_TICKS == 0) {
-                            compactor.compact();
+                            for (Compactor shardCompactor : shardCompactors.values()) {
+                                shardCompactor.compact();
+                            }
                         }
                     }
                 } catch (Throwable t) {
@@ -1235,20 +1293,24 @@ public final class ConfigdServer {
      *   <li>reads {@code configd.raft.shardCount} (default {@code 1} — a single group, byte-identical to
      *       today; system property, consistent with the other {@code configd.raft.*} tunables);</li>
      *   <li>validates {@code 1 <= N <= }{@link #MAX_SHARD_COUNT} (a clear error otherwise);</li>
-     *   <li><b>TEMPORARY scaffold</b> — until the C3 N-group consensus loop lands, the server registers a
-     *       single group, so {@code N>1} is refused LOUDLY rather than routing writes to groups that do
-     *       not exist (silent corruption — charter §2). N=1 is unaffected. This guard is removed when the
-     *       N-group wiring ships;</li>
      *   <li>enforces fixed-at-deploy via {@link #enforceFixedShardCount} (persist on first boot, reject a
-     *       later changed N). Ordered AFTER the {@code N>1} guard so a rejected {@code N>1} boot never
-     *       persists a marker.</li>
+     *       later changed N — a loud reshard error rather than silent mis-routing).</li>
      * </ol>
-     * Package-private static so {@code ShardCountConfigTest} can drive it directly.
+     *
+     * <p><b>Multi-Raft Phase 1 — Seam G4 (the switch-flip):</b> the temporary {@code N>1} boot refusal was
+     * REMOVED here once the N-group production wiring was proven correct end-to-end (Seams C/D/E/F/G) and
+     * the integrated N&gt;1 sweep went green (gate-phase1 {@code wiring-g} — charter §3.4). {@code N>1} now
+     * boots: every shard is a registered Raft group (Seam C), writes/reads route per shard (Seam D), each
+     * shard has its own fan-out (Seam G1), shared-node isolation is proven (Seam G2), and every shared
+     * node-level dependency is thread-safe at N&gt;1 (the Seam-G audit). {@code N=1} (the default) is
+     * unchanged and byte-identical to before the flip.
+     *
+     * <p>Package-private static so {@code ShardCountConfigTest} can drive it directly.
      *
      * @param dataDir the data directory (holds the fixed-at-deploy marker)
      * @return the validated shard count {@code N}
      * @throws IllegalArgumentException if {@code N} is out of range
-     * @throws IllegalStateException    if {@code N>1} (temporary) or a reshard is attempted
+     * @throws IllegalStateException    if a reshard is attempted (configured N differs from the persisted N)
      */
     static int resolveShardCount(Path dataDir) {
         int shardCount = Integer.getInteger("configd.raft.shardCount", 1);
@@ -1258,14 +1320,9 @@ public final class ConfigdServer {
                             + " — static-N multi-Raft; N is a deploy-time constant fixed for the life of"
                             + " the deployment (changing it requires a manual reshard).");
         }
-        if (shardCount > 1) {
-            throw new IllegalStateException(
-                    "configd.raft.shardCount=" + shardCount + " (N>1) is configured, but the N-group"
-                            + " server wiring is not enabled in this build (only the single default group"
-                            + " is registered). Multi-shard routing would send writes to unregistered"
-                            + " groups. Run with N=1 (the default) until the multi-Raft production wiring"
-                            + " ships. The sharding logic is sim-verified (docs/multiraft/phase1).");
-        }
+        // Seam G4: the N>1 boot refusal is GONE — N>1 is fully wired + verified. fixed-at-deploy still
+        // applies (now to N>1 too): the first boot persists N; a later boot with a different N is a loud
+        // reshard rejection, never silent mis-routing of already-committed keys.
         enforceFixedShardCount(shardCount, dataDir);
         return shardCount;
     }
@@ -1498,6 +1555,97 @@ public final class ConfigdServer {
                 return max;
             }
         };
+    }
+
+    /**
+     * Multi-Raft Phase 1 — Seam G1: the per-shard fan-out runtime — one {@link FanOutBuffer} and one
+     * {@link Compactor} per shard, returned keyed by group id. The primary group's
+     * entries (gid {@link #DEFAULT_RAFT_GROUP}) are the home for the not-yet-sharded edge endpoint and the
+     * server's {@code fanOutBuffer()}/{@code compactor()}/{@code replaySource()} accessors.
+     *
+     * @param buffers    gid -&gt; that shard's {@link FanOutBuffer} (the §4.6 {@link CommitNotificationSource})
+     * @param compactors gid -&gt; that shard's snapshot-retention {@link Compactor}
+     */
+    record ShardedFanOut(Map<Integer, FanOutBuffer> buffers, Map<Integer, Compactor> compactors) {
+    }
+
+    /**
+     * Multi-Raft Phase 1 — Seam G1: builds the PER-SHARD fan-out and registers each group's commit
+     * listener. For every shard it creates a {@link FanOutBuffer} (sharing the aggregate
+     * {@code fanout.buffer.dropped} counter) + a {@link Compactor}, and registers a
+     * {@link ConfigStateMachine.ConfigChangeListener} on THAT group's state machine that, on each mutating
+     * apply, builds the {@link ConfigDelta} (with the F-0052 signature/epoch/nonce when present), publishes
+     * a {@link CommitNotification} (seq = the shard's applied-mutation version; commit timestamp = the
+     * leader wall clock captured on the apply thread — ADR-0035) to THAT shard's buffer, and adds the
+     * shard's snapshot to THAT shard's compactor.
+     *
+     * <p><b>Thread-safety (Seam-G §3.3):</b> a group's apply -&gt; {@code notifyListeners} runs only on
+     * that group's owner thread (R-01'), so each per-shard buffer/compactor has exactly ONE writer — the
+     * {@link FanOutBuffer} single-writer invariant holds per shard with NO lock, even when several groups
+     * share an owner thread (they write their distinct buffers serially on that one thread). The shared
+     * dropped counter is {@code LongAdder}-backed (thread-safe). The listener touches only its own group's
+     * state machine + store — no cross-group {@link RaftNode} access.
+     *
+     * <p><b>N=1 byte-identity:</b> at a single shard this builds exactly one buffer + compactor for the
+     * primary group and registers exactly the prior single fan-out listener (identical delta/notification/
+     * publish/addSnapshot logic) — behaviourally identical to the pre-G1 single-buffer wiring.
+     *
+     * <p>Per-shard sequences + cursor vector; NO fabricated cross-shard global order (ADR-D-A/D-C). See
+     * {@code docs/multiraft/phase1/seam-g1-fanout-merge.md}. Package-private static so
+     * {@code ShardedFanOutTest} can drive it directly without standing up a whole server.
+     *
+     * @param runtimes       the per-shard runtimes (each supplies its group id, state machine, and store)
+     * @param clock          the wall clock for the ADR-0035 commit timestamp
+     * @param droppedCounter the aggregate {@code fanout.buffer.dropped} counter (shared across shards)
+     * @param bufferCapacity the per-shard ring capacity ({@link #FANOUT_BUFFER_CAPACITY})
+     * @return the per-shard {@link ShardedFanOut} (buffers + compactors), keyed by group id
+     */
+    static ShardedFanOut registerShardedFanOut(
+            List<RaftGroupRuntime> runtimes, Clock clock,
+            MetricsRegistry.Counter droppedCounter, int bufferCapacity) {
+        Map<Integer, FanOutBuffer> buffers = new java.util.LinkedHashMap<>();
+        Map<Integer, Compactor> compactors = new java.util.LinkedHashMap<>();
+        for (RaftGroupRuntime rt : runtimes) {
+            // Defensive (mirrors the primary-selection guard): a duplicate gid would orphan a buffer
+            // whose listener writes a buffer no accessor exposes. Unreachable with StaticShardMap's
+            // unique [0,N), but fail loud if a future ShardMap returns a duplicate.
+            if (buffers.containsKey(rt.groupId())) {
+                throw new IllegalStateException(
+                        "duplicate shard group id " + rt.groupId() + " in the bring-up runtimes — each"
+                                + " group must have exactly one fan-out buffer");
+            }
+            FanOutBuffer fanOut = new FanOutBuffer(bufferCapacity, droppedCounter::increment);
+            Compactor shardCompactor = new Compactor();
+            buffers.put(rt.groupId(), fanOut);
+            compactors.put(rt.groupId(), shardCompactor);
+            // Capture THIS group's state machine + store (final per-iteration so the listener binds to its
+            // own shard, never a loop-variable race).
+            ConfigStateMachine sm = rt.stateMachine();
+            VersionedConfigStore store = rt.configStore();
+            sm.addListener((mutations, version) -> {
+                long fromVersion = version - 1;
+                byte[] signature = sm.lastSignature();
+                // F-0052: bind the monotonic epoch + nonce into the signature so edges can reject replays.
+                long epoch = sm.lastEpoch();
+                byte[] nonce = sm.lastNonce();
+                ConfigDelta delta;
+                if (signature != null && nonce != null) {
+                    delta = new ConfigDelta(fromVersion, version, mutations, signature, epoch, nonce);
+                } else {
+                    delta = new ConfigDelta(fromVersion, version, mutations, signature);
+                }
+                // `version` is this shard's ADR-0033 applied-mutation seq S (the listener fires only on
+                // mutating applies). The commit timestamp is the leader's wall clock on the apply thread —
+                // the single authoritative §2 staleness clock (ADR-0035), captured per shard.
+                long commitTimestampMillis = clock.currentTimeMillis();
+                fanOut.publish(new CommitNotification(version, commitTimestampMillis, delta));
+                shardCompactor.addSnapshot(store.snapshot());
+            });
+        }
+        // Order-preserving immutable views (deterministic compact-rider / debug iteration by gid).
+        return new ShardedFanOut(
+                java.util.Collections.unmodifiableMap(buffers),
+                java.util.Collections.unmodifiableMap(compactors));
     }
 
     /**
@@ -1998,7 +2146,9 @@ public final class ConfigdServer {
     }
 
     /**
-     * Returns the fan-out buffer for delta distribution.
+     * Returns the fan-out buffer for delta distribution. Seam G1: at {@code N>1} this is the PRIMARY
+     * shard's buffer only; the per-shard sources (one buffer per shard) are the cursor-vector view the
+     * v2 sharded edge client consumes. At {@code N=1} it is the single buffer.
      */
     public FanOutBuffer fanOutBuffer() {
         return fanOutBuffer;
@@ -2030,7 +2180,8 @@ public final class ConfigdServer {
     /**
      * §4.6 / ADR-0034: the commit-notification boundary Session 3's data plane
      * consumes. Backed by {@link #fanOutBuffer()} (the bounded hot-path cache);
-     * cursor-based, replayable, with the drop-oldest overflow contract.
+     * cursor-based, replayable, with the drop-oldest overflow contract. Seam G1: at {@code N>1} this is
+     * the PRIMARY shard only (per-shard sources are the cursor-vector v2 client view).
      */
     public CommitNotificationSource commitNotificationSource() {
         return fanOutBuffer;
@@ -2039,7 +2190,9 @@ public final class ConfigdServer {
     /**
      * §4.6 / ADR-0034: the authoritative recovery seam a consumer replays from
      * on a {@link CommitNotificationSource#readSince(long)} GAP. A
-     * snapshot-equivalent replay over the live config store.
+     * snapshot-equivalent replay over the live config store. Seam G1: at {@code N>1} this is the PRIMARY
+     * shard's store only; each shard's per-shard replay is derived on demand from its own
+     * {@code configStore()::snapshot} (a per-shard cursor vector — the v2 sharded edge client).
      */
     public ReplaySource replaySource() {
         return new SnapshotReplaySource(stateMachine.store()::snapshot);
