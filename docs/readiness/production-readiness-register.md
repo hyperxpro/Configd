@@ -214,7 +214,7 @@ recommendation for the go/no-go, **not** a decision.
 | 4.5 Slow-consumer governor / backpressure | ✅ | `fanout/SlowConsumerGovernor` + `SubscriberOverflowDemotionTest`, `QuarantineReBootstrapTest` | — |
 | 4.6 Signed-chain streaming (ADR-0038) | ✅ | `FanOutSessionCore`; `FrameBatchingChainIntegrityTest`, `FullChainDeliveryTest` | — |
 | 4.7 Edge frame wire format | ✅ | `EdgeFrameCodec` + golden/property/fuzz/boundary tests | — |
-| 4.8 **Watches** | 🟡 | server-internal only: fed `ConfigdServer.java:568`, ticked `:913`; `WatchServiceTest`/`WatchServicePropertyTest` | **Δ ✅→🟡 — NO client-facing API** (no HTTP/SSE route, no wire frame), **NO production registrant** (zero watchers → ticks to nobody), accessor test-only |
+| 4.8 **Watches** | 🟡 | server-internal only: fed `ConfigdServer.java:568`, ticked `:913`; `WatchServiceTest`/`WatchServicePropertyTest` | **Δ ✅→🟡 — NO client-facing API** (no HTTP/SSE route, no wire frame), **NO production registrant** (zero watchers → ticks to nobody), accessor test-only. **DECIDED 2026-06-27: client-facing watches are v2** (operator); v1 = polling / delta-apply only — documented in known-limitations / README / Integration-Guide |
 | 4.9 Subscription manager / prefix subs (ADR-0020) | ✅ | `SubscriptionManager` wired `:852`; `SubscriptionManagerTest`; edge `PrefixStorageFilter` | — |
 | 4.10 Rollout controller (ADR-0008) | 🟡 | constructed `:526` + accessor `:1565` | **Parked library — zero `rolloutController.` call sites in main**, no rollout endpoint |
 | 4.11 Cross-region / WAN replication | ⛔ | single-region per ADR-0030/ADR-0024 (Accepted, defers per-DC Raft to v0.2); WAN leg modeled only in `EdgeStalenessDistributionLoadSimTest` | no cross-region path in code; WAN staleness 🔬 unmeasured |
@@ -286,7 +286,7 @@ recommendation for the go/no-go, **not** a decision.
 | Item | Status | Evidence | Gap / note |
 |---|---|---|---|
 | 8.1 At-rest **integrity** HMAC (ADR-0042 Accepted) | ✅ | `IntegrityEnvelope.java:104` keyed HMAC-SHA256 + CRC32C fail-closed; gate-7 `SnapshotIntegrityTest`/`WalRecordIntegrityTest`/`DurableRaftStateIntegrityTest` | **integrity / tamper-detection, NOT encryption** |
-| 8.2 **Encryption at rest** | ❌ | **no `javax.crypto.Cipher`/AES anywhere in `src/main`**; `security-report.md` MAJOR-4 "config values plaintext, no encryption at rest"; **RR-098 OPEN** | config (incl. `secure/` keys) plaintext in control-plane HAMT/WAL/snapshot. **A registered gap, not a decided ⛔ non-goal.** (edge store is in-memory → bounded exposure) |
+| 8.2 **Encryption at rest** | ❌ → v2 | **no `javax.crypto.Cipher`/AES anywhere in `src/main`**; `security-report.md` MAJOR-4 "config values plaintext, no encryption at rest"; **RR-098 OPEN → v2** | config (incl. `secure/` keys) plaintext in control-plane HAMT/WAL/snapshot. **DECIDED 2026-06-27: accept-as-v2** (operator). `secure/` is a read-*freshness* class, **NOT** confidentiality; "do not store secrets" documented (known-limitations / README / Integration-Guide / consistency-contract). (edge store is in-memory → bounded exposure) |
 | 8.3 TLS / mTLS in transit | ✅ | `NettyRaftTransport:301` + `NettyFanOutServer:215` `setNeedClientAuth(true)`; fail-closed `ConfigdServer:345`; gate-7 `RaftTransportMtlsAttackTest`, `EdgeTransportSanMismatchTest` | mTLS required **when TLS configured**, but **TLS is off-by-default** (plaintext single-node); admin HTTP is server-TLS+Bearer, not mTLS |
 | 8.4 Config signing (sign-or-fail-close, ADR-0027 Accepted) | ✅ | `ConfigStateMachine.signCommand` re-throws on failure (`:620`); Ed25519 `ConfigSigner:51`; `ConfigStateMachineTest.signFailureFailsClose` | — |
 | 8.5 Signing-key co-location (D-1) | ✅ | `enforceSigningKeyNotColocated:1066` default `SecurityException`; `D1FailClosedTest`; ADR-0043 | **Δ 🟡→✅.** Caveat: ADR-0043 claims default-relocation but code still defaults to `dataDir` → **server refuses to boot out-of-box** (secure, not as ADR describes); no gate-7.5; HKDF crypto-review pending |
@@ -323,14 +323,14 @@ recommendation for the go/no-go, **not** a decision.
 
 | Item | Status | Evidence | Gap / note |
 |---|---|---|---|
-| 11.1 **Single Raft group topology** | ⛔ † | `adr-0030` governs `consistency-contract.md` §5; code-verified single-group | **† ADR-0030 Status = "Proposed (under review). Not yet Accepted"** — the structural decision the whole contract rests on is **formally unratified** |
+| 11.1 **Single Raft group topology** | ⛔ | `adr-0030` governs `consistency-contract.md` §5; code-verified single-group | **ADR-0030 ratified → Accepted (2026-06-27, pre-EC2 cleanup)** with a reality-update note recording the post-sharding deltas. The structural decision the contract rests on is now formally ratified |
 | 11.2 Java 25 + preview (non-LTS) | 🟡 | **ADR-0022 Accepted**; records non-LTS + `--enable-preview` + "no long-term vendor support" | carried **accepted risk** (preview features can break on JDK upgrade) |
 | 11.3 Maven build | ✅ | **ADR-0021 Accepted (2026-04-11)** | — |
 | 11.4 Netty transport (Epoll auto-default / io_uring opt-in) | ✅ | **ADR-0043 Accepted**; records 2026-06-26 Epoll-default flip | — |
 | 11.5 Durability Level 0/1, no early-ack | ⛔ | `DL-P1-08` + `handoff.md:123`; grep finds **no early-ack path** in consensus/replication/server | — |
 | 11.6 Multi-region write topology deferred | ⛔ | **ADR-0024 Accepted**: "v0.1 supports exactly one DC per cluster" | — |
 | 11.7 BATCH API not wired (CM-033) | ❌ | `HttpApiServer` exposes only `GET\|PUT\|DELETE /v1/config/{key}` — no BATCH route; contract §1 "PLANNED, not yet wired" | absent; documented; guard + single-shard atomic-BATCH semantics designed |
-| 11.8 Watches scope decision | 🟡 | ADR-0006/0018 (Accepted) adopt event-driven push "replacing watches"; live `WatchService` is that push impl | **no ADR scopes a v1 client watch API**; confusing naming; ADR-0006/0018 near-duplicates |
+| 11.8 Watches scope decision | 🟡 → v2 | ADR-0006/0018 (Accepted) adopt event-driven push "replacing watches"; live `WatchService` is that push impl | **no ADR scopes a v1 client watch API**; confusing naming; ADR-0006/0018 near-duplicates. **DECIDED 2026-06-27: client-facing watches are v2** (operator) — v1 = polling / delta-apply only |
 | 11.9 Snapshot 4 MiB cap / chunked deferred | 🟡 | `known-limitations.md:76`; `RaftMessageCodec.java:74` enforced | followers can't bootstrap from >4 MiB snapshot in v1 |
 | 11.10 Wire epoch field deferred (DL-P1-04) | 🟡 | in-memory `ShardMap.epoch()` returns 0; wire field deferred | **OPEN operator decision** (reserve-now vs v2 wire break) |
 | 11.11 Write-availability target renegotiated | ⛔ | **ADR-0031 Accepted, option (a)** (ratified by owner): keep 99.999% flat target; **sub-second auto region-failover = a GA BLOCKER** | declares an open GA blocker |
@@ -340,8 +340,8 @@ recommendation for the go/no-go, **not** a decision.
 
 | # | Open call | Evidence today | Decision needed |
 |---|---|---|---|
-| D-1 | **Ratify or revise ADR-0030 (topology) + ADR-0032 (linearizability harness)** | both Status = *Proposed*; consistency contract + linz proof depend on them | ratify before v1 (cheap), or record why Proposed is acceptable |
-| D-2 | **Encryption at rest: implement, or accept-as-v2** | 8.2 ❌; RR-098 OPEN; MAJOR-4; no Cipher in main | decide based on data sensitivity / compliance — currently undecided, not a non-goal |
+| D-1 | **RESOLVED 2026-06-27 — ADR-0030 + ADR-0032 ratified (Accepted)** | both were *Proposed*; now **Accepted** with reality-update notes (pre-EC2 cleanup) | ✅ done — consistency contract + linz proof now rest on Accepted ADRs |
+| D-2 | **DECIDED 2026-06-27 — encryption at rest = accept-as-v2** (operator) | 8.2 ❌; RR-098 OPEN → v2 | ✅ decided — v1 ships without at-rest encryption; `secure/` = freshness-not-confidentiality + "do not store secrets" documented (known-limitations / README / Integration-Guide / contract); RR-098 tracked to v2 |
 | D-3 | **Security on-by-default vs operator-config** | auth/TLS/audit/replay off-by-default (8.3/8.6/8.8/8.9); signing-key already refuses-to-boot | choose secure-by-default (or refuse-to-boot-insecure) + document required operator config |
 | D-4 | **Empirical-validation / burn-in posture** | 9.7 soak incomplete; 7.5 drills never run; 11.12 | accept the "first-30-days = burn-in" contract, or gate v1 on a completed soak + DR drills |
 | D-5 | **Wire epoch reservation (DL-P1-04)** | in-memory epoch present; wire field deferred | reserve now (one v1 `WIRE_VERSION` bump) vs accept a v2 wire break |

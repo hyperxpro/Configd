@@ -34,11 +34,19 @@ import static org.junit.jupiter.api.Assertions.*;
  * Integration tests for {@link ConfigdServer}.
  * <p>
  * Each test uses a temporary data directory that is cleaned up automatically.
- * All server tests are guarded by a 10-second timeout to prevent hangs.
+ * All server tests are guarded by a 60-second timeout to prevent hangs (raised from 10s for the
+ * credit-throttling 2-vCPU box — see the note on the {@code @Timeout} annotation below).
  * The API port is set to 0 (ephemeral) so tests can run in parallel without
  * port conflicts.
  */
-@Timeout(10)
+// Hang ceiling raised 10s → 60s (2026-06-27, pre-EC2 cleanup). This 2-vCPU box credit-throttles, and a
+// cold-JVM server boot does real CPU work (class-load, Netty/TLS init, Raft groups, HTTP, snapshot replay).
+// Measured robust at 16-burner oversubscription (serverStartsAndStopsCleanly 3/3 PASS, boot method ≪ 10s),
+// but true credit-exhaustion is more severe than burner-oversubscription (it cuts total CPU, not just
+// shares it), which is the documented "gate-4 boot timeout" risk. 60s is generous headroom that prevents a
+// boot false-fail without masking a real hang; fast wiring tests are unaffected and keytool-heavy tests
+// (e.g. find0050) keep their own larger method-level @Timeout overrides.
+@Timeout(60)
 class ConfigdServerTest {
 
     @TempDir

@@ -18,6 +18,11 @@ import java.util.Set;
  * confirmed. A stale "allow" on a revoked credential is unbounded damage, so the
  * safe failure is to refuse to answer.
  *
+ * <p><b>Freshness, not confidentiality (RR-098).</b> "strong-read" / {@code secure/} is a
+ * <em>freshness</em> guarantee, NOT encryption: values are stored plaintext at rest
+ * (integrity-checked only, ADR-0042). Configd does not encrypt data at rest in v1; do not store
+ * secrets here. At-rest encryption is a v2 item (RR-098).
+ *
  * <p>Key-class assignment here is <b>configuration-driven</b>: a key is a
  * strong-read key iff it starts with one of a configured set of prefixes
  * (default {@code secure/}). This is the minimal, testable enforcement seam for

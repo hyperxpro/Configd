@@ -2,7 +2,46 @@
 
 ## Status
 
-**Proposed** (under review). Not yet Accepted.
+**Accepted** (2026-06-27 — ratified in the pre-EC2 cleanup). Was **Proposed** (under review) at authoring
+(2026-06-06).
+
+> **Ratification & reality-update note (2026-06-27).** The **core decision stands**: a single,
+> region-local, strongly-consistent Raft root for writes + asynchronous bounded-staleness edge fan-out,
+> and **reject global multi-region / hierarchical Raft *write* consensus** (the §Reasoning latency
+> arithmetic is unchanged). The `## Context`, `## Reasoning`, and `## Consequences` below describe the
+> repository **as it was at authoring (2026-06-06)**; the following has changed since and is reconciled
+> here (the inline `file:line` references in those sections are therefore historical):
+>
+> - **"Registers exactly one Raft group" (Context, ~L27–31) is now historical.** The multi-Raft sharding
+>   that `adr-0023-multi-raft-sharding-deferred.md` deferred to v0.2 has since been **built** (sim-verified
+>   foundation merged; production server-wiring landed; the N>1 production-boot switch lands via the
+>   multi-Raft workstream). Sharding partitions the **region-local root** by hash-within-scope; it does
+>   **not** introduce WAN / multi-region write consensus, so it is exactly the "partition the root, not the
+>   regions" path this ADR endorsed in Rejected-Alternative #6, and is consistent with the core decision.
+>   **Default is N=1 (byte-identical to single-group)** and N=1 remains the validated v1 topology; N>1
+>   aggregate throughput is **unmeasured pending the EC2 N×knee measurement**.
+> - **The async fan-out is now WIRED (Session-3 edge data plane).** The point-7 / Consequences residual
+>   "async fan-out … UNWIRED" is **closed for wiring** (`FanOutServer`, the commit-notification stream,
+>   and the edge plane are all built and gated). End-to-end propagation/staleness **at scale** remains a
+>   **target, not yet measured** (the deferred EC2 soak) — that portion of the residual stands.
+> - **The thread-unsafe `RaftNode`/`ConfigStateMachine` integration race (point 6 / Risks) is FIXED** by
+>   the Phase-0 owner-thread re-threading (one owner thread per group; the `apply_owner_thread` tripwire,
+>   `consistency-contract.md §8`). The "no runtime invariant enforcement in production" risk is likewise
+>   closed — `InvariantMonitor` runs in production (`testMode=false` ⇒ metric + log; `consistency-contract.md §8`).
+> - **The §0.1 write-availability renegotiation is resolved:** `adr-0031` is now **Accepted**, so the
+>   "HUMAN RATIFICATION PENDING / stops for review before merge" caveat under §"SLO impact" is discharged.
+>   The single-region-root **full-region-loss** shortfall remains an accepted, documented residual (manual
+>   cutover; sub-second region failover deferred to the `adr-0024` v0.2 cross-DC bridge).
+> - **Naming honesty (cross-ref RR-098).** Amendment A1 / INV-1's `GLOBAL`/security key class (default
+>   prefix `secure/`) is a **read-freshness** guarantee (always-linearizable, fail-closed, never served
+>   stale) for security-*critical* decisions — it is **NOT** at-rest confidentiality/encryption. Configd
+>   does not encrypt data at rest in v1; see `docs/known-limitations.md` and `docs/consistency-contract.md §9`.
+>
+> **Open residuals (unchanged, honest):** full-region write availability is not five-nines (A2 covers
+> single-AZ loss automatically; full-region failover deferred to `adr-0024` v0.2); data residency deferred
+> with residual stated (A3); end-to-end propagation/staleness numbers are MODELED until the EC2
+> measurement; INV-1 (GLOBAL fail-closed) and INV-2 (residency deploy-time guardrail) remain Phase-B
+> obligations.
 
 Supersedes the *write-topology* portion of `adr-0015-multi-region-topology.md`
 (the global 5-voter cross-region Raft group + regional groups + closed-timestamp

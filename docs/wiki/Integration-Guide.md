@@ -2,6 +2,20 @@
 
 Configd is an embeddable library. This guide covers how to integrate each layer into your Java application.
 
+## Important v1 limitations (read first)
+
+- **No change-subscription / "watch" API.** v1 is **pull / delta-apply only**: read via
+  `LocalConfigStore.get(...)` (edge) or the control-plane `GET`, and apply deltas from your replication
+  layer (below). There is no client callback that fires on change — clients **poll** (edge reads are
+  in-process and sub-millisecond). Change-subscription (**watches**) is a **v2** feature.
+- **No encryption at rest.** Configd stores values **plaintext** (integrity-checked only — HMAC,
+  ADR-0042; **not** encrypted). The `secure/` key prefix is a **read-freshness** guarantee
+  (always-linearizable, fail-closed for security-critical keys), **not** confidentiality. **Do not store
+  secrets** (passwords, tokens, private keys) in Configd — use a dedicated secret manager and keep only
+  non-secret references here. At-rest encryption is a **v2** item (RR-098).
+
+See `docs/known-limitations.md` for the complete, current list.
+
 ## Choosing Your Integration Level
 
 | Level | Modules Needed | Use Case |
@@ -79,7 +93,10 @@ import io.configd.edge.StalenessTracker;
 
 StalenessTracker tracker = new StalenessTracker();
 
-// Call after each successful delta application
+// Call after each successful delta application. In real usage pass the LEADER-assigned
+// commit timestamp carried on the notification (ADR-0035 §2) — staleness is measured
+// against that frontier (ADR-0039); the local clock here is illustrative only and would
+// understate real data age on a quiet/lagging link.
 tracker.recordUpdate(store.currentVersion(), System.currentTimeMillis());
 
 // Check health
