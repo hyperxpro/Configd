@@ -1211,8 +1211,9 @@ public final class ConfigdServer {
      * changing {@code N} on an existing deployment requires a manual reshard (static-N; v2 adds dynamic
      * resharding — see {@code docs/multiraft/phase1}). This turns a reshard attempt into a LOUD,
      * fail-closed startup error instead of silently mis-routing already-committed keys to the wrong
-     * group. Idempotent: a matching marker is a no-op. The write is atomic (temp-then-rename) so a crash
-     * mid-write cannot leave a half-written marker that poisons the next boot.
+     * group. Idempotent: a matching marker is a no-op. The write is crash-durable (temp + fsync, atomic
+     * rename, dir fsync — mirroring {@code FileStorage.put}) so a crash can neither leave a torn marker
+     * (poisoning) nor lose it (a silent reset of the guard).
      *
      * <p>Package-private static so {@code ShardCountConfigTest} can drive it directly without standing up
      * a server.
@@ -1247,13 +1248,31 @@ public final class ConfigdServer {
                 }
                 return; // matches — fixed-at-deploy honoured
             }
-            // First boot for this data dir: record N atomically (write-temp-then-rename).
+            // First boot for this data dir: record N CRASH-DURABLY — write temp + fsync, atomic rename,
+            // fsync the directory — mirroring FileStorage.put so a crash in the OS writeback window cannot
+            // LOSE the marker (not just "cannot leave a torn write"). The marker is the durability backbone
+            // of the fixed-at-deploy safety guard, so it gets the same fsync discipline as Raft state.
             Path tmp = dataDir.resolve(SHARD_COUNT_MARKER + ".tmp");
-            Files.writeString(tmp, Integer.toString(shardCount), java.nio.charset.StandardCharsets.UTF_8);
+            byte[] bytes = Integer.toString(shardCount).getBytes(java.nio.charset.StandardCharsets.UTF_8);
+            try (java.nio.channels.FileChannel ch = java.nio.channels.FileChannel.open(tmp,
+                    java.nio.file.StandardOpenOption.CREATE,
+                    java.nio.file.StandardOpenOption.WRITE,
+                    java.nio.file.StandardOpenOption.TRUNCATE_EXISTING)) {
+                java.nio.ByteBuffer buf = java.nio.ByteBuffer.wrap(bytes);
+                while (buf.hasRemaining()) {
+                    ch.write(buf);
+                }
+                ch.force(true); // fsync data + metadata before the rename
+            }
             try {
                 Files.move(tmp, marker, java.nio.file.StandardCopyOption.ATOMIC_MOVE);
             } catch (java.nio.file.AtomicMoveNotSupportedException amns) {
                 Files.move(tmp, marker, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+            }
+            // fsync the directory so the rename itself is durable (mirrors FileStorage.sync()).
+            try (java.nio.channels.FileChannel dir = java.nio.channels.FileChannel.open(
+                    dataDir, java.nio.file.StandardOpenOption.READ)) {
+                dir.force(true);
             }
         } catch (java.io.IOException e) {
             throw new RuntimeException("Failed to read/write shard-count marker " + marker, e);

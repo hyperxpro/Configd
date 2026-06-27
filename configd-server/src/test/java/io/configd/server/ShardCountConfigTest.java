@@ -83,14 +83,20 @@ class ShardCountConfigTest {
 
     @Test
     void nGreaterThanOneIsRefusedWhileWiringDormant() {
-        System.setProperty(PROP, "4");
-        IllegalStateException e =
-                assertThrows(IllegalStateException.class, () -> ConfigdServer.resolveShardCount(dataDir));
-        assertTrue(e.getMessage().contains("N>1"), () -> "guard should explain N>1 is not wired: " + e.getMessage());
-        // CRITICAL: a refused N>1 boot must NOT poison the data dir with an N>1 marker — a later N=1
-        // boot would then be rejected as a "reshard". The guard runs BEFORE the marker is persisted.
-        assertFalse(Files.exists(dataDir.resolve(MARKER)),
-                "refused N>1 boot must not persist a marker (else it poisons a later N=1 boot)");
+        // Cover the FULL forbidden band, especially the BOUNDARY value N=2 (a `> 1` → `> 2` mutation of
+        // the guard would route N=2 to an unregistered group while leaving an N=4-only test green —
+        // red-team MEDIUM) and the in-range ceiling N=16 (refused by the N>1 guard, not the range check).
+        for (int n : new int[] {2, 4, 16}) {
+            System.setProperty(PROP, Integer.toString(n));
+            IllegalStateException e = assertThrows(IllegalStateException.class,
+                    () -> ConfigdServer.resolveShardCount(dataDir), () -> "N=" + n + " must be refused");
+            assertTrue(e.getMessage().contains("N>1"),
+                    () -> "guard should explain N>1 is not wired (N=" + n + "): " + e.getMessage());
+            // CRITICAL: a refused N>1 boot must NOT poison the data dir with an N>1 marker — a later N=1
+            // boot would then be rejected as a "reshard". The guard runs BEFORE the marker is persisted.
+            assertFalse(Files.exists(dataDir.resolve(MARKER)),
+                    "refused N=" + n + " boot must not persist a marker (else it poisons a later N=1 boot)");
+        }
         // Prove it: a subsequent default (N=1) boot on the same data dir succeeds.
         System.clearProperty(PROP);
         assertEquals(1, ConfigdServer.resolveShardCount(dataDir));

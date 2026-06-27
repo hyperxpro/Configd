@@ -14,7 +14,7 @@
 | Seam | Charter step | Status | N=1 identity | Evidence |
 |---|---|---|---|---|
 | **A — C4a config N-selection** | Step 1 | ✅ DONE | preserved | `ShardCountConfigTest` 8/0; `ConfigdServerTest` 22/0 (boot+restart) |
-| **B — adapter groupId fix** | Step 3 | ⏳ | — | — |
+| **B — adapter inbound groupId demux** | Step 3 (inbound) | ✅ DONE, four-way | preserved | `RaftInboundDemuxTest` 2/0; `NettyConsensusLivenessTest` 3/0; loopback+marshalling+owner-net+throwable all green |
 | **C — N-group consensus loop** | Step 2 | ⏳ | — | — |
 | **D — write/read routing + guard** | Step 4 | ⏳ | — | — |
 | **E — per-shard observability** | Step 5 | ⏳ | — | — |
@@ -48,6 +48,39 @@ poison the next boot. **Marker safety:** `FileStorage` resolves fixed key-based 
 (`<key>.dat`/`<logName>.wal`) and never enumerates the data dir, so the marker is inert additive
 metadata — the Raft WAL/snapshot bytes are unchanged (N=1 byte-identity preserved). Changing N is the v2
 dynamic-resharding gap — DOCUMENTED here and in the error message. *Reversible: delete the marker.*
+
+### DL-W-04b — Marker is crash-DURABLE (fsync), after review
+Both four-way reviewers flagged that the original atomic temp-then-rename prevented *poisoning* (a torn
+marker) but not *loss* (a crash in the OS writeback window could erase the rename, silently resetting the
+guard). `enforceFixedShardCount` now writes temp + `force(true)`, atomic-renames, then fsyncs the data
+dir — the exact `FileStorage.put` discipline used for Raft persistent state. The guard is now as durable
+as the data it protects. *Reversible: yes.*
+
+### DL-W-06 — Seam B = inbound demux only; outbound per-group adapters deferred to Seam C
+The DL-P1-06 adapter groupId fix has two halves. The INBOUND demux (route on `frame.groupId()`) is
+independent, N=1-byte-identical, and unit-testable now, so it lands in Seam B. The OUTBOUND half ("one
+adapter per group, each stamped with its gid") is intrinsic to building N transports in the C3 loop and
+is a no-op at N=1 (the single adapter stamps 0), so it is built in Seam C. Both reviewers confirmed the
+split is safe: the inbound/outbound inconsistency can only manifest at N>1, which is refused at boot
+until Seam C. *Reversible: yes.*
+
+### Four-way review of Seam A+B (DL-P1 charter §3)
+- **Diff-review (java-distinguished-engineer): APPROVE-WITH-NITS.** No blockers; N=1 byte-identity
+  confirmed for both commits; one SHOULD-FIX (marker durability — DONE, DL-W-04b); nits accepted.
+- **Red-team (redteam-auditor): SHIP-WITH-FIXES.** No CRITICAL/HIGH; could not break misrouting,
+  hostile-groupId safety, RR-008 throwable surfacing, N=1 identity, or guard-before-write ordering.
+  - [MEDIUM] test-vacuity (N=2 boundary untested) → FIXED (`nGreaterThanOneIsRefusedWhileWiringDormant`
+    now sweeps {2, 4, 16}).
+  - [LOW] marker fsync → FIXED (DL-W-04b).
+  - [LOW] fixed `.tmp` name multi-writer race → ACCEPTED/DEFERRED: only matters for concurrent boots
+    with *different* N, which is an N>1 (Seam C) concern and subsumed by the pre-existing "no boot lock"
+    gap (FileStorage takes no lock either). Revisit with the boot-lock work.
+  - [LOW] `Integer.getInteger` swallows malformed config → ACCEPTED: matches the established
+    `configd.raft.*` idiom (every tunable) and fails to the safe byte-identical default N=1; diverging
+    only for shardCount would be inconsistent.
+  - [INFO] CRC32C is a checksum not a MAC, so the demux branches on attacker-influenceable `groupId` →
+    the demux handles every hostile gid safely (drop); **carry to EC2 go/no-go: run the Raft transport
+    with mTLS + client auth** (already supported, `TcpRaftTransport setNeedClientAuth(true)`).
 
 ### DL-W-05 — Temporary `N>1` startup guard until the C3 N-group loop lands
 While the server still registers a single group (pre-Seam-C), `resolveShardCount` refuses `N>1` LOUDLY
