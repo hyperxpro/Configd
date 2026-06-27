@@ -124,7 +124,7 @@ configured. The default path does not regress.
 
 ## 7. Decisions + provenance
 
-All autonomous decisions are logged in `decision-log.md` (DL-P1-01..08) for retroactive veto, including
+All autonomous decisions are logged in `decision-log.md` (DL-P1-01..09) for retroactive veto, including
 the operator-flagged wire-epoch deferral (DL-P1-04) and the no-wire-change groupId fix (DL-P1-06). Design
 notes: `design.md`, `v-verification-machinery.md`, `c1-shardmap.md`, `c2-routing-redirect-guard.md`,
 `c3-multigroup-wiring.md`. Did NOT re-litigate M1; did NOT build dynamic resharding; did NOT add an
