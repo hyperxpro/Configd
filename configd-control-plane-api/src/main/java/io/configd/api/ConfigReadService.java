@@ -38,11 +38,15 @@ public final class ConfigReadService {
     @FunctionalInterface
     public interface LeadershipConfirmer {
         /**
-         * Confirms leadership by verifying quorum contact.
+         * Confirms leadership of the Raft group that owns {@code key} by verifying quorum contact
+         * (ReadIndex). Multi-Raft Phase 1 (Seam D): keyed so the confirmation runs on the OWNING shard's
+         * node (a keyless confirm would verify the wrong shard's leadership at N&gt;1). At {@code N=1}
+         * every key resolves to group 0.
          *
-         * @return true if this node is confirmed as the current leader
+         * @param key the key being read (selects the shard)
+         * @return true if this node is confirmed as the current leader of that key's shard
          */
-        boolean confirmLeadership();
+        boolean confirmLeadership(String key);
     }
 
     private final ConfigReader reader;
@@ -69,7 +73,8 @@ public final class ConfigReadService {
     public ReadResult linearizableRead(String key) {
         Objects.requireNonNull(key, "key must not be null");
 
-        if (leadershipConfirmer != null && !leadershipConfirmer.confirmLeadership()) {
+        // Multi-Raft Phase 1 (Seam D): confirm leadership on the shard that OWNS this key.
+        if (leadershipConfirmer != null && !leadershipConfirmer.confirmLeadership(key)) {
             return null; // not leader — caller must distinguish from "key not found"
         }
         return reader.get(key);

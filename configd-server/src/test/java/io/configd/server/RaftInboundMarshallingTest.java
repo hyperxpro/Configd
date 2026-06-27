@@ -145,7 +145,7 @@ class RaftInboundMarshallingTest {
                 await(go);
                 try {
                     for (int i = 0; i < 3_000; i++) {
-                        proposer.propose(null, cmd("w" + i)); // off-executor write
+                        proposer.propose(null, java.util.List.of("w" + i), cmd("w" + i)); // off-executor write
                     }
                 } catch (Throwable t) {
                     floodError.compareAndSet(null, t);
@@ -217,7 +217,7 @@ class RaftInboundMarshallingTest {
             String callerThread = Thread.currentThread().getName();
             // RR-004 / ADR-0033: a single-node leader commits + applies inline, so
             // the proposer returns Committed (commit-confirmed), not a bare accept.
-            ConfigWriteService.ProposeCommitResult result = proposer.propose(null, cmd("hello"));
+            ConfigWriteService.ProposeCommitResult result = proposer.propose(null, java.util.List.of("hello"), cmd("hello"));
             assertInstanceOf(ConfigWriteService.ProposeCommitResult.Committed.class, result,
                     "single-node leader should commit the proposal");
 

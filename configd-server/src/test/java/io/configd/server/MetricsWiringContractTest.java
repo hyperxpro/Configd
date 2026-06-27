@@ -131,7 +131,7 @@ class MetricsWiringContractTest {
 
             ConfigWriteService.RaftProposer proposer =
                     ConfigdServer.raftProposer(driverFor(node), GROUP, exec, 5000, metrics);
-            var result = proposer.propose(null, put("k", "v"));
+            var result = proposer.propose(null, java.util.List.of("k"), put("k", "v"));
             assertInstanceOf(ConfigWriteService.ProposeCommitResult.Committed.class, result,
                     "single-node leader must commit-confirm the write");
 
@@ -168,7 +168,7 @@ class MetricsWiringContractTest {
             RaftNode leader = forcedUncommittableLeader(exec, 1024);
             ConfigWriteService.RaftProposer proposer =
                     ConfigdServer.raftProposer(driverFor(leader), GROUP, exec, 200 /* ms */, metrics);
-            var result = proposer.propose(null, put("k", "v"));
+            var result = proposer.propose(null, java.util.List.of("k"), put("k", "v"));
             assertInstanceOf(ConfigWriteService.ProposeCommitResult.Indeterminate.class, result,
                     "a leader that cannot reach quorum must report the write as Indeterminate");
             assertTrue(seriesValue(scrape(registry), "configd_write_commit_failed_total") >= 1.0,
@@ -195,7 +195,7 @@ class MetricsWiringContractTest {
 
             ConfigWriteService.RaftProposer proposer =
                     ConfigdServer.raftProposer(driverFor(leader), GROUP, exec, 5000, metrics);
-            var result = proposer.propose(null, put("k", "v"));
+            var result = proposer.propose(null, java.util.List.of("k"), put("k", "v"));
             assertInstanceOf(ConfigWriteService.ProposeCommitResult.Overloaded.class, result,
                     "a write past the bounded proposal queue must be shed as Overloaded");
             assertTrue(seriesValue(scrape(registry), "configd_write_rejected_overloaded_total") >= 1.0,

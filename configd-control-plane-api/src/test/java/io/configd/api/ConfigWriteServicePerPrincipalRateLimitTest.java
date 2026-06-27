@@ -21,7 +21,7 @@ class ConfigWriteServicePerPrincipalRateLimitTest {
     };
 
     private static final ConfigWriteService.RaftProposer ALWAYS_COMMIT =
-            (scope, command) -> new ConfigWriteService.ProposeCommitResult.Committed(1L);
+            (scope, keys, command) -> new ConfigWriteService.ProposeCommitResult.Committed(1L);
 
     @Test
     void oneTenantsFloodDoesNotStarveAnother() {

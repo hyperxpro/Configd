@@ -3,6 +3,7 @@ package io.configd.api;
 import io.configd.common.ConfigScope;
 import io.configd.common.NodeId;
 
+import java.util.List;
 import java.util.Objects;
 
 /**
@@ -85,6 +86,14 @@ public final class ConfigWriteService {
         record Indeterminate() implements ProposeCommitResult {}
         /** Rejected pre-append: backpressure (too many uncommitted entries). */
         record Overloaded() implements ProposeCommitResult {}
+        /**
+         * Multi-Raft Phase 1 (Seam D, DISCLAIM): rejected pre-append because the write's keys span more
+         * than one shard. Configd does not offer cross-shard atomicity (ADR adr-multiraft-cross-shard,
+         * D-C); the cross-shard write guard catches it before any Raft work. {@code reason} names the
+         * offending keys. Mapped to {@link WriteResult.ValidationFailed} (permanent — retrying the same
+         * spanning write cannot succeed).
+         */
+        record CrossShardRejected(String reason) implements ProposeCommitResult {}
     }
 
     /**
@@ -94,15 +103,22 @@ public final class ConfigWriteService {
     @FunctionalInterface
     public interface RaftProposer {
         /**
-         * Proposes a command to the Raft group for the given scope and blocks the
-         * calling thread until the commit outcome is known or the write deadline
-         * expires.
+         * Proposes a command to the Raft group that owns the write, blocking the calling thread until the
+         * commit outcome is known or the write deadline expires.
          *
-         * @param scope   determines which Raft group handles this write
+         * <p>Multi-Raft Phase 1 (Seam D): the {@code keys} of the write select the shard via the
+         * implementation's {@code ShardMap} ({@code shardFor(scope, key)}). For a single-key
+         * {@code put}/{@code delete} this is one key ⇒ one shard. For a multi-key write the implementation
+         * runs the cross-shard guard: all keys must co-locate on ONE shard, else
+         * {@link ProposeCommitResult.CrossShardRejected} (DISCLAIM). At {@code N=1} every key resolves to
+         * group 0 (byte-identical to the prior single-group path).
+         *
+         * @param scope   the write's configuration scope (folded into the shard hash)
+         * @param keys    the key(s) of the write (non-empty); selects the owning shard + drives the guard
          * @param command the encoded command bytes
          * @return the terminal commit outcome
          */
-        ProposeCommitResult propose(ConfigScope scope, byte[] command);
+        ProposeCommitResult propose(ConfigScope scope, List<String> keys, byte[] command);
     }
 
     /**
@@ -125,7 +141,17 @@ public final class ConfigWriteService {
      */
     @FunctionalInterface
     public interface LeaderHintSupplier {
-        NodeId currentLeader();
+        /**
+         * The current leader of the Raft group that owns {@code (scope, key)} — the redirect target for a
+         * {@code NotLeader}/{@code Lost} write. Multi-Raft Phase 1 (Seam D): keyed so the hint points at
+         * the OWNING shard's leader (a keyless hint would loop forever at N&gt;1, redirecting every shard's
+         * write to one group's leader). At {@code N=1} every key resolves to group 0. May return
+         * {@code null} if the leader is unknown.
+         *
+         * @param scope the write's configuration scope
+         * @param key   the write's key (selects the shard)
+         */
+        NodeId currentLeader(ConfigScope scope, String key);
     }
 
     private final RaftProposer proposer;
@@ -235,7 +261,9 @@ public final class ConfigWriteService {
         }
 
         byte[] command = encodeCommand((byte) 0x01, key, value);
-        return mapOutcome(proposer.propose(scope, command));
+        // Multi-Raft Phase 1 (Seam D): a single-key write — the proposer routes it to shardFor(scope,key)
+        // and the cross-shard guard is trivially satisfied (one key ⇒ one shard).
+        return mapOutcome(proposer.propose(scope, List.of(key), command), scope, key);
     }
 
     /**
@@ -264,7 +292,7 @@ public final class ConfigWriteService {
         }
 
         byte[] command = encodeCommand((byte) 0x02, key, null);
-        return mapOutcome(proposer.propose(scope, command));
+        return mapOutcome(proposer.propose(scope, List.of(key), command), scope, key);
     }
 
     /**
@@ -293,22 +321,25 @@ public final class ConfigWriteService {
     }
 
     /**
-     * Maps a terminal {@link ProposeCommitResult} to a {@link WriteResult},
-     * attaching the leader hint to the redirect/loss cases.
+     * Maps a terminal {@link ProposeCommitResult} to a {@link WriteResult}, attaching the
+     * SHARD-AWARE leader hint (resolved for {@code (scope, key)}) to the redirect/loss cases
+     * (Multi-Raft Phase 1, Seam D) and mapping a cross-shard rejection to a permanent
+     * {@link WriteResult.ValidationFailed}.
      */
-    private WriteResult mapOutcome(ProposeCommitResult outcome) {
+    private WriteResult mapOutcome(ProposeCommitResult outcome, ConfigScope scope, String key) {
         return switch (outcome) {
             case ProposeCommitResult.Committed c -> new WriteResult.Committed(c.seq());
-            case ProposeCommitResult.NotLeader ignored -> new WriteResult.NotLeader(leaderHint());
-            case ProposeCommitResult.Lost ignored -> new WriteResult.Lost(leaderHint());
+            case ProposeCommitResult.NotLeader ignored -> new WriteResult.NotLeader(leaderHint(scope, key));
+            case ProposeCommitResult.Lost ignored -> new WriteResult.Lost(leaderHint(scope, key));
             case ProposeCommitResult.Indeterminate ignored -> new WriteResult.Indeterminate();
             case ProposeCommitResult.Overloaded ignored -> new WriteResult.Overloaded();
+            case ProposeCommitResult.CrossShardRejected cr -> new WriteResult.ValidationFailed(cr.reason());
         };
     }
 
-    private NodeId leaderHint() {
+    private NodeId leaderHint(ConfigScope scope, String key) {
         if (leaderHintSupplier != null) {
-            return leaderHintSupplier.currentLeader();
+            return leaderHintSupplier.currentLeader(scope, key);
         }
         return null;
     }

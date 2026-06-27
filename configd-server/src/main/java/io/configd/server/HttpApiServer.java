@@ -23,7 +23,7 @@ import java.net.InetSocketAddress;
 import java.net.URI;
 import java.util.Map;
 import java.util.concurrent.Executors;
-import java.util.function.Supplier;
+import java.util.function.Function;
 
 /**
  * JDK-transport adapter for the Configd admin / control-plane HTTP API. Uses the built-in
@@ -68,7 +68,7 @@ public final class HttpApiServer {
                          AuthInterceptor authInterceptor,
                          AclService aclService,
                          StrongReadPolicy strongReadPolicy,
-                         Supplier<NodeId> leaderHintSupplier) throws IOException {
+                         Function<String, NodeId> leaderHintSupplier) throws IOException {
         this(port, sslContext, healthService, prometheusExporter, configStore, writeService,
                 readService, authInterceptor, aclService, strongReadPolicy, leaderHintSupplier,
                 /* auditLog */ null, /* replayGuard */ null);
@@ -91,7 +91,7 @@ public final class HttpApiServer {
                          AuthInterceptor authInterceptor,
                          AclService aclService,
                          StrongReadPolicy strongReadPolicy,
-                         Supplier<NodeId> leaderHintSupplier,
+                         Function<String, NodeId> leaderHintSupplier,
                          AuditLog auditLog,
                          ReplayGuard replayGuard) throws IOException {
         if (sslContext != null) {
