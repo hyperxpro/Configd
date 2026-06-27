@@ -53,6 +53,22 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  *
  * <p>Production stays single-group and never rehomes; this multi-group/rehoming surface is test-only until
  * Phase-1 sharding. See docs/phase0-B-stage2-m2b/.
+ *
+ * <p><b>De-flake (pre-EC2 cleanup, 2026-06-27).</b> This test deliberately runs REAL distinct owner
+ * threads — its core assertion is that {@code raft_owner_thread} NEVER fires across rehomes, which is
+ * only meaningful with genuinely separate OS owner threads. A single-thread / FIFO deterministic
+ * scheduler would bind every group to one thread, making owner-isolation pass <em>vacuously</em> and
+ * destroying the exact coverage this test exists for (catching live multi-owner handoff races the
+ * deterministic sim cannot model — see above). The schedule therefore stays non-deterministic <em>by
+ * design</em>; what is made deterministic is the <em>verdict</em>. The asserted invariants (zero owner
+ * fires, per-group commit growth, no deadlock) hold under ALL interleavings, so the only historical
+ * flakiness was wall-clock-budget sensitivity on the CPU-credit-throttled 2-vCPU box (per-task
+ * {@code .get(10s)} round-trips and a 90s {@code producersDone.await}). Those <em>throughput</em>
+ * budgets are removed: task round-trips use unbounded {@code .get()} and the workload is awaited with no
+ * budget. The SOLE wall-clock deadline is the method-level {@code @Timeout(600)} — a pure DEADLOCK
+ * ceiling: a correct run finishes the bounded workload in seconds (≈1.3s un-throttled), so 600s only
+ * fires on a genuine wedge, and then with a JUnit thread dump. Cleanup joins keep a generous 60s bound
+ * (a thread that ignores {@code shutdownNow} interrupt is a real bug, not throttle).
  */
 class RehomingInjectedSweepTest {
 
@@ -96,13 +112,13 @@ class RehomingInjectedSweepTest {
             // Production-style coalescing flush, dispatched onto the group's CURRENT owner (rehoming-aware).
             node.setGroupCommit((flush, delayMicros) -> driver.dispatchFlush(gid, flush, delayMicros), 4096, 0L);
             for (int i = 0; i < 400; i++) node.tick();
-        }).get(10, TimeUnit.SECONDS);
+        }).get();
         assertEquals(RaftRole.LEADER, node.role(), "group " + gid + " should self-elect");
         return node;
     }
 
     @Test
-    @Timeout(300)
+    @Timeout(600) // pure DEADLOCK ceiling (a correct run is ~seconds); see class doc — NOT a throughput budget
     void rehomingUnderConcurrentMultiOwnerWorkload_holdsInvariants_keepsCommitting_zeroFires() throws Exception {
         // Seed-sweep: each seed drives a different rehome SEQUENCE; real-executor scheduling adds
         // interleaving diversity on top. CI runs 1 sweep (fast smoke); the S3 verification runs many
@@ -159,14 +175,14 @@ class RehomingInjectedSweepTest {
                         //     filters to the groups it currently owns, so it is safe under rehoming; coupling it
                         //     to a group's executor would let tickOwner(oldOwner) run on a new owner after a race).
                         final int oi = (pid + i) % n;
-                        pool.ownerByIndex(oi).submit(() -> driver.tickOwner(oi)).get(10, TimeUnit.SECONDS);
+                        pool.ownerByIndex(oi).submit(() -> driver.tickOwner(oi)).get();
                         // (b) propose to a group — marshalled onto its CURRENT owner; driver.propose self-bounces
                         //     (rejects NOT_LEADER) if the group rehomed away from the resolved owner (no fire).
                         driver.ownerExecutor(gid).submit(() -> {
                             if (driver.propose(gid, ("v" + gid).getBytes()).result() == ProposalResult.ACCEPTED) {
                                 accepted.incrementAndGet();
                             }
-                        }).get(10, TimeUnit.SECONDS);
+                        }).get();
                         // (c) marshalled inbound (production pattern) — benign low-term vote (rejected, no state
                         //     change), on the current owner; handleMessage runs on-owner, or bounces if rehomed.
                         driver.ownerExecutor(gid).execute(() ->
@@ -222,10 +238,13 @@ class RehomingInjectedSweepTest {
         });
 
         start.countDown();
-        assertTrue(producersDone.await(90, TimeUnit.SECONDS), "the injected workload did not finish in time (deadlock?)");
+        // No throughput budget: a correct run (even under 2-vCPU credit-exhaustion throttle) finishes the
+        // bounded workload in well under a minute; a genuine handoff DEADLOCK is caught by @Timeout(600)
+        // (with a thread dump). The former 90s budget was the throttle-sensitivity that made this flaky.
+        producersDone.await();
         keepInjecting.set(0); // stop the injector
         work.shutdownNow();
-        assertTrue(work.awaitTermination(15, TimeUnit.SECONDS), "workforce did not terminate");
+        assertTrue(work.awaitTermination(60, TimeUnit.SECONDS), "workforce did not terminate");
 
         if (failure.get() != null) {
             throw new AssertionError("rehoming-injected sweep violated an invariant/tripwire (first: "
@@ -245,7 +264,7 @@ class RehomingInjectedSweepTest {
         for (int k = 0; k < gids.length; k++) {
             int gid = gids[k];
             final int owner = driver.currentOwnerIndex(gid);
-            pool.ownerByIndex(owner).submit(() -> driver.tickOwner(owner)).get(10, TimeUnit.SECONDS);
+            pool.ownerByIndex(owner).submit(() -> driver.tickOwner(owner)).get();
             long pre = nodes.get(gid).monitorView().commitIndex();
             assertTrue(pre > baseline[k],
                     "group " + gid + " did not commit across the concurrent rehoming phase (pre-drain commitIndex "
@@ -267,7 +286,7 @@ class RehomingInjectedSweepTest {
                     driver.propose(gid, "drain".getBytes());
                     driver.tickOwner(owner);
                 }
-            }).get(10, TimeUnit.SECONDS);
+            }).get();
         }
         assertEquals(0, checker.ownerFires.get(), "drain must not fire");
         assertTrue(accepted.get() > 0, "vacuous — no proposals were accepted");
@@ -287,6 +306,6 @@ class RehomingInjectedSweepTest {
                 + " over " + gids.length + " groups) ownerFires=" + checker.ownerFires.get());
 
         pool.shutdown();
-        assertTrue(pool.awaitTermination(15, TimeUnit.SECONDS), "owner pool did not terminate");
+        assertTrue(pool.awaitTermination(60, TimeUnit.SECONDS), "owner pool did not terminate");
     }
 }
