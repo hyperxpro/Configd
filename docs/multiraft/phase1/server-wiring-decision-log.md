@@ -406,6 +406,23 @@ order (fan-out then watch); the downstream wiring + the `fanOutBuffer()`/`compac
 accessors receive the same primary instances; the compact rider iterates one compactor. No consensus / WAL
 / wire / read / write / tick change. (Full `configd-server` suite re-run for the regression.)
 
+### G2 — live shared-node isolation sim (DL-W-G2-01 + four-way)
+
+Design: `docs/multiraft/phase1/seam-g2-live-isolation.md`. Proves, on the REAL `MultiRaftDriver` +
+`OwnerExecutorPool`, the isolation the independent-harness V sim could not — the SF1 mandate.
+
+#### DL-W-G2-01 — the starvation class needs a per-group LIVENESS witness (assertOwnerThread can't catch it)
+`OwnerIsolationMultiOwnerTest` already covers the missed-hop class (a wrong-owner entry point trips
+`assertOwnerThread`). The new `SharedNodeFaultIsolationLiveTest` (replication-engine, 4 groups on 2 owners
+— genuine shared owners) adds the STARVATION class: a STUCK apply on group 0 blocks owner0's single thread
+(applyCommitted is synchronous on the owner thread), starving co-owned sibling group 2 — which no thread
+net can catch. A per-group liveness witness (fire-and-forget propose+tick, poll applied count) goes RED
+for group 2 (non-vacuous: baseline + recovery prove it CAN go GREEN), while groups on owner1 stay GREEN
+(the fault is owner-confined, not node-wide) and per-shard safety (monotone sequence, no cross-shard leak)
+survives the fault + concurrency. Releasing the apply recovers both starved groups (transient
+back-pressure, not corruption/deadlock). The RED is FIFO-deterministic on the single-thread owner (not
+sleep-timed) → no 2-vCPU flake. `SharedNodeFaultIsolationLiveTest` 2/0 (stable ×3). *Reversible: test-only.*
+
 ## Invariants held (re-checked each seam)
 - **N=1 byte-identical** to today (consensus behaviour, Raft WAL/snapshot format; the wire is identical
   EXCEPT the sanctioned version byte `01→02` + the 8 reserved epoch zero-bytes — charter §2 D1). The
