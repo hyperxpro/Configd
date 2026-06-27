@@ -36,6 +36,15 @@ A write is acknowledged **only after quorum commit + local apply**. The client s
 #### GLOBAL / security strong reads (ADR-0030 INV-1)
 A read of a **GLOBAL/security ("strong-read") key** (a configured key-class, default prefix `secure/`) is **always served via the linearizable ReadIndex path**, regardless of the requested consistency. If the linearizable read cannot be confirmed (not leader / ReadIndex unconfirmed / timeout / no read path), the read **fails closed** — HTTP 503 with `X-Fail-Closed: strong-read` and `X-Leader-Hint` — and the local/bounded-stale value is **never** served (RR-020). See §9.
 
+> ⚠️ **`secure/` is a *freshness* guarantee, not a *confidentiality* one.** The strong-read class
+> guarantees a key is always read **fresh** (linearizable, fail-closed) — appropriate for
+> security-*critical* decisions (ACL/auth revocations, kill-switches, legal gates). It does **NOT**
+> encrypt values or make them confidential at rest: Configd stores all values — including `secure/`
+> keys — as **plaintext** (integrity-checked via HMAC-SHA-256, ADR-0042; at the edge, kept in-memory
+> only — RR-098). **Configd does not encrypt data at rest in v1.** Do **not** store secret material
+> (passwords, tokens, private keys) in Configd; use a dedicated secret manager. At-rest encryption is a
+> deferred v2 item (RR-098). See `docs/known-limitations.md`.
+
 ### Explicitly Non-Linearizable Operations
 - **Edge reads** — bounded staleness (see §2)
 - **Cross-group reads** — no ordering guarantee between reads to different Raft groups
@@ -71,7 +80,7 @@ Staleness at an edge node = `edge_wall_now − commit_timestamp(last_applied_not
 | 5s - 30s | `DEGRADED` | Above + emit alert. Edge node reports unhealthy to load balancer. Continue serving stale data. |
 | > 30s | `DISCONNECTED` | Above + trigger re-bootstrap sequence. Attempt snapshot catch-up from regional relay. |
 
-> **Implementation status (ADR-0035 / RR-015).** The state thresholds and bounds above are the contract targets and stay. The *measurement mechanism* — the leader-assigned commit-notification timestamp consumed by the edge `StalenessTracker` — is **implemented in Session 3** (the data-plane / commit-notification §4.6 interface). Today `StalenessTracker` measures local idle time (`nanoTime − lastUpdateNanos`), a proxy; Session 3 makes the commit timestamp load-bearing. Until then, the `STALE`/`DEGRADED`/`DISCONNECTED` transitions are exercised by `StalenessUpperBoundTest` against the proxy clock.
+> **Implementation status (ADR-0035 / ADR-0039 / RR-015) — UPDATED 2026-06-27.** The state thresholds and bounds above are the contract targets and stay. The *measurement mechanism* is now **implemented and load-bearing** (Session 3 + ADR-0039), no longer a proxy: the edge `StalenessTracker` measures staleness against the **covered frontier** = `max( commit_ts(last applied notification), server_now(last cursor-matched HEARTBEAT) )`, where `commit_ts` is the leader-assigned commit/apply timestamp (ADR-0035 §2). The earlier idle-time proxy (`nanoTime − lastUpdateNanos`) was **deleted** (ADR-0039) because it falsely marched a quiet-but-caught-up edge toward STALE/DEGRADED on an idle keyspace; the heartbeat-attested frontier keeps an idle, fully-covered edge `CURRENT`. INV-S1 threshold violations route through `InvariantMonitor` (`configd.invariant.violation.staleness_bound`); a future-frontier beyond the 50 ms NTP-skew allowance, or a backward frontier, trips `edge_staleness_implausible_total` and is clamped (ADR-0039 §5). The `STALE`/`DEGRADED`/`DISCONNECTED` transitions are exercised by `StalenessUpperBoundTest` against this frontier clock. **Still owed:** the p99 staleness *distribution* (INV-S2) measured at scale under sustained load — that is part of the deferred empirical-validation soak (`docs/known-limitations.md`), not a mechanism gap.
 
 ### Formal Invariant
 ```
@@ -211,7 +220,7 @@ Every invariant maps to a property test in `testkit/`:
 | Invariant | Test Name | Description | Implementation |
 |---|---|---|---|
 | INV-L1 | `configd-linz` harness + Porcupine checker (ADR-0032) | Drive a real separate-JVM cluster (shaded `configd-server` over the real `TcpRaftTransport`) under OS-level faults (`iptables --dport REJECT` + `kill -9`), record a per-key checker-neutral op-history (`ack≠commit` ⇒ writes float/confirm-bound; ADR-0033 ⇒ 200 `Committed` = `:ok`), and check each key as an independent linearizable register with the trusted `anishathalye/porcupine` checker — NOT a hand-rolled "Wing & Gong" checker. | Real binary: `configd-linz/runner/HarnessMain` → `configd-linz/src/main/go/porcupine-check`; gates: self-test `CheckerSelfTest` (`PORCUPINE_BIN`-gated, `gates/gate-1.sh` step b), discrimination `scripts/run-discrimination.sh`, `scripts/run-gate.sh`. Replayable complement: the deterministic-sim history source (configd-testkit `AdversarialSim` + `HistoryRecorder`, emitted by `OpHistoryTest`) producing the identical checker-neutral op-history (`docs/session-2/adversarial-sim-design.md §6`), checked through the same Porcupine binary by `configd-linz`'s `SimHistoryCheck`. |
-| INV-S1/S2 | `StalenessUpperBoundTest` | Verify the staleness state machine transitions correctly (CURRENT→STALE→DEGRADED→DISCONNECTED at the 500ms/5s/30s thresholds, reset on update) | Today asserts **threshold transitions** against the proxy idle-time clock (CM-049), NOT a p99 staleness distribution. The p99-distribution test (INV-S2) is **owed to Session 3** — it requires the leader-assigned commit-timestamp clock (ADR-0035 §2); only then can the distribution be measured against real data age. |
+| INV-S1/S2 | `StalenessUpperBoundTest` | Verify the staleness state machine transitions correctly (CURRENT→STALE→DEGRADED→DISCONNECTED at the 500ms/5s/30s thresholds, reset on update) | Asserts **threshold transitions** against the now-load-bearing **frontier** clock (commit-ts + cursor-matched heartbeat, ADR-0035/ADR-0039) — the idle-time proxy (CM-049) was deleted. The mechanism is in place; the p99 staleness **distribution** at scale (INV-S2) is still **owed to the deferred soak** (`docs/known-limitations.md`), not to a missing clock. |
 | INV-M1 | `MonotonicReadTest` | Verify version never decreases for a client session | Single client reads repeatedly during concurrent writes; assert version cursor monotonically increases |
 | INV-M2 | `MonotonicReadFailoverTest` | Verify monotonic reads survive edge failover | Client reads from edge A, failover to edge B with cursor; assert reads from B >= cursor |
 | INV-V1 | `SequenceMonotonicityTest` | Verify sequence numbers are strictly increasing | Apply many writes; verify each committed entry has seq = prev + 1 |
@@ -269,3 +278,9 @@ The previously-listed `assert_sequence_monotonic` / `assert_sequence_gap_free` r
 | Cross-key order (same group) | All replicas | Guaranteed | Shared Raft log |
 | Cross-key order (cross group) | N/A | N/A under ADR-0030 single-group topology | — (per-entry HLC descoped, ADR-0035) |
 | Version monotonicity | All nodes | Guaranteed | Monotonic sequence numbers |
+
+> ⚠️ **The `secure/` strong-read class is a *freshness* guarantee, not *confidentiality*.** It means
+> "always read fresh, fail-closed" — it does **not** mean encrypted. Configd does **not** encrypt data at
+> rest in v1; all values (including `secure/` keys) are plaintext, integrity-checked only (HMAC, ADR-0042;
+> in-memory only at the edge). Do not store secrets in Configd. At-rest encryption is a v2 item (RR-098).
+> See `docs/known-limitations.md` §"No at-rest encryption".

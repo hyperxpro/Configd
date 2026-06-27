@@ -14,6 +14,14 @@ import java.util.Set;
  * and the edge <b>stores</b> them (store-and-fail-closed-serve, C2 design §3) — the
  * serving refusal is the edge process's job (C2 part b).
  *
+ * <h2>Freshness, not confidentiality (RR-098)</h2>
+ * The name {@code secure/} denotes a <em>freshness</em> property (always-linearizable, fail-closed),
+ * <b>NOT</b> encryption or at-rest confidentiality. Strong-read values are stored <b>plaintext</b>
+ * (integrity-checked via HMAC, ADR-0042; in-memory only at the edge). Configd does <b>not</b> encrypt
+ * data at rest in v1 — do not store secret material (passwords, tokens, keys) under {@code secure/}
+ * or any key; use a dedicated secret manager. At-rest encryption is a v2 item (RR-098). See
+ * {@code docs/known-limitations.md}.
+ *
  * <h2>Why this class exists — one source of truth for the prefix</h2>
  * Both the edge ({@link EdgeConfigClient}'s ADR-0038 storage filter, which must ALWAYS
  * store strong-read keys regardless of subscription) and the control plane

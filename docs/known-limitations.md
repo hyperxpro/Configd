@@ -1,5 +1,78 @@
 # Known Limitations — v0.1
 
+> **⚠️ Current v1 known limitations (updated 2026-06-27, pre-EC2 cleanup).** This section is the
+> authoritative, current statement of what v1 does and does not do. The live, audited per-subsystem
+> status (132 items, ✅/🟡/❌/⛔/🔬) is `docs/readiness/production-readiness-register.md`; this section
+> surfaces the user- and operator-facing limitations. The dated **iter-3 note further below
+> (2026-04-25)** is preserved as historical record and is **superseded by this section and the register**
+> wherever they differ.
+
+### 1. No encryption at rest (RR-098) — do NOT store secrets
+
+Configd does **not** encrypt data at rest in v1. All config values — **including `secure/` (strong-read)
+keys** — are stored as **plaintext** bytes in the control-plane HAMT / WAL / snapshot, protected by an
+**integrity** envelope only (HMAC-SHA-256, ADR-0042), which detects tampering but provides **no
+confidentiality**. (At edge nodes, `secure/` values are kept **in-memory only**, never written to disk —
+the RR-098 mitigation — which bounds, but does not remove, the exposure.)
+
+- **The `secure/` namespace is a *freshness* guarantee, not a security/encryption one.** `secure/` (the
+  strong-read key class, ADR-0030 INV-1) means a key is **always read fresh** — linearizable, fail-closed,
+  never served stale — for security-*critical decisions* like ACL/auth revocations, kill-switches, and
+  legal gates. It does **not** mean the value is encrypted or confidential. Naming a key `secure/...` buys
+  read **freshness**, not **secrecy**.
+- **Do not store secret material** (passwords, tokens, private keys, PII) in Configd. Use a dedicated
+  secret manager (e.g. Vault, a cloud KMS / secret store) and keep only non-secret references in Configd.
+- **At-rest encryption is a deferred v2 item (RR-098, OPEN).** It is a *registered gap*, not a decided
+  non-goal: if a v1 deployment must store sensitive data or meets a compliance bar, this is a **blocker** —
+  raise it before deploying.
+
+### 2. No client-facing watches / change-subscription — polling only (v2)
+
+v1 exposes **pull reads only**: `GET /v1/config/{key}` (optionally linearizable) plus the edge
+bounded-staleness read path with version cursors. There is **no client-facing change-subscription
+("watch") API** — no HTTP/SSE/long-poll route, no wire frame, no client callback. An internal
+`WatchService` exists but is server-internal, has **zero production registrants**, and is **not a usable
+v1 client feature** (register §4.8, 🟡).
+
+- **v1 pattern:** clients **poll** (the edge read path is in-process and sub-millisecond, designed for
+  frequent reads), or consume the edge delta stream at the edge-node layer.
+- **Change-subscription (watches) is a v2 feature** — at the top of the v2 backlog.
+
+### 3. Sharding: v1 ships single-group (N=1); multi-shard is built but unmeasured (v2)
+
+v1 runs a **single Raft group by design** (N=1; ADR-0030, ADR-0023). The multi-Raft sharding layer is
+built and sim-verified and the production server-wiring has landed, but the **N>1 aggregate throughput is
+UNMEASURED** — the EC2 N×knee measurement is the next, separately-gated step (register §2.11 🔬).
+
+- **Measured v1 write throughput:** the single-group write knee is **~800 writes/s** (register §9.1 ✅,
+  measured on m6id.4xlarge; throughput collapses with elections at ~1000/s). This is **below the original
+  §0.1 10k/s baseline**.
+- The 10k/s baseline is intended to be met by the **sharded aggregate** (≈ 800/s × N shards), which is the
+  multi-Raft thesis the EC2 measurement will validate (`adr-throughput-target`, Proposed — deferred to the
+  multi-Raft go/no-go). Until measured, treat **~800/s single-group** as the v1 write-throughput envelope.
+
+### 4. Empirical validation deferred to production observation
+
+- **No completed soak.** A 24 h soak launched (2026-06-14) and ran **leak-clean** (FD / threads / heap
+  flat) but only **~3.45 h of 24 h** before the OS OOM-killer stopped a node (box capacity, RR-112 — **not**
+  a Configd leak). No full 24 h / 72 h soak has completed (register §9.7 🟡).
+- **DR drills never executed.** The drill scripts are real (`gates/game-day-drill.sh`,
+  `gates/rr-002-blackhole-drill.sh`) and one in-process drill runs in gate-6, but **full multi-node DR
+  drills (restore-from-snapshot, leader-loss) have never been run** — `ops/dr-drills/` holds only a README
+  (register §7.5 🟡). Run at least restore-from-snapshot + leader-loss once on the release commit before any
+  operational-readiness claim.
+- Load / chaos / burn-in beyond the above remain production-observation items (see the historical iter-3
+  note below and the register §11 empirical-validation rows).
+
+---
+
+## Historical record — iter-3 code-level pass (2026-04-25)
+
+> The note below is the **original 2026-04-25 (iter-3)** known-limitations document, retained as a
+> historical record of the v0.1 code-level GA framing. Several specifics have since drifted (e.g. the wire
+> format has since bumped to v2; sessions S1–S7 + multi-Raft followed). **For current status, defer to the
+> §"Current v1 known limitations" section above and to `docs/readiness/production-readiness-register.md`.**
+
 **Authored:** 2026-04-25 (iter-3 code-level production-readiness pass).
 **Companion to:** `docs/production-readiness-code-level.md`,
 `docs/automation-prerequisites.md`, `docs/ga-approval.md`,
