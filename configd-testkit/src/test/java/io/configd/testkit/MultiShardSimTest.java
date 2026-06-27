@@ -1,6 +1,7 @@
 package io.configd.testkit;
 
 import io.configd.replication.ShardMap;
+import io.configd.replication.StaticShardMap;
 import io.configd.store.ReadResult;
 
 import org.junit.jupiter.api.Test;
@@ -15,6 +16,7 @@ import java.util.Set;
 import java.util.stream.LongStream;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -54,7 +56,7 @@ class MultiShardSimTest {
 
     @Test
     void routingCorrectness_keyAlwaysResolvesToOneShard() {
-        MultiShardSim sim = new MultiShardSim(1L, 4, R, ShardRouters.hashReference(4), Set.of());
+        MultiShardSim sim = new MultiShardSim(1L, 4, R, new StaticShardMap(4), Set.of());
         sim.electAllLeaders(ELECT_TICKS);
         // Writing the same key 50 times must always land on the same shard (shardFor is a stable
         // function); checkRoutingStability inside write() would throw if it ever drifted.
@@ -77,9 +79,11 @@ class MultiShardSimTest {
         // Routing stability is checked BEFORE proposing, so no leaders are needed: the 2nd write of the
         // same key resolves to a different shard than the 1st → SafetyViolation.
         sim.write("client", "svc/cfg/key-0", 0);
-        assertThrows(SimInvariants.SafetyViolation.class,
+        SimInvariants.SafetyViolation ex = assertThrows(SimInvariants.SafetyViolation.class,
                 () -> sim.write("client", "svc/cfg/key-0", 1),
                 "a non-functional router (same key → different shard) MUST fail routing correctness");
+        assertTrue(ex.getMessage().contains("ROUTING correctness"),
+                "the RED must be the routing-correctness check, not an unrelated violation: " + ex.getMessage());
     }
 
     // =============================================================================================
@@ -89,7 +93,7 @@ class MultiShardSimTest {
     @ParameterizedTest
     @MethodSource("smallSweep")
     void disjointOwnership_greenAcrossSeeds(long seed) {
-        MultiShardSim sim = new MultiShardSim(seed, 4, R, ShardRouters.hashReference(4), Set.of());
+        MultiShardSim sim = new MultiShardSim(seed, 4, R, new StaticShardMap(4), Set.of());
         sim.electAllLeaders(ELECT_TICKS);
         sim.runWorkload(80, 4); // routes 80 writes; runWorkload heals+drains+checkAll at the end
     }
@@ -101,7 +105,7 @@ class MultiShardSimTest {
      */
     @Test
     void nonVacuity_crossShardRedirect_failsDisjointOwnership() {
-        MultiShardSim sim = new MultiShardSim(1L, 3, R, ShardRouters.hashReference(3),
+        MultiShardSim sim = new MultiShardSim(1L, 3, R, new StaticShardMap(3),
                 Set.of(MultiShardSim.Bug.CROSS_SHARD_REDIRECT));
         sim.electAllLeaders(ELECT_TICKS);
         String key = "svc/cfg/key-3";
@@ -110,11 +114,14 @@ class MultiShardSimTest {
         // Force a stale cache (a non-leader) so write() takes the redirect path; the bug redirects to the
         // wrong shard, landing the key where shardFor does not point.
         sim.setCachedLeader(s, (leader + 1) % R);
-        assertThrows(SimInvariants.SafetyViolation.class, () -> {
+        SimInvariants.SafetyViolation ex = assertThrows(SimInvariants.SafetyViolation.class, () -> {
             sim.write("client", key, 0);
             sim.drain(200);
             sim.checkDisjointOwnership();
         }, "a cross-shard redirect MUST fail disjoint ownership (key on a shard that does not own it)");
+        assertTrue(ex.getMessage().contains("DISJOINT-OWNERSHIP")
+                        || ex.getMessage().contains("ROUTING/OWNERSHIP mismatch"),
+                "the RED must be the disjoint-ownership/routing-to-owner check: " + ex.getMessage());
     }
 
     // =============================================================================================
@@ -123,11 +130,13 @@ class MultiShardSimTest {
 
     @Test
     void crossShardIsolation_oneShardStallDoesNotStopOthers() {
-        MultiShardSim sim = new MultiShardSim(7L, 3, R, ShardRouters.hashReference(3), Set.of());
+        MultiShardSim sim = new MultiShardSim(7L, 3, R, new StaticShardMap(3), Set.of());
         sim.electAllLeaders(ELECT_TICKS);
-        // Warm up: every shard commits.
+        // Warm up: every shard commits, then drain so warmup apply-lag fully settles before we baseline.
         sim.applyOps(sim.generateOps(20), 5);
-        // Reset the progress witnesses, then KILL shard 0 (majority isolated → no quorum → full stall).
+        sim.drain(80);
+        // Reset the progress witnesses (baseline = settled version), then KILL shard 0 (majority isolated
+        // → no quorum → full stall).
         for (int s = 0; s < 3; s++) sim.commitsAdvancedOn(s);
         sim.faultShardMajority(0);
 
@@ -135,7 +144,13 @@ class MultiShardSimTest {
         // (the per-tick SimInvariants for every shard run inside sim.tick(); a leak would throw).
         sim.applyOps(sim.generateOps(60), 5);
 
-        assertTrue(sim.commitsAdvancedOn(1) || sim.commitsAdvancedOn(2),
+        boolean shard0Advanced = sim.commitsAdvancedOn(0);
+        boolean shard1Advanced = sim.commitsAdvancedOn(1);
+        boolean shard2Advanced = sim.commitsAdvancedOn(2);
+        assertFalse(shard0Advanced,
+                "cross-shard isolation: shard 0 lost quorum and MUST be stalled (no commits) — if it "
+                        + "advanced, the scenario degenerated and the test is not exercising isolation");
+        assertTrue(shard1Advanced || shard2Advanced,
                 "cross-shard isolation: a dead shard 0 must NOT stop the other shards committing");
         // Shard 0 recovers once healed (no permanent damage from the isolation). Disjoint ownership is
         // always sound; no-loss is NOT asserted here (writes accepted by shard 0's isolated old leader
@@ -151,7 +166,7 @@ class MultiShardSimTest {
 
     @Test
     void staleLeaderRedirect_recoversTheWrite() {
-        MultiShardSim sim = new MultiShardSim(2L, 2, R, ShardRouters.hashReference(2), Set.of());
+        MultiShardSim sim = new MultiShardSim(2L, 2, R, new StaticShardMap(2), Set.of());
         sim.electAllLeaders(ELECT_TICKS);
         String key = "svc/cfg/key-5";
         int s = sim.shardMap().shardFor(MultiShardSim.SCOPE, key);
@@ -167,7 +182,7 @@ class MultiShardSimTest {
     /** NON-VACUITY: with redirect DISABLED, the stale-leader write is never accepted → lost. */
     @Test
     void nonVacuity_noRedirect_losesTheWrite() {
-        MultiShardSim sim = new MultiShardSim(2L, 2, R, ShardRouters.hashReference(2),
+        MultiShardSim sim = new MultiShardSim(2L, 2, R, new StaticShardMap(2),
                 Set.of(MultiShardSim.Bug.NO_REDIRECT));
         sim.electAllLeaders(ELECT_TICKS);
         String key = "svc/cfg/key-5";
@@ -189,7 +204,7 @@ class MultiShardSimTest {
     void nEqualsOne_byteIdenticalToSingleGroup(long seed) {
         // Generate one op stream, drive it through BOTH the N=1 multi-shard sim and a bare single-group
         // control on the identical per-shard seed; the committed key→value views must be identical.
-        MultiShardSim sim = new MultiShardSim(seed, 1, R, ShardRouters.hashReference(1), Set.of());
+        MultiShardSim sim = new MultiShardSim(seed, 1, R, new StaticShardMap(1), Set.of());
         List<MultiShardSim.Op> ops = sim.generateOps(60);
         sim.electAllLeaders(ELECT_TICKS);
         sim.applyOps(ops, 5);
@@ -198,6 +213,9 @@ class MultiShardSimTest {
         Map<String, String> multi = sim.committedView();
 
         Map<String, String> control = singleGroupControl(seed, ops, 5);
+        assertTrue(multi.size() >= 5,
+                "N=1 equivalence would be vacuous if nothing committed (seed=" + seed + ", committed="
+                        + multi.size() + ") — the cluster must elect + commit for the comparison to mean anything");
         assertEquals(control, multi,
                 "N=1 multi-shard committed state must be byte-identical to the single-group control");
     }
@@ -205,8 +223,11 @@ class MultiShardSimTest {
     /** NON-VACUITY: at N=1, dropping ops makes the multi-shard committed state diverge from the control. */
     @Test
     void nonVacuity_droppedOpAtN1_divergesFromSingleGroup() {
+        // Deterministic: DROP_OP_AT_N1 skips every 7th op (indices 0,7,14,…); divergence requires at
+        // least one skipped op to be the LAST writer of its key. With 60 ops over a 40-key space, seed 3
+        // deterministically satisfies that — the sim is a pure function of the seed, so this is stable.
         long seed = 3L;
-        MultiShardSim sim = new MultiShardSim(seed, 1, R, ShardRouters.hashReference(1),
+        MultiShardSim sim = new MultiShardSim(seed, 1, R, new StaticShardMap(1),
                 Set.of(MultiShardSim.Bug.DROP_OP_AT_N1));
         List<MultiShardSim.Op> ops = sim.generateOps(60);
         sim.electAllLeaders(ELECT_TICKS);
@@ -227,7 +248,7 @@ class MultiShardSimTest {
     @ParameterizedTest
     @MethodSource("fullSweep")
     void fullSurface_greenAcrossSeeds(long seed) {
-        MultiShardSim sim = new MultiShardSim(seed, 4, R, ShardRouters.hashReference(4), Set.of());
+        MultiShardSim sim = new MultiShardSim(seed, 4, R, new StaticShardMap(4), Set.of());
         sim.electAllLeaders(ELECT_TICKS);
         // A workload with a mid-run per-shard fault: routing + disjoint + per-shard safety + redirect
         // (the fault staled the cache) + cross-shard isolation are all on the surface every tick/seed.
@@ -244,7 +265,7 @@ class MultiShardSimTest {
     /** Vacuity guard: the sweep must actually commit writes on every shard (else it would pass empty). */
     @Test
     void sweepIsNotVacuous() {
-        MultiShardSim sim = new MultiShardSim(11L, 4, R, ShardRouters.hashReference(4), Set.of());
+        MultiShardSim sim = new MultiShardSim(11L, 4, R, new StaticShardMap(4), Set.of());
         sim.electAllLeaders(ELECT_TICKS);
         sim.runWorkload(120, 4);
         Map<String, String> committed = sim.committedView();

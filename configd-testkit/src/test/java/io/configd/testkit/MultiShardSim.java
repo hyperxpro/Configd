@@ -348,6 +348,11 @@ final class MultiShardSim {
      * Disjoint ownership: scan every shard's committed store; each key must be present on at most one
      * shard, and that shard must equal {@code shardFor(key)}. Catches a routing leak / cross-shard
      * redirect (the key physically lands on a shard that does not own it).
+     *
+     * <p><b>Requires a PURE {@link ShardMap}</b> (the production {@link io.configd.replication.StaticShardMap}
+     * is): this calls {@code shardFor} mid-scan, which would perturb a stateful router — exactly the
+     * failure mode {@link ShardRouters#rotating} models, which is therefore only used in the
+     * routing-stability test (it throws before any disjoint scan), never here.
      */
     void checkDisjointOwnership() {
         Map<String, Integer> ownerOf = new HashMap<>();
