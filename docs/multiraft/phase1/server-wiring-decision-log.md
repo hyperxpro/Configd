@@ -423,6 +423,38 @@ survives the fault + concurrency. Releasing the apply recovers both starved grou
 back-pressure, not corruption/deadlock). The RED is FIFO-deterministic on the single-thread owner (not
 sleep-timed) → no 2-vCPU flake. `SharedNodeFaultIsolationLiveTest` 2/0 (stable ×3). *Reversible: test-only.*
 
+### G3 — the integrated N>1 sweep (DL-W-G3-01) — GATES G4
+
+#### DL-W-G3-01 — the sweep is the proof that N>1 is correct end-to-end (the gate on lifting the guard)
+The component proofs each cover one surface; G3 closes the INTEGRATION gap and assembles the whole into
+the cumulative gate `wiring-g`. `MultiShardIntegratedSweepTest` (configd-server) drives the REAL
+production bring-up (`buildRaftGroup`) for N=4 groups on a SHARED-owner pool (P=2 — the production shape)
+and wires the REAL sharded fan-out (`registerShardedFanOut`) over those runtimes, proving they COMPOSE:
+a committed write to shard k lands in shard k's store AND shard k's fan-out buffer (per-shard seq 1) and
+in NO other shard's store or buffer (cross-shard isolation in both surfaces). The `wiring-g` gate block
+runs the full N>1 sweep — G1 (`ShardedFanOutTest`), G2 (`SharedNodeFaultIsolationLiveTest`), G3
+(`MultiShardIntegratedSweepTest`), the thread-safety net non-vacuous (`OwnerIsolationMultiOwnerTest` —
+missed-hop; the starvation class is in G2), and coalesced-HB flat-in-N (`HeartbeatCoalescingTest`, G≤256
+⊇ the N≤16 ceiling) — all GREEN. **This green sweep is the charter §3.4 gate that authorizes G4.**
+`MultiShardIntegratedSweepTest` 1/0. *Reversible: test/gate only.*
+
+#### Seam-G thread-safety audit (gating G4) — SAFE TO LIFT, no MUST-FIX races
+A fresh-context audit (java-distinguished-engineer) of every node-level object `buildRaftGroup` shares
+across owner threads at N>1: **`ConfigSigner`** uses a PER-CALL `Signature` (the feared single shared
+`Signature` does NOT exist) — SAFE; both **InvariantCheckers** (= `InvariantMonitor.check`) use
+`ConcurrentHashMap` + `LongAdder` — SAFE; **`ConfigdMetrics`/`MetricsRegistry`** is `LongAdder`/
+`AtomicLong`/`ConcurrentHashMap` throughout — SAFE; **`IntegrityEnvelope`** (per-call `Mac`/`CRC32C`),
+**`Clock`** (stateless), **`MultiRaftDriver`** (CHM/volatile/per-owner-disjoint tick; rehoming dormant),
+**`NettyRaftTransport.send`** (non-blocking per-peer ABQ+CAS), the per-group RNG (distinct), **`Compactor`**
+(`ConcurrentSkipListMap`, cross-thread `compact()` vs `addSnapshot` safe), **`FanOutBuffer`** (per-shard
+single-writer), **`WatchService`** (primary-only) — all SAFE. **Verdict: SAFE TO LIFT THE GUARD.** Two
+items to land WITH G4 (not blockers): (a) wrap the bring-up loop to close/`removeGroup` already-built
+groups + shut the owner pool on a partial-bring-up failure (defense-in-depth; no FD leak today since
+append channels are lazy + owner threads are daemon); (b) a startup WARNING when `N>1 && ownerPoolSize==1`
+(all groups would serialize on owner[0] — safe but no throughput gain; EC2 must set ownerPoolSize≥N).
+Two metric NITs (the global `raft_pending_apply_entries` is owner-0-only at N>1; per-shard gauges cover
+each shard) deferred.
+
 ## Invariants held (re-checked each seam)
 - **N=1 byte-identical** to today (consensus behaviour, Raft WAL/snapshot format; the wire is identical
   EXCEPT the sanctioned version byte `01→02` + the 8 reserved epoch zero-bytes — charter §2 D1). The

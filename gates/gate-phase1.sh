@@ -207,5 +207,31 @@ assert_file "docs/multiraft/phase1/seam-f-wire-bump.md"
 assert_grep "docs/multiraft/phase1/server-wiring-decision-log.md" "DL-F-0"
 echo "gate-phase1 wiring-f: OK"
 
-echo "=== gate-phase1: GREEN — Multi-Raft Phase 1 sharding foundation + server-wiring A/B/C/D/E/F verified ==="
+# --- (i) Server-wiring Seam G: the integrated N>1 sweep (GATES the boot-guard removal) ----
+# The cumulative proof that N>1 is correct END-TO-END (charter §3.4/§6) — the gate on lifting the boot
+# guard. G1 (per-shard fan-out merge: monotone, isolated, concurrent-safe, no fabricated global order),
+# G2 (live shared-node isolation: a STUCK apply starves a co-owned sibling — coupling-leak RED — while
+# the other owner stays live, with per-shard safety preserved), G3 (the REAL production bring-up
+# buildRaftGroup COMPOSED with the sharded fan-out at N>1 on shared owners — per-shard isolation in BOTH
+# the store and the fan-out), the thread-safety net proven NON-VACUOUS at N>1 (missed-hop via
+# OwnerIsolationMultiOwnerTest), and the coalesced-heartbeat flat-in-N property (HeartbeatCoalescingTest,
+# G up to 256 ⊇ the Phase-1 N<=16 ceiling).
+echo "gate-phase1 wiring-g: integrated N>1 sweep (fan-out + live isolation + thread-safety net + coalesced-HB)..."
+WIRINGG="$LOGDIR/wiring-g.txt"
+run_tests wiring-g "ShardedFanOutTest,MultiShardIntegratedSweepTest,SharedNodeFaultIsolationLiveTest,OwnerIsolationMultiOwnerTest,HeartbeatCoalescingTest" "$WIRINGG"
+assert_class_green "$WIRINGG" "ShardedFanOutTest"                # G1: per-shard fan-out (monotone/isolated/concurrent-safe)
+assert_class_green "$WIRINGG" "MultiShardIntegratedSweepTest"    # G3: real bring-up + sharded fan-out compose at N>1
+assert_class_green "$WIRINGG" "SharedNodeFaultIsolationLiveTest" # G2: coupling-leak RED + cross-owner isolation GREEN
+assert_class_green "$WIRINGG" "OwnerIsolationMultiOwnerTest"     # thread-safety net non-vacuous (missed-hop)
+assert_class_green "$WIRINGG" "HeartbeatCoalescingTest"          # coalesced-heartbeat flat-in-N (covers N<=16)
+assert_file "configd-server/src/test/java/io/configd/server/ShardedFanOutTest.java"
+assert_file "configd-server/src/test/java/io/configd/server/MultiShardIntegratedSweepTest.java"
+assert_file "configd-replication-engine/src/test/java/io/configd/replication/SharedNodeFaultIsolationLiveTest.java"
+assert_file "docs/multiraft/phase1/seam-g1-fanout-merge.md"
+assert_file "docs/multiraft/phase1/seam-g2-live-isolation.md"
+assert_grep "docs/multiraft/phase1/server-wiring-decision-log.md" "DL-W-G1-0"
+assert_grep "docs/multiraft/phase1/server-wiring-decision-log.md" "DL-W-G2-0"
+echo "gate-phase1 wiring-g: OK"
+
+echo "=== gate-phase1: GREEN — Multi-Raft Phase 1 sharding foundation + server-wiring A/B/C/D/E/F/G verified ==="
 exit 0
