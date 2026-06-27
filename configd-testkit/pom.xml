@@ -41,6 +41,17 @@
             <artifactId>configd-config-store</artifactId>
             <version>${project.version}</version>
         </dependency>
+        <!--
+          Multi-Raft Phase 1: the sharding/routing layer (ShardMap, StaticShardMap, MultiRaftDriver)
+          lives here. The multi-shard deterministic sim (MultiShardSim) imports ShardMap directly;
+          declared explicitly rather than relied upon transitively via configd-server. configd-server
+          already depends on configd-replication-engine, so this introduces no new cycle.
+        -->
+        <dependency>
+            <groupId>io.configd</groupId>
+            <artifactId>configd-replication-engine</artifactId>
+            <version>${project.version}</version>
+        </dependency>
         <dependency>
             <groupId>io.configd</groupId>
             <artifactId>configd-edge-cache</artifactId>
