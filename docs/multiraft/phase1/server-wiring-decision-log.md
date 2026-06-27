@@ -15,11 +15,22 @@
 |---|---|---|---|---|
 | **A — C4a config N-selection** | Step 1 | ✅ DONE | preserved | `ShardCountConfigTest` 8/0; `ConfigdServerTest` 22/0 (boot+restart) |
 | **B — adapter inbound groupId demux** | Step 3 (inbound) | ✅ DONE, four-way | preserved | `RaftInboundDemuxTest` 2/0; `NettyConsensusLivenessTest` 3/0; loopback+marshalling+owner-net+throwable all green |
-| **C — N-group consensus loop** | Step 2 | ⏳ | — | — |
-| **D — write/read routing + guard** | Step 4 | ⏳ | — | — |
-| **E — per-shard observability** | Step 5 | ⏳ | — | — |
-| **F — wire-format D1+D2** | Step 6 | ⏳ | — | — |
-| **G — isolation sim + fan-out N>1** | Steps 7,8 | ⏳ | — | — |
+| **C — N-group consensus loop** | Step 2 | ⏳ DEFERRED (clean stop) | — | see `server-wiring-handoff.md` §2 |
+| **D — write/read routing + guard** | Step 4 | ⏳ DEFERRED | — | handoff §2 |
+| **E — per-shard observability** | Step 5 | ⏳ DEFERRED | — | handoff §2 |
+| **F — wire-format D1+D2** | Step 6 | ⏳ DEFERRED | — | handoff §2 |
+| **G — isolation sim + fan-out N>1** | Steps 7,8 | ⏳ DEFERRED | — | handoff §2 |
+
+### Session outcome — CLEAN STOP after Seam B (DL-W-07)
+Seams **A + B** are complete, four-way-verified, and N=1-byte-identical. **`gate-phase1` GREEN**
+(chain-skipped: c1 + multi-shard sim 200-seed + artifacts + the new server-wiring section); **full
+`configd-server` suite 297/0**. The remaining Seams **C–G** are ONE large, coupled
+consensus-bringup/read/write/fan-out surgery (the same the Phase-1 sim session deferred) with no small,
+safe, independently-completable sub-unit — so per the charter prime directive ("stop clean beats finish
+dirty, absolutely … NEVER leave the server path half-wired"), they are deferred to a focused
+next session, mapped at `file:line` in `server-wiring-handoff.md` §2. The temporary N>1 boot guard
+(DL-W-05) keeps every shipped state safe (N>1 cannot boot until the guard is removed at the end of C–G).
+PR opened; STOPPED at the merge gate. EC2 NOT provisioned (handoff §3: not ready until C+D+G land).
 
 ## Decisions (for retroactive veto)
 
