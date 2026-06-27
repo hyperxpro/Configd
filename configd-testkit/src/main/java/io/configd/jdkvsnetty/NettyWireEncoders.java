@@ -69,6 +69,7 @@ final class NettyWireEncoders {
         out.writeByte((byte) type.code());
         out.writeInt(groupId);
         out.writeLong(term);
+        out.writeLong(0L); // v2/D1 reserved epoch — MBZ (dormant); byte-identical to FrameCodec.encode
         out.writeBytes(payload);
         CRC32C crc = CRC.get();
         crc.reset();

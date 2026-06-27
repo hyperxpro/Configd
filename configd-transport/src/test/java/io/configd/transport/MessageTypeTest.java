@@ -78,8 +78,9 @@ class MessageTypeTest {
 
         @Test
         void justAboveTableSizeThrows() {
-            // BY_CODE array is size 0x11 = 17, so code 0x11 is out of bounds
-            assertThrows(IllegalArgumentException.class, () -> MessageType.fromCode(0x11));
+            // BY_CODE array is size 0x12 = 18 (v2 added RAFT_COALESCED_HEARTBEAT at 0x11), so the
+            // first out-of-bounds code is 0x12.
+            assertThrows(IllegalArgumentException.class, () -> MessageType.fromCode(0x12));
         }
     }
 
@@ -166,6 +167,11 @@ class MessageTypeTest {
         @Test
         void timeoutNowIs0x10() {
             assertEquals(0x10, MessageType.TIMEOUT_NOW.code());
+        }
+
+        @Test
+        void raftCoalescedHeartbeatIs0x11() {
+            assertEquals(0x11, MessageType.RAFT_COALESCED_HEARTBEAT.code());
         }
     }
 }

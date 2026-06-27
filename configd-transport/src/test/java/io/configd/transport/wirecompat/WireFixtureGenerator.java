@@ -55,7 +55,7 @@ public final class WireFixtureGenerator {
         boolean update = args.length >= 1 && "--update-fixtures".equals(args[0]);
         Path outDir = Path.of(args.length >= 2
                 ? args[1]
-                : "configd-transport/src/test/resources/wire-fixtures/v1");
+                : "configd-transport/src/test/resources/wire-fixtures/v2");
 
         Map<String, byte[]> fixtures = build();
         if (update) {

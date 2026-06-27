@@ -55,6 +55,8 @@ import io.configd.store.HamtMap;
 import io.configd.store.SigningKeyStore;
 import io.configd.store.VersionedConfigStore;
 import io.configd.netty.NettyRaftTransport;
+import io.configd.transport.FrameCodec;
+import io.configd.transport.MessageType;
 import io.configd.transport.RaftTransportEndpoint;
 import io.configd.transport.TcpRaftTransport;
 import io.configd.transport.TlsConfig;
@@ -434,15 +436,10 @@ public final class ConfigdServer {
         if (tcpTransport != null) {
             final RaftTransportEndpoint tcp = tcpTransport;
             driver.enableHeartbeatCoalescing((peer, groupHeartbeats) -> {
-                // Frame each group's empty AppendEntries onto the node-level transport. At N=1 this is the
-                // single group → one normal AppendEntries frame (wire unchanged). >1 frames each group
-                // individually (a correct fallback; the single coalesced wire frame is Phase-1 Seam F).
-                for (Map.Entry<Integer, AppendEntriesRequest> hb : groupHeartbeats.entrySet()) {
-                    try {
-                        tcp.send(peer, RaftMessageCodec.encode(hb.getValue(), hb.getKey()));
-                    } catch (RuntimeException ignored) {
-                        // codec reject / transport drop — fire-and-forget, Raft retransmits (mirrors send path)
-                    }
+                try {
+                    tcp.send(peer, frameHeartbeatDrain(groupHeartbeats));
+                } catch (RuntimeException ignored) {
+                    // codec reject / transport drop — fire-and-forget, Raft retransmits (mirrors send path)
                 }
             });
             // (Seam C: each group's CoalescingRaftTransport is bound to its owner's coalescer in the
@@ -1660,6 +1657,24 @@ public final class ConfigdServer {
             raftInboundHandler(driver, groupId, driver.ownerExecutor(groupId), metrics)
                     .accept(from, message);
         };
+    }
+
+    /**
+     * Multi-Raft Phase 1 Seam F (D2): frames one owner's per-peer heartbeat drain. Exactly one group
+     * for the peer (ALWAYS the case at N=1) → a normal {@link MessageType#APPEND_ENTRIES} frame, so the
+     * wire is byte-for-byte unchanged; more than one group (only at N&gt;1) → ONE
+     * {@link MessageType#RAFT_COALESCED_HEARTBEAT} frame the receiver demuxes. Package-private static so
+     * {@code HeartbeatDrainFramingTest} can exercise both branches without standing up a server.
+     *
+     * @param groupHeartbeats the per-group {@code groupId -> empty AppendEntriesRequest} (≥1 entry)
+     * @return the frame to send to the peer
+     */
+    static FrameCodec.Frame frameHeartbeatDrain(Map<Integer, AppendEntriesRequest> groupHeartbeats) {
+        if (groupHeartbeats.size() == 1) {
+            Map.Entry<Integer, AppendEntriesRequest> hb = groupHeartbeats.entrySet().iterator().next();
+            return RaftMessageCodec.encode(hb.getValue(), hb.getKey());
+        }
+        return RaftMessageCodec.encodeCoalescedHeartbeat(groupHeartbeats);
     }
 
     /**

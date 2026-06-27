@@ -20,7 +20,15 @@ public enum MessageType {
     HYPARVIEW_SHUFFLE(0x0D),
     HEARTBEAT(0x0E),
     INSTALL_SNAPSHOT_RESPONSE(0x0F),
-    TIMEOUT_NOW(0x10);
+    TIMEOUT_NOW(0x10),
+    /**
+     * Multi-Raft Phase 1 (D2; wire v2): a coalesced heartbeat carrying every group's empty
+     * AppendEntries that one node drained for a single peer in one tick, as ONE frame instead of one
+     * per group (M3). Dormant at N=1 (a single-group drain sends a plain {@link #APPEND_ENTRIES}); the
+     * coalesced frame is only emitted at N&gt;1. Payload codec + demux:
+     * {@code RaftMessageCodec.{encode,decode}CoalescedHeartbeat}.
+     */
+    RAFT_COALESCED_HEARTBEAT(0x11);
 
     private final int code;
 
@@ -32,7 +40,7 @@ public enum MessageType {
         return code;
     }
 
-    private static final MessageType[] BY_CODE = new MessageType[0x11];
+    private static final MessageType[] BY_CODE = new MessageType[0x12];
     static {
         for (MessageType type : values()) {
             BY_CODE[type.code] = type;

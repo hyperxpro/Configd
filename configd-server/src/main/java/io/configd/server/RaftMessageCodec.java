@@ -15,7 +15,9 @@ import io.configd.transport.MessageType;
 
 import java.nio.ByteBuffer;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 
 /**
  * Codec that serializes {@link RaftMessage} to {@link FrameCodec.Frame}
@@ -67,11 +69,26 @@ public final class RaftMessageCodec {
      *
      * <p>4 MiB per blob leaves headroom for both blobs (= 8 MiB) plus
      * the InstallSnapshot fixed header (33 B) plus the FrameCodec
-     * header+trailer (22 B), all comfortably under
-     * {@link FrameCodec#MAX_FRAME_SIZE} = 16 MiB. Larger snapshots
+     * header+trailer ({@code HEADER_SIZE + TRAILER_SIZE}), all comfortably
+     * under {@link FrameCodec#MAX_FRAME_SIZE} = 16 MiB. Larger snapshots
      * must chunk via the {@code offset}/{@code done} fields.
      */
     public static final int MAX_SNAPSHOT_BLOB_LEN = 4 * 1024 * 1024;
+
+    /**
+     * Multi-Raft Phase 1 (D2): hard upper bound on the number of groups in a single coalesced
+     * heartbeat — a defensive allocation bound on a hostile peer's count claim (mirrors
+     * {@link #MAX_ENTRIES_PER_APPEND}). The production ceiling is the shard count (≤16); 1024 is
+     * generous headroom that still bounds the per-frame map allocation.
+     */
+    public static final int MAX_COALESCED_GROUPS = 1024;
+
+    /**
+     * Fixed per-group record in a coalesced-heartbeat payload (bytes):
+     * groupId(4) + term(8) + leaderId(4) + prevLogIndex(8) + prevLogTerm(8) + leaderCommit(8).
+     * Every coalesced entry is a heartbeat (empty AppendEntries), so no entries are carried.
+     */
+    private static final int COALESCED_GROUP_RECORD = 4 + 8 + 4 + 8 + 8 + 8;
 
     /** Fixed-size portion of an InstallSnapshot payload (in bytes). */
     private static final int INSTALL_SNAPSHOT_FIXED_HEADER =
@@ -177,9 +194,124 @@ public final class RaftMessageCodec {
             case INSTALL_SNAPSHOT -> decodeInstallSnapshot(frame);
             case INSTALL_SNAPSHOT_RESPONSE -> decodeInstallSnapshotResponse(frame);
             case TIMEOUT_NOW -> decodeTimeoutNow(frame);
+            // A coalesced heartbeat is NOT a RaftMessage (it bundles many groups) — it must be
+            // decoded via decodeCoalescedHeartbeat() and demuxed per group. Surface a directional
+            // error rather than the generic default so a misroute is loud, not silent.
+            case RAFT_COALESCED_HEARTBEAT -> throw new IllegalArgumentException(
+                    "CoalescedHeartbeat must be decoded via decodeCoalescedHeartbeat(), not decode()");
             default -> throw new IllegalArgumentException(
                     "Not a Raft message type: " + frame.messageType());
         };
+    }
+
+    // ---- CoalescedHeartbeat (Multi-Raft Phase 1, D2) ----
+
+    /**
+     * Encodes a coalesced heartbeat — the per-group empty {@link AppendEntriesRequest}s one node
+     * drained for a single peer in one tick — into ONE {@link MessageType#RAFT_COALESCED_HEARTBEAT}
+     * frame. Dormant at N=1 (the drain there always has exactly one group and sends a plain
+     * AppendEntries instead); emitted only at N&gt;1.
+     *
+     * <p>The sending node's id is NOT in the payload — the transport already carries it as the
+     * sender-id prefix ({@code RaftWireProtocol}), so the receiver gets {@code from} from the
+     * {@code InboundMessage}. The frame-header groupId/term are sentinels (0): the real per-group
+     * ids/terms are in the payload, and the inbound demux dispatches this type by message type, never
+     * by {@code frame.groupId()}.
+     *
+     * @param groupHeartbeats per-group {@code groupId -> empty AppendEntriesRequest} (≥1 entry)
+     * @return the encoded coalesced-heartbeat frame
+     * @throws IllegalArgumentException if the map is empty, exceeds {@link #MAX_COALESCED_GROUPS}, or
+     *                                  any entry carries a non-empty AppendEntries (only heartbeats
+     *                                  may be coalesced)
+     */
+    public static FrameCodec.Frame encodeCoalescedHeartbeat(Map<Integer, AppendEntriesRequest> groupHeartbeats) {
+        int n = groupHeartbeats.size();
+        if (n == 0) {
+            throw new IllegalArgumentException("CoalescedHeartbeat must carry at least one group");
+        }
+        if (n > MAX_COALESCED_GROUPS) {
+            throw new IllegalArgumentException(
+                    "CoalescedHeartbeat group count " + n + " exceeds max " + MAX_COALESCED_GROUPS);
+        }
+        ByteBuffer buf = ByteBuffer.allocate(4 + n * COALESCED_GROUP_RECORD);
+        buf.putInt(n);
+        for (Map.Entry<Integer, AppendEntriesRequest> e : groupHeartbeats.entrySet()) {
+            AppendEntriesRequest ae = e.getValue();
+            if (!ae.entries().isEmpty()) {
+                // Only heartbeats (empty AppendEntries) are ever coalesced (M3 contract). Reject a
+                // non-empty AE rather than silently dropping its entries on the wire.
+                throw new IllegalArgumentException(
+                        "CoalescedHeartbeat group " + e.getKey() + " carries " + ae.entries().size()
+                                + " entries; only empty heartbeats may be coalesced");
+            }
+            buf.putInt(e.getKey());
+            buf.putLong(ae.term());
+            buf.putInt(ae.leaderId().id());
+            buf.putLong(ae.prevLogIndex());
+            buf.putLong(ae.prevLogTerm());
+            buf.putLong(ae.leaderCommit());
+        }
+        return new FrameCodec.Frame(MessageType.RAFT_COALESCED_HEARTBEAT, 0, 0L, buf.array());
+    }
+
+    /**
+     * Decodes a {@link MessageType#RAFT_COALESCED_HEARTBEAT} frame back into the per-group
+     * {@code groupId -> empty AppendEntriesRequest} map. The caller demuxes each entry onto ITS
+     * group's owner thread (see {@code RaftTransportAdapter}); preserves group order for deterministic
+     * replay.
+     *
+     * @param frame a frame whose {@code messageType()} is {@link MessageType#RAFT_COALESCED_HEARTBEAT}
+     * @return the per-group heartbeats (insertion-ordered, distinct group ids)
+     * @throws IllegalArgumentException on a malformed/adversarial payload (bad count, truncation,
+     *                                  duplicate group id, or trailing bytes)
+     */
+    public static Map<Integer, AppendEntriesRequest> decodeCoalescedHeartbeat(FrameCodec.Frame frame) {
+        // Defense-in-depth: the sole production caller routes by type, but a type guard here makes the
+        // method fail-closed against any future second caller (mirrors the directional throw in decode()).
+        if (frame.messageType() != MessageType.RAFT_COALESCED_HEARTBEAT) {
+            throw new IllegalArgumentException(
+                    "decodeCoalescedHeartbeat called on a " + frame.messageType()
+                            + " frame; expected RAFT_COALESCED_HEARTBEAT");
+        }
+        ByteBuffer buf = ByteBuffer.wrap(frame.payload());
+        checkRemaining(buf, 4, "CoalescedHeartbeat count");
+        int n = buf.getInt();
+        if (n < 0) {
+            throw new IllegalArgumentException("Negative CoalescedHeartbeat group count: " + n);
+        }
+        if (n > MAX_COALESCED_GROUPS) {
+            throw new IllegalArgumentException(
+                    "CoalescedHeartbeat group count " + n + " exceeds max " + MAX_COALESCED_GROUPS);
+        }
+        // Reject up front if the declared count cannot fit in the remaining buffer — blocks a tiny
+        // adversary frame from triggering a large map allocation (mirrors decodeAppendEntries).
+        if ((long) n * COALESCED_GROUP_RECORD > buf.remaining()) {
+            throw new IllegalArgumentException(
+                    "CoalescedHeartbeat declares " + n + " groups but only "
+                            + buf.remaining() + " bytes remain");
+        }
+        Map<Integer, AppendEntriesRequest> out = new LinkedHashMap<>(Math.max(4, n * 2));
+        for (int i = 0; i < n; i++) {
+            checkRemaining(buf, COALESCED_GROUP_RECORD, "CoalescedHeartbeat group[" + i + "]");
+            int groupId = buf.getInt();
+            long term = buf.getLong();
+            NodeId leaderId = NodeId.of(buf.getInt());
+            long prevLogIndex = buf.getLong();
+            long prevLogTerm = buf.getLong();
+            long leaderCommit = buf.getLong();
+            AppendEntriesRequest ae = new AppendEntriesRequest(
+                    term, leaderId, prevLogIndex, prevLogTerm, List.of(), leaderCommit);
+            if (out.putIfAbsent(groupId, ae) != null) {
+                throw new IllegalArgumentException(
+                        "CoalescedHeartbeat has duplicate group id: " + groupId);
+            }
+        }
+        if (buf.hasRemaining()) {
+            // Strict: a well-formed coalesced heartbeat is exactly count + n records, no padding.
+            throw new IllegalArgumentException(
+                    "CoalescedHeartbeat has " + buf.remaining() + " trailing bytes after " + n + " groups");
+        }
+        return out;
     }
 
     // ---- AppendEntries ----

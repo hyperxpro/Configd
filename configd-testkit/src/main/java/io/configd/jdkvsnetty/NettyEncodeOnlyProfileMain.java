@@ -70,6 +70,7 @@ public final class NettyEncodeOnlyProfileMain {
             buf.writeByte((byte) type.code());
             buf.writeInt(GROUP_ID);
             buf.writeLong(TERM);
+            buf.writeLong(0L); // v2/D1 reserved epoch — MBZ (dormant); byte-identical to FrameCodec.encode
             buf.writeBytes(pl);
             CRC32C crc = CRC.get();
             crc.reset();

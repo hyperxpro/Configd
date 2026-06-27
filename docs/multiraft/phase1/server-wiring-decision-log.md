@@ -296,8 +296,63 @@ the scrape contract unchanged). The full adversarial/diff four-way is folded int
 Verifier (which reviews every seam) — there is no attack surface in read-only additive gauges to red-team
 in isolation.
 
+## Seam F — the `WIRE_VERSION 0x01→0x02` bump (DL-F-01..04)
+
+ONE atomic, protocol-critical wire bump covering BOTH operator-settled wire decisions (charter §2),
+both DORMANT at N=1. Design + layout: `docs/multiraft/phase1/seam-f-wire-bump.md`.
+
+### DL-F-01 — D1: reserve an 8-byte epoch field, NOT surfaced on the `Frame` record
+`FrameCodec` `HEADER_SIZE 18→26`: an 8-byte epoch field is reserved after the term (offset 18). The
+encoder writes zero (MBZ); the decoder reads-and-ignores it (forward-compatible — a future v2.x sender
+that populates epoch is still decodable, so *activating* epoch needs NO further wire bump). It is
+deliberately NOT added to the `FrameCodec.Frame` record: that record has 60 construction sites (mostly
+tests), and a reserved field no caller consumes is premature plumbing + a 60-site blast radius for zero
+behavioural gain. When epoch activates (DL-P1-04), that session adds the `Frame.epoch()` accessor + an
+`encode` overload — purely additive, no wire bump. The hand-rolled zero-alloc encoders that bypass
+`FrameCodec.encode` (the production `NettyConsensusFrameEncoder` + 3 testkit H2H encoders) each gained
+the matching `writeLong(0L)` — pinned byte-identical by `NettyConsensusFrameEncoderByteIdentityTest`.
+*Reversible: yes (revert the seam; no v1 deployment exists, so it is a clean cutover either way).*
+
+### DL-F-02 — D2: the CoalescedHeartbeat frame + count-bounded payload codec
+`MessageType.RAFT_COALESCED_HEARTBEAT(0x11)` (`BY_CODE` 0x11→0x12). Codec home: `RaftMessageCodec`
+(`encodeCoalescedHeartbeat`/`decodeCoalescedHeartbeat` — siblings of the RaftMessage codec; a
+`CoalescedHeartbeat` is deliberately not a `RaftMessage`, so the sealed `decode` switch gains an
+explicit `RAFT_COALESCED_HEARTBEAT` case that throws a *directional* error). Payload = a count-bounded
+fixed-size-record format: `[count][n × {groupId, term, leaderId, prevLogIndex, prevLogTerm,
+leaderCommit}]` (40 B/record). `from` is NOT in the payload (the transport carries the sender-id prefix);
+frame-header groupId/term are sentinels (0). Adversary bounds: `MAX_COALESCED_GROUPS=1024` cap, the
+`n×record > remaining` tiny-frame/big-alloc pre-check, reject duplicate group ids, reject trailing
+bytes, reject a non-empty AppendEntries on encode (only heartbeats coalesce). *Reversible: yes.*
+
+### DL-F-03 — inbound demux is per-group on the adapter, NOT `routeCoalescedHeartbeat` on the inbound thread
+The handoff sketched "inbound → `driver.routeCoalescedHeartbeat`". That method calls `routeMessage`
+inline, which runs `node.handleMessage` ON THE CALLING THREAD for a non-rehomed group (every production
+group), and `handleMessage` asserts the owner thread. A coalesced frame can bundle groups with DIFFERENT
+owners at N>1, so routing them all on the single Netty inbound thread would run `handleMessage` off-owner
+for all but one group — firing `assertOwnerThread()` / racing the non-synchronized `RaftNode` (ADR-0009).
+So `RaftTransportAdapter.registerInboundHandler` instead DEMUXes the coalesced frame and dispatches each
+group via the existing per-group `InboundHandler.accept(from, gid, ae)` path — each marshalled onto ITS
+owner executor, through the Seam-C unregistered-group drop + the RR-008 throwable guard.
+`routeCoalescedHeartbeat` remains the sim/single-owner-test helper. *Reversible: yes.*
+
+### DL-F-04 — send drain framing extracted + dormant-at-N=1
+The `enableHeartbeatCoalescing` drain swapped "frame each group individually" for
+`ConfigdServer.frameHeartbeatDrain` (package-private, testable): exactly one group for the peer (ALWAYS
+the case at N=1) → a normal `APPEND_ENTRIES` frame (wire byte-for-byte unchanged); more than one (only at
+N>1) → ONE coalesced frame. The coalesced branch is unreachable at N=1, so the wire is identical to
+today. *Reversible: yes.*
+
+### Four-way + gate (Seam F)
+Implementer → diff-review → independent clean re-run → adversarial red-team → fresh-context Verifier
+(APPROVE-0-must-fix) before the PR. Evidence: `configd-transport` 143/0 (incl. `FrameCodecEpochReservationTest`
+6/0 + `WireCompatGoldenBytesTest` 17/0 incl. the v2 regen), `configd-netty` 71/0 (incl. the byte-identity
++ all real-transport round-trips), `configd-server` 331/0 (incl. `CoalescedHeartbeatCodecTest` 13/0,
+`RaftTransportAdapterCoalescedInboundTest` 3/0, `HeartbeatDrainFramingTest` 3/0, and the N=1
+boot/restart + metrics regressions). `gate-phase1` block (h)/wiring-f added (CI-wired, cumulative).
+
 ## Invariants held (re-checked each seam)
-- **N=1 byte-identical** to today (consensus behaviour, wire bytes, Raft WAL/snapshot format). The
+- **N=1 byte-identical** to today (consensus behaviour, Raft WAL/snapshot format; the wire is identical
+  EXCEPT the sanctioned version byte `01→02` + the 8 reserved epoch zero-bytes — charter §2 D1). The
   single most important bar.
 - No early-ack; durability Level 0/1 unchanged.
 - Dynamic resharding NOT built; rehoming DORMANT (D-016 re-verify not triggered).

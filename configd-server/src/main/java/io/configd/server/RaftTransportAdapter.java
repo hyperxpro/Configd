@@ -1,10 +1,14 @@
 package io.configd.server;
 
 import io.configd.common.NodeId;
+import io.configd.raft.AppendEntriesRequest;
 import io.configd.raft.RaftMessage;
 import io.configd.raft.RaftTransport;
 import io.configd.transport.FrameCodec;
+import io.configd.transport.MessageType;
 import io.configd.transport.TcpRaftTransport;
+
+import java.util.Map;
 
 /**
  * Adapts {@link TcpRaftTransport} (transport module, uses {@code Object} messages)
@@ -86,8 +90,26 @@ public final class RaftTransportAdapter implements RaftTransport {
         transport.registerHandler((from, rawMessage) -> {
             if (rawMessage instanceof FrameCodec.Frame frame) {
                 try {
-                    RaftMessage raftMessage = RaftMessageCodec.decode(frame);
-                    handler.accept(from, frame.groupId(), raftMessage);
+                    if (frame.messageType() == MessageType.RAFT_COALESCED_HEARTBEAT) {
+                        // Multi-Raft Phase 1 (D2): a coalesced heartbeat bundles many groups' empty
+                        // AppendEntries into one frame (dormant at N=1 — never sent there). DEMUX it
+                        // and dispatch EACH group through the SAME per-group inbound path, so every
+                        // group's AppendEntries is marshalled onto ITS OWN owner thread (R-01′),
+                        // re-using the Seam-C unregistered-group drop + the RR-008 throwable guard.
+                        // We deliberately do NOT call driver.routeCoalescedHeartbeat() here: it runs
+                        // routeMessage() inline, and a coalesced frame can carry groups with DIFFERENT
+                        // owners at N>1 — running them all on this (inbound) thread would execute
+                        // handleMessage off-owner and trip RaftNode.assertOwnerThread() / race the
+                        // non-synchronized node (ADR-0009). See seam-f-wire-bump.md DL-F-03.
+                        Map<Integer, AppendEntriesRequest> heartbeats =
+                                RaftMessageCodec.decodeCoalescedHeartbeat(frame);
+                        for (Map.Entry<Integer, AppendEntriesRequest> e : heartbeats.entrySet()) {
+                            handler.accept(from, e.getKey(), e.getValue());
+                        }
+                    } else {
+                        RaftMessage raftMessage = RaftMessageCodec.decode(frame);
+                        handler.accept(from, frame.groupId(), raftMessage);
+                    }
                 } catch (Exception e) {
                     System.err.println("Failed to decode Raft message from " + from + ": " + e.getMessage());
                 }

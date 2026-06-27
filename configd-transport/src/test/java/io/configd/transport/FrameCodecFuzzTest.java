@@ -63,7 +63,7 @@ class FrameCodecFuzzTest {
     /** Bounded per-decode timeout. Decode is microseconds; 2 s catches a true hang. */
     private static final Duration DECODE_BUDGET = Duration.ofSeconds(2);
 
-    private static final int MIN_FRAME = FrameCodec.HEADER_SIZE + FrameCodec.TRAILER_SIZE; // 22
+    private static final int MIN_FRAME = FrameCodec.HEADER_SIZE + FrameCodec.TRAILER_SIZE; // 30 (v2: 26+4)
 
     // -----------------------------------------------------------------------
     // 1. Arbitrary bytes — the core fuzz oracle.
