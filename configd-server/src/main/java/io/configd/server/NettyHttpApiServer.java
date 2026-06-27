@@ -51,7 +51,7 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
-import java.util.function.Supplier;
+import java.util.function.Function;
 
 import static io.netty.handler.codec.http.HttpVersion.HTTP_1_1;
 
@@ -125,7 +125,7 @@ public final class NettyHttpApiServer {
                               AuthInterceptor authInterceptor,
                               AclService aclService,
                               StrongReadPolicy strongReadPolicy,
-                              Supplier<NodeId> leaderHintSupplier,
+                              Function<String, NodeId> leaderHintSupplier,
                               AuditLog auditLog,
                               ReplayGuard replayGuard) {
         this.port = port;

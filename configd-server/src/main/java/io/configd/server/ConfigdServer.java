@@ -39,6 +39,8 @@ import io.configd.raft.RaftNode;
 import io.configd.raft.RaftTransport;
 import io.configd.raft.RaftMessage;
 import io.configd.raft.ProposeOutcome;
+import io.configd.replication.CrossShardBatchException;
+import io.configd.replication.CrossShardWriteGuard;
 import io.configd.replication.MultiRaftDriver;
 import io.configd.replication.OwnerExecutorPool;
 import io.configd.replication.StaticShardMap;
@@ -537,10 +539,13 @@ public final class ConfigdServer {
         ConfigStateMachine stateMachine = primaryGroup.stateMachine();
         VersionedConfigStore configStore = primaryGroup.configStore();
         RaftNode raftNode = primaryGroup.raftNode();
-        // The owner executor for the default group — the read path's marshalling hop targets THIS
-        // (expressed as ownerExecutor(gid)), so the group's RaftNode is only ever touched on its bound
-        // owner thread (the assertOwnerThread() net backstops it). Seam D re-resolves per read by shard.
-        ScheduledExecutorService defaultGroupOwner = driver.ownerExecutor(DEFAULT_RAFT_GROUP);
+        // Seam D: gid -> RaftGroupRuntime for the sharded read path (per-shard configStore + scatter-gather
+        // getPrefix). Built once, immutable thereafter, captured by the read closures. At N=1 it holds the
+        // single primary entry, so a read resolves the same store as today.
+        Map<Integer, RaftGroupRuntime> runtimesByGid = new java.util.HashMap<>();
+        for (RaftGroupRuntime rt : runtimes) {
+            runtimesByGid.put(rt.groupId(), rt);
+        }
 
         // Register the inbound DEMULTIPLEXER ONCE on the shared node-level transport. RR-008 (S4): the
         // handler carries `configdMetrics` so a Throwable escaping driver.routeMessage (e.g. a disk fault
@@ -689,10 +694,11 @@ public final class ConfigdServer {
         // synchronous result never crosses the marshalling boundary); the HTTP write thread blocks on
         // one end-to-end WRITE_COMMIT_TIMEOUT_MS deadline and gets a commit-confirmed answer
         // (Committed/Lost/NotLeader/Indeterminate/Overloaded).
+        // Seam D: the production shard-routing proposer — each write routes to shardFor(scope,key)'s
+        // group (and the cross-shard guard rejects a multi-key write spanning shards). At N=1 every key
+        // resolves to group 0, byte-identical to the prior fixed-group proposer.
         ConfigWriteService.RaftProposer proposer =
-                raftProposer(driver, DEFAULT_RAFT_GROUP,
-                        driver.ownerExecutor(DEFAULT_RAFT_GROUP), WRITE_COMMIT_TIMEOUT_MS,
-                        configdMetrics);
+                raftProposer(driver, shardMap, WRITE_COMMIT_TIMEOUT_MS, configdMetrics);
         // F-0054: default write rate limit = 10_000/s globally. Docs in
         // ADR-0017 and performance.md reflect this value; a startup line
         // prints the effective rate so operators can audit at boot.
@@ -704,8 +710,14 @@ public final class ConfigdServer {
         // (same params as the global), so one noisy/hostile tenant cannot consume the whole write
         // budget and starve others. The global rateLimiter remains the fallback for unauthenticated /
         // overflow requests. Gate stays before the Raft proposal (RR-002-safe).
+        // Seam D: the leader hint is SHARD-AWARE — a NotLeader/Lost redirect points at the leader of the
+        // shard that OWNS (scope,key), so a client retries the right shard's leader (a keyless hint would
+        // loop forever at N>1). At N=1 shardFor → group 0 ⇒ raftNode.leaderId(), byte-identical.
         ConfigWriteService writeService = new ConfigWriteService(proposer, null, rateLimiter,
-                () -> raftNode.leaderId(),
+                (scope, key) -> {
+                    io.configd.raft.RaftNode owner = driver.getGroup(shardMap.shardFor(scope, key));
+                    return owner != null ? owner.leaderId() : null;
+                },
                 () -> new RateLimiter(clock, writeRatePerSec, writeBurst));
 
         // (Tick / read-dispatch / TLS-reload executors are created earlier,
@@ -729,13 +741,24 @@ public final class ConfigdServer {
         // (a non-thread-safe LinkedHashMap). These must be dispatched to
         // the tick thread, not called directly from HTTP handler threads.
         // ---------------------------------------------------------------
-        ConfigReadService.ConfigReader configReader = new ConfigReadService.ConfigReader() {
-            @Override public io.configd.store.ReadResult get(String key) { return configStore.get(key); }
-            @Override public io.configd.store.ReadResult get(String key, long minVersion) { return configStore.get(key, minVersion); }
-            @Override public java.util.Map<String, io.configd.store.ReadResult> getPrefix(String prefix) { return configStore.getPrefix(prefix); }
-            @Override public long currentVersion() { return configStore.currentVersion(); }
-        };
-        ConfigReadService readService = new ConfigReadService(configReader, () -> {
+        // Seam D: reads route to the shard that OWNS the key. Every HTTP write is ConfigScope.GLOBAL, so
+        // reads resolve shardFor(GLOBAL, key) — the same scope the write used (single-key linearizability
+        // preserved). getPrefix scatter-gathers across all shards (prefix keys may hash to different
+        // shards). At N=1 every resolution is group 0 ⇒ the single primary store, byte-identical.
+        final ConfigScope readScope = ConfigScope.GLOBAL;
+        // Pass IMMUTABLE copies: the reader is read concurrently by HTTP threads (off the build thread),
+        // so a frozen map/list makes the read-only-after-publication contract self-evident (diff-review NIT).
+        ConfigReadService.ConfigReader configReader =
+                shardedConfigReader(shardMap, Map.copyOf(runtimesByGid), List.copyOf(runtimes), readScope);
+        // Seam D: linearizable-read leadership is confirmed on the shard that OWNS the key (the ReadIndex
+        // protocol runs on that shard's node via its owner). At N=1 this is group 0 ⇒ byte-identical.
+        ConfigReadService readService = new ConfigReadService(configReader, key -> {
+            int readGid = shardMap.shardFor(readScope, key);
+            io.configd.raft.RaftNode readNode = driver.getGroup(readGid);
+            if (readNode == null) {
+                return false; // unknown shard — fail closed (treat as not-leader)
+            }
+            ScheduledExecutorService readOwner = driver.ownerExecutor(readGid);
             // F-0022 fix: single-future completion-driven pattern.
             // Allocates 1 CompletableFuture per linearizable read (was ~150
             // under stall from the previous polling loop).
@@ -755,9 +778,9 @@ public final class ConfigdServer {
             // via the AtomicLong memory-model semantics).
             java.util.concurrent.atomic.AtomicLong readIdRef =
                     new java.util.concurrent.atomic.AtomicLong(Long.MIN_VALUE);
-            readDispatchExecutor.execute(() -> defaultGroupOwner.execute(() -> {
+            readDispatchExecutor.execute(() -> readOwner.execute(() -> {
                 try {
-                    long readId = raftNode.readIndex();
+                    long readId = readNode.readIndex();
                     if (readId < 0) {
                         resultFuture.complete(false); // Not leader
                         return;
@@ -766,9 +789,9 @@ public final class ConfigdServer {
                     // whenReadReady fires synchronously if already ready,
                     // otherwise registers a one-shot callback fired from
                     // the owner thread after confirmPendingReads / apply.
-                    raftNode.whenReadReady(readId, () -> {
-                        boolean ready = raftNode.isReadReady(readId);
-                        raftNode.completeRead(readId);
+                    readNode.whenReadReady(readId, () -> {
+                        boolean ready = readNode.isReadReady(readId);
+                        readNode.completeRead(readId);
                         resultFuture.complete(ready);
                     });
                 } catch (Throwable t) {
@@ -788,7 +811,7 @@ public final class ConfigdServer {
                 long readId = readIdRef.get();
                 if (readId != Long.MIN_VALUE) {
                     final long finalReadId = readId;
-                    defaultGroupOwner.execute(() -> raftNode.completeRead(finalReadId));
+                    readOwner.execute(() -> readNode.completeRead(finalReadId));
                 }
                 return false;
             }
@@ -840,10 +863,18 @@ public final class ConfigdServer {
         // JDK adapter is retained and CI-green as the revert target.
         NettyHttpApiServer httpApiServer;
         try {
+            // Seam D: the read 503 X-Leader-Hint is SHARD-AWARE — resolved for the key's owning shard
+            // (mirrors the write redirect), so a client retries the right shard's leader. At N=1 every
+            // key resolves to group 0 ⇒ raftNode.leaderId(), byte-identical.
             httpApiServer = new NettyHttpApiServer(
                     config.apiPort(), sslContext, healthService, prometheusExporter,
                     configStore, writeService, readService, authInterceptor, aclService,
-                    strongReadPolicy, () -> raftNode.leaderId(), auditLog, replayGuard);
+                    strongReadPolicy,
+                    key -> {
+                        io.configd.raft.RaftNode owner = driver.getGroup(shardMap.shardFor(readScope, key));
+                        return owner != null ? owner.leaderId() : null;
+                    },
+                    auditLog, replayGuard);
             httpApiServer.start();
         } catch (Exception e) {
             throw new RuntimeException("Failed to start HTTP API server on port " + config.apiPort(), e);
@@ -1422,6 +1453,50 @@ public final class ConfigdServer {
     }
 
     /**
+     * Multi-Raft Phase 1 — Seam D: the SHARD-AWARE {@link ConfigReadService.ConfigReader}. A point read
+     * resolves the shard that OWNS the key ({@code shardMap.shardFor(readScope, key)}) and reads THAT
+     * shard's {@code configStore}; a {@code getPrefix} SCATTER-GATHERS across all shards (a prefix's keys
+     * may hash to different shards) and merges; {@code currentVersion} is the max across shards (the
+     * per-key version still comes from {@code ReadResult.version()}, which is per-shard correct). At
+     * {@code N=1} every key resolves to group 0 ⇒ the single store, byte-identical to today. Package-private
+     * static so {@code ShardedRoutingTest} can drive the real read routing.
+     *
+     * @param readScope the scope reads route on (production: {@code GLOBAL}, matching the HTTP write path)
+     */
+    static ConfigReadService.ConfigReader shardedConfigReader(
+            StaticShardMap shardMap, Map<Integer, RaftGroupRuntime> runtimesByGid,
+            List<RaftGroupRuntime> runtimes, ConfigScope readScope) {
+        return new ConfigReadService.ConfigReader() {
+            private VersionedConfigStore storeFor(String key) {
+                RaftGroupRuntime rt = runtimesByGid.get(shardMap.shardFor(readScope, key));
+                return (rt != null ? rt : runtimes.get(0)).configStore();
+            }
+            @Override public io.configd.store.ReadResult get(String key) { return storeFor(key).get(key); }
+            @Override public io.configd.store.ReadResult get(String key, long minVersion) {
+                return storeFor(key).get(key, minVersion);
+            }
+            @Override public Map<String, io.configd.store.ReadResult> getPrefix(String prefix) {
+                if (runtimes.size() == 1) {
+                    return runtimes.get(0).configStore().getPrefix(prefix); // single shard — byte-identical
+                }
+                // Scatter-gather across shards; a prefix's keys may live on different shards.
+                Map<String, io.configd.store.ReadResult> merged = new java.util.LinkedHashMap<>();
+                for (RaftGroupRuntime rt : runtimes) {
+                    merged.putAll(rt.configStore().getPrefix(prefix));
+                }
+                return merged;
+            }
+            @Override public long currentVersion() {
+                long max = 0L;
+                for (RaftGroupRuntime rt : runtimes) {
+                    max = Math.max(max, rt.configStore().currentVersion());
+                }
+                return max;
+            }
+        };
+    }
+
+    /**
      * H-009 (iter-2): handles an unhandled throwable that escaped the tick
      * loop body. This is package-private static so the regression test
      * ({@code TickLoopThrowableHandlerTest}) can drive it directly without
@@ -1603,30 +1678,90 @@ public final class ConfigdServer {
                 new ConfigdMetrics(new MetricsRegistry(), () -> 0L));
     }
 
-    /** Production proposer (S6/WS-A): same commit-confirmed semantics as the overload above, plus
-     *  end-to-end write-commit metric recording into {@code metrics} (D-2). */
+    /**
+     * Fixed-group proposer (tests / single-group wiring): every write routes to {@code groupId} on
+     * {@code raftExecutor}, ignoring the keys for routing (one group ⇒ trivially single-shard, so the
+     * cross-shard guard never fires). Commit-confirmed semantics + write-commit metrics as the production
+     * overload. Package-private so the marshalling/commit regression tests can drive the real seam with
+     * their own executor.
+     */
     static ConfigWriteService.RaftProposer raftProposer(
             MultiRaftDriver driver, int groupId,
             java.util.concurrent.Executor raftExecutor, long writeCommitTimeoutMs,
             ConfigdMetrics metrics) {
-        // S7.5 admission control (§11): bound the proposals concurrently in-flight on the single tick
-        // executor so a sustained write flood cannot starve the periodic heartbeat — the PART 2 churn
-        // cause (heartbeat slips past the election timeout → leadership churn → 503 collapse, with the
-        // disk and CPU idle). Excess is shed as Overloaded (→ 429 + Retry-After) on the HTTP thread
-        // BEFORE the proposal ever reaches the executor, so the leader stays stable and throughput
-        // holds at the sustainable rate instead of inverting. Default 0 = OFF (opt-in / A-B via
-        // -Dconfigd.write.maxInflightProposals=N); the permit is held only for the bounded
-        // writeCommitTimeoutMs wait, so it bounds the executor backlog directly.
+        return buildProposer(driver, writeCommitTimeoutMs, metrics,
+                (scope, keys) -> new Routed(groupId, raftExecutor));
+    }
+
+    /**
+     * Multi-Raft Phase 1 — Seam D: the PRODUCTION shard-routing proposer. Each write is routed to the
+     * shard that owns its key(s) via {@link CrossShardWriteGuard#requireSingleShard} — ONE call that is
+     * both the router (single key ⇒ {@code shardFor(scope, key)}) AND the DISCLAIM guard (multi-key keys
+     * spanning shards ⇒ {@link ConfigWriteService.ProposeCommitResult.CrossShardRejected}, before any Raft
+     * work). The owner executor is re-resolved per write from the resolved gid ({@code
+     * driver.ownerExecutor(gid)} — rehoming-aware), dropping the captured group-0 executor. At {@code N=1}
+     * every key resolves to group 0 ⇒ byte-identical to the prior single-group proposer.
+     */
+    static ConfigWriteService.RaftProposer raftProposer(
+            MultiRaftDriver driver, StaticShardMap shardMap, long writeCommitTimeoutMs,
+            ConfigdMetrics metrics) {
+        return buildProposer(driver, writeCommitTimeoutMs, metrics,
+                (scope, keys) -> {
+                    int gid = CrossShardWriteGuard.requireSingleShard(shardMap, scope, keys);
+                    return new Routed(gid, driver.ownerExecutor(gid));
+                });
+    }
+
+    /** The (gid, owner-executor) a write was routed to (Seam D). */
+    private record Routed(int gid, java.util.concurrent.Executor executor) {}
+
+    /** Resolves a write's owning shard + owner executor, or throws {@code CrossShardBatchException}. */
+    @FunctionalInterface
+    private interface WriteRouter {
+        Routed route(ConfigScope scope, List<String> keys);
+    }
+
+    /**
+     * R-01 + RR-004 / ADR-0033 + Seam D: the commit-confirmed proposer core, parameterized by a
+     * {@link WriteRouter} (fixed-group for tests; shard-routing for production). A SINGLE marshalled task
+     * performs {@code driver.propose(gid, …)} AND, on acceptance, registers
+     * {@code whenCommitOutcome(index, term, cb)} on the owning {@link io.configd.raft.RaftNode} —
+     * capturing {@code (index, term)} INSIDE the task. All node mutation stays on the group's owner
+     * thread; the HTTP write thread blocks on ONE end-to-end {@code writeCommitTimeoutMs} deadline and
+     * gets a commit-confirmed answer (Committed/Lost/NotLeader/Indeterminate/Overloaded/CrossShardRejected).
+     */
+    private static ConfigWriteService.RaftProposer buildProposer(
+            MultiRaftDriver driver, long writeCommitTimeoutMs, ConfigdMetrics metrics,
+            WriteRouter router) {
+        // S7.5 admission control (§11): bound the proposals concurrently in-flight so a sustained write
+        // flood cannot starve the periodic heartbeat. Excess is shed as Overloaded (→ 429 + Retry-After)
+        // on the HTTP thread BEFORE the proposal reaches the executor. Default 0 = OFF (opt-in via
+        // -Dconfigd.write.maxInflightProposals=N); the permit is held only for the bounded wait.
         int maxInflightProposals = Integer.getInteger("configd.write.maxInflightProposals", 0);
         java.util.concurrent.Semaphore admission =
                 maxInflightProposals > 0 ? new java.util.concurrent.Semaphore(maxInflightProposals) : null;
-        return (scope, command) -> {
+        return (scope, keys, command) -> {
             // S6/WS-A: end-to-end write-commit latency is measured HERE (HTTP write thread, OFF
             // the R-01 tick hot path) from request entry to outcome — the true "write commit p99"
             // SLO signal (S5: ~16 ms), NOT the apply duration. Recorded via recordWriteOutcome.
             long t0 = System.nanoTime();
+            // Seam D: route + cross-shard guard FIRST (fail-fast, before admission / any Raft work). A
+            // multi-key write whose keys span shards is rejected here (DISCLAIM) — no permit consumed.
+            final int groupId;
+            final java.util.concurrent.Executor raftExecutor;
+            try {
+                Routed routed = router.route(scope, keys);
+                groupId = routed.gid();
+                raftExecutor = routed.executor();
+            } catch (CrossShardBatchException | IllegalArgumentException e) {
+                // CrossShardBatchException = keys span shards (DISCLAIM). IllegalArgumentException =
+                // an empty key list (requireSingleShard contract). Both are pre-Raft validation failures
+                // surfaced as a clean ValidationFailed (HTTP 400), never a 500. Defensive for a future
+                // multi-key BATCH path — the single-key HTTP write path always passes one key (red-team LOW).
+                return new ConfigWriteService.ProposeCommitResult.CrossShardRejected(e.getMessage());
+            }
             if (admission != null && !admission.tryAcquire()) {
-                // In-flight bound reached → graceful shed. This path creates NO tick-executor task,
+                // In-flight bound reached → graceful shed. This path creates NO executor task,
                 // so the heartbeat is never queued behind a flood — the leader stays stable (§11).
                 ConfigWriteService.ProposeCommitResult shed =
                         new ConfigWriteService.ProposeCommitResult.Overloaded();
@@ -1636,7 +1771,7 @@ public final class ConfigdServer {
             java.util.concurrent.CompletableFuture<ConfigWriteService.ProposeCommitResult> f =
                     new java.util.concurrent.CompletableFuture<>();
             // Captured inside the marshalled task so the timeout path can cancel
-            // the exact pending callback on the tick thread (mirrors the read
+            // the exact pending callback on the owner thread (mirrors the read
             // path's readIdRef). -1 until an entry is appended.
             java.util.concurrent.atomic.AtomicLong indexRef =
                     new java.util.concurrent.atomic.AtomicLong(-1L);
@@ -1662,7 +1797,7 @@ public final class ConfigdServer {
                         return;
                     }
                     // Register the one-shot commit-outcome callback atomically with
-                    // the accepted append, on the tick thread. Fires inline if the
+                    // the accepted append, on the owner thread. Fires inline if the
                     // outcome is already decidable (single-node immediate commit).
                     node.whenCommitOutcome(index, outcome.term(), commitOutcome -> {
                         f.complete(switch (commitOutcome.kind()) {
@@ -1682,7 +1817,7 @@ public final class ConfigdServer {
                 return result;
             } catch (java.util.concurrent.TimeoutException e) {
                 // Deadline expired with the outcome unknown. Cancel the abandoned
-                // one-shot callback on the tick thread so its map entry cannot leak
+                // one-shot callback on the owner thread so its map entry cannot leak
                 // (an isolated leader may never step down or apply). complete()
                 // below is a no-op race-wise: the future is returned as
                 // Indeterminate regardless.
@@ -1709,9 +1844,7 @@ public final class ConfigdServer {
                 throw new RuntimeException("propose failed", cause);
             } finally {
                 // S7.5 admission control: release the permit when the HTTP thread finishes waiting
-                // (commit, loss, timeout, or error). Holding it only for the bounded
-                // writeCommitTimeoutMs wait is what bounds the executor backlog → keeps heartbeats
-                // timely. No-op when admission control is disabled (admission == null).
+                // (commit, loss, timeout, or error). No-op when admission control is disabled.
                 if (admission != null) {
                     admission.release();
                 }

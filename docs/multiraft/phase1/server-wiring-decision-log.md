@@ -16,7 +16,7 @@
 | **A — C4a config N-selection** | Step 1 | ✅ DONE | preserved | `ShardCountConfigTest` 8/0; `ConfigdServerTest` 22/0 (boot+restart) |
 | **B — adapter inbound groupId demux** | Step 3 (inbound) | ✅ DONE, four-way | preserved | `RaftInboundDemuxTest` 2/0; `NettyConsensusLivenessTest` 3/0; loopback+marshalling+owner-net+throwable all green |
 | **C — N-group consensus loop** | Step 2 | ✅ DONE, four-way | preserved | `MultiGroupBringupTest` 5/0; full `configd-server` 303/0 (incl. `NettyConsensusLivenessTest` real-wire N=1 + `ConfigdServerTest` boot/restart); `RaftInboundDemuxTest` 3/0; §3 mTLS negatives 5/0 on `NettyRaftTransport` |
-| **D — write/read routing + guard** | Step 4 | ⏳ DEFERRED | — | handoff §2 |
+| **D — write/read routing + guard** | Step 4 | ✅ DONE, four-way | preserved | `ShardedRoutingTest` 6/0; full `configd-server` 309/0; `configd-control-plane-api` 15/0; `ConfigdServerTest` 22/0 (N=1 boot/restart) |
 | **E — per-shard observability** | Step 5 | ⏳ DEFERRED | — | handoff §2 |
 | **F — wire-format D1+D2** | Step 6 | ⏳ DEFERRED | — | handoff §2 |
 | **G — isolation sim + fan-out N>1** | Steps 7,8 | ⏳ DEFERRED | — | handoff §2 |
@@ -162,6 +162,79 @@ for legit frames (gid 0 at N=1). Codified by `RaftInboundDemuxTest#hostileGroupI
 3. **`configdMetrics` is per-shard-blind** — counters conflate shards (the documented Seam E deferral).
 4. **mTLS is operator-optional** (pre-existing, whole-consensus exposure if TLS off) — the EC2 N×knee
    run MUST set TLS on; consider making mTLS mandatory for the Raft transport.
+
+## Seam D — live write/read routing + cross-shard guard (DL-W-D-01..04 + four-way)
+
+The sim-verified ShardMap routing is wired into the LIVE write + read paths; the cross-shard DISCLAIM
+guard is active on the live path; redirects are shard-aware. Design:
+`docs/multiraft/phase1/seam-d-live-routing.md`. N>1 routing is exercised by tests (the N>1 boot guard
+still holds until Seam G); N=1 is byte-identical (every resolution lands on group 0).
+
+### DL-W-D-01 — `requireSingleShard` is the unified live router + guard
+`RaftProposer.propose` is widened to `(scope, List<String> keys, command)`. The production proposer
+(`raftProposer(driver, shardMap, …)`) resolves the owning shard via
+`CrossShardWriteGuard.requireSingleShard(shardMap, scope, keys)` — ONE call that is both the router
+(single-key ⇒ `shardFor`) and the DISCLAIM guard (multi-key spanning shards ⇒ `CrossShardRejected`,
+caught synchronously before any Raft work / admission permit). The owner executor is re-resolved per
+write (`driver.ownerExecutor(gid)`), dropping the captured group-0 executor. A fixed-group proposer
+overload is retained for the marshalling/commit regression tests. *Reversible: revert the commit.*
+
+### DL-W-D-02 — shard-aware leader redirect + linearizable confirm
+`LeaderHintSupplier.currentLeader()` → `currentLeader(scope, key)` and
+`LeadershipConfirmer.confirmLeadership()` → `confirmLeadership(key)`: a `NotLeader`/`Lost` redirect now
+points at the leader of the shard that OWNS the key, and a linearizable read runs the ReadIndex protocol
+on the OWNING shard's node (a keyless hint/confirm would loop forever / verify the wrong shard at N>1).
+At N=1 both resolve to group 0. *Reversible: yes.*
+
+### DL-W-D-03 — sharded reader; `getPrefix` scatter-gather; `currentVersion` aggregate
+`ConfigdServer.shardedConfigReader` (package-private, testable): a point read resolves
+`shardFor(READ_SCOPE, key)`'s store; `getPrefix` scatter-gathers across all shards and merges (a
+prefix's keys may hash to different shards); `currentVersion` is the max across shards (per-key version
+still from `ReadResult.version()`). `READ_SCOPE = GLOBAL`, matching every HTTP write
+(`AdminApiHandler` is GLOBAL-only) — single-key linearizability preserved. At N=1 it is the one store.
+*Reversible: yes.*
+
+### DL-W-D-04 — `ProposeCommitResult.CrossShardRejected` → `WriteResult.ValidationFailed`
+A new terminal outcome for the DISCLAIM rejection, mapped to a permanent `ValidationFailed` (HTTP 400) —
+retrying the same spanning write cannot succeed. The proposer's pre-Raft guard catch also covers
+`IllegalArgumentException` (empty key list) → `CrossShardRejected`, so a malformed multi-key write is a
+clean 400, never a 500 (red-team LOW; defensive for a future BATCH path). *Reversible: yes.*
+
+### DL-W-D-05 — the LIVE read path is FULLY sharded (both reviewers' HIGH/BLOCKER, FIXED)
+The first four-way pass found the read path only HALF-sharded: the linearizable/strong-read path went
+through the sharded `ConfigReadService`, but the **default stale `GET`** read the captured group-0
+`configStore` directly (`AdminApiHandler`) and the **read 503 `X-Leader-Hint` was keyless** (group 0) —
+both wrong at N>1 (read-your-writes break / wrong-shard redirect loop), unreachable at N=1. FIXED in this
+seam (the charter §5.D requires the live READ path sharded, so not deferred):
+- stale `GET` now routes through `readService.staleRead` → the sharded reader (`AdminApiHandler.java`);
+- the HTTP leader hint is now `Function<String,NodeId>` — keyed, resolving the owning shard's leader
+  (mirrors the write redirect); plumbed through `NettyHttpApiServer`/`HttpApiServer`.
+Proven by `ShardedRoutingTest#staleGetIsShardedThroughTheHttpHandler` (a shard-k≠0 key GET returns 200
+via the sharded reader, not 404 from the group-0 store — red/green for the BLOCKER) +
+`#leaderHintResolvesTheOwningShardLeader`. **Still group-0 (Seam G / not-yet-sharded singletons, by
+design):** the fan-out/watch listeners + compactor (Seam G N-way merge) and the health-readiness leader
+check. *Reversible: yes.*
+
+### Four-way review of Seam D (charter §4.1)
+- **Diff-review (java-distinguished-engineer): REQUEST-CHANGES → re-reviewed APPROVE-WITH-NITS (no
+  must-fix).** N=1 byte-identity confirmed claim-by-claim ("no way the N=1 path diverges"); write path +
+  cross-shard guard + threading sound. Findings FIXED + re-verified on the actual code (second-agent
+  replay): [BLOCKER] stale `GET` group-0 read (DL-W-D-05); [SHOULD-FIX] keyless read hint (DL-W-D-05);
+  [SHOULD-FIX] HTTP-read test-gap (`staleGetIsShardedThroughTheHttpHandler` — genuine red/green); [NIT]
+  `runtimesByGid`/`runtimes` → immutable copies. Residual NITs (non-blocking): empty-keys →
+  `CrossShardRejected` is a mild misnomer (accurate reason text; 400 either way); the stale fallback is
+  group-0 only in a degenerate stale-only-no-read-service config (N=1-correct, documented).
+- **Red-team (redteam-auditor): SHIP-WITH-FIXES.** Could NOT break the redirect race (StaticShardMap
+  epoch=0/deploy-fixed ⇒ no stale-map window; hint races only leadership, self-correcting; exactly-once
+  = last-writer-wins idempotent, unchanged), the cross-shard guard (pre-Raft, no permit consumed), or
+  the N=1 path. Findings FIXED: [HIGH×2] stale `GET` + keyless read hint (DL-W-D-05); [LOW] guard catch
+  broadened (DL-W-D-04). [MEDIUM] writer-scope/reader-GLOBAL divergence — DOCUMENTED constraint
+  (`AdminApiHandler` is GLOBAL-only; the read scope matches; `ConfigWriteService.put(…,scope)` with a
+  non-GLOBAL scope is the v2 multi-scope seam). [INFO] `currentVersion` aggregate / fan-out / health
+  remain Seam-G territory.
+- **Independent re-run:** `ShardedRoutingTest` 6/0; full `configd-server` 309/0 (incl. real-wire
+  `NettyConsensusLivenessTest` + admin API contracts on both transports + `ConfigdServerTest`
+  boot/restart); `configd-control-plane-api` 15/0.
 
 ## Invariants held (re-checked each seam)
 - **N=1 byte-identical** to today (consensus behaviour, wire bytes, Raft WAL/snapshot format). The

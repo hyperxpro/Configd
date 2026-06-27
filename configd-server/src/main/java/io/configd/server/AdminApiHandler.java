@@ -19,7 +19,7 @@ import java.nio.charset.StandardCharsets;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Objects;
-import java.util.function.Supplier;
+import java.util.function.Function;
 
 /**
  * Transport-agnostic decision core for the admin / control-plane HTTP API (ADR-0043 M2; the DR-N2
@@ -57,7 +57,10 @@ public final class AdminApiHandler {
     private final AuthInterceptor authInterceptor;     // nullable: auth disabled
     private final AclService aclService;               // nullable: ACLs disabled
     private final StrongReadPolicy strongReadPolicy;   // non-null
-    private final Supplier<NodeId> leaderHintSupplier; // non-null
+    // Multi-Raft Phase 1 (Seam D): KEYED leader hint — resolves the leader of the shard that OWNS the key,
+    // so a read 503's X-Leader-Hint points at the right shard's leader (a keyless hint would loop forever
+    // at N>1). At N=1 every key resolves to group 0. Non-null.
+    private final Function<String, NodeId> leaderHintSupplier;
     private final AuditLog auditLog;                   // nullable: auditing disabled
     private final ReplayGuard replayGuard;             // nullable: replay protection off
 
@@ -69,7 +72,7 @@ public final class AdminApiHandler {
                            AuthInterceptor authInterceptor,
                            AclService aclService,
                            StrongReadPolicy strongReadPolicy,
-                           Supplier<NodeId> leaderHintSupplier,
+                           Function<String, NodeId> leaderHintSupplier,
                            AuditLog auditLog,
                            ReplayGuard replayGuard) {
         this.healthService = healthService;
@@ -223,14 +226,19 @@ public final class AdminApiHandler {
                 // Ordinary key, explicit linearizable request that can't be served: reported as Not
                 // Leader. NOT a strong-read fail-close (a stale read of this key is contract-permitted).
                 Map<String, String> h = jsonHeaders();
-                NodeId hint = leaderHintSupplier.get();
+                NodeId hint = leaderHintSupplier.apply(key);
                 if (hint != null) {
                     h.put("X-Leader-Hint", String.valueOf(hint.id()));
                 }
                 return new AdminResponse(503, h, bytes("Not Leader - cannot serve linearizable read"));
             }
         } else {
-            result = configStore.get(key);
+            // Multi-Raft Phase 1 (Seam D): route the STALE read through the sharded reader so a key on
+            // shard k≠0 is read from ITS store, not the captured group-0 store (read-your-writes at N>1).
+            // ConfigReadService.staleRead delegates to the sharded ConfigReader; at N=1 it resolves group 0
+            // (byte-identical). The raw group-0 configStore is the fallback only for a stale-only
+            // deployment with no read service wired (single-group by construction).
+            result = (readService != null) ? readService.staleRead(key) : configStore.get(key);
         }
 
         if (!result.found()) {
@@ -254,7 +262,7 @@ public final class AdminApiHandler {
     private AdminResponse failClosed(String key, String reason) {
         Map<String, String> h = jsonHeaders();
         h.put("X-Fail-Closed", "strong-read");
-        NodeId hint = leaderHintSupplier.get();
+        NodeId hint = leaderHintSupplier.apply(key);
         if (hint != null) {
             h.put("X-Leader-Hint", String.valueOf(hint.id()));
         }

@@ -83,7 +83,7 @@ class RaftProposerCommitConfirmTest {
             ConfigWriteService.RaftProposer proposer =
                     ConfigdServer.raftProposer(driverFor(node), GROUP, exec, 5000);
 
-            var result = proposer.propose(null, put("k", "v"));
+            var result = proposer.propose(null, java.util.List.of("k"), put("k", "v"));
             // A single-node leader commits + applies inline, so the proposer
             // returns Committed (NOT a bare local-append accept) carrying the
             // applied-mutation seq.
@@ -108,7 +108,7 @@ class RaftProposerCommitConfirmTest {
             ConfigWriteService.RaftProposer proposer =
                     ConfigdServer.raftProposer(driverFor(follower), GROUP, exec, 5000);
 
-            var result = proposer.propose(null, put("k", "v"));
+            var result = proposer.propose(null, java.util.List.of("k"), put("k", "v"));
             assertInstanceOf(ConfigWriteService.ProposeCommitResult.NotLeader.class, result,
                     "a follower must reject pre-append as NotLeader (definite, distinct from Indeterminate)");
         } finally {
@@ -136,7 +136,7 @@ class RaftProposerCommitConfirmTest {
                     Thread.currentThread().interrupt();
                 }
             });
-            var result = proposer.propose(null, put("k", "v"));
+            var result = proposer.propose(null, java.util.List.of("k"), put("k", "v"));
             assertInstanceOf(ConfigWriteService.ProposeCommitResult.Indeterminate.class, result,
                     "outcome-unknown-within-deadline must be Indeterminate (distinct from success and "
                             + "from definite failure)");
@@ -190,7 +190,7 @@ class RaftProposerCommitConfirmTest {
             ScheduledFuture<?> ticker = exec.scheduleAtFixedRate(
                     n1::tick, 0, 5, TimeUnit.MILLISECONDS);
             try {
-                var result = proposer.propose(null, put("k", "v"));
+                var result = proposer.propose(null, java.util.List.of("k"), put("k", "v"));
                 assertInstanceOf(ConfigWriteService.ProposeCommitResult.Indeterminate.class, result,
                         "an APPENDED-but-UNCOMMITTED write must not be acked as Committed; "
                                 + "it must block to the deadline and report Indeterminate");

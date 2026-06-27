@@ -153,5 +153,19 @@ assert_file "docs/multiraft/phase1/seam-c-multigroup-bringup.md"
 assert_grep "docs/multiraft/phase1/server-wiring-decision-log.md" "DL-W-C-0"
 echo "gate-phase1 wiring-c: OK"
 
-echo "=== gate-phase1: GREEN — Multi-Raft Phase 1 sharding foundation + server-wiring A/B/C verified ==="
+# --- (f) Server-wiring Seam D: live write/read routing + cross-shard guard ----
+# Drives the PRODUCTION proposer (shard-routing) + the sharded reader over N real groups. Non-vacuity:
+# a write for key k applies to shardFor(GLOBAL,k)'s store and NO other (isolation matrix goes RED on a
+# mis-route); the sharded reader resolves the same shard (read/write consistency); a multi-key write
+# spanning shards is CrossShardRejected (DISCLAIM); the leader hint resolves the owning shard's leader.
+echo "gate-phase1 wiring-d: live write/read routing + cross-shard guard (Seam D)..."
+WIRINGD="$LOGDIR/wiring-d.txt"
+run_tests wiring-d "ShardedRoutingTest" "$WIRINGD"
+assert_class_green "$WIRINGD" "ShardedRoutingTest"
+assert_file "configd-server/src/test/java/io/configd/server/ShardedRoutingTest.java"
+assert_file "docs/multiraft/phase1/seam-d-live-routing.md"
+assert_grep "docs/multiraft/phase1/server-wiring-decision-log.md" "DL-W-D-0"
+echo "gate-phase1 wiring-d: OK"
+
+echo "=== gate-phase1: GREEN — Multi-Raft Phase 1 sharding foundation + server-wiring A/B/C/D verified ==="
 exit 0

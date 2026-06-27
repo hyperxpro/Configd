@@ -23,7 +23,7 @@ class ConfigWriteServiceTest {
 
     /** A proposer that returns a fixed terminal commit outcome. */
     private static ConfigWriteService.RaftProposer proposerReturning(ProposeCommitResult outcome) {
-        return (scope, cmd) -> outcome;
+        return (scope, keys, cmd) -> outcome;
     }
 
     @Test
@@ -129,7 +129,7 @@ class ConfigWriteServiceTest {
     void notLeaderIncludesLeaderHint() {
         io.configd.common.NodeId leaderNode = io.configd.common.NodeId.of(5);
         ConfigWriteService service = new ConfigWriteService(
-                proposerReturning(new ProposeCommitResult.NotLeader()), null, null, () -> leaderNode);
+                proposerReturning(new ProposeCommitResult.NotLeader()), null, null, (scope, key) -> leaderNode);
 
         var result = service.put("key", new byte[]{1}, ConfigScope.GLOBAL);
         assertInstanceOf(WriteResult.NotLeader.class, result);
@@ -140,7 +140,7 @@ class ConfigWriteServiceTest {
     void lostIncludesLeaderHintWhenKnown() {
         io.configd.common.NodeId leaderNode = io.configd.common.NodeId.of(2);
         ConfigWriteService service = new ConfigWriteService(
-                proposerReturning(new ProposeCommitResult.Lost()), null, null, () -> leaderNode);
+                proposerReturning(new ProposeCommitResult.Lost()), null, null, (scope, key) -> leaderNode);
 
         var result = service.put("key", new byte[]{1}, ConfigScope.GLOBAL);
         assertInstanceOf(WriteResult.Lost.class, result);
@@ -161,7 +161,7 @@ class ConfigWriteServiceTest {
     void deleteNotLeaderIncludesLeaderHint() {
         io.configd.common.NodeId leaderNode = io.configd.common.NodeId.of(3);
         ConfigWriteService service = new ConfigWriteService(
-                proposerReturning(new ProposeCommitResult.NotLeader()), null, null, () -> leaderNode);
+                proposerReturning(new ProposeCommitResult.NotLeader()), null, null, (scope, key) -> leaderNode);
 
         var result = service.delete("key", ConfigScope.GLOBAL);
         assertInstanceOf(WriteResult.NotLeader.class, result);
