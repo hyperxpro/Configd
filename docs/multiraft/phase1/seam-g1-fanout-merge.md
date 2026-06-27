@@ -93,13 +93,23 @@ This is not "half-wired N>1": the **fan-out** (G1's mandate) is fully per-shard 
 is a separate dormant push mechanism whose multiplexing client is explicitly deferred, and the
 limitation is loud (comment + decision log + the N>1 edge-endpoint startup warning below).
 
-## Edge endpoint at N>1 — serves the primary shard, with a loud warning
+## Edge endpoint at N>1 — FAIL-CLOSED (refuse), with an explicit opt-in
 
 `NettyFanOutServer` (only when `--edge-port` is set; **off by default**) takes one
 `CommitNotificationSource` + one `ReplaySource`. Its single-cursor wire protocol cannot address N
 per-shard sequences without the cursor-vector client (v2). At N=1 it gets the primary buffer/replay —
-byte-identical. At N>1 it serves the **primary shard** and the server prints a **loud startup warning**
-that the sharded edge client (multiplexing the N per-shard sources) is v2 — observable, not silent.
+byte-identical.
+
+At N>1 it could only serve the **primary shard** — and an edge subscriber has **no in-band signal** that
+it is receiving a SUBSET of the keyspace, so a downstream cache would silently believe it has the full
+config. A loud *startup warning* (the original G1 choice) is not enough — the consumer never sees it.
+Consistent with the project's fail-closed discipline (a loud refusal, never silent partial data), the
+G4 red-team escalated this to **fail-closed**: the server **REFUSES to start** when `shardCount > 1` and
+the edge endpoint is enabled, **unless** the operator explicitly opts in with
+`-Dconfigd.edge.allowPartialShardView=true`. The check is **fail-fast** (at the top of `start()`, before
+any allocation — no leak on the refusal path). Never trips at N=1 (the primary is the only shard — full
+view). The sharded edge client that multiplexes the N per-shard sources (a cursor vector — ADR-D-A/D-C)
+is v2 (handoff §5). Pinned by `NGreaterThanOneBootSmokeTest#edgeEndpointAtNGreaterThanOneIsRefusedWithoutOptIn`.
 
 ## Implementation (additive; N=1 byte-identical)
 

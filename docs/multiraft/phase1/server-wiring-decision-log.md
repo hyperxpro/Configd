@@ -455,6 +455,75 @@ append channels are lazy + owner threads are daemon); (b) a startup WARNING when
 Two metric NITs (the global `raft_pending_apply_entries` is owner-0-only at N>1; per-shard gauges cover
 each shard) deferred.
 
+### G4 — the switch-flip: remove the N>1 boot guard (DL-W-G4-01..03) — gated on G3 green
+
+The LAST act, gated on the integrated sweep (`wiring-g`) being green (it is). The N>1 boot refusal in
+`resolveShardCount` is removed; N>1 now boots in production.
+
+#### DL-W-G4-01 — the boot guard is GONE; fixed-at-deploy now applies to N>1 too
+`resolveShardCount` no longer throws on `shardCount > 1`. N>1 boots: every shard is a registered Raft
+group (Seam C), routed per shard (Seam D), with its own fan-out (G1), proven shared-node isolation (G2),
+all shared node-level deps thread-safe (the audit). `enforceFixedShardCount` still runs (now for N>1):
+first boot persists N; a later boot with a different N is a loud reshard rejection, never silent
+mis-routing. `ShardCountConfigTest` flipped from `nGreaterThanOneIsRefusedWhileWiringDormant` to
+`nGreaterThanOneNowBootsAndIsFixedAtDeploy` (N∈{2,4,16} boot + persist + reshard-reject) +
+`n1StillBootsByteIdenticalAfterGuardRemoval`. **N=1 boot/run is byte-identical** (the guard removal
+touched only the N>1 branch; full `configd-server` suite re-run). *Reversible: re-add the throw.*
+
+#### DL-W-G4-02 — N>1 boot smoke on the REAL server
+`NGreaterThanOneBootSmokeTest`: `ConfigdServer.start()` with `configd.raft.shardCount=2` (single-node,
+`--peers ""`) BOOTS (before G4 it threw `IllegalStateException`); both shards self-elect LEADER; a propose
+to shard k commits+applies on shard k and advances ONLY shard k's applied index (live cross-shard
+isolation on the booted server); per-shard metrics (Seam E) for shard 1 are present. 1/0. (The per-shard
+write/read SEMANTICS are also proven on the real bring-up path by `MultiShardIntegratedSweepTest` +
+`MultiGroupBringupTest`.) *Reversible: test-only.*
+
+#### DL-W-G4-03 — thread-safety audit co-deliverables landed with the flip
+(a) The bring-up loop is wrapped: on a partial-bring-up failure (`buildRaftGroup` throws for gid=k>0) the
+already-built groups are `removeGroup`'d + the owner pool is shut down, then the original cause is
+rethrown — no leaked driver registrations / owner-bound nodes (defense-in-depth; unreachable at N=1).
+(b) A loud startup WARNING when `shardCount>1 && ownerPoolSize==1` (all shards would serialize on one
+owner thread — safe but no throughput gain; the EC2 run sets ownerPoolSize≥N). *Reversible: yes.*
+
+#### DL-W-G4-04 — edge endpoint at N>1 is FAIL-CLOSED (red-team MEDIUM), not a warning
+The G1 design served the PRIMARY shard at N>1 with a loud startup *warning*. The G4 red-team escalated:
+an edge subscriber has NO in-band signal of a partial view, so a downstream cache would silently believe
+it has the full keyspace. Consistent with the project's fail-closed discipline, `start()` now REFUSES
+N>1 + `--edge-port` together unless `-Dconfigd.edge.allowPartialShardView=true`. The check is FAIL-FAST
+(top of start(), before any allocation — no leak on the refusal path). N=1 + edge is unaffected (full
+view); N>1 without edge is unaffected. Pinned by
+`NGreaterThanOneBootSmokeTest#edgeEndpointAtNGreaterThanOneIsRefusedWithoutOptIn`. *Reversible: yes.*
+
+#### Four-way (G4 — the switch-flip)
+- **Diff-review (java-distinguished-engineer): APPROVE-WITH-NITS, 0 must-fix.** N=1 byte-identity verified
+  object-by-object (the deleted code was the N>1 branch only); N>1 genuinely safe to boot (all gids ∈
+  [0,N) registered before any route; ordering correct); the partial-bring-up cleanup correct (rethrows
+  original cause). NITs folded: catch `Throwable`; track the runtime right after `addGroup` (cleans a
+  register-but-fail-to-bind group); the P-vs-N warning broadened to `ownerPoolSize < N`; comment precision.
+- **Red-team (redteam-auditor): SHIP-WITH-FIXES, no CRITICAL/HIGH.** Could not break N=1, the N>1
+  consensus plane (writes can't reach an unregistered group), the cleanup, the marker durability, or the
+  smoke's non-vacuity. The one MEDIUM (silent edge partial view) is FIXED fail-closed (DL-W-G4-04). LOW
+  (cleanup completeness) partially folded.
+- **Independent re-run:** full `configd-server` 346/0 (N=1 byte-identity: boot/restart + real-wire
+  liveness + metrics regression); gate-phase1 GREEN end-to-end (wiring-g + wiring-g4).
+
+#### Tracked follow-ups (NOT in G4 — pre-existing or v2)
+- **`Storage` is not closed on `shutdown()`** (diff-review S1 / audit): pre-existing (N=1 already leaks the
+  single node storage; reclaimed at process exit), now ×N per-shard at N>1. Make `Storage` `AutoCloseable`
+  + close per-shard storage in `shutdown()` and the bring-up catch — a follow-up (touches the Storage API;
+  out of G4's scope). Matters for embedded/repeated `start()`, not the long-lived CLI daemon.
+- **Multi-NODE N>1 boot smoke**: the smoke uses `--peers ""` (single-node), so the N>1 real-wire demux +
+  coalesced-heartbeat EMIT path are covered by `MultiShardIntegratedSweepTest` + `RaftInboundDemuxTest` +
+  the Seam-F battery, not the boot smoke. A 2-node N>1 smoke is a nice-to-have for the EC2 session.
+- Metric semantics at N>1: the global `raft_pending_apply_entries` is owner-0/group-0 only (per-shard
+  `raft.shard.apply_lag.<gid>` cover each shard); per-shard `fanout.buffer.dropped.<gid>` (G1 follow-up).
+
+#### gate-phase1 wiring-g4
+Added AFTER `wiring-g` so the gate STRUCTURE encodes "guard removed only with the sweep green": the smoke
+(N>1 boots + per-shard commit + the edge fail-closed refusal) + the flipped `ShardCountConfigTest` + a
+non-vacuity grep that the old boot-refusal message is GONE from `ConfigdServer`. gate-phase1 GREEN
+end-to-end through wiring-g4.
+
 ## Invariants held (re-checked each seam)
 - **N=1 byte-identical** to today (consensus behaviour, Raft WAL/snapshot format; the wire is identical
   EXCEPT the sanctioned version byte `01→02` + the 8 reserved epoch zero-bytes — charter §2 D1). The

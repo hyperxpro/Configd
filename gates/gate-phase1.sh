@@ -131,7 +131,7 @@ echo "gate-phase1 artifacts: OK"
 echo "gate-phase1 wiring: server N-config (C4a) + inbound groupId demux (DL-P1-06)..."
 WIRING="$LOGDIR/wiring.txt"
 run_tests wiring "ShardCountConfigTest,RaftInboundDemuxTest" "$WIRING"
-assert_class_green "$WIRING" "ShardCountConfigTest"   # C4a: range + N>1 guard (no marker poison) + reshard reject
+assert_class_green "$WIRING" "ShardCountConfigTest"   # C4a: range + N>1 BOOTS (Seam G4) + fixed-at-deploy reshard reject
 assert_class_green "$WIRING" "RaftInboundDemuxTest"   # DL-P1-06: gid=k -> group k (not 0); hostile gid dropped
 assert_file "configd-server/src/test/java/io/configd/server/ShardCountConfigTest.java"
 assert_file "configd-server/src/test/java/io/configd/server/RaftInboundDemuxTest.java"
@@ -233,5 +233,25 @@ assert_grep "docs/multiraft/phase1/server-wiring-decision-log.md" "DL-W-G1-0"
 assert_grep "docs/multiraft/phase1/server-wiring-decision-log.md" "DL-W-G2-0"
 echo "gate-phase1 wiring-g: OK"
 
-echo "=== gate-phase1: GREEN — Multi-Raft Phase 1 sharding foundation + server-wiring A/B/C/D/E/F/G verified ==="
+# --- (j) Server-wiring Seam G4: the SWITCH-FLIP — the N>1 boot guard is REMOVED ----
+# Ordered AFTER wiring-g (the integrated sweep) so the structure encodes the charter §3.4 gate: the guard
+# is removed ONLY with the sweep green. The smoke proves the REAL ConfigdServer.start() now BOOTS at N=2
+# (before G4 it threw), both shards self-elect, a propose to shard k commits+applies on shard k ONLY (live
+# cross-shard isolation), and per-shard metrics are live. ShardCountConfigTest (in wiring above) flipped
+# from "N>1 refused" to "N>1 boots + fixed-at-deploy". N=1 stays byte-identical (its own assertions).
+echo "gate-phase1 wiring-g4: the switch-flip — N>1 boots on the real server (boot guard removed)..."
+WIRINGG4="$LOGDIR/wiring-g4.txt"
+run_tests wiring-g4 "NGreaterThanOneBootSmokeTest" "$WIRINGG4"
+assert_class_green "$WIRINGG4" "NGreaterThanOneBootSmokeTest"   # G4: ConfigdServer.start() boots at N=2 + per-shard commit
+assert_file "configd-server/src/test/java/io/configd/server/NGreaterThanOneBootSmokeTest.java"
+# Non-vacuity: the temporary N>1 boot refusal is GONE from resolveShardCount (a regression that re-added
+# the throw would FAIL the smoke; this grep also fails loudly if the scaffold message creeps back). The
+# old guard's unique fragment was "is not enabled in this build".
+if grep -q "is not enabled in this build" "$ROOT/configd-server/src/main/java/io/configd/server/ConfigdServer.java"; then
+  fail wiring-g4 "the N>1 boot-refusal message is back in ConfigdServer — the switch-flip regressed"
+fi
+assert_grep "docs/multiraft/phase1/server-wiring-decision-log.md" "DL-W-G4-0"
+echo "gate-phase1 wiring-g4: OK"
+
+echo "=== gate-phase1: GREEN — Multi-Raft Phase 1 sharding foundation + server-wiring A/B/C/D/E/F/G (incl. G4 switch-flip) verified ==="
 exit 0

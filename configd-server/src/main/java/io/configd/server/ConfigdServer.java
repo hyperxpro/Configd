@@ -233,6 +233,26 @@ public final class ConfigdServer {
         System.out.println("  Shard map    : " + shardMap + " [Multi-Raft Phase 1 C4a; N fixed at deploy,"
                 + " ceiling " + MAX_SHARD_COUNT + "]");
 
+        // Seam G1/G4 (red-team MEDIUM) — FAIL FAST before allocating anything: the C1 edge endpoint's
+        // single-cursor wire protocol serves ONE shard, so at N>1 a subscriber would silently receive only
+        // the PRIMARY shard's keys (a downstream cache believing it has the full keyspace). The sharded
+        // edge client that multiplexes the N per-shard streams (a cursor vector — ADR-D-A/D-C) is v2
+        // (handoff §5). Consistent with the fail-closed discipline (a loud refusal, never silent partial
+        // data), REFUSE N>1 + the edge endpoint together unless the operator EXPLICITLY opts in. Never
+        // trips at N=1 (the primary is the only shard — full view).
+        if (shardCount > 1 && config.edgeEnabled()
+                && !Boolean.getBoolean("configd.edge.allowPartialShardView")) {
+            throw new IllegalStateException(
+                    "configd.raft.shardCount=" + shardCount + " (N>1) with the edge endpoint enabled"
+                            + " (--edge-port): the edge endpoint serves the PRIMARY shard (group "
+                            + DEFAULT_RAFT_GROUP + ") ONLY — a subscriber would silently receive a SUBSET"
+                            + " of the keyspace (the sharded edge client that multiplexes all " + shardCount
+                            + " per-shard streams is v2 — docs/multiraft/phase1). Refusing to start to avoid"
+                            + " a silent partial-view data plane. Either run the edge endpoint at N=1, or set"
+                            + " -Dconfigd.edge.allowPartialShardView=true to accept the primary-shard-only"
+                            + " edge view explicitly.");
+        }
+
         // Initialize storage
         Storage storage = Storage.file(dataDir);
         Clock clock = Clock.system();
@@ -489,31 +509,63 @@ public final class ConfigdServer {
         // single-group bring-up. See docs/multiraft/phase1/seam-c-multigroup-bringup.md.
         // ===============================================================
         int[] gids = shardMap.shardIds().toArray(); // StaticShardMap: [0, N)
+        // Seam G4 / thread-safety audit: a startup warning when N>1 groups would under-provision the owner
+        // pool (P < N) — they then serialize on too few owner threads. Safe (per-group single-writer
+        // holds), but it forfeits the sharding throughput gain — the EC2 N×knee run sets ownerPoolSize>=N.
+        // Loud, not silent.
+        if (shardCount > 1 && ownerPool.size() < shardCount) {
+            System.err.println("WARNING: ************************************************************");
+            System.err.println("WARNING: shardCount=" + shardCount + " (N>1) with ownerPoolSize="
+                    + ownerPool.size() + " (< N) — shards serialize on fewer owner threads than shards.");
+            System.err.println("WARNING: Set configd.raft.ownerPoolSize>=" + shardCount
+                    + " for the multi-shard throughput gain.");
+            System.err.println("WARNING: ************************************************************");
+        }
         List<RaftGroupRuntime> runtimes = new ArrayList<>(gids.length);
-        for (int gid : gids) {
-            RaftGroupRuntime rt = buildRaftGroup(
-                    gid, shardCount, dataDir, storage, raftIntegrity, clock, configSigner,
-                    smInvariantChecker, raftInvariantChecker, configdMetrics, raftConfig, config.nodeId(),
-                    tcpTransport, groupCommitEnabled, groupCommitMaxBatch, groupCommitLingerMicros, driver);
-            driver.addGroup(gid, rt.raftNode());
-            // Stage 2 M3: bind this group's CoalescingRaftTransport to its CURRENT owner's coalescer
-            // (rehoming-aware; resolved per record). DORMANT for outbound at N=1 (owner 0). Only when a
-            // real TCP transport exists (peer mode) does the group carry a coalescing decorator.
-            if (rt.coalescingTransport() != null) {
-                rt.coalescingTransport().bindCoalescer(
-                        () -> driver.heartbeatCoalescer(driver.currentOwnerIndex(gid)));
+        // Seam G4 (thread-safety audit, partial-bring-up cleanup): if a group's bring-up throws for gid=k>0,
+        // groups 0..k-1 are already registered + owner-bound. Release them on failure (remove from the
+        // driver + shut the owner pool) so a failed boot does not leak driver registrations / owner-bound
+        // nodes, then rethrow the original cause. At N=1 the prior-group cleanup loop is a no-op (one
+        // group), though the catch itself still runs on a failed single-group boot (harmless — it shuts the
+        // pool + rethrows the same cause). Catches Throwable so an Error mid-boot also cleans up.
+        try {
+            for (int gid : gids) {
+                RaftGroupRuntime rt = buildRaftGroup(
+                        gid, shardCount, dataDir, storage, raftIntegrity, clock, configSigner,
+                        smInvariantChecker, raftInvariantChecker, configdMetrics, raftConfig, config.nodeId(),
+                        tcpTransport, groupCommitEnabled, groupCommitMaxBatch, groupCommitLingerMicros, driver);
+                driver.addGroup(gid, rt.raftNode());
+                // Track the runtime the instant it is registered on the driver — BEFORE the binds below — so
+                // a throw from bindCoalescer/execute (register-but-fail-to-bind) is still cleaned up.
+                runtimes.add(rt);
+                // Stage 2 M3: bind this group's CoalescingRaftTransport to its CURRENT owner's coalescer
+                // (rehoming-aware; resolved per record). DORMANT for outbound at N=1 (owner 0). Only when a
+                // real TCP transport exists (peer mode) does the group carry a coalescing decorator.
+                if (rt.coalescingTransport() != null) {
+                    rt.coalescingTransport().bindCoalescer(
+                            () -> driver.heartbeatCoalescer(driver.currentOwnerIndex(gid)));
+                }
+                // H-6 (Phase 0 B Stage 1B) — BIND THE OWNER. Submit bindOwnerThread() as the FIRST task on
+                // this group's owner executor, BEFORE the inbound demux is published (tcpTransport.start
+                // below) and BEFORE the per-owner tick loop is scheduled. Single-thread FIFO then orders any
+                // later inbound-routing / propose / tick task AFTER the bind — even a frame arriving the
+                // instant start() returns marshals BEHIND this already-submitted bind. NEVER bind in the
+                // constructor (it runs on `main` and legitimately touches state during recovery). After this
+                // task runs, assertOwnerThread() is ACTIVE for the group's RaftNode (the R-01′ net, live).
+                // (The bind + the addGroup ConcurrentHashMap put give the happens-before edge that keeps
+                // monitorView() non-null for the off-owner scrape — H-5.)
+                driver.ownerExecutor(gid).execute(rt.raftNode()::bindOwnerThread);
             }
-            // H-6 (Phase 0 B Stage 1B) — BIND THE OWNER. Submit bindOwnerThread() as the FIRST task on
-            // this group's owner executor, BEFORE the inbound demux is published (tcpTransport.start
-            // below) and BEFORE the per-owner tick loop is scheduled. Single-thread FIFO then orders any
-            // later inbound-routing / propose / tick task AFTER the bind — even a frame arriving the
-            // instant start() returns marshals BEHIND this already-submitted bind. NEVER bind in the
-            // constructor (it runs on `main` and legitimately touches state during recovery). After this
-            // task runs, assertOwnerThread() is ACTIVE for the group's RaftNode (the R-01′ net, live).
-            // (The bind + the addGroup ConcurrentHashMap put give the happens-before edge that keeps
-            // monitorView() non-null for the off-owner scrape — H-5.)
-            driver.ownerExecutor(gid).execute(rt.raftNode()::bindOwnerThread);
-            runtimes.add(rt);
+        } catch (Throwable bringUpFailed) {
+            for (RaftGroupRuntime built : runtimes) {
+                try {
+                    driver.removeGroup(built.groupId());
+                } catch (RuntimeException ignored) {
+                    // best-effort cleanup — surface the ORIGINAL bring-up failure below
+                }
+            }
+            ownerPool.shutdown();
+            throw bringUpFailed;
         }
 
         // The PRIMARY group (DEFAULT_RAFT_GROUP = 0) is the home for the singletons not yet sharded —
@@ -890,19 +942,9 @@ public final class ConfigdServer {
         // ---------------------------------------------------------------
         io.configd.server.fanout.FanOutEndpoint fanOutServer = null;
         if (config.edgeEnabled()) {
-            // Seam G1: the C1 edge endpoint's single-cursor wire protocol serves ONE shard. At N>1 it
-            // serves the PRIMARY shard; the sharded edge client that multiplexes the N per-shard sources
-            // (a cursor vector — ADR-D-A/D-C) is v2 (handoff §5). Warn loudly so this is observable, not
-            // a silent partial-view footgun. At N=1 the primary is the only shard (full view).
-            if (shardCount > 1) {
-                System.err.println("WARNING: ************************************************************");
-                System.err.println("WARNING: --edge-port is set with shardCount=" + shardCount + " (N>1).");
-                System.err.println("WARNING: The edge endpoint serves the PRIMARY shard (group "
-                        + DEFAULT_RAFT_GROUP + ") ONLY.");
-                System.err.println("WARNING: The sharded edge client (multiplexing all " + shardCount
-                        + " per-shard streams) is v2.");
-                System.err.println("WARNING: ************************************************************");
-            }
+            // (Seam G1/G4: N>1 + the edge endpoint without -Dconfigd.edge.allowPartialShardView was already
+            // refused fail-fast at the top of start(), so here shardCount==1 OR the operator opted into the
+            // primary-shard-only view. The edge endpoint binds the primary shard's buffer/replay below.)
             io.configd.server.fanout.RegistryFanOutSessionMetrics fanOutMetrics =
                     new io.configd.server.fanout.RegistryFanOutSessionMetrics(metricsRegistry);
             io.configd.distribution.ReplaySource edgeReplaySource =
@@ -1250,20 +1292,24 @@ public final class ConfigdServer {
      *   <li>reads {@code configd.raft.shardCount} (default {@code 1} — a single group, byte-identical to
      *       today; system property, consistent with the other {@code configd.raft.*} tunables);</li>
      *   <li>validates {@code 1 <= N <= }{@link #MAX_SHARD_COUNT} (a clear error otherwise);</li>
-     *   <li><b>TEMPORARY scaffold</b> — until the C3 N-group consensus loop lands, the server registers a
-     *       single group, so {@code N>1} is refused LOUDLY rather than routing writes to groups that do
-     *       not exist (silent corruption — charter §2). N=1 is unaffected. This guard is removed when the
-     *       N-group wiring ships;</li>
      *   <li>enforces fixed-at-deploy via {@link #enforceFixedShardCount} (persist on first boot, reject a
-     *       later changed N). Ordered AFTER the {@code N>1} guard so a rejected {@code N>1} boot never
-     *       persists a marker.</li>
+     *       later changed N — a loud reshard error rather than silent mis-routing).</li>
      * </ol>
-     * Package-private static so {@code ShardCountConfigTest} can drive it directly.
+     *
+     * <p><b>Multi-Raft Phase 1 — Seam G4 (the switch-flip):</b> the temporary {@code N>1} boot refusal was
+     * REMOVED here once the N-group production wiring was proven correct end-to-end (Seams C/D/E/F/G) and
+     * the integrated N&gt;1 sweep went green (gate-phase1 {@code wiring-g} — charter §3.4). {@code N>1} now
+     * boots: every shard is a registered Raft group (Seam C), writes/reads route per shard (Seam D), each
+     * shard has its own fan-out (Seam G1), shared-node isolation is proven (Seam G2), and every shared
+     * node-level dependency is thread-safe at N&gt;1 (the Seam-G audit). {@code N=1} (the default) is
+     * unchanged and byte-identical to before the flip.
+     *
+     * <p>Package-private static so {@code ShardCountConfigTest} can drive it directly.
      *
      * @param dataDir the data directory (holds the fixed-at-deploy marker)
      * @return the validated shard count {@code N}
      * @throws IllegalArgumentException if {@code N} is out of range
-     * @throws IllegalStateException    if {@code N>1} (temporary) or a reshard is attempted
+     * @throws IllegalStateException    if a reshard is attempted (configured N differs from the persisted N)
      */
     static int resolveShardCount(Path dataDir) {
         int shardCount = Integer.getInteger("configd.raft.shardCount", 1);
@@ -1273,14 +1319,9 @@ public final class ConfigdServer {
                             + " — static-N multi-Raft; N is a deploy-time constant fixed for the life of"
                             + " the deployment (changing it requires a manual reshard).");
         }
-        if (shardCount > 1) {
-            throw new IllegalStateException(
-                    "configd.raft.shardCount=" + shardCount + " (N>1) is configured, but the N-group"
-                            + " server wiring is not enabled in this build (only the single default group"
-                            + " is registered). Multi-shard routing would send writes to unregistered"
-                            + " groups. Run with N=1 (the default) until the multi-Raft production wiring"
-                            + " ships. The sharding logic is sim-verified (docs/multiraft/phase1).");
-        }
+        // Seam G4: the N>1 boot refusal is GONE — N>1 is fully wired + verified. fixed-at-deploy still
+        // applies (now to N>1 too): the first boot persists N; a later boot with a different N is a loud
+        // reshard rejection, never silent mis-routing of already-committed keys.
         enforceFixedShardCount(shardCount, dataDir);
         return shardCount;
     }
