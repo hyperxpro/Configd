@@ -228,30 +228,31 @@ public final class ConfigdServer {
         // consistent with the other `configd.raft.*` tunables), validated to [1, MAX_SHARD_COUNT], and
         // FIXED AT DEPLOY (see resolveShardCount). The StaticShardMap routes (scope,key)→shard.
         // ---------------------------------------------------------------
+        // Seam G1/G4 (red-team MEDIUM) — FAIL FAST, and BEFORE resolveShardCount persists the
+        // fixed-at-deploy marker (preserving DL-W-05: a refused boot never persists a marker). The C1 edge
+        // endpoint's single-cursor wire protocol serves ONE shard, so at N>1 a subscriber would silently
+        // receive only the PRIMARY shard's keys (a downstream cache believing it has the full keyspace).
+        // The sharded edge client that multiplexes the N per-shard streams (a cursor vector — ADR-D-A/D-C)
+        // is v2 (handoff §5). Consistent with the fail-closed discipline (a loud refusal, never silent
+        // partial data), REFUSE N>1 + the edge endpoint together unless the operator EXPLICITLY opts in.
+        // Never trips at N=1 (the primary is the only shard — full view).
+        int configuredShardCount = Integer.getInteger("configd.raft.shardCount", 1);
+        if (configuredShardCount > 1 && config.edgeEnabled()
+                && !Boolean.getBoolean("configd.edge.allowPartialShardView")) {
+            throw new IllegalStateException(
+                    "configd.raft.shardCount=" + configuredShardCount + " (N>1) with the edge endpoint"
+                            + " enabled (--edge-port): the edge endpoint serves the PRIMARY shard (group "
+                            + DEFAULT_RAFT_GROUP + ") ONLY — a subscriber would silently receive a SUBSET"
+                            + " of the keyspace (the sharded edge client that multiplexes all "
+                            + configuredShardCount + " per-shard streams is v2 — docs/multiraft/phase1)."
+                            + " Refusing to start to avoid a silent partial-view data plane. Either run the"
+                            + " edge endpoint at N=1, or set -Dconfigd.edge.allowPartialShardView=true to"
+                            + " accept the primary-shard-only edge view explicitly.");
+        }
         int shardCount = resolveShardCount(dataDir);
         StaticShardMap shardMap = new StaticShardMap(shardCount);
         System.out.println("  Shard map    : " + shardMap + " [Multi-Raft Phase 1 C4a; N fixed at deploy,"
                 + " ceiling " + MAX_SHARD_COUNT + "]");
-
-        // Seam G1/G4 (red-team MEDIUM) — FAIL FAST before allocating anything: the C1 edge endpoint's
-        // single-cursor wire protocol serves ONE shard, so at N>1 a subscriber would silently receive only
-        // the PRIMARY shard's keys (a downstream cache believing it has the full keyspace). The sharded
-        // edge client that multiplexes the N per-shard streams (a cursor vector — ADR-D-A/D-C) is v2
-        // (handoff §5). Consistent with the fail-closed discipline (a loud refusal, never silent partial
-        // data), REFUSE N>1 + the edge endpoint together unless the operator EXPLICITLY opts in. Never
-        // trips at N=1 (the primary is the only shard — full view).
-        if (shardCount > 1 && config.edgeEnabled()
-                && !Boolean.getBoolean("configd.edge.allowPartialShardView")) {
-            throw new IllegalStateException(
-                    "configd.raft.shardCount=" + shardCount + " (N>1) with the edge endpoint enabled"
-                            + " (--edge-port): the edge endpoint serves the PRIMARY shard (group "
-                            + DEFAULT_RAFT_GROUP + ") ONLY — a subscriber would silently receive a SUBSET"
-                            + " of the keyspace (the sharded edge client that multiplexes all " + shardCount
-                            + " per-shard streams is v2 — docs/multiraft/phase1). Refusing to start to avoid"
-                            + " a silent partial-view data plane. Either run the edge endpoint at N=1, or set"
-                            + " -Dconfigd.edge.allowPartialShardView=true to accept the primary-shard-only"
-                            + " edge view explicitly.");
-        }
 
         // Initialize storage
         Storage storage = Storage.file(dataDir);

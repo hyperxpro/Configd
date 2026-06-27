@@ -490,9 +490,12 @@ The G1 design served the PRIMARY shard at N>1 with a loud startup *warning*. The
 an edge subscriber has NO in-band signal of a partial view, so a downstream cache would silently believe
 it has the full keyspace. Consistent with the project's fail-closed discipline, `start()` now REFUSES
 N>1 + `--edge-port` together unless `-Dconfigd.edge.allowPartialShardView=true`. The check is FAIL-FAST
-(top of start(), before any allocation — no leak on the refusal path). N=1 + edge is unaffected (full
-view); N>1 without edge is unaffected. Pinned by
-`NGreaterThanOneBootSmokeTest#edgeEndpointAtNGreaterThanOneIsRefusedWithoutOptIn`. *Reversible: yes.*
+(near the top of start(), before any allocation — no leak on the refusal path) AND ordered BEFORE
+`resolveShardCount` persists the fixed-at-deploy marker, preserving DL-W-05 (a refused boot never persists
+a marker that could poison a later boot — final-Verifier NIT). N=1 + edge is unaffected (full view); N>1
+without edge is unaffected. Pinned by
+`NGreaterThanOneBootSmokeTest#edgeEndpointAtNGreaterThanOneIsRefusedWithoutOptIn` (incl. the no-marker
+assertion). *Reversible: yes.*
 
 #### Four-way (G4 — the switch-flip)
 - **Diff-review (java-distinguished-engineer): APPROVE-WITH-NITS, 0 must-fix.** N=1 byte-identity verified

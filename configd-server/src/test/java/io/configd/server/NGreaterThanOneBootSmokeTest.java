@@ -126,6 +126,10 @@ class NGreaterThanOneBootSmokeTest {
                 () -> "refusal should explain the partial-view reason: " + e.getMessage());
         assertTrue(e.getMessage().contains("allowPartialShardView"),
                 () -> "refusal should name the explicit opt-in escape: " + e.getMessage());
+        // DL-W-05 invariant: a REFUSED boot must NOT persist the fixed-at-deploy marker (else it would
+        // poison a later boot at a different N). The edge guard runs BEFORE resolveShardCount persists.
+        assertTrue(java.nio.file.Files.notExists(dataDir.resolve("raft-shard-count.meta")),
+                "a refused N>1+edge boot must not persist the fixed-at-deploy marker");
     }
 
     /** Polls the group's owner-published monitor view until it is LEADER (single-node self-election). */
