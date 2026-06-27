@@ -498,6 +498,50 @@ jobs:
         run: GATE_B_SKIP_CHAIN=1 bash gates/gate-B.sh
         timeout-minutes: 5
 
+  gate-phase1:
+    # Multi-Raft Phase 1 cumulative gate (gates/gate-phase1.sh) — the static-N sharding layer: the
+    # ShardMap seam + StaticShardMap (hash-within-scope), the DISCLAIM cross-shard write guard, and the
+    # multi-shard deterministic simulator with its six invariants (routing correctness, disjoint
+    # ownership, per-shard linearizability, cross-shard isolation, stale-map redirect, N=1 equivalence) —
+    # each proven NON-VACUOUS (an injected mis-route / wrong-shard / dropped-redirect / N=1-divergence goes
+    # RED). Cumulative with gates 1..7 + phase0 + B (each its own job); this job DEPENDS on gate-B, so a
+    # green gate-phase1 means the whole chain passed. Sets GATE_PHASE1_SKIP_CHAIN=1 (chain supplied by the
+    # gate jobs). Push/PR runs a fast 200-seed sweep; the NIGHTLY path runs the integrated >=10k-seed sweep
+    # (charter C5).
+    needs: gate-B
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 25
+        uses: actions/setup-java@v4
+        with:
+          java-version: '25'
+          distribution: 'corretto'
+          cache: maven
+
+      - name: Run gate-phase1 (push/PR — fast 200-seed sweep)
+        if: github.event_name != 'schedule' && github.event.inputs.run_full_nightly != 'true'
+        run: GATE_PHASE1_SKIP_CHAIN=1 GATE_PHASE1_SWEEP_COUNT=200 bash gates/gate-phase1.sh
+        env:
+          GATE_PHASE1_LOG_DIR: ${{ runner.temp }}/gate-phase1-logs
+        timeout-minutes: 30
+
+      - name: Run gate-phase1 FULL (nightly — the integrated >=10k-seed multi-shard sweep, charter C5)
+        if: github.event_name == 'schedule' || github.event.inputs.run_full_nightly == 'true'
+        run: GATE_PHASE1_SKIP_CHAIN=1 GATE_PHASE1_SWEEP_COUNT=10000 bash gates/gate-phase1.sh
+        env:
+          GATE_PHASE1_LOG_DIR: ${{ runner.temp }}/gate-phase1-logs
+        timeout-minutes: 45
+
+      - name: Upload gate-phase1 step logs
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: gate-phase1-logs
+          path: ${{ runner.temp }}/gate-phase1-logs
+          retention-days: 7
+
   wire-compat:
     # ADR-0029 §8.10 fixture-bump guardrail.
     # Fails the build if GoldenFixtures.java changed without a matching bump
