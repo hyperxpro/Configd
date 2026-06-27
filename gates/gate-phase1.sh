@@ -1,0 +1,126 @@
+#!/usr/bin/env bash
+# =============================================================================
+# gate-phase1.sh — Multi-Raft Phase 1 (the static-N sharding layer) cumulative gate.
+# -----------------------------------------------------------------------------
+# A green gate-phase1 SEALS the Phase 1 sharding foundation: the ShardMap seam +
+# StaticShardMap (hash-within-scope), the cross-shard DISCLAIM write guard, and
+# the multi-shard deterministic simulator with its six invariants (routing
+# correctness, disjoint ownership, per-shard linearizability, cross-shard
+# isolation, stale-map redirect, N=1 equivalence) — each proven NON-VACUOUS
+# (an injected mis-route / wrong-shard / dropped-redirect / N=1-divergence goes
+# RED). It is CUMULATIVE with gates 1..7 + phase0 + B: a green gate-phase1
+# REQUIRES a green gate-B (which chains gate-phase0 -> gate-7 -> ... -> 1).
+#
+# In CI, gate-B (and its chain) run as their OWN jobs and this gate's job DEPENDS
+# on gate-B, so GATE_PHASE1_SKIP_CHAIN=1 relies on that coverage (LOUD) instead of
+# re-running the multi-hour chain. Locally / in a full manual run it runs the chain.
+#
+# WHAT A GREEN gate-phase1 PROVES (beyond the cumulative chain):
+#   - the sharding ownership model is correct + the invariants are non-vacuous;
+#   - the DISCLAIM cross-shard guard rejects a multi-key write spanning > 1 shard;
+#   - the Phase 1 milestone artifacts EXIST (non-vacuity: a deleted class / sim /
+#     design note FAILS this gate, never a silent pass — the RR-012 lesson).
+#
+# Environment knobs:
+#   GATE_PHASE1_SKIP_CHAIN=1   skip the cumulative gate-B chain (CI supplies it via
+#                              the gate jobs) — LOUD.
+#   GATE_PHASE1_SKIP_BUILD=1   reuse already-installed module jars (local convenience).
+#   GATE_PHASE1_SWEEP_COUNT=N  multi-shard full-surface sweep seed count (default 200
+#                              for fast PR; CI nightly sets 10000 for the integrated
+#                              >=10k-seed sweep — charter C5).
+# =============================================================================
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+MVN="$ROOT/mvnw -B"
+LOGDIR="${GATE_PHASE1_LOG_DIR:-$(mktemp -d /tmp/gate-phase1-XXXXXX)}"
+mkdir -p "$LOGDIR"
+
+# Modules whose sharding tests this gate exercises.
+MODULES="configd-common,configd-consensus-core,configd-replication-engine,configd-server,configd-testkit"
+
+echo "=== gate-phase1 (Multi-Raft Phase 1: static-N sharding layer) — logs in $LOGDIR ==="
+
+fail() { echo "gate-phase1 FAIL [$1]: $2" >&2; exit 1; }
+
+# Asserts a surefire class ran with >=1 test and zero failures/errors (non-vacuity).
+assert_class_green() {
+  local log="$1" cls="$2" line
+  line="$(grep -E "Tests run: [0-9]+, Failures: [0-9]+, Errors: [0-9]+.* -- in .*\.${cls}$" "$log" | tail -1 || true)"
+  [ -n "$line" ] || { tail -30 "$log"; fail tests "non-vacuity: ${cls} did not run (renamed/skipped?)"; }
+  echo "$line" | grep -qE "Tests run: [1-9][0-9]*, Failures: 0, Errors: 0" \
+    || { echo "  $line"; fail tests "${cls} did not pass with >=1 test and 0 failures/errors"; }
+  echo "gate-phase1   ✓ ${cls}: ${line#*-- in }"
+}
+
+# Runs a targeted, offline test set across MODULES (with optional extra -D props) and asserts BUILD SUCCESS.
+run_tests() {
+  local label="$1" tests="$2" log="$3"; shift 3
+  $MVN -o -pl "$MODULES" test -Dtest="$tests" -Dsurefire.failIfNoSpecifiedTests=false "$@" >"$log" 2>&1 \
+    || { tail -80 "$log"; fail "$label" "test run failed"; }
+  grep -q "BUILD SUCCESS" "$log" || { tail -80 "$log"; fail "$label" "no BUILD SUCCESS"; }
+}
+
+assert_file() { [ -e "$ROOT/$1" ] || fail artifacts "missing Phase 1 artifact: $1"; echo "gate-phase1   ✓ exists: $1"; }
+assert_grep() { grep -qE "$2" "$ROOT/$1" 2>/dev/null || fail artifacts "expected /$2/ in $1 (artifact regressed?)"; echo "gate-phase1   ✓ $1 :: $2"; }
+
+# --- 2-vCPU box discipline: never overlap another Maven workload --------------
+if pgrep -f "[s]urefirebooter" >/dev/null 2>&1; then
+  echo "gate-phase1: another Maven test workload is running — refusing to start (2-vCPU box)" >&2
+  exit 1
+fi
+
+# --- cumulative: gate-B (chains gate-phase0 -> gate-7 -> ... -> 1) -------------
+if [ "${GATE_PHASE1_SKIP_CHAIN:-0}" = "1" ]; then
+  echo "gate-phase1 chain: SKIPPED by GATE_PHASE1_SKIP_CHAIN=1 (LOUD: gates 1..7 + phase0 + B NOT verified this run; CI supplies them via the gate jobs)"
+else
+  echo "gate-phase1 chain: running cumulative gate-B (chains gate-phase0 -> gate-7 -> ... -> 1)..."
+  bash "$ROOT/gates/gate-B.sh" || fail chain "cumulative gate-B (1..7 + phase0 + B) is RED — Phase 1 sits on an unverified base"
+  echo "gate-phase1 chain: OK (gates 1..7 + phase0 + B green)"
+fi
+
+# --- build/install the modules' deps once (so the targeted test runs are offline)
+if [ "${GATE_PHASE1_SKIP_BUILD:-0}" = "1" ]; then
+  echo "gate-phase1 build: SKIPPED by GATE_PHASE1_SKIP_BUILD=1 (reusing installed jars; CI must not do this)"
+else
+  echo "gate-phase1 build: installing module jars (skip tests) so the gate run is hermetic..."
+  $MVN -q -pl "$MODULES" -am install -DskipTests >"$LOGDIR/build.txt" 2>&1 \
+    || { tail -30 "$LOGDIR/build.txt"; fail build "module build/install failed"; }
+fi
+
+# --- (a) C1: ShardMap + StaticShardMap (hash-within-scope) + the DISCLAIM guard ----
+echo "gate-phase1 c1: StaticShardMap (stable/in-range/opaque-id/N=1-equiv/spread) + cross-shard write guard..."
+C1="$LOGDIR/c1.txt"
+run_tests c1 "StaticShardMapTest,CrossShardWriteGuardTest" "$C1"
+assert_class_green "$C1" "StaticShardMapTest"        # the hash-within-scope ownership model (C1)
+assert_class_green "$C1" "CrossShardWriteGuardTest"  # cross-shard multi-key BATCH rejected (DISCLAIM, C2)
+echo "gate-phase1 c1: OK"
+
+# --- (b) V/C5: the multi-shard simulator + the six invariants, proven NON-VACUOUS ---
+# The green tests route through the PRODUCTION StaticShardMap; the non-vacuity tests inject a mis-route /
+# cross-shard-redirect / dropped-redirect / N=1-divergence and assert the matching invariant goes RED.
+# GATE_PHASE1_SWEEP_COUNT sizes the full-surface sweep (fast PR = 200; nightly = 10000 — charter C5).
+SWEEP_COUNT="${GATE_PHASE1_SWEEP_COUNT:-200}"
+echo "gate-phase1 sim: multi-shard 6-invariant surface, full-surface sweep = ${SWEEP_COUNT} seeds..."
+SIM="$LOGDIR/sim.txt"
+run_tests sim "MultiShardSimTest" "$SIM" "-Dconfigd.multiShard.seedSweep.count=${SWEEP_COUNT}"
+assert_class_green "$SIM" "MultiShardSimTest"
+echo "gate-phase1 sim: OK"
+
+# --- (c) Phase 1 milestone artifacts present (non-vacuity: a deleted artifact FAILS) ----
+echo "gate-phase1 artifacts: asserting the Phase 1 milestone artifacts exist (non-vacuity)..."
+assert_file "configd-replication-engine/src/main/java/io/configd/replication/ShardMap.java"
+assert_file "configd-replication-engine/src/main/java/io/configd/replication/StaticShardMap.java"
+assert_file "configd-replication-engine/src/main/java/io/configd/replication/CrossShardWriteGuard.java"
+assert_file "configd-testkit/src/test/java/io/configd/testkit/MultiShardSim.java"
+assert_file "configd-testkit/src/test/java/io/configd/testkit/MultiShardSimTest.java"
+assert_file "docs/multiraft/phase1/design.md"
+assert_file "docs/multiraft/phase1/decision-log.md"
+assert_file "docs/multiraft/phase1/v-verification-machinery.md"
+# the D-B seam invariants + the operator-flagged wire-epoch deferral are recorded
+assert_grep "configd-replication-engine/src/main/java/io/configd/replication/ShardMap.java" "Opaque, stable shard IDs"
+assert_grep "docs/multiraft/phase1/decision-log.md" "DL-P1-04"
+echo "gate-phase1 artifacts: OK"
+
+echo "=== gate-phase1: GREEN — Multi-Raft Phase 1 sharding foundation is verified (sim) ==="
+exit 0
