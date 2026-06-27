@@ -518,9 +518,12 @@ public final class ConfigdServer {
             // transport is the M3 CoalescingRaftTransport wrapping the adapter (see above); the inbound
             // handler is registered on the underlying adapter/TCP transport.
             RaftTransportAdapter adapter = (RaftTransportAdapter) ((CoalescingRaftTransport) transport).delegate();
-            adapter.registerInboundHandler(
-                    raftInboundHandler(driver, DEFAULT_RAFT_GROUP,
-                            driver.ownerExecutor(DEFAULT_RAFT_GROUP), configdMetrics));
+            // Multi-Raft Phase 1 (DL-P1-06): DEMULTIPLEX inbound by the frame's groupId — route each
+            // message to ITS group's owner (driver.routeMessage(frame.groupId(), …) on
+            // ownerExecutor(frame.groupId())), not the captured constant 0. No wire-format change (the
+            // groupId is already in the frame header). At N=1 every frame is group 0, so this is
+            // byte-identical to the prior single-group registration.
+            adapter.registerInboundHandler(raftDemuxInboundHandler(driver, configdMetrics));
             try {
                 tcpTransport.start();
             } catch (Exception e) {
@@ -1337,6 +1340,27 @@ public final class ConfigdServer {
                 handleInboundRoutingThrowable(t, metrics);
             }
         });
+    }
+
+    /**
+     * Multi-Raft Phase 1 (DL-P1-06): the N-group inbound DEMULTIPLEXER. Routes each decoded frame to ITS
+     * group — resolving the group's owner executor from {@code frame.groupId()} and delegating to the
+     * tested fixed-group marshalling primitive ({@link #raftInboundHandler}) — instead of collapsing every
+     * inbound message onto a single captured group. The owner executor is re-resolved PER MESSAGE
+     * ({@code driver.ownerExecutor(groupId)}), so it always targets the group's CURRENT owner (matches the
+     * propose/flush de-binding; rehoming-correct even though rehoming is dormant). A frame for an
+     * unregistered group is dropped safely by {@code driver.routeMessage} (absent group → no-op).
+     *
+     * <p>At {@code N=1} only group 0 is registered and every frame carries groupId 0, so this resolves to
+     * {@code raftInboundHandler(driver, 0, ownerExecutor(0), metrics)} on every message — byte-identical to
+     * the prior single-group registration. Package-private static so {@code RaftInboundDemuxTest} can drive
+     * the real routing decision directly.
+     */
+    static RaftTransportAdapter.InboundHandler raftDemuxInboundHandler(
+            MultiRaftDriver driver, ConfigdMetrics metrics) {
+        return (from, groupId, message) ->
+                raftInboundHandler(driver, groupId, driver.ownerExecutor(groupId), metrics)
+                        .accept(from, message);
     }
 
     /**
