@@ -21,7 +21,7 @@
 |---|---|---|
 | **Routing correctness** | `checkRoutingStability`: a key's resolved shard never changes; `write()` routes only to `shardFor(scope,key)` | `rotating` router (same key → different shard) → routing RED (`nonVacuity_nonFunctionalRouter`) |
 | **Disjoint ownership** | `checkDisjointOwnership`: scan every shard's store — no key on two shards, and the owning shard == `shardFor(key)` | `CROSS_SHARD_REDIRECT` bug lands a key on a shard that does not own it → disjoint RED (`nonVacuity_crossShardRedirect`) |
-| **Per-shard linearizability** | each shard's `SimInvariants.checkAll()` + throwing in-node checker, every tick (version monotonicity, log matching, state-machine safety, single-leader-per-term, the 9 in-node) | inherits `SimInvariants`' own non-vacuity (proven by `SeedSweepTest`); exercised across the sweep |
+| **Per-shard linearizability** | each shard's `SimInvariants.checkAll()` + throwing in-node checker, every tick (version monotonicity, log matching, state-machine safety, single-leader-per-term, the 9 in-node) | `SimInvariants`' own non-vacuity is mutation-proven by `SeedSweepTestTheTesterTest` (`-Dconfigd.testTheTester=true`, 50/50 seeds catch an injected commit divergence); the red-team also wired a synthetic per-shard `SafetyViolation` out of `MultiShardSim.tick()` → 68 RED (the per-shard wiring is live) |
 | **Cross-shard isolation** | `faultShardMajority` kills one shard (no quorum); it must stall while the others keep committing (`commitsAdvancedOn`) and stay safe | **structural this phase** (see note) — no dedicated injected-RED; the routing leak that *would* break it is caught RED by `nonVacuity_crossShardRedirect`. The genuine non-vacuous surface is **mandatory in C3** |
 | **Stale-map redirect (exactly-once)** | a stale cached leader → intra-shard redirect to the live leader (the `X-Leader-Hint` generalized), never crossing shards; the write commits (no loss); disjoint ownership proves no scatter | `NO_REDIRECT` bug → the stale-leader write is never accepted → lost (`nonVacuity_noRedirect_losesTheWrite`) |
 | **N=1 equivalence** | drive the same op stream through the N=1 sim AND a bare single-group control on the identical per-shard seed; committed views must be byte-identical | `DROP_OP_AT_N1` bug → committed state diverges from the control (`nonVacuity_droppedOpAtN1`) |
@@ -52,6 +52,21 @@ fault, plus the targeted green + non-vacuity cases). The sweep counts are system
 - The `ShardMap` used here is the test `hashReference`; **C1 swaps in the production `StaticShardMap`** and
   re-runs this surface against it (routing correctness + disjoint ownership + N=1 equivalence on the real
   hash).
+
+## Four-way review evidence (V is consensus-adjacent)
+
+| Leg | Who | Verdict |
+|---|---|---|
+| Implementer | this session | built + green + self-reviewed |
+| Diff / correctness review | `java-distinguished-engineer` agent | **no BLOCKER**; determinism, N=1 byte-identity, and the no-loss RR-004 restriction all verified sound; 5/6 invariants non-vacuous. SF1–SF4 + nits raised → all addressed (SF2 = sim now judges the production `StaticShardMap`; SF1 = isolation downgraded to structural + C3 made mandatory; SF3 = `assertThrows` pinned to message tags; SF4 = N=1 vacuous-empty guard). |
+| Red-team / adversarial mutation-test | `general-purpose` agent in an isolated worktree | mutation-tested every check: **5/6 genuinely non-vacuous** (mis-route → RED, no-op disjoint → the guard test fails, op-drop → N=1 RED, redirect genuinely runs, per-shard linearizability mutation-proven 50/50). **Found invariant 4's liveness witness vacuous** (`commitsAdvancedOn` summed replica versions → rose on catch-up; killed all 3 shards and the test stayed GREEN). |
+| Independent re-run | both agents re-ran the suite; determinism confirmed byte-identical across two runs | 72/0 reproduced |
+
+**Red-team find FIXED:** `commitsAdvancedOn` now uses the strictly-increasing MAX applied version (a
+genuine new-commit signal — catch-up cannot raise it), and `nonVacuity_allShardsDead_isolationWitnessReportsNoProgress`
+proves it: all shards killed + drained (laggards catch up) → the witness correctly reports no progress.
+Net: the isolation *witness* is now sound + non-vacuity-tested; isolation as a *safety* property remains
+structural this phase (C3 mandate). Doc citation corrected (`SeedSweepTestTheTesterTest`).
 
 ## Why this satisfies "verification machinery first"
 

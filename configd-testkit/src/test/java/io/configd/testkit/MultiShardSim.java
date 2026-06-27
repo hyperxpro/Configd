@@ -105,8 +105,13 @@ final class MultiShardSim {
     /** Every write the client COMMITTED TO (kept retrying until accepted): key → last accepted token. */
     private final Map<String, String> intendedWrites = new HashMap<>();
 
-    /** Per-shard commit progress witness (store version), for the cross-shard-isolation liveness check. */
-    private final long[] lastSeenVersionSum;
+    /**
+     * Per-shard commit-progress witness — the MAX applied store version across the shard's replicas
+     * (genuine new-commit signal). NOT the sum: a sum rises when a lagging replica merely catches up to an
+     * existing committed version, so it would falsely report "progress" during a total stall (red-team find,
+     * invariant 4). The max only rises when a NEW entry commits and applies on the most-advanced replica.
+     */
+    private final long[] lastSeenMaxVersion;
 
     private final RandomGenerator workloadRng;
 
@@ -117,7 +122,7 @@ final class MultiShardSim {
         this.shardMap = shardMap;
         this.bugs = bugs;
         this.cachedLeader = new int[shardCount];
-        this.lastSeenVersionSum = new long[shardCount];
+        this.lastSeenMaxVersion = new long[shardCount];
         for (int s = 0; s < shardCount; s++) {
             cachedLeader[s] = -1;
             // Two-phase wiring (mirrors SeedSweepTest.newCheckedCluster): the throwing in-node checker
@@ -388,7 +393,9 @@ final class MultiShardSim {
      * only {@link #checkDisjointOwnership} (always sound), never this.
      */
     void checkNoWritesLost() {
-        for (Map.Entry<String, String> e : intendedWrites.entrySet()) {
+        // Iterate in sorted key order so the FIRST reported violation is stable across runs (replay
+        // determinism); pass/fail is order-independent regardless (red-team minor nit).
+        for (Map.Entry<String, String> e : new java.util.TreeMap<>(intendedWrites).entrySet()) {
             String key = e.getKey();
             String token = e.getValue();
             int s = shardMap.shardFor(SCOPE, key);
@@ -408,15 +415,21 @@ final class MultiShardSim {
         }
     }
 
-    /** Cross-shard isolation: shard {@code s} has made commit progress since the last call (it is live). */
+    /**
+     * Cross-shard isolation liveness witness: shard {@code s} made GENUINE new-commit progress since the
+     * last call. Uses the strictly-increasing MAX applied version across replicas — a new entry committed
+     * and applied on the most-advanced replica. A dead shard (lost quorum) cannot raise its max even as
+     * lagging replicas catch up, so this correctly reports {@code false} for a stalled shard (red-team
+     * find: the prior sum-of-versions witness rose on catch-up and falsely reported progress).
+     */
     boolean commitsAdvancedOn(int s) {
-        long sum = 0;
+        long max = 0;
         ConsistencyPropertyTests.ClusterHarness shard = shards.get(s);
         for (int i = 0; i < nodesPerShard; i++) {
-            sum += shard.store(i).currentVersion();
+            max = Math.max(max, shard.store(i).currentVersion());
         }
-        boolean advanced = sum > lastSeenVersionSum[s];
-        lastSeenVersionSum[s] = sum;
+        boolean advanced = max > lastSeenMaxVersion[s];
+        lastSeenMaxVersion[s] = max;
         return advanced;
     }
 

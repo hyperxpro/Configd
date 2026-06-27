@@ -160,6 +160,28 @@ class MultiShardSimTest {
         sim.checkDisjointOwnership();
     }
 
+    /**
+     * NON-VACUITY for the cross-shard-isolation liveness WITNESS (red-team find): the prior
+     * sum-of-replica-versions witness rose on stale-replica CATCH-UP and falsely reported progress even
+     * when every shard had lost quorum. Kill ALL shards, drain so laggards catch up (where the old witness
+     * would falsely rise), and assert the corrected max-version witness reports NO progress for any shard.
+     */
+    @Test
+    void nonVacuity_allShardsDead_isolationWitnessReportsNoProgress() {
+        MultiShardSim sim = new MultiShardSim(7L, 3, R, new StaticShardMap(3), Set.of());
+        sim.electAllLeaders(ELECT_TICKS);
+        sim.applyOps(sim.generateOps(20), 5);
+        sim.drain(80);
+        for (int s = 0; s < 3; s++) sim.commitsAdvancedOn(s); // baseline the witnesses
+        for (int s = 0; s < 3; s++) sim.faultShardMajority(s); // kill EVERY shard (no quorum anywhere)
+        sim.drain(300); // lagging replicas catch up here — the OLD sum witness would falsely rise
+        for (int s = 0; s < 3; s++) {
+            assertFalse(sim.commitsAdvancedOn(s),
+                    "a dead shard (lost quorum) must report NO new-commit progress — replica catch-up is "
+                            + "NOT progress; the witness would be vacuous otherwise (shard " + s + ")");
+        }
+    }
+
     // =============================================================================================
     // Stale-map redirect correctness (exactly-once: no loss, no scatter)
     // =============================================================================================
@@ -216,6 +238,8 @@ class MultiShardSimTest {
         assertTrue(multi.size() >= 5,
                 "N=1 equivalence would be vacuous if nothing committed (seed=" + seed + ", committed="
                         + multi.size() + ") — the cluster must elect + commit for the comparison to mean anything");
+        // FULL-MAP comparison is load-bearing: a size-only check is vacuous (red-team Exp 3b — a dropped
+        // write re-written by a later op keeps the key count identical while the value diverges).
         assertEquals(control, multi,
                 "N=1 multi-shard committed state must be byte-identical to the single-group control");
     }
