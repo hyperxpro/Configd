@@ -21,16 +21,44 @@
 | **F — wire-format D1+D2** | Step 6 | ⏳ DEFERRED | — | handoff §2 |
 | **G — isolation sim + fan-out N>1** | Steps 7,8 | ⏳ DEFERRED | — | handoff §2 |
 
-### Session outcome — CLEAN STOP after Seam B (DL-W-07)
-Seams **A + B** are complete, four-way-verified, and N=1-byte-identical. **`gate-phase1` GREEN**
-(chain-skipped: c1 + multi-shard sim 200-seed + artifacts + the new server-wiring section); **full
-`configd-server` suite 297/0**. The remaining Seams **C–G** are ONE large, coupled
-consensus-bringup/read/write/fan-out surgery (the same the Phase-1 sim session deferred) with no small,
-safe, independently-completable sub-unit — so per the charter prime directive ("stop clean beats finish
-dirty, absolutely … NEVER leave the server path half-wired"), they are deferred to a focused
-next session, mapped at `file:line` in `server-wiring-handoff.md` §2. The temporary N>1 boot guard
-(DL-W-05) keeps every shipped state safe (N>1 cannot boot until the guard is removed at the end of C–G).
-PR opened; STOPPED at the merge gate. EC2 NOT provisioned (handoff §3: not ready until C+D+G land).
+### Session 1 outcome — CLEAN STOP after Seam B (DL-W-07)
+Seams **A + B** complete, four-way-verified, N=1-byte-identical; `gate-phase1` GREEN; full
+`configd-server` 297/0. C–G deferred to a focused session (the heavy coupled surgery), mapped in
+`server-wiring-handoff.md` §2.
+
+### Session 2 outcome — CLEAN STOP after Seam E (C/D/E done; F/G remain)
+Seams **C, D, E** are complete and checkpointed (commits up to `ad7153f`). **C + D four-way-verified**
+(diff-review + red-team + independent re-run + second-agent replay; the D read-path BLOCKER/SHOULD-FIX
+found by the four-way were FIXED in-seam); **E** done with rigor-proportional review (additive
+observability). **N=1 byte-identical re-proven after every seam** (full `configd-server` 312/0 incl.
+real-wire `NettyConsensusLivenessTest` + `ConfigdServerTest` boot/restart; `MetricsWiringContractTest`
+4/0); **`gate-phase1` GREEN** for A/B/C/D/E (wiring-c + wiring-d + wiring-e blocks added). A final
+fresh-context Verifier runs before the PR.
+
+The two remaining seams — **F** (the protocol-critical `WIRE_VERSION` bump: epoch reservation +
+CoalescedHeartbeat frame + golden-fixture regen — a HARD cutover) and **G** (remove the N>1 boot guard +
+N-way fan-out + the C3a coupling-leak isolation sim + EC2-prep) — are each large, self-contained, and
+risky to start with limited remaining budget (a half-bumped wire format or half-removed boot guard is
+the "finish dirty" the charter calls the worst outcome). Per the prime directive they are deferred CLEAN
+to a focused next session, mapped at `file:line` in `server-wiring-handoff-2.md` §2. **The N>1 boot guard
+(DL-W-05) stays — every shipped state is safe (N>1 cannot boot until Seam G removes it).** PR opened;
+STOPPED at the merge gate. EC2 NOT provisioned (handoff-2 §3: needs C+D+G; G remains).
+
+#### Final fresh-context Verifier (charter §4.1) — APPROVE, 0 MUST-FIX
+A fresh-context Verifier (java-distinguished-engineer) independently verified the whole A–E increment
+(`origin/main...HEAD`) against all six bars, checking the code rather than trusting this log:
+**(a) no N=1 divergence** (traced `buildRaftGroup(0,1,…)` object-by-object; confirmed the per-group RNG
+is consumed only for election-timer jitter — never persisted/wire — so the instance split is
+format-neutral); **(b) N>1 correctly boot-refused** (guard before marker; {2,4,16}); **(c) no must-fix**.
+Also confirmed: writer/reader resolve the same shard for every live (GLOBAL) key; the cross-shard guard
+rejects pre-Raft before any admission permit; §3 mTLS+client-auth enforced + negatively tested on the
+production `NettyRaftTransport`; R-01′ holds (off-owner reads only the documented-safe
+`leaderId()`/`monitorView()`); the SPI blast radius is contained to server/control-plane-api/testkit
+(it compiled `configd-edge-node` offline to confirm). Full-reactor `install -DskipTests` GREEN (all 15
+modules). Non-blocking observations folded into the F/G handoff: per-inbound-frame handler allocation
+(micro-opt), `CrossShardRejected` un-metered (Seam G per-shard write metrics), the GLOBAL-only
+read/write scope coupling (guard when a multi-scope seam lands), mTLS operator-optional (Seam-G EC2
+obligation).
 
 ## Decisions (for retroactive veto)
 
