@@ -478,7 +478,7 @@ final class NettyConsensusLivenessTest {
             // Inbound (arrives on a Netty event-loop thread) → marshal handleMessage onto the node's owner.
             for (int i = 0; i < NODES; i++) {
                 final int idx = i;
-                adapters[i].registerInboundHandler((from, msg) ->
+                adapters[i].registerInboundHandler((from, gid, msg) ->
                         owners[idx].execute(() -> nodes[idx].handleMessage(msg)));
             }
 

@@ -122,5 +122,21 @@ assert_grep "configd-replication-engine/src/main/java/io/configd/replication/Sha
 assert_grep "docs/multiraft/phase1/decision-log.md" "DL-P1-04"
 echo "gate-phase1 artifacts: OK"
 
-echo "=== gate-phase1: GREEN — Multi-Raft Phase 1 sharding foundation is verified (sim) ==="
+# --- (d) Server-wiring foundation: Seam A (C4a config N) + Seam B (DL-P1-06 inbound demux) ----
+# The production-wiring session (server-wiring-decision-log.md) lands the dormant sharding into the live
+# ConfigdServer in dependency-ordered seams. A+B are the verified foundation: deploy-time shard-count
+# selection (range + N>1 guard + fixed-at-deploy reshard guard) and the inbound groupId demux (a frame
+# stamped gid=k reaches group k, not the captured constant 0). Both are N=1 byte-identical.
+echo "gate-phase1 wiring: server N-config (C4a) + inbound groupId demux (DL-P1-06)..."
+WIRING="$LOGDIR/wiring.txt"
+run_tests wiring "ShardCountConfigTest,RaftInboundDemuxTest" "$WIRING"
+assert_class_green "$WIRING" "ShardCountConfigTest"   # C4a: range + N>1 guard (no marker poison) + reshard reject
+assert_class_green "$WIRING" "RaftInboundDemuxTest"   # DL-P1-06: gid=k -> group k (not 0); unknown gid dropped
+assert_file "configd-server/src/test/java/io/configd/server/ShardCountConfigTest.java"
+assert_file "configd-server/src/test/java/io/configd/server/RaftInboundDemuxTest.java"
+assert_file "docs/multiraft/phase1/server-wiring-decision-log.md"
+assert_grep "docs/multiraft/phase1/server-wiring-decision-log.md" "DL-W-0"
+echo "gate-phase1 wiring: OK"
+
+echo "=== gate-phase1: GREEN — Multi-Raft Phase 1 sharding foundation + server-wiring A/B verified ==="
 exit 0

@@ -40,6 +40,7 @@ import io.configd.raft.RaftMessage;
 import io.configd.raft.ProposeOutcome;
 import io.configd.replication.MultiRaftDriver;
 import io.configd.replication.OwnerExecutorPool;
+import io.configd.replication.StaticShardMap;
 import io.configd.store.Compactor;
 import io.configd.store.ConfigDelta;
 import io.configd.store.ConfigSigner;
@@ -92,6 +93,16 @@ public final class ConfigdServer {
 
     private static final int TICK_PERIOD_MS = 10;
     private static final int DEFAULT_RAFT_GROUP = 0;
+    /**
+     * Multi-Raft static-N ceiling (operator decision N, charter §2): the maximum number of shards a
+     * single deploy may configure via {@code configd.raft.shardCount}. M1's static ceiling — ~10–11
+     * leaders saturate a 16-vCPU node (Workstream C), so N≤16 across a few nodes is a sane upper bound
+     * (~12k/s aggregate) without core overcommit. N is fixed at deploy (static-N); v2 adds dynamic
+     * resharding. Default is {@code 1} (single group — byte-identical to today).
+     */
+    private static final int MAX_SHARD_COUNT = 16;
+    /** Marker file under the data dir recording the deploy-time shard count N (fixed-at-deploy guard). */
+    private static final String SHARD_COUNT_MARKER = "raft-shard-count.meta";
     private static final int COMPACTION_INTERVAL_TICKS = 1000; // every ~10 seconds
     // RR-005: applied entries a Raft group may retain past its snapshot point before the tick
     // loop triggers Raft-LOG compaction (distinct from the snapshot-retention Compactor above).
@@ -195,6 +206,17 @@ public final class ConfigdServer {
         } catch (Exception e) {
             throw new RuntimeException("Failed to create data directory: " + dataDir, e);
         }
+
+        // ---------------------------------------------------------------
+        // Multi-Raft Phase 1 — C4a: deploy-time shard count N (static-N sharding). Default 1 ⇒ a single
+        // Raft group, byte-identical to today (the common case). N is config-derived (system property,
+        // consistent with the other `configd.raft.*` tunables), validated to [1, MAX_SHARD_COUNT], and
+        // FIXED AT DEPLOY (see resolveShardCount). The StaticShardMap routes (scope,key)→shard.
+        // ---------------------------------------------------------------
+        int shardCount = resolveShardCount(dataDir);
+        StaticShardMap shardMap = new StaticShardMap(shardCount);
+        System.out.println("  Shard map    : " + shardMap + " [Multi-Raft Phase 1 C4a; N fixed at deploy,"
+                + " ceiling " + MAX_SHARD_COUNT + "]");
 
         // Initialize storage
         Storage storage = Storage.file(dataDir);
@@ -496,9 +518,12 @@ public final class ConfigdServer {
             // transport is the M3 CoalescingRaftTransport wrapping the adapter (see above); the inbound
             // handler is registered on the underlying adapter/TCP transport.
             RaftTransportAdapter adapter = (RaftTransportAdapter) ((CoalescingRaftTransport) transport).delegate();
-            adapter.registerInboundHandler(
-                    raftInboundHandler(driver, DEFAULT_RAFT_GROUP,
-                            driver.ownerExecutor(DEFAULT_RAFT_GROUP), configdMetrics));
+            // Multi-Raft Phase 1 (DL-P1-06): DEMULTIPLEX inbound by the frame's groupId — route each
+            // message to ITS group's owner (driver.routeMessage(frame.groupId(), …) on
+            // ownerExecutor(frame.groupId())), not the captured constant 0. No wire-format change (the
+            // groupId is already in the frame header). At N=1 every frame is group 0, so this is
+            // byte-identical to the prior single-group registration.
+            adapter.registerInboundHandler(raftDemuxInboundHandler(driver, configdMetrics));
             try {
                 tcpTransport.start();
             } catch (Exception e) {
@@ -1140,6 +1165,121 @@ public final class ConfigdServer {
     }
 
     /**
+     * Multi-Raft Phase 1 — C4a: resolves and validates the deploy-time shard count {@code N}.
+     * <ol>
+     *   <li>reads {@code configd.raft.shardCount} (default {@code 1} — a single group, byte-identical to
+     *       today; system property, consistent with the other {@code configd.raft.*} tunables);</li>
+     *   <li>validates {@code 1 <= N <= }{@link #MAX_SHARD_COUNT} (a clear error otherwise);</li>
+     *   <li><b>TEMPORARY scaffold</b> — until the C3 N-group consensus loop lands, the server registers a
+     *       single group, so {@code N>1} is refused LOUDLY rather than routing writes to groups that do
+     *       not exist (silent corruption — charter §2). N=1 is unaffected. This guard is removed when the
+     *       N-group wiring ships;</li>
+     *   <li>enforces fixed-at-deploy via {@link #enforceFixedShardCount} (persist on first boot, reject a
+     *       later changed N). Ordered AFTER the {@code N>1} guard so a rejected {@code N>1} boot never
+     *       persists a marker.</li>
+     * </ol>
+     * Package-private static so {@code ShardCountConfigTest} can drive it directly.
+     *
+     * @param dataDir the data directory (holds the fixed-at-deploy marker)
+     * @return the validated shard count {@code N}
+     * @throws IllegalArgumentException if {@code N} is out of range
+     * @throws IllegalStateException    if {@code N>1} (temporary) or a reshard is attempted
+     */
+    static int resolveShardCount(Path dataDir) {
+        int shardCount = Integer.getInteger("configd.raft.shardCount", 1);
+        if (shardCount < 1 || shardCount > MAX_SHARD_COUNT) {
+            throw new IllegalArgumentException(
+                    "configd.raft.shardCount must be in [1, " + MAX_SHARD_COUNT + "], got " + shardCount
+                            + " — static-N multi-Raft; N is a deploy-time constant fixed for the life of"
+                            + " the deployment (changing it requires a manual reshard).");
+        }
+        if (shardCount > 1) {
+            throw new IllegalStateException(
+                    "configd.raft.shardCount=" + shardCount + " (N>1) is configured, but the N-group"
+                            + " server wiring is not enabled in this build (only the single default group"
+                            + " is registered). Multi-shard routing would send writes to unregistered"
+                            + " groups. Run with N=1 (the default) until the multi-Raft production wiring"
+                            + " ships. The sharding logic is sim-verified (docs/multiraft/phase1).");
+        }
+        enforceFixedShardCount(shardCount, dataDir);
+        return shardCount;
+    }
+
+    /**
+     * Multi-Raft Phase 1 — C4a fixed-at-deploy guard. Records the deploy-time shard count {@code N}
+     * under the data dir on first boot and REJECTS a later boot whose configured {@code N} differs:
+     * changing {@code N} on an existing deployment requires a manual reshard (static-N; v2 adds dynamic
+     * resharding — see {@code docs/multiraft/phase1}). This turns a reshard attempt into a LOUD,
+     * fail-closed startup error instead of silently mis-routing already-committed keys to the wrong
+     * group. Idempotent: a matching marker is a no-op. The write is crash-durable (temp + fsync, atomic
+     * rename, dir fsync — mirroring {@code FileStorage.put}) so a crash can neither leave a torn marker
+     * (poisoning) nor lose it (a silent reset of the guard).
+     *
+     * <p>Package-private static so {@code ShardCountConfigTest} can drive it directly without standing up
+     * a server.
+     *
+     * @param shardCount the configured, range-validated shard count (1..{@link #MAX_SHARD_COUNT})
+     * @param dataDir    the data directory (holds the {@value #SHARD_COUNT_MARKER} marker)
+     * @throws IllegalStateException if a marker exists and records a different {@code N} (a reshard
+     *                               attempt) or is corrupt
+     * @throws RuntimeException      if the marker cannot be read or written
+     */
+    static void enforceFixedShardCount(int shardCount, Path dataDir) {
+        Path marker = dataDir.resolve(SHARD_COUNT_MARKER);
+        try {
+            if (Files.exists(marker)) {
+                String recorded = Files.readString(marker, java.nio.charset.StandardCharsets.UTF_8).trim();
+                int persisted;
+                try {
+                    persisted = Integer.parseInt(recorded);
+                } catch (NumberFormatException nfe) {
+                    throw new IllegalStateException(
+                            "corrupt shard-count marker " + marker + " (content=\"" + recorded
+                                    + "\"); refusing to start. Restore the marker or redeploy on a clean"
+                                    + " data directory.", nfe);
+                }
+                if (persisted != shardCount) {
+                    throw new IllegalStateException(
+                            "configd.raft.shardCount=" + shardCount + " but this data directory was"
+                                    + " initialized with N=" + persisted + " (" + marker + "). The shard"
+                                    + " count is FIXED AT DEPLOY (static-N); changing it would mis-route"
+                                    + " already-committed keys to the wrong group. To change N, perform a"
+                                    + " manual reshard or redeploy on a fresh data directory.");
+                }
+                return; // matches — fixed-at-deploy honoured
+            }
+            // First boot for this data dir: record N CRASH-DURABLY — write temp + fsync, atomic rename,
+            // fsync the directory — mirroring FileStorage.put so a crash in the OS writeback window cannot
+            // LOSE the marker (not just "cannot leave a torn write"). The marker is the durability backbone
+            // of the fixed-at-deploy safety guard, so it gets the same fsync discipline as Raft state.
+            Path tmp = dataDir.resolve(SHARD_COUNT_MARKER + ".tmp");
+            byte[] bytes = Integer.toString(shardCount).getBytes(java.nio.charset.StandardCharsets.UTF_8);
+            try (java.nio.channels.FileChannel ch = java.nio.channels.FileChannel.open(tmp,
+                    java.nio.file.StandardOpenOption.CREATE,
+                    java.nio.file.StandardOpenOption.WRITE,
+                    java.nio.file.StandardOpenOption.TRUNCATE_EXISTING)) {
+                java.nio.ByteBuffer buf = java.nio.ByteBuffer.wrap(bytes);
+                while (buf.hasRemaining()) {
+                    ch.write(buf);
+                }
+                ch.force(true); // fsync data + metadata before the rename
+            }
+            try {
+                Files.move(tmp, marker, java.nio.file.StandardCopyOption.ATOMIC_MOVE);
+            } catch (java.nio.file.AtomicMoveNotSupportedException amns) {
+                Files.move(tmp, marker, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+            }
+            // fsync the directory so the rename itself is durable (mirrors FileStorage.sync()).
+            try (java.nio.channels.FileChannel dir = java.nio.channels.FileChannel.open(
+                    dataDir, java.nio.file.StandardOpenOption.READ)) {
+                dir.force(true);
+            }
+        } catch (java.io.IOException e) {
+            throw new RuntimeException("Failed to read/write shard-count marker " + marker, e);
+        }
+    }
+
+    /**
      * H-009 (iter-2): handles an unhandled throwable that escaped the tick
      * loop body. This is package-private static so the regression test
      * ({@code TickLoopThrowableHandlerTest}) can drive it directly without
@@ -1219,6 +1359,27 @@ public final class ConfigdServer {
                 handleInboundRoutingThrowable(t, metrics);
             }
         });
+    }
+
+    /**
+     * Multi-Raft Phase 1 (DL-P1-06): the N-group inbound DEMULTIPLEXER. Routes each decoded frame to ITS
+     * group — resolving the group's owner executor from {@code frame.groupId()} and delegating to the
+     * tested fixed-group marshalling primitive ({@link #raftInboundHandler}) — instead of collapsing every
+     * inbound message onto a single captured group. The owner executor is re-resolved PER MESSAGE
+     * ({@code driver.ownerExecutor(groupId)}), so it always targets the group's CURRENT owner (matches the
+     * propose/flush de-binding; rehoming-correct even though rehoming is dormant). A frame for an
+     * unregistered group is dropped safely by {@code driver.routeMessage} (absent group → no-op).
+     *
+     * <p>At {@code N=1} only group 0 is registered and every frame carries groupId 0, so this resolves to
+     * {@code raftInboundHandler(driver, 0, ownerExecutor(0), metrics)} on every message — byte-identical to
+     * the prior single-group registration. Package-private static so {@code RaftInboundDemuxTest} can drive
+     * the real routing decision directly.
+     */
+    static RaftTransportAdapter.InboundHandler raftDemuxInboundHandler(
+            MultiRaftDriver driver, ConfigdMetrics metrics) {
+        return (from, groupId, message) ->
+                raftInboundHandler(driver, groupId, driver.ownerExecutor(groupId), metrics)
+                        .accept(from, message);
     }
 
     /**

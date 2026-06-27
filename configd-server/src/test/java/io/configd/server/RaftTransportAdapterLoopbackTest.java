@@ -52,12 +52,18 @@ final class RaftTransportAdapterLoopbackTest {
         CountDownLatch received = new CountDownLatch(1);
         AtomicReference<NodeId> fromRef = new AtomicReference<>();
         AtomicReference<RaftMessage> msgRef = new AtomicReference<>();
+        java.util.concurrent.atomic.AtomicInteger groupRef =
+                new java.util.concurrent.atomic.AtomicInteger(Integer.MIN_VALUE);
 
         transportB = new TcpRaftTransport(nodeB, new InetSocketAddress("127.0.0.1", 0),
                 Map.of(), null, /* ctor inbound handler unused; adapter registers its own */ m -> {});
         RaftTransportAdapter adapterB = new RaftTransportAdapter(transportB, GROUP);
-        adapterB.registerInboundHandler((from, message) -> {
+        // Multi-Raft Phase 1 (DL-P1-06): the handler now receives the frame's groupId. Capture it to
+        // prove the groupId survives the encode -> TCP -> decode round-trip and is delivered (the basis
+        // for the N-group inbound demux).
+        adapterB.registerInboundHandler((from, groupId, message) -> {
             fromRef.set(from);
+            groupRef.set(groupId);
             msgRef.set(message);
             received.countDown();
         });
@@ -81,6 +87,8 @@ final class RaftTransportAdapterLoopbackTest {
                 "the message must traverse encode -> TCP -> decode -> handler within the bound");
 
         assertEquals(nodeA, fromRef.get(), "the decoded message must carry the sender's NodeId");
+        assertEquals(GROUP, groupRef.get(),
+                "the frame's groupId must survive the round-trip and be delivered to the handler (DL-P1-06)");
         RaftMessage got = msgRef.get();
         RequestVoteRequest decoded = assertInstanceOf(RequestVoteRequest.class, got,
                 "the decoded message must be a RequestVoteRequest");
