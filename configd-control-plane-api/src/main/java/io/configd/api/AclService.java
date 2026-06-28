@@ -6,7 +6,8 @@ import java.util.concurrent.ConcurrentSkipListMap;
 
 /**
  * Per-key-prefix ACL enforcement.
- * Controls which principals can read/write config under specific prefixes.
+ * Controls which principals may {@code READ}, {@code LIST}, {@code WRITE}, {@code WATCH}, or
+ * {@code ADMIN}ister config under specific key prefixes (the v1 capability set — see {@link Permission}).
  * <p>
  * <b>Evaluation model (RFC §01 A5-4; namespace-model {@code access-control.md} §4; DL-N-08).</b>
  * Authorization is the <b>union of all matching ancestor grants</b> with <b>absolute deny-precedence</b>
@@ -23,6 +24,13 @@ import java.util.concurrent.ConcurrentSkipListMap;
  * A {@code DENY} for a capability at <b>any</b> matching ancestor removes that capability regardless
  * of any {@code ALLOW}, including more-specific paths and including {@code ADMIN} — deny is absolute.
  * No matching {@code ALLOW} ⇒ denied.
+ * <p>
+ * <b>One capability-relationship refinement (RFC §01 A5-2; {@code access-control.md} §2.1).</b> Writing
+ * the effective set {@code eff = allow − deny}, {@link #isAllowed} decides {@code C ∈ eff} for every
+ * capability {@code C} <b>except</b> {@code WATCH}, for which it returns the floored decision
+ * {@code WATCH ∈ eff ∧ READ ∈ eff} — a watch is a streaming read and <b>MUST never expose what a read
+ * could not</b> (INV-WATCH-READ). {@code LIST} is independent of {@code READ}, and {@code ADMIN} is
+ * <b>not</b> a super-capability; both fall out of plain per-capability membership with no extra logic.
  * <p>
  * This <b>supersedes</b> the historical longest-match-only evaluation (which consulted only the single
  * longest matching prefix — across <i>all</i> principals — and silently dropped ancestor grants, a
@@ -42,11 +50,40 @@ import java.util.concurrent.ConcurrentSkipListMap;
 public final class AclService {
 
     /**
-     * Permission types for config operations. The {@code DENY} effect is expressed via {@link #deny}
-     * (an effect on a rule), not a permission — {@code LIST}/{@code WATCH} are deliberately out of
-     * scope for this capability set.
+     * Config-operation capabilities — the v1 capability set (RFC §01 A5-1;
+     * {@code access-control.md} §2), declared in RFC A5-1 order:
+     * <ul>
+     *   <li>{@code READ}  — read the value at a concrete path ({@code get}).</li>
+     *   <li>{@code LIST}  — enumerate the children/descendants of a path ({@code list}); a distinct
+     *       privilege because knowing a key <i>exists</i> can be sensitive even without its value.</li>
+     *   <li>{@code WRITE} — put or delete at a concrete path.</li>
+     *   <li>{@code WATCH} — subscribe to a change stream on a path/subtree.</li>
+     *   <li>{@code ADMIN} — manage policies/roles for a subtree; reach the reserved {@code /_acl/},
+     *       {@code /_system/} subtrees.</li>
+     * </ul>
+     * {@code DENY} is <b>not</b> a permission — it is an effect on a rule, expressed via {@link #deny}
+     * and subtracted with absolute precedence (see the class doc).
+     * <p>
+     * <b>Capability relationships (RFC A5-2 — the only normative relationships; both honored here).</b>
+     * <ul>
+     *   <li><b>{@code LIST} is independent of {@code READ}</b> (R-CAP-1): neither implies the other.
+     *       Holding {@code READ} never confers {@code LIST}, nor vice-versa. This falls out of evaluating
+     *       each capability by exact membership in the effective set — <b>no special code</b>.</li>
+     *   <li><b>{@code WATCH} requires {@code READ}</b> (R-CAP-2 / INV-WATCH-READ): a watch is a streaming
+     *       read, so it must <b>never expose what a read could not</b>. {@code WATCH} is its own grantable
+     *       capability but is <b>ineffective without {@code READ}</b> over the same target —
+     *       {@link #isAllowed} enforces <b>effective-{@code WATCH} = {@code WATCH} ∧ {@code READ}</b> for a
+     *       <b>single key</b>. Because {@link #isAllowed} unions only a key's <i>ancestor</i> grants it
+     *       cannot observe a {@code READ} deny on a <i>descendant</i>; a future watch endpoint must apply
+     *       this floor over the <b>whole target</b> — per delivered key, or via a whole-target cover-check
+     *       (cf. {@code WatchAuthz.authorizeWatch}, RFC A6-2/A6-3) — <b>not</b> with a single
+     *       {@code isAllowed(p, subtreeRoot, WATCH)} call, which would over-expose a denied descendant.</li>
+     * </ul>
+     * {@code ADMIN} is deliberately <b>not</b> a super-capability: an {@code ADMIN}-only principal is
+     * authorized for {@code ADMIN} alone, not for {@code READ}/{@code LIST}/{@code WRITE}/{@code WATCH}
+     * (RFC A5-2 names no "{@code ADMIN} implies others" relationship).
      */
-    public enum Permission { READ, WRITE, ADMIN }
+    public enum Permission { READ, LIST, WRITE, WATCH, ADMIN }
 
     /**
      * One principal's effective rule at one prefix: the capabilities {@code ALLOW}ed and the
@@ -148,10 +185,12 @@ public final class AclService {
      * absolute deny-precedence and default-deny (A5-4; see the class doc).
      * <p>
      * Walks <b>every</b> ancestor prefix matching the key — {@code floorKey(key)} then {@code lowerKey}
-     * back through the sorted prefix set — accumulating the ALLOW and DENY capability unions, then
-     * returns {@code permission ∈ allow ∧ permission ∉ deny}. The walk length is bounded by the number
-     * of stored prefixes ≤ the key; for a control-plane policy set (a small number of grants; exactly
-     * one in the deployed config) this is negligible.
+     * back through the sorted prefix set — accumulating the ALLOW and DENY capability unions into the
+     * effective set {@code eff = allow − deny}, then returns {@code permission ∈ eff} for every
+     * capability <b>except</b> {@code WATCH}, for which it returns the floored decision
+     * {@code WATCH ∈ eff ∧ READ ∈ eff} (INV-WATCH-READ, RFC A5-2 — see below). The walk length is
+     * bounded by the number of stored prefixes ≤ the key; for a control-plane policy set (a small
+     * number of grants; exactly one in the deployed config) this is negligible.
      *
      * @param principal  the principal name (non-null)
      * @param key        the config key (non-null)
@@ -185,8 +224,23 @@ public final class AclService {
         }
 
         // Deny has absolute precedence (subtract it from allow); default-deny falls out of the empty
-        // initial allow set.
+        // initial allow set. `allow` is now the effective capability set eff = allow − deny.
         allow.removeAll(deny);
+
+        // INV-WATCH-READ enforcement point (RFC §01 A5-2 R-CAP-2 / access-control.md §2.1,§6; DL-O3-03).
+        // A watch is a streaming read, so effective WATCH is floored by READ: WATCH is authorized only
+        // when BOTH WATCH and READ survive in eff. Consequences — a WATCH-without-READ grant yields no
+        // watch authz; a deny of READ (or of WATCH) at any matching ancestor also removes effective
+        // WATCH. NOTE this floors a SINGLE KEY: the walk above unions only `key`'s ANCESTOR grants, so it
+        // cannot see a READ/WATCH deny on a DESCENDANT of `key`. A subtree/FULL watch is therefore NOT
+        // authorized by one isAllowed(p, subtreeRoot, WATCH) call — the O-5 subscribe path must apply this
+        // floor over the WHOLE target (per delivered key, or a whole-target cover-check à la
+        // WatchAuthz.authorizeWatch / RFC A6-2/A6-3), else it would over-expose a denied descendant.
+        // Every other capability (READ/LIST/WRITE/ADMIN) is decided by exact membership — BYTE-IDENTICAL
+        // to the increment-2 evaluation.
+        if (permission == Permission.WATCH) {
+            return allow.contains(Permission.WATCH) && allow.contains(Permission.READ);
+        }
         return allow.contains(permission);
     }
 

@@ -4,10 +4,13 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 
+import java.util.EnumSet;
 import java.util.Set;
 
 import static io.configd.api.AclService.Permission.ADMIN;
+import static io.configd.api.AclService.Permission.LIST;
 import static io.configd.api.AclService.Permission.READ;
+import static io.configd.api.AclService.Permission.WATCH;
 import static io.configd.api.AclService.Permission.WRITE;
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -20,6 +23,13 @@ import static org.junit.jupiter.api.Assertions.*;
  * {@link GrantDenyIndependence} suites <b>prove</b> these semantics adversarially (they fail under the
  * historical longest-match-only evaluation); {@link ProductionByteIdentity} pins the deployed
  * single-root-grant configuration to decisions identical to longest-match.
+ * <p>
+ * The O-3 capability-expansion suites prove the new vocabulary and its relationships (RFC §01 A5-1/A5-2;
+ * {@code access-control.md} §2): {@link ListIndependentOfRead} (R-CAP-1, {@code LIST} ⊥ {@code READ}),
+ * {@link WatchRequiresRead} (R-CAP-2 / INV-WATCH-READ, effective-{@code WATCH} = {@code WATCH} ∧
+ * {@code READ}), and {@link AdminIsNotSuperCapability} (DL-O3-01). Each is written to <b>fail</b> if the
+ * coupling were wrong (e.g. {@code READ}⇒{@code LIST}, {@code READ}⇒{@code WATCH}, or {@code ADMIN}
+ * super-capability).
  */
 class AclServiceTest {
 
@@ -318,6 +328,144 @@ class AclServiceTest {
     }
 
     // -----------------------------------------------------------------------
+    // O-3: LIST ⊥ READ (R-CAP-1 / A5-2) — PROVES non-crossing in BOTH directions
+    // -----------------------------------------------------------------------
+
+    @Nested
+    class ListIndependentOfRead {
+
+        /** Holding READ must NOT confer LIST. Fails if LIST were folded into READ. */
+        @Test
+        void readGrantDoesNotConferList() {
+            acl.grant("a.", "alice", Set.of(READ)); // READ only, no LIST
+
+            assertTrue(acl.isAllowed("alice", "a.x", READ));
+            assertFalse(acl.isAllowed("alice", "a.x", LIST),
+                    "holding READ must NOT confer LIST (LIST ⊥ READ, R-CAP-1)");
+        }
+
+        /** Holding LIST must NOT confer READ. Fails if READ were folded into LIST. */
+        @Test
+        void listGrantDoesNotConferRead() {
+            acl.grant("a.", "alice", Set.of(LIST)); // LIST only, no READ
+
+            assertTrue(acl.isAllowed("alice", "a.x", LIST));
+            assertFalse(acl.isAllowed("alice", "a.x", READ),
+                    "holding LIST must NOT confer READ (LIST ⊥ READ, R-CAP-1)");
+            // LIST without READ also cannot drag in effective WATCH (no READ floor).
+            assertFalse(acl.isAllowed("alice", "a.x", WATCH),
+                    "LIST does not confer READ, so it cannot confer effective WATCH either");
+        }
+
+        /** LIST is an ordinary exact-membership capability: grantable and DENY-able on its own. */
+        @Test
+        void listIsGrantedAndDeniedIndependently() {
+            acl.grant("a.", "alice", Set.of(READ, LIST, WRITE));
+            acl.deny("a.secret.", "alice", Set.of(LIST)); // carve out *enumeration* of secrets only
+
+            assertTrue(acl.isAllowed("alice", "a.secret.k", READ),
+                    "can still READ a known secret value");
+            assertFalse(acl.isAllowed("alice", "a.secret.k", LIST),
+                    "cannot LIST/enumerate the secrets subtree (deny LIST)");
+            assertTrue(acl.isAllowed("alice", "a.public.k", LIST),
+                    "LIST outside the carve-out is unaffected");
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // O-3: effective-WATCH = WATCH ∧ READ (R-CAP-2 / INV-WATCH-READ) — the load-bearing coupling
+    // -----------------------------------------------------------------------
+
+    @Nested
+    class WatchRequiresRead {
+
+        /** WATCH granted but READ absent ⇒ NOT authorized to watch. The core INV-WATCH-READ proof. */
+        @Test
+        void watchWithoutReadIsNotAuthorized() {
+            acl.grant("a.", "alice", Set.of(WATCH)); // WATCH but no READ
+
+            assertFalse(acl.isAllowed("alice", "a.x", WATCH),
+                    "WATCH without READ yields NO effective watch authz (INV-WATCH-READ)");
+        }
+
+        /** WATCH ∧ READ ⇒ authorized to watch. */
+        @Test
+        void watchWithReadIsAuthorized() {
+            acl.grant("a.", "alice", Set.of(READ, WATCH));
+
+            assertTrue(acl.isAllowed("alice", "a.x", WATCH),
+                    "WATCH ∧ READ over the target → authorized as a streaming read");
+        }
+
+        /** READ alone is not WATCH — WATCH is a separate grantable capability. */
+        @Test
+        void readGrantAloneDoesNotConferWatch() {
+            acl.grant("a.", "alice", Set.of(READ)); // READ, no WATCH
+
+            assertFalse(acl.isAllowed("alice", "a.x", WATCH),
+                    "READ alone must not confer WATCH (WATCH is separately grantable)");
+        }
+
+        /** Denying READ kills effective WATCH (a watch can never out-read a read). */
+        @Test
+        void denyingReadKillsEffectiveWatch() {
+            acl.grant("a.", "alice", Set.of(READ, WATCH));
+            acl.deny("a.secret.", "alice", Set.of(READ)); // deny READ on a sensitive child
+
+            assertFalse(acl.isAllowed("alice", "a.secret.k", WATCH),
+                    "denying READ must kill effective WATCH — INV-WATCH-READ");
+            assertTrue(acl.isAllowed("alice", "a.public.k", WATCH),
+                    "outside the READ carve-out, WATCH ∧ READ still holds");
+        }
+
+        /** Denying WATCH removes effective WATCH while leaving READ intact. */
+        @Test
+        void denyingWatchKillsEffectiveWatchButNotRead() {
+            acl.grant("a.", "alice", Set.of(READ, WATCH));
+            acl.deny("a.secret.", "alice", Set.of(WATCH)); // deny WATCH only
+
+            assertFalse(acl.isAllowed("alice", "a.secret.k", WATCH),
+                    "deny(WATCH) removes effective WATCH");
+            assertTrue(acl.isAllowed("alice", "a.secret.k", READ),
+                    "READ remains — only WATCH was denied");
+        }
+
+        /** The WATCH coupling must not perturb the other capabilities' evaluation. */
+        @Test
+        void watchCouplingDoesNotLeakIntoOtherCaps() {
+            acl.grant("a.", "alice", Set.of(READ, WATCH));
+
+            assertTrue(acl.isAllowed("alice", "a.x", READ));
+            assertFalse(acl.isAllowed("alice", "a.x", WRITE),
+                    "WATCH ∧ READ must not manufacture WRITE");
+            assertFalse(acl.isAllowed("alice", "a.x", LIST),
+                    "WATCH ∧ READ must not manufacture LIST");
+            assertFalse(acl.isAllowed("alice", "a.x", ADMIN),
+                    "WATCH ∧ READ must not manufacture ADMIN");
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // O-3: ADMIN is NOT a super-capability (DL-O3-01 / RFC A5-2: no "ADMIN implies others")
+    // -----------------------------------------------------------------------
+
+    @Nested
+    class AdminIsNotSuperCapability {
+
+        /** An ADMIN-only principal is authorized for ADMIN alone — never for the other four caps. */
+        @Test
+        void adminOnlyPrincipalIsNotAuthorizedForOtherCaps() {
+            acl.grant("a.", "alice", Set.of(ADMIN)); // ADMIN only
+
+            assertTrue(acl.isAllowed("alice", "a.x", ADMIN));
+            assertFalse(acl.isAllowed("alice", "a.x", READ), "ADMIN does not imply READ");
+            assertFalse(acl.isAllowed("alice", "a.x", LIST), "ADMIN does not imply LIST");
+            assertFalse(acl.isAllowed("alice", "a.x", WRITE), "ADMIN does not imply WRITE");
+            assertFalse(acl.isAllowed("alice", "a.x", WATCH), "ADMIN does not imply WATCH");
+        }
+    }
+
+    // -----------------------------------------------------------------------
     // Production byte-identity — the deployed single root grant (ConfigdServer.java)
     // -----------------------------------------------------------------------
 
@@ -325,23 +473,36 @@ class AclServiceTest {
     class ProductionByteIdentity {
 
         /**
-         * Replicates the ONLY production grant: {@code grant("", "root", {READ,WRITE,ADMIN})}. With a
-         * single rule there are no overlapping ancestors and no DENY, so union+deny yields the same
-         * decision as longest-match for every key: root is allowed everything; every other principal is
-         * default-denied. This is the byte-identity the wiring relies on.
+         * Replicates the ONLY production grant <b>exactly</b>: {@code ConfigdServer.java:726}
+         * {@code grant("", "root", EnumSet.allOf(Permission.class))}. With a single rule there are no
+         * overlapping ancestors and no DENY (a trivial one-element antichain), so union+deny decides
+         * identically to longest-match for every key. The O-3 expansion makes {@code allOf} cover all
+         * five caps, so root gains {@code LIST} and effective {@code WATCH} ({@code WATCH} ∧ {@code READ}
+         * both held) — root has everything, which is correct. The load-bearing wiring guarantee is that
+         * the historical {@code READ}/{@code WRITE}/{@code ADMIN} decisions are <b>unchanged</b>, and that
+         * every non-root principal stays default-denied for <b>every</b> capability.
          */
         @Test
         void singleRootGrantBehavesIdenticallyToLongestMatch() {
-            acl.grant("", "root", Set.of(READ, WRITE, ADMIN));
+            // Model production verbatim: the sole grant is allOf(Permission.class), which now has 5 caps.
+            acl.grant("", "root", EnumSet.allOf(AclService.Permission.class));
 
             for (String key : new String[]{"db.host", "app.name", "/a/b/c", "", "x"}) {
+                // Historical decisions — byte-identical to longest-match for the deployed config.
                 assertTrue(acl.isAllowed("root", key, READ), key);
                 assertTrue(acl.isAllowed("root", key, WRITE), key);
                 assertTrue(acl.isAllowed("root", key, ADMIN), key);
+                // New caps: root holds all of allOf, so LIST and effective WATCH (WATCH ∧ READ) are granted.
+                assertTrue(acl.isAllowed("root", key, LIST), key);
+                assertTrue(acl.isAllowed("root", key, WATCH), key);
             }
 
+            // Every non-root principal remains default-denied for every capability (incl. the new ones).
             assertFalse(acl.isAllowed("intruder", "db.host", READ));
             assertFalse(acl.isAllowed("intruder", "anything", WRITE));
+            assertFalse(acl.isAllowed("intruder", "anything", ADMIN));
+            assertFalse(acl.isAllowed("intruder", "db.host", LIST));
+            assertFalse(acl.isAllowed("intruder", "anything", WATCH));
         }
     }
 
