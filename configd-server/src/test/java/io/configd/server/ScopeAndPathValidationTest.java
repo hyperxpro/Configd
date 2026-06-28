@@ -77,7 +77,7 @@ class ScopeAndPathValidationTest {
         return new AdminApiHandler(
                 new HealthService(), /* exporter */ null, new VersionedConfigStore(), writeService,
                 readService, /* auth */ null, /* acl */ null, StrongReadPolicy.defaultPolicy(),
-                key -> NodeId.of(1), /* auditLog */ null, /* replayGuard */ null);
+                (scope, key) -> NodeId.of(1), /* auditLog */ null, /* replayGuard */ null);
     }
 
     /** Builds a request whose {@code uri().getPath()} decodes to {@code /v1/config/<key>}. */
@@ -190,5 +190,48 @@ class ScopeAndPathValidationTest {
         // Fail-closed: a rejected scope NEVER reached the write/read path (closes scope-confusion).
         assertNull(rec.writeScope.get(), "an unknown scope must not route to the proposer");
         assertNull(rec.readScope.get(), "an unknown scope must not route to the reader");
+    }
+
+    // ---- the read 503 X-Leader-Hint is scope-aware (regression for the review finding) -------
+
+    @Test
+    void read503LeaderHintIsResolvedForTheRequestScope() throws Exception {
+        // A confirmer that NEVER confirms ⇒ a linearizable read 503s. The hint ENCODES the scope it is
+        // called with (NodeId id == scope.ordinal()), so the emitted X-Leader-Hint proves which scope the
+        // hint was resolved for — it must be the REQUEST scope, not a pinned GLOBAL (else a non-GLOBAL
+        // retry loops to the wrong shard's leader at N>1).
+        ConfigReadService.ConfigReader reader = new ConfigReadService.ConfigReader() {
+            @Override public ReadResult get(String key) { return ReadResult.NOT_FOUND; }
+            @Override public ReadResult get(String key, long minVersion) { return ReadResult.NOT_FOUND; }
+            @Override public ReadResult get(ConfigScope scope, String key) { return ReadResult.NOT_FOUND; }
+            @Override public Map<String, ReadResult> getPrefix(String prefix) { return Map.of(); }
+            @Override public long currentVersion() { return 0; }
+        };
+        ConfigReadService readService = new ConfigReadService(reader, (scope, key) -> false); // never leader
+        AdminApiHandler h = new AdminApiHandler(
+                new HealthService(), /* exporter */ null, new VersionedConfigStore(), /* write */ null,
+                readService, /* auth */ null, /* acl */ null, StrongReadPolicy.defaultPolicy(),
+                (scope, key) -> NodeId.of(scope.ordinal()), /* auditLog */ null, /* replayGuard */ null);
+
+        // Ordinary key + explicit linearizable + unconfirmable ⇒ 503 with a scope-aware hint.
+        AdminApiHandler.AdminResponse regional =
+                h.handle(req("GET", "k", "consistency=linearizable&scope=REGIONAL", new byte[0]));
+        assertEquals(503, regional.status());
+        assertEquals(String.valueOf(ConfigScope.REGIONAL.ordinal()), regional.headers().get("X-Leader-Hint"),
+                "the read 503 leader hint must be resolved for the REQUEST scope (REGIONAL), not GLOBAL");
+
+        AdminApiHandler.AdminResponse global =
+                h.handle(req("GET", "k", "consistency=linearizable", new byte[0]));
+        assertEquals(503, global.status());
+        assertEquals(String.valueOf(ConfigScope.GLOBAL.ordinal()), global.headers().get("X-Leader-Hint"),
+                "absent scope ⇒ GLOBAL hint");
+
+        // The strong-read fail-closed path (RR-020) is scope-aware too: X-Fail-Closed + scoped hint.
+        AdminApiHandler.AdminResponse strong =
+                h.handle(req("GET", "secure/killswitch", "scope=LOCAL", new byte[0]));
+        assertEquals(503, strong.status());
+        assertEquals("strong-read", strong.headers().get("X-Fail-Closed"));
+        assertEquals(String.valueOf(ConfigScope.LOCAL.ordinal()), strong.headers().get("X-Leader-Hint"),
+                "the strong-read fail-closed hint must also be scope-aware (LOCAL)");
     }
 }

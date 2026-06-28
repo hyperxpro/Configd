@@ -891,7 +891,7 @@ class ConfigdServerTest {
         HttpApiServer api = new HttpApiServer(
                 0, null, healthService, exporter,
                 configStore, null, null, auth, null,
-                StrongReadPolicy.defaultPolicy(), key -> null);
+                StrongReadPolicy.defaultPolicy(), (scope, key) -> null);
         api.start();
         try {
             // Fetch the server's actual port via reflection (HttpServer field).

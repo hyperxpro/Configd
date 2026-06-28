@@ -20,7 +20,7 @@ import java.util.LinkedHashMap;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
-import java.util.function.Function;
+import java.util.function.BiFunction;
 
 /**
  * Transport-agnostic decision core for the admin / control-plane HTTP API (ADR-0043 M2; the DR-N2
@@ -58,10 +58,11 @@ public final class AdminApiHandler {
     private final AuthInterceptor authInterceptor;     // nullable: auth disabled
     private final AclService aclService;               // nullable: ACLs disabled
     private final StrongReadPolicy strongReadPolicy;   // non-null
-    // Multi-Raft Phase 1 (Seam D): KEYED leader hint — resolves the leader of the shard that OWNS the key,
-    // so a read 503's X-Leader-Hint points at the right shard's leader (a keyless hint would loop forever
-    // at N>1). At N=1 every key resolves to group 0. Non-null.
-    private final Function<String, NodeId> leaderHintSupplier;
+    // Wiring Increment 1: KEYED + SCOPED leader hint — resolves the leader of the shard that OWNS
+    // (scope, key), so a read 503's X-Leader-Hint points at the right shard's leader for the read's scope
+    // (a keyless/scopeless hint would loop forever at N>1, mis-routing a REGIONAL/LOCAL retry to the
+    // GLOBAL shard's leader). At N=1 every (scope, key) resolves to group 0. Non-null.
+    private final BiFunction<ConfigScope, String, NodeId> leaderHintSupplier;
     private final AuditLog auditLog;                   // nullable: auditing disabled
     private final ReplayGuard replayGuard;             // nullable: replay protection off
 
@@ -73,7 +74,7 @@ public final class AdminApiHandler {
                            AuthInterceptor authInterceptor,
                            AclService aclService,
                            StrongReadPolicy strongReadPolicy,
-                           Function<String, NodeId> leaderHintSupplier,
+                           BiFunction<ConfigScope, String, NodeId> leaderHintSupplier,
                            AuditLog auditLog,
                            ReplayGuard replayGuard) {
         this.healthService = healthService;
@@ -226,12 +227,12 @@ public final class AdminApiHandler {
         if (strongReadKey) {
             if (readService == null) {
                 // No linearizable path wired (stale-only deployment): fail closed.
-                return failClosed(key, "no linearizable read path is configured on this node");
+                return failClosed(scope, key, "no linearizable read path is configured on this node");
             }
             result = readService.linearizableRead(scope, key);
             if (result == null) {
                 // Leadership / ReadIndex confirmation failed: fail CLOSED.
-                return failClosed(key,
+                return failClosed(scope, key,
                         "linearizable read could not be confirmed (not leader / ReadIndex unconfirmed)");
             }
         } else if (linearizableRequested && readService != null) {
@@ -240,7 +241,7 @@ public final class AdminApiHandler {
                 // Ordinary key, explicit linearizable request that can't be served: reported as Not
                 // Leader. NOT a strong-read fail-close (a stale read of this key is contract-permitted).
                 Map<String, String> h = jsonHeaders();
-                NodeId hint = leaderHintSupplier.apply(key);
+                NodeId hint = leaderHintSupplier.apply(scope, key);
                 if (hint != null) {
                     h.put("X-Leader-Hint", String.valueOf(hint.id()));
                 }
@@ -273,10 +274,10 @@ public final class AdminApiHandler {
      * {@code X-Fail-Closed: strong-read} header, plus {@code X-Leader-Hint} when a leader is known.
      * The local/stale value is NEVER served for a strong-read key on this path.
      */
-    private AdminResponse failClosed(String key, String reason) {
+    private AdminResponse failClosed(ConfigScope scope, String key, String reason) {
         Map<String, String> h = jsonHeaders();
         h.put("X-Fail-Closed", "strong-read");
-        NodeId hint = leaderHintSupplier.apply(key);
+        NodeId hint = leaderHintSupplier.apply(scope, key);
         if (hint != null) {
             h.put("X-Leader-Hint", String.valueOf(hint.id()));
         }
@@ -559,11 +560,13 @@ public final class AdminApiHandler {
      * surface (see docs/wiring/increment-1-scope-and-path-validation.md §2).
      */
     private static String keyValidationReason(String key) {
-        if (key.isBlank()) {
-            return "key must not be blank";
-        }
+        // Length-before-blank mirrors ConfigWriteService.put's order, so a key that is both yields the
+        // same 400 reason at the edge and in the write service.
         if (key.getBytes(StandardCharsets.UTF_8).length > 1024) {
             return "key length exceeds maximum of 1024 bytes";
+        }
+        if (key.isBlank()) {
+            return "key must not be blank";
         }
         return null;
     }

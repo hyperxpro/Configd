@@ -12,6 +12,7 @@ import io.configd.api.ConfigReadService;
 import io.configd.api.ConfigWriteService;
 import io.configd.api.HealthService;
 import io.configd.api.ReplayGuard;
+import io.configd.common.ConfigScope;
 import io.configd.common.NodeId;
 import io.configd.observability.PrometheusExporter;
 import io.configd.store.VersionedConfigStore;
@@ -23,7 +24,7 @@ import java.net.InetSocketAddress;
 import java.net.URI;
 import java.util.Map;
 import java.util.concurrent.Executors;
-import java.util.function.Function;
+import java.util.function.BiFunction;
 
 /**
  * JDK-transport adapter for the Configd admin / control-plane HTTP API. Uses the built-in
@@ -68,7 +69,7 @@ public final class HttpApiServer {
                          AuthInterceptor authInterceptor,
                          AclService aclService,
                          StrongReadPolicy strongReadPolicy,
-                         Function<String, NodeId> leaderHintSupplier) throws IOException {
+                         BiFunction<ConfigScope, String, NodeId> leaderHintSupplier) throws IOException {
         this(port, sslContext, healthService, prometheusExporter, configStore, writeService,
                 readService, authInterceptor, aclService, strongReadPolicy, leaderHintSupplier,
                 /* auditLog */ null, /* replayGuard */ null);
@@ -91,7 +92,7 @@ public final class HttpApiServer {
                          AuthInterceptor authInterceptor,
                          AclService aclService,
                          StrongReadPolicy strongReadPolicy,
-                         Function<String, NodeId> leaderHintSupplier,
+                         BiFunction<ConfigScope, String, NodeId> leaderHintSupplier,
                          AuditLog auditLog,
                          ReplayGuard replayGuard) throws IOException {
         if (sslContext != null) {

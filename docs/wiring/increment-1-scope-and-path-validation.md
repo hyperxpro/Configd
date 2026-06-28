@@ -113,6 +113,13 @@ from `URI.getPath()`, so it does **not** touch the key or the C6/RR-020 strong-r
 > `401`, not a pre-auth `400`). Existing valid-key traffic is unaffected by placement; this choice
 > preserves the security ordering against a red-team "you moved validation ahead of auth" critique.
 
+> **DL-W1-03b (behaviour note).** The superset gate is uniform across GET/PUT/DELETE, so a **blank or
+> over-length key on GET now returns `400`** (previously `404`/served-nothing). This is not a regression of
+> any currently-valid key — such keys are unstorable (the PUT gate rejects them at ≤1024 B) — it just
+> applies the RFC A7-1 taxonomy (path-exceeds-limit ⇒ 400) uniformly. The `queryParam` parser splits the
+> already-percent-decoded `URI.getQuery()`; this is safe for `scope` specifically because `valueOf`
+> strictly rejects any non-enum value to `400` (defence-in-depth, not relied upon for routing).
+
 ---
 
 ## 4. Read API widening — the seam (read-your-writes, minimal blast radius)
@@ -126,19 +133,29 @@ scope cannot flow through a construction-time capture, so the SPI is widened to 
   **delegating to the key-only method** — so every existing key-only `ConfigReader` (3 test fixtures)
   compiles and behaves **unchanged**. Only the production `shardedConfigReader` **overrides** the
   scope-aware method to resolve `shardFor(scope, key)` with the **call-time** scope.
-- `LeadershipConfirmer` gains `default boolean confirmLeadership(ConfigScope, String)`, delegating to the
-  key-only SAM — so every existing `key -> …` confirmer lambda (4 fixtures) is **unchanged**. The
-  production confirmer becomes an anonymous class overriding the scope-aware method (call-time scope).
+- `LeadershipConfirmer` (a single-method `@FunctionalInterface`) **promotes** the scope-aware
+  `confirmLeadership(ConfigScope, String)` to the SAM, with the key-only `confirmLeadership(String)` a
+  `default` delegating to GLOBAL — so production and the confirmer fixtures stay clean `(scope, key) -> …`
+  lambdas (the 4 confirmer fixtures were updated `key ->` → `(scope, key) ->`). *(The asymmetry with
+  `ConfigReader` is deliberate and by interface kind: a multi-method interface adds the scope method as a
+  `default` so its anonymous-class fixtures stay untouched; a single-method functional interface promotes
+  the SAM so its lambda fixtures stay lambdas — each minimizes churn for its shape.)*
 - `ConfigReadService` gains `linearizableRead(ConfigScope, String)` and `staleRead(ConfigScope, String)`;
   the key-only methods are retained, **delegating to the GLOBAL overload** — so every existing caller
   (the testkit, ConfigdServerTest) is unchanged.
 
-> **DL-W1-04.** Scope-aware read methods are added as **defaults delegating to the key-only methods**
-> (back-compat shim), with only production overriding them. This routes a GET by the same `(scope, key)`
-> as its write while leaving all existing key-only readers/confirmers/callers byte-identical.
-> `shardedConfigReader` keeps its 4-arg signature; the `readScope` argument is now the **A2-3 GLOBAL
-> default for the legacy key-only `ConfigReader.get(String)` path** (still exercised by `ShardedRoutingTest`),
-> while the new scope-aware overrides use the caller's scope.
+> **DL-W1-04.** Scope is threaded per-call through the read SPI: `ConfigReader` adds the scope-aware method
+> as a `default` (its anonymous-class fixtures stay untouched); `LeadershipConfirmer` promotes the
+> scope-aware method to its SAM (its lambda fixtures stay lambdas); `ConfigReadService`'s key-only methods
+> delegate to the GLOBAL overload. Only production overrides the scope-aware behavior, so a GET routes by
+> the same `(scope, key)` as its write while existing key-only callers stay byte-identical.
+> `shardedConfigReader` keeps its 4-arg signature; `readScope` is now the **A2-3 GLOBAL default for the
+> legacy key-only `ConfigReader.get(String)` path** (still exercised by `ShardedRoutingTest`), while the
+> scope-aware overrides use the caller's scope. **The read 503 `X-Leader-Hint` is widened to the same
+> scope-aware shape** (`BiFunction<ConfigScope,String,NodeId>`, mirroring the already-scope-aware write
+> redirect) so a non-GLOBAL read that 503s points the client at the owning shard's leader *for that scope*
+> — without it, a REGIONAL/LOCAL retry would loop to the GLOBAL shard's leader at N>1 (found in the
+> review four-way; regression `ScopeAndPathValidationTest.read503LeaderHintIsResolvedForTheRequestScope`).
 
 ---
 

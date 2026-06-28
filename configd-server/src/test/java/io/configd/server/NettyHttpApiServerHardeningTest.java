@@ -70,7 +70,7 @@ class NettyHttpApiServerHardeningTest {
                 0, /* sslContext */ null, new HealthService(), new PrometheusExporter(registry),
                 new VersionedConfigStore(), /* writeService */ null, /* readService */ null,
                 /* authInterceptor */ null, /* aclService */ null, StrongReadPolicy.defaultPolicy(),
-                key -> NodeId.of(1), /* auditLog */ null, /* replayGuard */ null);
+                (scope, key) -> NodeId.of(1), /* auditLog */ null, /* replayGuard */ null);
         server.start();
     }
 

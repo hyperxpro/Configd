@@ -228,8 +228,8 @@ class ShardedRoutingTest {
         AdminApiHandler handler = new AdminApiHandler(
                 new HealthService(), /* exporter */ null, group0Store, /* writeService */ null,
                 readService, /* auth */ null, /* acl */ null, StrongReadPolicy.defaultPolicy(),
-                k -> {
-                    io.configd.raft.RaftNode owner = fx.driver.getGroup(fx.shardMap.shardFor(SCOPE, k));
+                (scope, k) -> {
+                    io.configd.raft.RaftNode owner = fx.driver.getGroup(fx.shardMap.shardFor(scope, k));
                     return owner != null ? owner.leaderId() : null;
                 },
                 /* auditLog */ null, /* replayGuard */ null);

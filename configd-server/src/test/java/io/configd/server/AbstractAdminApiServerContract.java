@@ -8,6 +8,7 @@ import io.configd.api.ConfigWriteService;
 import io.configd.api.HealthService;
 import io.configd.api.ReplayGuard;
 import io.configd.common.Clock;
+import io.configd.common.ConfigScope;
 import io.configd.common.NodeId;
 import io.configd.common.Storage;
 import io.configd.observability.MetricsRegistry;
@@ -38,7 +39,7 @@ import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
-import java.util.function.Function;
+import java.util.function.BiFunction;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
@@ -103,7 +104,7 @@ abstract class AbstractAdminApiServerContract {
                       AuthInterceptor authInterceptor,
                       AclService aclService,
                       StrongReadPolicy strongReadPolicy,
-                      Function<String, NodeId> leaderHint,
+                      BiFunction<ConfigScope, String, NodeId> leaderHint,
                       AuditLog auditLog,
                       ReplayGuard replayGuard) {
     }
@@ -175,7 +176,7 @@ abstract class AbstractAdminApiServerContract {
         MetricsRegistry registry = new MetricsRegistry();
         return new ServerSpec(null, new HealthService(), new PrometheusExporter(registry),
                 store, committingWriteService(), /* readService */ null, authInterceptor(), aclService(),
-                StrongReadPolicy.defaultPolicy(), key -> NodeId.of(1), /* auditLog */ null, /* replayGuard */ null);
+                StrongReadPolicy.defaultPolicy(), (scope, key) -> NodeId.of(1), /* auditLog */ null, /* replayGuard */ null);
     }
 
     // -----------------------------------------------------------------------
@@ -424,7 +425,7 @@ abstract class AbstractAdminApiServerContract {
         MetricsRegistry registry = new MetricsRegistry();
         return start(new ServerSpec(null, new HealthService(), new PrometheusExporter(registry),
                 store, committingWriteServiceSeq42(), null, authInterceptor(), aclService(),
-                StrongReadPolicy.defaultPolicy(), key -> NodeId.of(1), auditLog, /* replayGuard */ null));
+                StrongReadPolicy.defaultPolicy(), (scope, key) -> NodeId.of(1), auditLog, /* replayGuard */ null));
     }
 
     private HttpResponse<String> sendKey(int port, String method, String key, String token, String body)
@@ -521,7 +522,7 @@ abstract class AbstractAdminApiServerContract {
         MetricsRegistry registry = new MetricsRegistry();
         return start(new ServerSpec(null, new HealthService(), new PrometheusExporter(registry),
                 store, committingWriteService(), null, writerOnlyAuthInterceptor(), writerOnlyAclService(),
-                StrongReadPolicy.defaultPolicy(), key -> NodeId.of(1), /* auditLog */ null, guard));
+                StrongReadPolicy.defaultPolicy(), (scope, key) -> NodeId.of(1), /* auditLog */ null, guard));
     }
 
     /** Builds a PUT carrying the bearer token + the given replay headers. */
@@ -622,7 +623,7 @@ abstract class AbstractAdminApiServerContract {
     }
 
     private int startStrong(VersionedConfigStore store, ConfigReadService readService,
-                            StrongReadPolicy policy, Function<String, NodeId> leaderHint) throws Exception {
+                            StrongReadPolicy policy, BiFunction<ConfigScope, String, NodeId> leaderHint) throws Exception {
         MetricsRegistry registry = new MetricsRegistry();
         return start(new ServerSpec(null, new HealthService(), new PrometheusExporter(registry),
                 store, /* writeService */ null, readService, /* auth */ null, /* acl */ null,
@@ -638,7 +639,7 @@ abstract class AbstractAdminApiServerContract {
         VersionedConfigStore store = seededStore();
         AtomicBoolean isLeader = new AtomicBoolean(true);
         int port = startStrong(store, readService(store, isLeader),
-                StrongReadPolicy.defaultPolicy(), key -> NodeId.of(1));
+                StrongReadPolicy.defaultPolicy(), (scope, key) -> NodeId.of(1));
 
         // No consistency param: a strong-read key is ALWAYS linearizable.
         HttpResponse<String> resp = get(port, "/v1/config/secure/killswitch");
@@ -657,7 +658,7 @@ abstract class AbstractAdminApiServerContract {
         VersionedConfigStore store = seededStore();
         AtomicBoolean isLeader = new AtomicBoolean(false); // a follower
         int port = startStrong(store, readService(store, isLeader),
-                StrongReadPolicy.defaultPolicy(), key -> NodeId.of(3));
+                StrongReadPolicy.defaultPolicy(), (scope, key) -> NodeId.of(3));
 
         HttpResponse<String> resp = get(port, "/v1/config/secure/killswitch");
 
@@ -679,7 +680,7 @@ abstract class AbstractAdminApiServerContract {
         VersionedConfigStore store = seededStore();
         AtomicBoolean confirmable = new AtomicBoolean(true);
         int port = startStrong(store, readService(store, confirmable),
-                StrongReadPolicy.defaultPolicy(), key -> NodeId.of(2));
+                StrongReadPolicy.defaultPolicy(), (scope, key) -> NodeId.of(2));
 
         // Confirmable: served linearizably.
         assertEquals(200, get(port, "/v1/config/secure/killswitch").statusCode());
@@ -699,7 +700,7 @@ abstract class AbstractAdminApiServerContract {
         VersionedConfigStore store = seededStore();
         AtomicBoolean isLeader = new AtomicBoolean(false);
         int port = startStrong(store, readService(store, isLeader),
-                StrongReadPolicy.defaultPolicy(), key -> NodeId.of(3));
+                StrongReadPolicy.defaultPolicy(), (scope, key) -> NodeId.of(3));
 
         HttpResponse<String> resp = get(port, "/v1/config/secure/killswitch?consistency=stale");
         assertEquals(503, resp.statusCode(),
@@ -713,7 +714,7 @@ abstract class AbstractAdminApiServerContract {
         // answer and must fail closed rather than fall through to the store.
         VersionedConfigStore store = seededStore();
         int port = startStrong(store, /* readService */ null,
-                StrongReadPolicy.defaultPolicy(), key -> null);
+                StrongReadPolicy.defaultPolicy(), (scope, key) -> null);
 
         HttpResponse<String> resp = get(port, "/v1/config/secure/killswitch");
         assertEquals(503, resp.statusCode());
@@ -733,7 +734,7 @@ abstract class AbstractAdminApiServerContract {
         VersionedConfigStore store = seededStore();
         AtomicBoolean isLeader = new AtomicBoolean(false);
         int port = startStrong(store, readService(store, isLeader),
-                StrongReadPolicy.defaultPolicy(), key -> NodeId.of(3));
+                StrongReadPolicy.defaultPolicy(), (scope, key) -> NodeId.of(3));
 
         HttpResponse<String> resp = get(port, "/v1/config/app/feature");
         assertEquals(200, resp.statusCode());
@@ -766,7 +767,7 @@ abstract class AbstractAdminApiServerContract {
         VersionedConfigStore store = seededStore();
         AtomicBoolean isLeader = new AtomicBoolean(false);
         int port = startStrong(store, readService(store, isLeader),
-                StrongReadPolicy.defaultPolicy(), key -> NodeId.of(3));
+                StrongReadPolicy.defaultPolicy(), (scope, key) -> NodeId.of(3));
 
         HttpResponse<String> resp = getRaw(port, "/v1/config/%73ecure/killswitch");
         assertEquals(503, resp.statusCode(),
@@ -782,7 +783,7 @@ abstract class AbstractAdminApiServerContract {
         VersionedConfigStore store = seededStore();
         AtomicBoolean isLeader = new AtomicBoolean(false);
         int port = startStrong(store, readService(store, isLeader),
-                StrongReadPolicy.defaultPolicy(), key -> NodeId.of(3));
+                StrongReadPolicy.defaultPolicy(), (scope, key) -> NodeId.of(3));
 
         HttpResponse<String> resp = getRaw(port, "/v1/config/secure%2Fkillswitch");
         assertEquals(503, resp.statusCode(),
@@ -799,7 +800,7 @@ abstract class AbstractAdminApiServerContract {
         VersionedConfigStore store = seededStore();
         AtomicBoolean isLeader = new AtomicBoolean(false);
         int port = startStrong(store, readService(store, isLeader),
-                StrongReadPolicy.defaultPolicy(), key -> NodeId.of(3));
+                StrongReadPolicy.defaultPolicy(), (scope, key) -> NodeId.of(3));
 
         HttpResponse<String> resp = getRaw(port, "/v1/config/secure/../killswitch");
         assertEquals(503, resp.statusCode(),
@@ -818,7 +819,7 @@ abstract class AbstractAdminApiServerContract {
         VersionedConfigStore store = seededStore();
         AtomicBoolean isLeader = new AtomicBoolean(false);
         int port = startStrong(store, readService(store, isLeader),
-                StrongReadPolicy.defaultPolicy(), key -> NodeId.of(3));
+                StrongReadPolicy.defaultPolicy(), (scope, key) -> NodeId.of(3));
 
         HttpResponse<String> resp = getRaw(port, "/v1/config//secure/killswitch");
         assertNotEquals("DENY", resp.body(),
@@ -835,7 +836,7 @@ abstract class AbstractAdminApiServerContract {
         VersionedConfigStore store = seededStore();
         AtomicBoolean isLeader = new AtomicBoolean(false);
         int port = startStrong(store, readService(store, isLeader),
-                StrongReadPolicy.defaultPolicy(), key -> NodeId.of(3));
+                StrongReadPolicy.defaultPolicy(), (scope, key) -> NodeId.of(3));
 
         HttpResponse<String> resp = getRaw(port, "/v1/config/app/feature?key=secure/killswitch");
         assertEquals(200, resp.statusCode(),
@@ -857,7 +858,7 @@ abstract class AbstractAdminApiServerContract {
         return start(new ServerSpec(null, new HealthService(), new PrometheusExporter(registry),
                 new VersionedConfigStore(), /* writeService */ null, /* readService */ null,
                 authInterceptor(), /* aclService */ null, StrongReadPolicy.defaultPolicy(),
-                key -> NodeId.of(1), /* auditLog */ null, /* replayGuard */ null));
+                (scope, key) -> NodeId.of(1), /* auditLog */ null, /* replayGuard */ null));
     }
 
     @Test
@@ -904,7 +905,7 @@ abstract class AbstractAdminApiServerContract {
         MetricsRegistry registry = new MetricsRegistry();
         int port = start(new ServerSpec(null, new HealthService(), new PrometheusExporter(registry),
                 store, overloadedWriteService(), /* readService */ null, authInterceptor(), aclService(),
-                StrongReadPolicy.defaultPolicy(), key -> NodeId.of(1), /* auditLog */ null, /* replayGuard */ null));
+                StrongReadPolicy.defaultPolicy(), (scope, key) -> NodeId.of(1), /* auditLog */ null, /* replayGuard */ null));
 
         // Authorized writer, non-empty body, but the proposer is overloaded -> 429 + Retry-After: 1.
         HttpResponse<String> put = send(port, "PUT", "/v1/config/app/feature", "good-writer", "off");
@@ -1000,7 +1001,7 @@ abstract class AbstractAdminApiServerContract {
         int port = start(new ServerSpec(serverCtx, new HealthService(), new PrometheusExporter(registry),
                 new VersionedConfigStore(), /* writeService */ null, /* readService */ null,
                 /* auth */ null, /* acl */ null, StrongReadPolicy.defaultPolicy(),
-                key -> NodeId.of(1), /* auditLog */ null, /* replayGuard */ null));
+                (scope, key) -> NodeId.of(1), /* auditLog */ null, /* replayGuard */ null));
 
         // A dedicated HttpClient that trusts the server cert. /health/live is public (no auth fixture).
         try (HttpClient tlsClient = HttpClient.newBuilder()

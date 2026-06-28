@@ -920,15 +920,17 @@ public final class ConfigdServer {
         // JDK adapter is retained and CI-green as the revert target.
         NettyHttpApiServer httpApiServer;
         try {
-            // Seam D: the read 503 X-Leader-Hint is SHARD-AWARE — resolved for the key's owning shard
-            // (mirrors the write redirect), so a client retries the right shard's leader. At N=1 every
-            // key resolves to group 0 ⇒ raftNode.leaderId(), byte-identical.
+            // Wiring Increment 1: the read 503 X-Leader-Hint is SHARD- AND SCOPE-AWARE — resolved for the
+            // shard that owns (scope, key) using the read's per-request scope (mirrors the scope-aware write
+            // redirect at raftProposer's leaderHint), so a client retries the right shard's leader for that
+            // scope (a scopeless hint would loop at N>1, sending a REGIONAL/LOCAL retry to the GLOBAL
+            // shard's leader). At N=1 every (scope, key) resolves to group 0 ⇒ raftNode.leaderId(), byte-identical.
             httpApiServer = new NettyHttpApiServer(
                     config.apiPort(), sslContext, healthService, prometheusExporter,
                     configStore, writeService, readService, authInterceptor, aclService,
                     strongReadPolicy,
-                    key -> {
-                        io.configd.raft.RaftNode owner = driver.getGroup(shardMap.shardFor(readScope, key));
+                    (scope, key) -> {
+                        io.configd.raft.RaftNode owner = driver.getGroup(shardMap.shardFor(scope, key));
                         return owner != null ? owner.leaderId() : null;
                     },
                     auditLog, replayGuard);
