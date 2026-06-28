@@ -7,6 +7,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 
 import java.util.ArrayList;
+import java.util.EnumSet;
 import java.util.List;
 import java.util.Set;
 import java.util.concurrent.TimeUnit;
@@ -14,7 +15,9 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 
 import static io.configd.api.AclService.Permission.ADMIN;
+import static io.configd.api.AclService.Permission.LIST;
 import static io.configd.api.AclService.Permission.READ;
+import static io.configd.api.AclService.Permission.WATCH;
 import static io.configd.api.AclService.Permission.WRITE;
 import static org.junit.jupiter.api.Assertions.assertAll;
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
@@ -311,6 +314,31 @@ class AclServiceRedTeamTest {
                             "ALSO matches the sibling — documented flat-prefix behavior (use a trailing separator to scope)"),
                     () -> assertFalse(acl.isAllowed("alice", "app.public", READ), "does not match unrelated keys"));
         }
+
+        @Test
+        @DisplayName("INFO: the startsWith matching caveats apply UNIFORMLY to all 5 capabilities (incl. LIST/WATCH)")
+        void prefixMatchingIsCapabilityUniform_documented() {
+            // DL-O3-02: O-3 adds LIST/WATCH to the VOCABULARY but does NOT change MATCHING. The literal
+            // key.startsWith() caveats (DL-W2-03: fail-safe sibling over-reach; fail-OPEN subtree-root gap)
+            // are properties of the rule PREFIX, evaluated identically for every capability — they apply
+            // uniformly to LIST and WATCH exactly as to READ/WRITE/ADMIN. The segment-aware (A3.4 glob) fix
+            // remains the deferred binary/driver surface. This pins the uniformity so a future per-cap
+            // matching divergence is visible.
+            acl.grant("app.", "alice", Set.of(READ, LIST, WRITE, WATCH, ADMIN));
+            // Carve out enumeration + streaming of the secrets subtree (a dot-terminated, well-scoped deny).
+            acl.deny("app.secret.", "alice", Set.of(LIST, WATCH));
+            assertAll(
+                    () -> assertFalse(acl.isAllowed("alice", "app.secret.k", LIST),
+                            "LIST denied inside app.secret. (same startsWith boundary as READ/WRITE)"),
+                    () -> assertFalse(acl.isAllowed("alice", "app.secret.k", WATCH),
+                            "WATCH denied inside app.secret. (deny(WATCH) removes effective WATCH)"),
+                    () -> assertTrue(acl.isAllowed("alice", "app.secret.k", READ),
+                            "READ still allowed inside the subtree — only LIST/WATCH were carved out"),
+                    () -> assertTrue(acl.isAllowed("alice", "app.secretZ", LIST),
+                            "app.secretZ is NOT under app.secret. — the LIST deny does not bleed (uniform boundary)"),
+                    () -> assertTrue(acl.isAllowed("alice", "app.secretZ", WATCH),
+                            "WATCH (∧ READ) authorized on the sibling — the deny does not bleed; matching is capability-uniform"));
+        }
     }
 
     // =====================================================================================
@@ -427,7 +455,7 @@ class AclServiceRedTeamTest {
         @Test
         @DisplayName("a principal with no rules is default-denied even when others are granted globally")
         void unknownPrincipalDefaultDeniedAmidstGlobalGrant() {
-            acl.grant("", "root", Set.of(READ, WRITE, ADMIN)); // mirrors the deployed production grant
+            acl.grant("", "root", EnumSet.allOf(AclService.Permission.class)); // mirrors the deployed production grant (ConfigdServer:726 allOf)
             assertAll(
                     () -> assertFalse(acl.isAllowed("mallory", "anything", READ), "mallory has no rules -> default-deny"),
                     () -> assertTrue(acl.isAllowed("root", "anything", READ), "root's global grant intact"));
@@ -453,13 +481,17 @@ class AclServiceRedTeamTest {
         @Test
         @DisplayName("grant(\"\",\"root\",all) authorizes every key/cap for root and nobody else")
         void singleRootGrantBehavesAsLongestMatch() {
-            acl.grant("", "root", Set.of(READ, WRITE, ADMIN));
+            acl.grant("", "root", EnumSet.allOf(AclService.Permission.class));
             assertAll(
                     () -> assertTrue(acl.isAllowed("root", "a/b/c", READ)),
                     () -> assertTrue(acl.isAllowed("root", "a/b/c", WRITE)),
                     () -> assertTrue(acl.isAllowed("root", "a/b/c", ADMIN)),
+                    () -> assertTrue(acl.isAllowed("root", "a/b/c", LIST), "root holds the new LIST cap too"),
+                    () -> assertTrue(acl.isAllowed("root", "a/b/c", WATCH), "root holds effective WATCH (WATCH ∧ READ)"),
                     () -> assertTrue(acl.isAllowed("root", "", READ), "even the empty key"),
-                    () -> assertFalse(acl.isAllowed("intruder", "a/b/c", READ), "non-root default-denied"));
+                    () -> assertFalse(acl.isAllowed("intruder", "a/b/c", READ), "non-root default-denied"),
+                    () -> assertFalse(acl.isAllowed("intruder", "a/b/c", LIST), "non-root default-denied (new cap)"),
+                    () -> assertFalse(acl.isAllowed("intruder", "a/b/c", WATCH), "non-root default-denied (new cap)"));
         }
     }
 
@@ -544,6 +576,212 @@ class AclServiceRedTeamTest {
             synchronized (errors) {
                 assertTrue(errors.isEmpty(), "writer threw: " + errors);
             }
+        }
+    }
+
+    // =====================================================================================
+    // ATTACK 10 — WATCH CAN NEVER OUT-READ A READ (INV-WATCH-READ / R-CAP-2). The effective-WATCH floor
+    // (WATCH ∧ READ) must hold under every adversarial shape: WATCH held while READ is absent or denied,
+    // deny ordering, deep decoy walks, global READ deny. A single authorized WATCH without effective READ
+    // is a watch-bypass — exactly the class of defect §6/INV-WATCH-READ exists to prevent.
+    // =====================================================================================
+    @Nested
+    @DisplayName("Attack 10: WATCH is never authorized without effective READ")
+    class WatchNeverOutreadsRead {
+
+        @Test
+        @DisplayName("WATCH+LIST+WRITE+ADMIN but NO READ -> no effective WATCH")
+        void everyCapButReadDoesNotYieldWatch() {
+            acl.grant("a.", "alice", Set.of(WATCH, LIST, WRITE, ADMIN)); // everything EXCEPT READ
+            assertFalse(acl.isAllowed("alice", "a.x", WATCH),
+                    "WATCH must be ineffective without READ even when every other capability is held");
+        }
+
+        @Test
+        @DisplayName("a global READ deny at \"\" kills effective WATCH for an otherwise-watchable descendant")
+        void globalReadDenyKillsDescendantWatch() {
+            acl.grant("a.", "alice", Set.of(READ, WATCH));
+            acl.deny("", "alice", Set.of(READ)); // global READ carve-out (deny precedence + global scope)
+            assertAll(
+                    () -> assertFalse(acl.isAllowed("alice", "a.x", WATCH),
+                            "global DENY(READ) at \"\" floors away effective WATCH everywhere"),
+                    () -> assertFalse(acl.isAllowed("alice", "a.x", READ), "READ itself is denied"));
+        }
+
+        @Test
+        @DisplayName("the READ-floor is insertion-order independent (grant/deny in either order -> no watch)")
+        void watchFloorIsOrderIndependent() {
+            AclService a = new AclService();
+            a.grant("a.", "alice", Set.of(READ, WATCH));
+            a.deny("a.", "alice", Set.of(READ));
+
+            AclService b = new AclService();
+            b.deny("a.", "alice", Set.of(READ));
+            b.grant("a.", "alice", Set.of(READ, WATCH));
+
+            assertAll(
+                    () -> assertFalse(a.isAllowed("alice", "a.x", WATCH), "grant-then-deny(READ): no watch"),
+                    () -> assertFalse(b.isAllowed("alice", "a.x", WATCH), "deny(READ)-then-grant: no watch"));
+        }
+
+        @Test
+        @DisplayName("effective WATCH survives a poisoned-decoy walk (decoy READ/WATCH denies are non-ancestors)")
+        void watchFloorSurvivesPoisonedDecoyWalk() {
+            // READ + WATCH come from a deep REAL ancestor; the decoys are NON-ancestors that deny READ+WATCH.
+            // If a decoy leaked (startsWith broken) or the walk halted early, effective WATCH would vanish.
+            acl.grant("a.b.c.d.", "alice", Set.of(READ, WATCH));
+            for (String decoy : List.of("a.a", "a.b.a", "a.b.c.a", "a.b.c.d.a")) {
+                acl.deny(decoy, "alice", Set.of(READ, WATCH));
+            }
+            assertTrue(acl.isAllowed("alice", "a.b.c.d.e", WATCH),
+                    "effective WATCH must survive — the decoy READ/WATCH denies are non-ancestors, filtered by startsWith");
+        }
+
+        @Test
+        @DisplayName("WATCH granted at a descendant but READ only at an ancestor still composes to effective WATCH")
+        void watchAtDescendantComposesWithAncestorRead() {
+            acl.grant("a.", "alice", Set.of(READ));        // READ from the ancestor
+            acl.grant("a.b.", "alice", Set.of(WATCH));     // WATCH from the descendant (no READ here)
+            assertTrue(acl.isAllowed("alice", "a.b.x", WATCH),
+                    "union: READ(ancestor) ∧ WATCH(descendant) -> effective WATCH (the floor is over the UNION)");
+            assertFalse(acl.isAllowed("alice", "a.c.x", WATCH),
+                    "a.c.x has READ but no WATCH in its ancestor chain -> not watchable");
+        }
+    }
+
+    // =====================================================================================
+    // ATTACK 11 — LIST AND READ NEVER CROSS (R-CAP-1). Neither implies the other under any union/deny
+    // shape; a stack of one must never manufacture the other.
+    // =====================================================================================
+    @Nested
+    @DisplayName("Attack 11: LIST and READ are non-crossing under union")
+    class ListReadNonCrossing {
+
+        @Test
+        @DisplayName("no stack of non-LIST grants ever manufactures LIST")
+        void noStackOfReadGrantsConfersList() {
+            acl.grant("", "alice", Set.of(READ));
+            acl.grant("a.", "alice", Set.of(READ, WRITE));
+            acl.grant("a.b.", "alice", Set.of(READ, WRITE, WATCH, ADMIN)); // everything but LIST
+            assertFalse(acl.isAllowed("alice", "a.b.x", LIST),
+                    "a union of non-LIST grants must never manufacture LIST");
+        }
+
+        @Test
+        @DisplayName("no stack of non-READ grants ever manufactures READ (or effective WATCH)")
+        void noStackOfListGrantsConfersReadOrWatch() {
+            acl.grant("", "alice", Set.of(LIST));
+            acl.grant("a.", "alice", Set.of(LIST, WATCH));
+            acl.grant("a.b.", "alice", Set.of(LIST, WRITE, WATCH, ADMIN)); // everything but READ
+            assertAll(
+                    () -> assertFalse(acl.isAllowed("alice", "a.b.x", READ),
+                            "a union of non-READ grants must never manufacture READ"),
+                    () -> assertFalse(acl.isAllowed("alice", "a.b.x", WATCH),
+                            "no READ in the union -> no effective WATCH despite WATCH being granted"));
+        }
+    }
+
+    // =====================================================================================
+    // ATTACK 12 — PER-CAPABILITY DENY OF THE NEW CAPS IS NOT EVADABLE. A deny of LIST or WATCH cannot be
+    // out-ordered, out-specified, or unioned around; deny(READ) is the second, equivalent way to kill
+    // effective WATCH. Mirrors the proven DenyBeatsSudo / DenyOrderIndependence properties for LIST/WATCH.
+    // =====================================================================================
+    @Nested
+    @DisplayName("Attack 12: per-capability DENY of LIST/WATCH is absolute and inevadable")
+    class NewCapabilityDenyNotEvadable {
+
+        @Test
+        @DisplayName("one deep DENY(LIST) beats three stacked ALLOW(LIST)")
+        void denyListBeatsStackedListAllows() {
+            acl.grant("", "alice", Set.of(LIST));
+            acl.grant("a.", "alice", Set.of(LIST));
+            acl.grant("a.b.", "alice", Set.of(LIST));
+            acl.deny("a.b.c.", "alice", Set.of(LIST));
+            assertFalse(acl.isAllowed("alice", "a.b.c.x", LIST),
+                    "a single deep DENY(LIST) beats three stacked ALLOW(LIST)");
+        }
+
+        @Test
+        @DisplayName("DENY(WATCH) at an ancestor beats ALLOW(READ+WATCH) at a descendant")
+        void denyWatchAtAncestorBeatsDescendantAllow() {
+            acl.deny("a.", "alice", Set.of(WATCH));
+            acl.grant("a.b.", "alice", Set.of(READ, WATCH));
+            assertAll(
+                    () -> assertFalse(acl.isAllowed("alice", "a.b.x", WATCH),
+                            "ancestor DENY(WATCH) removes effective WATCH at the descendant"),
+                    () -> assertTrue(acl.isAllowed("alice", "a.b.x", READ),
+                            "READ is unaffected by the WATCH deny"));
+        }
+
+        @Test
+        @DisplayName("deny(READ) is the second, equivalent way to revoke effective WATCH")
+        void denyReadAlsoRevokesEffectiveWatch() {
+            acl.grant("", "alice", Set.of(READ, WATCH));
+            acl.deny("a.b.", "alice", Set.of(READ)); // deny READ, NOT watch
+            assertAll(
+                    () -> assertFalse(acl.isAllowed("alice", "a.b.x", WATCH),
+                            "deny(READ) kills effective WATCH (the READ floor) even though WATCH is not denied"),
+                    () -> assertFalse(acl.isAllowed("alice", "a.b.x", READ), "READ denied"),
+                    () -> assertTrue(acl.isAllowed("alice", "a.other", WATCH),
+                            "outside the READ carve-out the watch is intact"));
+        }
+
+        @Test
+        @DisplayName("re-grant after deny(LIST/WATCH) does not resurrect the denied capability")
+        void regrantDoesNotResurrectDeniedNewCaps() {
+            acl.grant("a.", "alice", Set.of(READ, LIST, WATCH));
+            acl.deny("a.", "alice", Set.of(LIST, WATCH));
+            acl.grant("a.", "alice", Set.of(READ, LIST, WATCH)); // try to re-grant over the standing deny
+            assertAll(
+                    () -> assertFalse(acl.isAllowed("alice", "a.x", LIST), "standing DENY(LIST) survives the re-grant"),
+                    () -> assertFalse(acl.isAllowed("alice", "a.x", WATCH), "standing DENY(WATCH) survives the re-grant"),
+                    () -> assertTrue(acl.isAllowed("alice", "a.x", READ), "READ (never denied) remains"));
+        }
+    }
+
+    // =====================================================================================
+    // ATTACK 13 — isAllowed IS SINGLE-KEY, NOT WHOLE-TARGET. The O-3 floor (WATCH ∧ READ) is correct for a
+    // single KEY, but `isAllowed(p, prefix, …)` only unions a key's ANCESTOR grants (floorKey → lowerKey);
+    // it can NEVER see a deny on a DESCENDANT of `prefix`. So a single isAllowed-at-the-subtree-root does
+    // NOT prove READ over the whole subtree. These tests pin that contract boundary so that the future
+    // O-5 (watch) / O-2 (list) subscribe path enforces the floor PER DELIVERED KEY (or with a whole-target
+    // cover-check, as docs/design/.../WatchAuthz.authorizeWatch does via coversTarget) — NOT with one
+    // isAllowed call at the subtree root, which would over-expose. See finding RC-O3-1.
+    // =====================================================================================
+    @Nested
+    @DisplayName("Attack 13: isAllowed is a single-key floor — a subtree watch/list must re-check per delivered key")
+    class SingleKeyFloorIsNotWholeTargetCover {
+
+        @Test
+        @DisplayName("subtree WATCH authorized at the root despite a descendant READ-deny the watch would deliver")
+        void subtreeWatchRootCheckMissesDescendantReadDeny() {
+            acl.grant("a.", "alice", Set.of(READ, WATCH));    // read+watch the a. subtree
+            acl.deny("a.secret.", "alice", Set.of(READ));      // ...but NOT read a.secret.*
+
+            // What a "single isAllowed at the subtree root" (the comment's shortcut) would decide:
+            assertTrue(acl.isAllowed("alice", "a.", WATCH),
+                    "isAllowed at the SUBTREE ROOT says WATCH — the a.secret. READ-deny is a DESCENDANT, "
+                            + "invisible to the ancestor-only walk; this is NOT a whole-subtree READ guarantee");
+            // ...yet a key that very watch would stream is NOT readable, and the PER-KEY floor correctly denies:
+            assertFalse(acl.isAllowed("alice", "a.secret.k", READ),
+                    "a.secret.k is not readable — a subtree watch authorized only at the root would over-expose it");
+            assertFalse(acl.isAllowed("alice", "a.secret.k", WATCH),
+                    "the PER-DELIVERED-KEY floor is the correct enforcement and denies — O-5 must check per key, "
+                            + "not once at the subtree root (INV-WATCH-READ)");
+        }
+
+        @Test
+        @DisplayName("subtree LIST authorized at the root despite a descendant LIST-deny it would enumerate")
+        void subtreeListRootCheckMissesDescendantListDeny() {
+            acl.grant("a.", "alice", Set.of(READ, LIST));      // list the a. subtree
+            acl.deny("a.secret.", "alice", Set.of(LIST));       // ...but NOT enumerate a.secret.*
+
+            assertTrue(acl.isAllowed("alice", "a.", LIST),
+                    "isAllowed at the SUBTREE ROOT says LIST — the descendant LIST-deny is invisible to the "
+                            + "ancestor-only walk (same structural gap as WATCH; the O-2 list endpoint must not "
+                            + "authorize a subtree enumeration with one isAllowed at the prefix)");
+            assertFalse(acl.isAllowed("alice", "a.secret.k", LIST),
+                    "a.secret.* is not enumerable — the per-key floor denies; a root-only LIST check would leak it");
         }
     }
 }
