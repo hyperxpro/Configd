@@ -111,8 +111,18 @@ public class SketchSmokeTest {
             public AuthResult authenticate(Credential c) { throw new IllegalStateException("pool exhausted"); }
         };
         AuthenticatorChain faultyChain = new AuthenticatorChain(List.of(faulty, bearer));
-        check("chain: an authenticator faulting (unchecked) → Unavailable (RA-1 backstop, no fall-through)",
+        check("chain: an authenticator faulting (unchecked) in authenticate → Unavailable (RA-1, no fall-through)",
                 faultyChain.resolve(new Credential.BearerToken("s3cr3t")) instanceof AuthenticatorChain.Resolution.Unavailable);
+        // (e3) the guard covers canAttempt too: a dispatch that throws → Unavailable, not a propagated exception
+        // and not a fall-through to the bearer that would have accepted "s3cr3t".
+        Authenticator faultyDispatch = new Authenticator() {
+            public String type() { return "faulty-dispatch"; }
+            public boolean canAttempt(Credential c) { throw new RuntimeException("dispatch boom"); }
+            public AuthResult authenticate(Credential c) { return new AuthResult.Rejected(RejectReason.NO_CREDENTIAL, "n/a"); }
+        };
+        check("chain: an authenticator whose canAttempt faults → Unavailable (RA-1 backstop guards dispatch too)",
+                new AuthenticatorChain(List.of(faultyDispatch, bearer)).resolve(new Credential.BearerToken("s3cr3t"))
+                        instanceof AuthenticatorChain.Resolution.Unavailable);
         // (f) RA-4: a credential type no authenticator handles → 401 default-deny
         AuthenticatorChain bearerOnly = new AuthenticatorChain(List.of(bearer));
         check("chain: unsupported credential type → Unauthenticated (RA-4 default-deny)",

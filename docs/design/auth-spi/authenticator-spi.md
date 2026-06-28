@@ -202,11 +202,13 @@ says yes," which is how a forged/unavailable credential slips through a weaker p
 ```
 resolve(credential):
   attempted = false
-  for auth in orderedChain where auth.canAttempt(credential):     # TYPE dispatch (cert→mtls, token→bearer/oidc)
-     attempted = true
-     try result = auth.authenticate(credential)
+  for auth in orderedChain:
+     try:
+        if not auth.canAttempt(credential): continue            # TYPE dispatch (cert→mtls, token→bearer/oidc)
+        attempted = true
+        result = auth.authenticate(credential)
      catch AuthnUnavailableException:  return FAIL_CLOSED        # RA-1  STOP — never fall through
-     catch any other throwable:        return FAIL_CLOSED        # RA-1  STOP — buggy/hostile provider, fail closed
+     catch any other throwable:        return FAIL_CLOSED        # RA-1  STOP — canAttempt OR authenticate fault
      switch result:
         Authenticated(p):                 return AUTHENTICATED(p)  #       STOP — first acceptance wins
         Rejected(INVALID_CREDENTIAL, d):  return UNAUTHENTICATED(d)# RA-2  STOP — owned + bad: never fall through
@@ -231,8 +233,8 @@ The load-bearing rules and their JAAS lineage ([`prior-art.md`](prior-art.md) §
 is the finer **runtime** "recognised the type, not mine" that lets two bearer-type authenticators (a static
 token and an OIDC issuer) coexist. **Dispatch (`canAttempt`, and an OIDC issuer-peek) MUST NOT throw on a
 foreign/unparseable credential** — it returns `false` / `NOT_THIS_AUTHENTICATOR`; the "any other throwable →
-fail closed" row is the backstop for a provider that violates this, so a malformed token can never fault the
-chain into an open state.
+fail closed" row guards **both** `canAttempt` and `authenticate`, so a provider that violates this (or faults
+for any reason) can never fault the chain into an open state — a malformed token fails closed, never open.
 
 **Recommended ordering (normative for a mixed bearer chain).** Order **specific before catch-all**: a
 **catch-all** authenticator — one whose `canAttempt` matches a whole credential type and which **hard-rejects**

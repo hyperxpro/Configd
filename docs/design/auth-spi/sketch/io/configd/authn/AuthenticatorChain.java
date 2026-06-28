@@ -42,23 +42,23 @@ public final class AuthenticatorChain {
     public Resolution resolve(Credential credential) {
         boolean attempted = false;
         for (Authenticator a : chain) {
-            if (!a.canAttempt(credential)) {
-                continue;                                   // TYPE dispatch: not this authenticator's shape
-            }
-            attempted = true;
             AuthResult result;
             try {
+                if (!a.canAttempt(credential)) {
+                    continue;                               // TYPE dispatch: not this authenticator's shape
+                }
+                attempted = true;
                 result = a.authenticate(credential);
             } catch (AuthnUnavailableException e) {
                 return new Resolution.Unavailable(a.type() + ": " + e.getMessage());   // RA-1 STOP — fail closed
             } catch (RuntimeException | Error e) {
-                // Defensive backstop (RA-1): an authenticator that faults UNEXPECTEDLY (not the cooperative
-                // checked AuthnUnavailableException) — a buggy provider, an SDK fault under load, a parser that
-                // throws on a hostile credential — MUST NOT let the request proceed or fall through to a weaker
-                // authenticator. Fail closed, STOP. (Dispatch — canAttempt / an OIDC issuer-peek — MUST NOT
-                // throw on foreign input, per the Authenticator contract; this is the belt-and-braces so
-                // "fail-closed is structural" holds even for a non-compliant/hostile provider.)
-                return new Resolution.Unavailable(a.type() + ": unexpected authenticator fault ("
+                // Defensive backstop (RA-1): ANY throwable from canAttempt OR authenticate — a buggy provider,
+                // an SDK fault under load, a parser throwing on a hostile credential — MUST NOT let the request
+                // proceed or fall through to a weaker authenticator. Fail closed, STOP. (Dispatch SHOULD NOT
+                // throw, per the Authenticator contract; guarding BOTH calls here is the belt-and-braces so
+                // "fail-closed is structural" holds for whichever method a non-compliant/hostile provider
+                // faults in.)
+                return new Resolution.Unavailable(a.type() + ": authenticator fault ("
                         + e.getClass().getSimpleName() + ")");
             }
             switch (result) {
