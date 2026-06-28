@@ -25,11 +25,15 @@ import java.util.concurrent.ConcurrentSkipListMap;
  * No matching {@code ALLOW} ⇒ denied.
  * <p>
  * This <b>supersedes</b> the historical longest-match-only evaluation (which consulted only the single
- * longest matching prefix and silently dropped ancestor grants — a hierarchy footgun). For any
- * principal whose rules touch only one level for a given key (the common case, and the only case the
- * deployed single-root-grant production config exercises) the union equals longest-match — the
- * decision is <b>byte-identical</b>. The behavior differs only when overlapping ancestor/descendant
- * rules exist for the same principal.
+ * longest matching prefix — across <i>all</i> principals — and silently dropped ancestor grants, a
+ * hierarchy footgun). The two evaluations are <b>byte-identical precisely when the set of stored
+ * prefixes forms an antichain</b> (no stored prefix is an ancestor of another): then at most one prefix
+ * matches any key, so the union has a single term and equals longest-match. The deployed
+ * single-root-grant production config ({@code ""} only) is a trivial antichain, so production decisions
+ * are byte-identical. They differ only when ancestor-related prefixes both match a key — which only the
+ * tests construct. (Note the precondition is the global prefix set, not "one rule per principal": a
+ * longer prefix granted to a <i>different</i> principal could shadow this principal's shorter grant
+ * under the old longest-match, but not under the union.)
  * <p>
  * Thread safety: a {@link ConcurrentSkipListMap} holds the prefix → (principal → {@link GrantEntry})
  * map; each {@link GrantEntry} is immutable and is swapped wholesale on {@link #grant}/{@link #deny},
@@ -81,11 +85,14 @@ public final class AclService {
         Objects.requireNonNull(principal, "principal must not be null");
         Objects.requireNonNull(permissions, "permissions must not be null");
 
-        Set<Permission> allow = immutable(permissions); // rejects an empty set, as the prior contract did
+        Set<Permission> allow = immutable(permissions);
         acls.compute(prefix, (k, principalMap) -> {
             if (principalMap == null) {
                 principalMap = new ConcurrentHashMap<>();
             }
+            // The inner compute is the atomic swap point: it replaces this principal's whole GrantEntry,
+            // preserving any existing DENY (an orthogonal effect). A concurrent isAllowed reader sees
+            // either the old or the new entry, never a torn (allow, deny) pair.
             principalMap.compute(principal,
                     (p, existing) -> (existing == null ? GrantEntry.EMPTY : existing).withAllow(allow));
             return principalMap;
@@ -108,11 +115,12 @@ public final class AclService {
         Objects.requireNonNull(principal, "principal must not be null");
         Objects.requireNonNull(permissions, "permissions must not be null");
 
-        Set<Permission> deny = immutable(permissions); // rejects an empty set
+        Set<Permission> deny = immutable(permissions);
         acls.compute(prefix, (k, principalMap) -> {
             if (principalMap == null) {
                 principalMap = new ConcurrentHashMap<>();
             }
+            // Atomic swap (see grant): replaces the whole GrantEntry, preserving any existing ALLOW.
             principalMap.compute(principal,
                     (p, existing) -> (existing == null ? GrantEntry.EMPTY : existing).withDeny(deny));
             return principalMap;
@@ -182,7 +190,13 @@ public final class AclService {
         return allow.contains(permission);
     }
 
-    /** Defensive, immutable copy of a permission set (rejects an empty set, matching the prior contract). */
+    /**
+     * Defensive, immutable copy of a permission set, via {@link EnumSet#copyOf} as the prior contract did.
+     * Note {@code EnumSet.copyOf} throws on an empty <i>non-</i>{@code EnumSet} collection but accepts an
+     * empty {@code EnumSet} (stored as a no-op empty set — harmless: an empty allow grants nothing, an
+     * empty deny denies nothing); so the {@code non-empty} javadoc on {@link #grant}/{@link #deny} is a
+     * caller expectation, not a guarantee enforced for that one input shape.
+     */
     private static Set<Permission> immutable(Set<Permission> permissions) {
         return Collections.unmodifiableSet(EnumSet.copyOf(permissions));
     }
