@@ -47,6 +47,10 @@ public interface Authenticator {
      * Cheap TYPE dispatch: does this authenticator handle this credential's shape at all? (e.g. a bearer
      * authenticator returns true for any {@link Credential.BearerToken}.) No validation, no I/O. The finer
      * "this token isn't for my issuer" is decided in {@link #authenticate} via {@code NOT_THIS_AUTHENTICATOR}.
+     *
+     * <p><b>MUST NOT throw</b> on a foreign / unparseable credential — return {@code false} and let another
+     * authenticator try. A dispatch that throws would fault the whole resolution; the resolver fails closed as a
+     * backstop, but a compliant {@code canAttempt} keeps a mixed chain (e.g. static-bearer + OIDC) clean.
      */
     boolean canAttempt(Credential credential);
 

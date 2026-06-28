@@ -12,6 +12,13 @@ import java.util.function.Function;
  *
  * <p>Design artifact (auth-SPI). NOT production code.
  *
+ * <p><b>This authenticator does NO chain validation</b> — it trusts the transport's verification and reads
+ * identity off the {@link Credential.CertChain}, which (normatively) is the verified peer chain. It MUST never
+ * be the verification point and MUST never be fed an unverified/self-asserted cert (Credential.CertChain doc).
+ * To preserve the built <em>intrinsic</em> gate with no regression, production wiring SHOULD extract via the
+ * verified {@code SSLSession.getPeerPrincipal()} (which itself throws if the peer was not verified —
+ * {@code FanOutServer.java:284-287}) rather than reading a raw cert off an unguarded list.
+ *
  * <p>The identity extractor is injectable so a SPIFFE deployment can read the SAN URI instead of the Subject
  * DN (prior-art.md §4.2) — same {@link Principal} out. {@link #SUBJECT_DN} is the built behavior
  * ({@code getPeerPrincipal().getName()}).

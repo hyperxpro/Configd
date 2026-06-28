@@ -120,15 +120,27 @@ public sealed interface Credential
 - **`Headers`** — a generic carrier for signed-header schemes (cloud IAM / custom), so those don't need a new
   credential type either.
 
-**Why sealed is the right call here (and where it differs from `WrappedKey`).** Every named v1/future provider
-maps onto one of these: **OIDC → `BearerToken`, LDAP → `Password`, Kubernetes token-review → `BearerToken`,
-cloud-IAM → `Headers`.** No provider module needs a *new* credential shape — a credential is a **wire/transport
-concern**, not a provider-SDK concern (the provider consumes an existing shape). A genuinely novel credential
-is therefore a small, **versioned core addition** (like adding a wire frame to the closed
+**Why sealed is the right call here (and where it differs from `WrappedKey`).** Every **single-credential,
+request-shaped** provider — the ones this SPI targets — maps onto one of these: **OIDC → `BearerToken`,
+LDAP → `Password`, Kubernetes token-review → `BearerToken`, cloud-IAM → `Headers`.** No such provider module
+needs a *new* credential shape — a credential is a **wire/transport concern**, not a provider-SDK concern (the
+provider consumes an existing shape). A genuinely novel *single-shot* credential is therefore a small,
+**versioned core addition** (like adding a wire frame to the closed
 [`EdgeFrame`](../../rfc/driver-protocol/01-paths-and-access.md) set), not a per-provider fork. Sealing buys
 **exhaustiveness** (the transport layer handles a closed set) without blocking the provider modules
 ([§8](#8-module-layering--the-core-pulls-in-no-provider-sdk)) — they implement `Authenticator`, which is an
 open interface.
+
+> **Honest limit — what the sealed set + single-shot `authenticate` does NOT cover.** **Multi-leg
+> challenge-response** mechanisms — Kerberos/SPNEGO, SCRAM (SASL), RADIUS Access-Challenge, WebAuthn — and
+> **SAML's redirect/POST flow** are **not** expressible as a one-shot `authenticate(Credential) → AuthResult`.
+> Their gap is the **interaction model** (a back-and-forth), not a missing enum case, so they are **not** a
+> "rare credential add" — they require an interface-level **mutual-challenge extension** (RFC §3 AU7-3, a named
+> forward extension), exactly like a new wire conversation. Stuffing a SAML assertion into `Headers`/`BearerToken`
+> is a **type lie** to avoid (a SAML blob arriving as a `BearerToken` would be hard-rejected by the catch-all
+> bearer authenticator or fault an OIDC peek). The sealed-`Credential` claim is therefore scoped to
+> **single-credential, request-shaped** providers; challenge-response is deferred with eyes open, not
+> overclaimed as covered.
 
 ---
 
@@ -141,7 +153,7 @@ credential**.
 ```java
 public record Principal(
         String id,                       // stable subject identifier (cert DN, token subject, oidc iss#sub)
-        Set<String> roles,               // the Configd roles the authz engine keys on (already-mapped — §role-mapping)
+        Set<String> roles,               // the Configd roles the authz engine keys on (already-mapped — boundary §2)
         Map<String,String> attributes,   // identity claims for audit / future ABAC (oidc claims, SAN URI, tenant)
         String authenticator) {          // PROVENANCE: the type() that produced this ("mtls"/"bearer"/"oidc")
 
@@ -161,7 +173,8 @@ public record Principal(
   [`built-reality.md`](built-reality.md) §1.2). OIDC: `sub`, namespaced by issuer (`iss#sub`) so two issuers
   can't collide. Bearer: the configured principal (`"root"` today).
 - **`roles`** — the set the authz engine keys on. These are **Configd roles**, already mapped from the
-  external identity by the authenticator (§4.1) — the authz engine never sees an OIDC claim or LDAP group.
+  external identity by the authenticator ([`authn-authz-boundary.md`](authn-authz-boundary.md) §2) — the authz
+  engine never sees an OIDC claim or LDAP group.
   This is where the built `Authenticated.roles()` ([`built-reality.md`](built-reality.md) §2.3, *carried but
   unused*) finally lands a consumer.
 - **`attributes`** — identity claims (OIDC claims, the SAN URI, a tenant id) for **audit** and **future ABAC**.
@@ -193,6 +206,7 @@ resolve(credential):
      attempted = true
      try result = auth.authenticate(credential)
      catch AuthnUnavailableException:  return FAIL_CLOSED        # RA-1  STOP — never fall through
+     catch any other throwable:        return FAIL_CLOSED        # RA-1  STOP — buggy/hostile provider, fail closed
      switch result:
         Authenticated(p):                 return AUTHENTICATED(p)  #       STOP — first acceptance wins
         Rejected(INVALID_CREDENTIAL, d):  return UNAUTHENTICATED(d)# RA-2  STOP — owned + bad: never fall through
@@ -207,6 +221,7 @@ The load-bearing rules and their JAAS lineage ([`prior-art.md`](prior-art.md) §
 | Outcome | Action | JAAS analogue | Why |
 |---|---|---|---|
 | `AuthnUnavailableException` | **STOP, fail closed** | (none — stricter than JAAS) | a configured-but-down OIDC MUST NOT let the request through a weaker path (RA-1) |
+| any **other** throwable | **STOP, fail closed** | (none) | a buggy/hostile provider faulting MUST NOT proceed or fall through — a defensive backstop (RA-1) |
 | `Authenticated(p)` | **STOP, authenticated** | a sufficient module succeeding | first acceptance by a credential's owner wins |
 | `Rejected(INVALID_CREDENTIAL)` | **STOP, 401** | **Requisite** failing (control returns) | an owned-but-forged credential is a definitive reject, **not** "try a weaker authenticator" (RA-2) |
 | `Rejected(NOT_THIS_AUTHENTICATOR)` | **continue** | **Sufficient/Optional** failing (proceed) | a JWT for issuer B isn't issuer A's to reject |
@@ -214,11 +229,21 @@ The load-bearing rules and their JAAS lineage ([`prior-art.md`](prior-art.md) §
 
 `canAttempt` filters by credential **class** (a cert never reaches a bearer authenticator); `NOT_THIS_AUTHENTICATOR`
 is the finer **runtime** "recognised the type, not mine" that lets two bearer-type authenticators (a static
-token and an OIDC issuer) coexist.
+token and an OIDC issuer) coexist. **Dispatch (`canAttempt`, and an OIDC issuer-peek) MUST NOT throw on a
+foreign/unparseable credential** — it returns `false` / `NOT_THIS_AUTHENTICATOR`; the "any other throwable →
+fail closed" row is the backstop for a provider that violates this, so a malformed token can never fault the
+chain into an open state.
 
-**Recommended ordering:** strong, local, unambiguous first — `mtls, bearer, oidc, …`. The order only matters
-among authenticators that share a credential type (e.g. two bearer validators); across types `canAttempt` is
-disjoint so order is irrelevant.
+**Recommended ordering (normative for a mixed bearer chain).** Order **specific before catch-all**: a
+**catch-all** authenticator — one whose `canAttempt` matches a whole credential type and which **hard-rejects**
+(`INVALID_CREDENTIAL`) anything it doesn't own — **MUST** come **after** every more-specific authenticator of
+that type. The built static-`bearer` authenticator is exactly such a catch-all (it `INVALID_CREDENTIAL`s any
+non-matching `BearerToken`, a hard stop), so an OIDC authenticator (which returns `NOT_THIS_AUTHENTICATOR` for a
+foreign issuer) **MUST** precede it. The correct order is therefore **`mtls, oidc, bearer`** (the sketch's
+order), **not** `mtls, bearer, oidc` — the latter would make `bearer` hard-reject every OIDC JWT before `oidc`
+ever runs, silently disabling OIDC. Across *different* credential types `canAttempt` is disjoint, so order
+there is irrelevant; the rule bites only within a credential type. `Authenticators.chain` SHOULD warn if a
+catch-all precedes a more-specific authenticator of the same type.
 
 > *Rejected alternative — per-endpoint authenticator sets.* Letting the control-plane API and the edge use
 > **different** authenticators is **rejected**: it would let the two planes disagree on what a principal *is*,
@@ -231,32 +256,48 @@ the type signatures (`AuthnUnavailableException` is **checked**, so the fail-clo
 skipped — exactly as `KmsUnavailableException` is checked,
 [`../../research/kms-spi/kms-provider-spi.md`](../../research/kms-spi/kms-provider-spi.md) §3).
 
-- **RA-1 — A configured-but-unavailable authenticator fails closed; it never downgrades.** If `authenticate`
-  throws `AuthnUnavailableException` (OIDC issuer/JWKS unreachable *and* uncached, LDAP down, K8s TokenReview
-  API unreachable), the resolver **STOPS** and rejects (a `503`-class "auth temporarily unavailable", or
-  `401` if you prefer to hide liveness) — it **MUST NOT** fall through to a weaker authenticator. This is the
-  KMS R3 / `NettyTransport.select()` posture: *a silent downgrade is how a "the request was authenticated"
-  claim becomes fiction.*
+- **RA-1 — A configured-but-unavailable *or* faulting authenticator fails closed; it never downgrades.** If
+  `authenticate` throws `AuthnUnavailableException` (OIDC issuer/JWKS unreachable *and* uncached, LDAP down, K8s
+  TokenReview API unreachable), the resolver **STOPS** and rejects (a `503`-class "auth temporarily
+  unavailable", or `401` if you prefer to hide liveness) — it **MUST NOT** fall through to a weaker
+  authenticator. The resolver **MUST ALSO** treat **any other throwable** from an authenticator as fail-closed
+  (STOP, reject) — `AuthnUnavailableException` is the *cooperative* signal; an unchecked fault (a parser
+  throwing on a hostile token, an SDK error under load, a mis-implemented `canAttempt`) is the *non-cooperative*
+  one, and a backstop `catch` keeps "fail-closed is structural" true even for a buggy or hostile provider
+  (demonstrated in the sketch). This is the KMS R3 / `NettyTransport.select()` posture: *a silent downgrade is
+  how a "the request was authenticated" claim becomes fiction.*
 - **RA-2 — Credential-validation failures fail closed.** A malformed/expired/forged/untrusted-issuer
   credential that an authenticator **owns** is `Rejected(INVALID_CREDENTIAL)` → **401, STOP**. Never anonymous,
   never "treat as unauthenticated-but-allowed," never fall through to a weaker authenticator.
 - **RA-3 — The `Principal` never carries the raw credential.** The authenticator extracts identity and
-  **discards** the secret; `Principal` has `id/roles/attributes/provenance` and **no credential field** (RA-3
-  is structural — there is nowhere to put it). `BearerToken`/`Password` redact in `toString`. Mirrors the KMS
-  *"`RootKey` is redacted; only the `WrappedKey` is persistable"* type-level discipline and the built *"never
-  echo the token."*
+  **discards** the secret; `Principal` has **no _dedicated_ credential field**, and the `Credential` shapes
+  redact in `toString` (`BearerToken`/`Password`/`Headers`/`CertChain`). Honest scope: this is *structural for
+  a dedicated field* but a *discipline* for the free-form `attributes` map and the `id` — a careless
+  authenticator could smuggle a secret into `attributes` (which audit/ABAC may serialize **by value**) or into
+  `id` (printed in `toString`). An authenticator therefore **MUST NOT** place credential-derived material in
+  `attributes` or `id`, and audit **MUST NOT** blind-serialize attribute values. Mirrors the KMS *"`RootKey` is
+  redacted; only the `WrappedKey` is persistable"* discipline and the built *"never echo the token."*
 - **RA-4 — Auth enabled + no recognised credential → 401 (default-deny authn).** When auth is **configured**,
-  an unrecognised/absent credential is `401`. This is distinct from auth **disabled** (no authenticators
-  configured), which keeps the built open-gate + `WARNING` banner ([`built-reality.md`](built-reality.md)
-  §1.1) — an explicit, loud operator choice, not a silent default.
+  an unrecognised/absent credential is `401`. This is distinct from auth **disabled** — which is a **separate
+  boot flag** (the built `authInterceptor == null` open gate + the loud multi-line `WARNING` banner,
+  [`built-reality.md`](built-reality.md) §1.1), **not** an empty authenticator chain (an empty chain is itself a
+  startup error in `Authenticators.chain`). Auth-disabled is an explicit, loud operator choice that lives
+  *outside* the chain; it is never a silent default.
 - **RA-5 — The SAME authenticator chain governs the control-plane API and the edge subscribe path
-  (normative).** A `Principal` produced for a watch subscription **MUST** mean exactly what it means for a
-  read, or the watch-authz guarantee (INV-WATCH-READ) breaks. One chain, built once at boot, shared by both
-  planes ([§9](#9-recommended-core-wiring-not-built), [`authn-authz-boundary.md`](authn-authz-boundary.md) §3).
-- **RA-6 — Established libraries only; never roll crypto or token validation.** mTLS verification is the
-  **platform TLS stack** (already built). JWT signature/JWKS validation is a **vetted library** (e.g. Nimbus
-  JOSE+JWT), never hand-rolled. LDAP is JDK **JNDI**. This is the charter rule and the KMS *"no custom crypto"*
-  rule ([`../../research/kms-spi/kms-provider-spi.md`](../../research/kms-spi/kms-provider-spi.md) §9).
+  (normative).** The chain is built **once at boot** and **shared** by both planes — there is **no separate,
+  weaker edge-only authn**, and the **same credential** resolves to the **same** `Principal` on whichever plane
+  evaluates it (so a plane cannot fabricate a stronger identity than the credential warrants). This is what the
+  watch-authz guarantee (INV-WATCH-READ) needs. *It does **not** make a human one principal across planes when
+  they present different credential types (a cert at the edge, a token at the control plane) — the v1
+  cross-identity caveat, [`authn-authz-boundary.md`](authn-authz-boundary.md) §3.*
+  ([§9](#9-recommended-core-wiring-not-built))
+- **RA-6 — Established libraries only; never roll crypto or token validation; the transport is the
+  verification point.** mTLS verification is the **platform TLS stack** with `setNeedClientAuth(true)` (already
+  built) — the `MtlsAuthenticator` does **no chain validation**; it reads identity off an **already-verified**
+  chain and **MUST NOT** be fed a self-asserted cert, preserving the built *intrinsic* verification gate with
+  no regression (§7). JWT signature/JWKS validation is a **vetted library** (e.g. Nimbus JOSE+JWT), never
+  hand-rolled. LDAP is JDK **JNDI**. This is the charter rule and the KMS *"no custom crypto"* rule
+  ([`../../research/kms-spi/kms-provider-spi.md`](../../research/kms-spi/kms-provider-spi.md) §9).
 - **RA-7 — Fail-loud selection.** Naming an authenticator whose module is absent from the classpath is a
   **startup error**, never a silent skip to a weaker chain — the verbatim `NettyTransport.select()` /
   `KmsProviders.select()` posture ([§8](#8-module-layering--the-core-pulls-in-no-provider-sdk)).
@@ -307,9 +348,18 @@ provider.
 - **`MtlsAuthenticator`** ([`sketch/.../MtlsAuthenticator.java`](sketch/io/configd/authn/MtlsAuthenticator.java))
   — `type() = "mtls"`; `canAttempt(c) = c instanceof CertChain`. Extracts the Subject DN (the built
   `getPeerPrincipal().getName()`), maps DN → roles via a configured mapping (or none), returns
-  `Authenticated(Principal(dn, roles, {…}, "mtls"))`. No verification work beyond what the TLS stack did; a
-  `CertChain` with no usable identity is `Rejected(INVALID_CREDENTIAL)` (fail closed). A SPIFFE variant reads
-  the SAN URI instead ([`prior-art.md`](prior-art.md) §4.2) — same `Principal` out.
+  `Authenticated(Principal(dn, roles, {…}, "mtls"))`. A `CertChain` with no usable identity is
+  `Rejected(INVALID_CREDENTIAL)` (fail closed). A SPIFFE variant reads the SAN URI instead
+  ([`prior-art.md`](prior-art.md) §4.2) — same `Principal` out.
+  - **Preserve the verification gate — no regression (normative).** The built edge derives identity via
+    `ssl.getSession().getPeerPrincipal().getName()`, which **throws if the peer was not verified** under
+    `setNeedClientAuth(true)` (`FanOutServer.java:284-287`) — verification is *intrinsic* to obtaining the DN.
+    The `MtlsAuthenticator` does **no chain validation**; the `CertChain` it receives **MUST** be the verified
+    peer chain (Credential.CertChain doc), so production wiring **MUST** construct it only from a session that
+    required and completed client-cert verification — ideally by reading the verified
+    `SSLSession.getPeerPrincipal()` (which itself throws if unverified) rather than a raw cert off an unguarded
+    list. The authenticator is **never** the verification point; feeding it a self-asserted/`setWantClientAuth`
+    cert is a wiring bug that defeats mTLS (RA-6).
 - **`BearerTokenAuthenticator`** ([`sketch/.../BearerTokenAuthenticator.java`](sketch/io/configd/authn/BearerTokenAuthenticator.java))
   — `type() = "bearer"`; `canAttempt(c) = c instanceof BearerToken`. The built behavior verbatim:
   **constant-time** compare (`MessageDigest.isEqual`) against the configured admin token →
@@ -345,8 +395,10 @@ configd-authn-spi      interface + Principal/Credential/AuthResult/AuthnUnavaila
 
 **Discovery / selection — hybrid name + `ServiceLoader`, fail-loud (mirror `KmsProviders.select`).**
 
-- **Selection by an ordered name list** (the chain): `configd.authn.providers = mtls,bearer,oidc`
-  (**default `mtls,bearer`** — the built N = 2). The list *is* the resolution order (§5.1).
+- **Selection by an ordered name list** (the chain): `configd.authn.providers = mtls,oidc,bearer`
+  (**default `mtls,bearer`** — the built N = 2). The list *is* the resolution order, and it **MUST** be
+  ordered **specific before catch-all** (§5.1) — a catch-all hard-rejecting authenticator like static `bearer`
+  comes **last** among its credential type, so `oidc` precedes `bearer`.
 - **Discovery via `ServiceLoader<AuthenticatorFactory>`**: an optional module ships
   `META-INF/services/io.configd.authn.AuthenticatorFactory`; its presence registers its `type()`. The core
   instantiates the named factories without compile-referencing any provider module — exactly how the KMS SPI,
@@ -356,7 +408,14 @@ configd-authn-spi      interface + Principal/Credential/AuthResult/AuthnUnavaila
 - **Fail-loud (RA-7):** naming `oidc` without `configd-authn-oidc` on the classpath is a **startup error**, not
   a silent drop to `mtls,bearer`. The selection reproduces the `NettyTransport.select()` line verbatim —
   *"Refusing to silently … downgrade"* — because **a silent downgrade is how a "the API requires OIDC" claim
-  becomes fiction.**
+  becomes fiction.** Two duplicate `ServiceLoader` modules advertising the same `type()` are likewise a startup
+  error (no silent shadow).
+- **No silent *downgrade by omission*.** Fail-loud catches an unknown provider *value*; it does **not** catch an
+  absent/ineffective `configd.authn.providers` *key* silently defaulting to `mtls,bearer` (a typo'd key, an
+  un-plumbed env). So when auth is enabled the operator **SHOULD** set the chain **explicitly**, the boot
+  **MUST** log the effective chain (`Authenticators.availabilityReport`) so it is auditable, and a deployment
+  that intends a single strong provider **MUST** drop `bearer` from the list — the static-`bearer` catch-all is
+  a standing shared-secret door (OA-5-adjacent).
 
 ### 8.1 One non-trivial provider, end-to-end — `OidcAuthenticator` (sketch, NOT built)
 
@@ -373,7 +432,7 @@ public final class OidcAuthenticator implements Authenticator {
     private final String issuer;                       // the iss this authenticator owns
     private final String audience;                     // expected aud
     private final JwtVerifier verifier;                // wraps Nimbus: cached JWKS keys + signature/claim checks
-    private final Map<String,String> claimToRole;      // external claim value → Configd role (the §role-mapping)
+    private final Map<String,String> claimToRole;      // external claim value → Configd role (mapping — boundary §2)
     private final String roleClaim;                    // which claim holds groups/roles (e.g. "groups")
 
     public String type() { return "oidc"; }
@@ -420,14 +479,17 @@ and **shared** (RA-5):
 
 ```java
 // boot — build the ordered chain ONCE from configd.authn.providers; fail-loud on an absent module (RA-7)
-AuthenticatorChain authn = Authenticators.chain(config);     // mtls,bearer built-in; oidc/... via ServiceLoader
+AuthenticatorChain authn = Authenticators.chain(config);   // mtls,bearer built-in; oidc/... via ServiceLoader
 
 // control-plane: AdminApiHandler.checkAuth(...) replaces the inline TokenValidator (built-reality §1.1)
-AuthResult r = authn.resolve(new Credential.BearerToken(bearerToken(req)));   // → Principal or typed reject
-// edge: FanOutConnectionDriver replaces the raw-DN bindIdentity (built-reality §1.2, §2.4)
-AuthResult r = authn.resolve(new Credential.CertChain(peerCertificates(session)));
+Resolution cp = authn.resolve(new Credential.BearerToken(bearerToken(req)));   // Authenticated(p)/Unauthenticated/Unavailable
 
-// BOTH Principals feed the SAME in-core authz engine (PolicySet / WatchAuthz over the replicated policy).
+// edge: FanOutConnectionDriver replaces the raw-DN bindIdentity (built-reality §1.2, §2.4). The CertChain MUST
+// come from the VERIFIED session (setNeedClientAuth(true)) — the authenticator is NOT the verification gate (§7, RA-6).
+Resolution edge = authn.resolve(new Credential.CertChain(verifiedPeerChain(session)));
+
+// Authenticated → feed the Principal to the SAME in-core authz engine (PolicySet / WatchAuthz over the
+// replicated policy); Unauthenticated → 401; Unavailable → 503 (fail closed, never proceed — RA-1).
 ```
 
 No code is written this session; this is the shape the wiring conforms to.
@@ -446,6 +508,10 @@ No code is written this session; this is the shape the wiring conforms to.
   **re-authenticates the presented credential** — mTLS per connection, bearer per request. A Configd session
   token / auth caching layer is a **named future extension**, not v1 (it would add a token-issuance + revocation
   surface; deferred deliberately).
+- **No multi-leg challenge-response (v1).** The single-shot `authenticate(Credential) → AuthResult` covers
+  request-shaped providers (OIDC/LDAP/K8s/IAM, §3). **Kerberos/SPNEGO, SCRAM/SASL, RADIUS, WebAuthn, and SAML
+  redirect** need a back-and-forth interaction model — a named **mutual-challenge forward extension** (RFC §3
+  AU7-3), interface-level work, **not** a credential-enum add. Not covered, and not overclaimed as covered.
 - **No custom crypto / token validation (RA-6).** Providers wrap the platform TLS, a vetted JWT lib, JNDI —
   no primitive is rolled here.
 - **No change to the in-core authz engine, and authz is never a plug-in.** This is restated because it is the

@@ -20,7 +20,8 @@ import java.util.ServiceLoader;
  */
 public final class Authenticators {
 
-    /** Selection key, e.g. {@code -Dconfigd.authn.providers=mtls,bearer,oidc}. */
+    /** Selection key + resolution order, e.g. {@code -Dconfigd.authn.providers=mtls,oidc,bearer}
+     *  (specific before the catch-all static {@code bearer} — see authenticator-spi.md §5.1). */
     public static final String PROVIDERS_KEY = "configd.authn.providers";
 
     /** The built-in default chain: the built N = 2 (built-reality.md §1). */
@@ -41,7 +42,14 @@ public final class Authenticators {
         // Discover optional factories once (mtls/bearer are built in and never ServiceLoader entries).
         Map<String, AuthenticatorFactory> discovered = new LinkedHashMap<>();
         for (AuthenticatorFactory f : ServiceLoader.load(AuthenticatorFactory.class)) {
-            discovered.put(f.type(), f);
+            AuthenticatorFactory prior = discovered.putIfAbsent(f.type(), f);
+            if (prior != null) {
+                // Fail-loud: two modules advertise the same type() (e.g. a duplicate/stale jar). Refuse to
+                // silently shadow one — which one wins would be classpath-order luck (RA-7).
+                throw new IllegalStateException("two AuthenticatorFactory modules both advertise type '"
+                        + f.type() + "' (" + prior.getClass().getName() + " and " + f.getClass().getName()
+                        + "). Remove the duplicate; refusing to silently shadow one.");
+            }
         }
 
         List<Authenticator> built = new ArrayList<>();

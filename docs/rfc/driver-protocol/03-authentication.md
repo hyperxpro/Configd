@@ -15,7 +15,7 @@ Design rationale is in [`../../design/auth-spi/`](../../design/auth-spi/) (`buil
   side, the watch-authz contract). §03 owns **authentication** (the 401 side); it does **not** redefine
   authorization. The shared error taxonomy is §1 [§7](01-paths-and-access.md#7-error-taxonomy), restated here
   for the connection lifecycle.
-- `02-watches.md` (the watch section, from the watch research) — a watch subscription authenticates **before**
+- `02-watches.md` (the watch section, from the watch research — **planned; not yet written**) — a watch subscription authenticates **before**
   any subscribe/snapshot frame ([AU4](#au4--the-connection-lifecycle); the integration points are flagged in
   [§8](#8-composition-with-1-and-2)).
 
@@ -132,7 +132,8 @@ presenting a credential.
 ## 5. Error taxonomy (the 401 side; composes with §1 §7)
 
 **AU5-1 (401 unauthenticated vs 403 forbidden).** The authentication/authorization outcomes use the deployed
-control-plane taxonomy (identical to §1 [§7](01-paths-and-access.md#7-error-taxonomy)):
+control-plane taxonomy of §1 [§7](01-paths-and-access.md#7-error-taxonomy) — the 401/403 rows are identical;
+this section **extends** it with an authentication-specific **"authenticator unavailable"** row (AU5-2):
 
 | Condition | Owner | Unary (HTTP) | Streaming (watch) |
 |---|---|---|---|
@@ -189,7 +190,7 @@ avoid predictable `403`s, but the authoritative decision is the server's.
 **AU7-1 (unknown mechanism / challenge fails closed).** A driver **MUST** fail closed on an authentication
 mechanism, `WWW-Authenticate` challenge scheme, or auth capability it does not recognize — it **MUST NOT**
 downgrade to a weaker scheme or proceed unauthenticated. (The §1 fail-closed-on-unknown rule,
-[A1.3](01-paths-and-access.md#13-versioning) / [A9-4](01-paths-and-access.md#9-forward-compatibility-and-composition-with-the-watch-section).)
+[§1.3](01-paths-and-access.md#13-versioning) / [A9-4](01-paths-and-access.md#9-forward-compatibility-and-composition-with-the-watch-section).)
 
 **AU7-2 (new server authenticators do not break older drivers).** Because the driver contract is stable
 regardless of the server's authenticator (AU2-1) and a bearer token is opaque (AU2-2), a deployment MAY add or
@@ -200,9 +201,11 @@ assumption that ties it to a specific server authenticator.
 **AU7-3 (named forward extensions).** The following are **named** forward extensions; a driver **MUST** fail
 closed if it has not negotiated them rather than assuming them: a **token-bearing auth frame on the binary
 protocol** (AU3-3, so a bearer/OIDC token reaches the edge); a **Configd-issued auth session/token** (AU2-3); a
-**mutual-challenge** mechanism beyond bearer/mTLS. New `Principal` attributes/claims the server may attach are
-**additive** — a driver **MUST** ignore attributes it does not recognize (it does not consume them anyway,
-AU6-3).
+**multi-leg mutual-challenge** mechanism beyond the single-shot present-a-credential model — **Kerberos/SPNEGO,
+SCRAM/SASL, RADIUS, WebAuthn, SAML redirect** (these need a back-and-forth the v1 contract does not define;
+[`../../design/auth-spi/authenticator-spi.md`](../../design/auth-spi/authenticator-spi.md) §3, §10). New
+`Principal` attributes/claims the server may attach are **additive** — a driver **MUST** ignore attributes it
+does not recognize (it does not consume them anyway, AU6-3).
 
 ---
 

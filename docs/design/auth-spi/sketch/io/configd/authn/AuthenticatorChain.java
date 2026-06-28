@@ -51,6 +51,15 @@ public final class AuthenticatorChain {
                 result = a.authenticate(credential);
             } catch (AuthnUnavailableException e) {
                 return new Resolution.Unavailable(a.type() + ": " + e.getMessage());   // RA-1 STOP — fail closed
+            } catch (RuntimeException | Error e) {
+                // Defensive backstop (RA-1): an authenticator that faults UNEXPECTEDLY (not the cooperative
+                // checked AuthnUnavailableException) — a buggy provider, an SDK fault under load, a parser that
+                // throws on a hostile credential — MUST NOT let the request proceed or fall through to a weaker
+                // authenticator. Fail closed, STOP. (Dispatch — canAttempt / an OIDC issuer-peek — MUST NOT
+                // throw on foreign input, per the Authenticator contract; this is the belt-and-braces so
+                // "fail-closed is structural" holds even for a non-compliant/hostile provider.)
+                return new Resolution.Unavailable(a.type() + ": unexpected authenticator fault ("
+                        + e.getClass().getSimpleName() + ")");
             }
             switch (result) {
                 case AuthResult.Authenticated ok -> {

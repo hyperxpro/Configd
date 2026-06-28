@@ -19,10 +19,21 @@ import java.util.Objects;
 public sealed interface Credential
         permits Credential.CertChain, Credential.BearerToken, Credential.Password, Credential.Headers {
 
-    /** mTLS — the ALREADY-verified peer chain (the TLS stack ran {@code setNeedClientAuth(true)}). */
+    /**
+     * mTLS — the <b>already-verified</b> peer chain. <b>NORMATIVE:</b> a {@code CertChain} MUST be constructed
+     * only from a TLS session that <em>required and completed</em> client-certificate verification
+     * (the built {@code setNeedClientAuth(true)} gate, built-reality.md §1.2). The {@link Authenticator} is
+     * <b>NOT</b> the verification point — it reads identity off an already-trusted chain and does no path
+     * validation. Feeding an unverified/self-asserted cert here is a wiring bug that defeats authentication
+     * (authenticator-spi.md §7, RA-6). {@code toString} shows the chain length only.
+     */
     record CertChain(List<X509Certificate> chain) implements Credential {
         public CertChain {
             chain = List.copyOf(chain);
+        }
+        @Override
+        public String toString() {
+            return "CertChain[" + chain.size() + " cert(s)]";
         }
     }
 

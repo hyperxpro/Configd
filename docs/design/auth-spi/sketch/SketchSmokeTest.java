@@ -42,6 +42,8 @@ public class SketchSmokeTest {
         check("Headers redacts values, shows keys",
                 new Credential.Headers(Map.of("Authorization", "sigv4")).toString().contains("Authorization")
                         && !new Credential.Headers(Map.of("Authorization", "sigv4")).toString().contains("sigv4"));
+        check("CertChain.toString shows count, not certificate contents",
+                new Credential.CertChain(List.of()).toString().equals("CertChain[0 cert(s)]"));
 
         // --- MtlsAuthenticator: cert identity → Principal; no identity → fail closed ---
         MtlsAuthenticator mtls = new MtlsAuthenticator(cc -> "CN=svc,O=acme", Map.of("CN=svc,O=acme", Set.of("svc-role")));
@@ -67,7 +69,7 @@ public class SketchSmokeTest {
         // --- The chain resolution (authenticator-spi.md §5.1) ---
         // fake JWT format "iss|sub|g1,g2"; "iss|JWKSDOWN" → unavailable; "<1 field>" → not-this-issuer dispatch
         OidcAuthenticator.TokenVerifier fakeVerifier = new OidcAuthenticator.TokenVerifier() {
-            public String peekIssuer(String jwt) { return jwt.split("\\|", -1)[0]; }
+            public String peekIssuer(String jwt) { return jwt.contains("|") ? jwt.split("\\|", -1)[0] : null; }
             public OidcAuthenticator.Claims verify(String jwt, String aud)
                     throws AuthnUnavailableException, OidcAuthenticator.InvalidJwtException {
                 String[] f = jwt.split("\\|", -1);
@@ -101,6 +103,16 @@ public class SketchSmokeTest {
         AuthenticatorChain.Resolution down = chain.resolve(new Credential.BearerToken("issuer-A|JWKSDOWN"));
         check("chain: oidc unavailable → Unavailable (RA-1 fail-closed, NOT a fall-through to bearer)",
                 down instanceof AuthenticatorChain.Resolution.Unavailable u && u.detail().contains("oidc"));
+        // (e2) RA-1 backstop: an authenticator faulting with an UNCHECKED exception → Unavailable (fail closed),
+        // MUST NOT fall through to the bearer authenticator that would have accepted "s3cr3t".
+        Authenticator faulty = new Authenticator() {
+            public String type() { return "faulty"; }
+            public boolean canAttempt(Credential c) { return c instanceof Credential.BearerToken; }
+            public AuthResult authenticate(Credential c) { throw new IllegalStateException("pool exhausted"); }
+        };
+        AuthenticatorChain faultyChain = new AuthenticatorChain(List.of(faulty, bearer));
+        check("chain: an authenticator faulting (unchecked) → Unavailable (RA-1 backstop, no fall-through)",
+                faultyChain.resolve(new Credential.BearerToken("s3cr3t")) instanceof AuthenticatorChain.Resolution.Unavailable);
         // (f) RA-4: a credential type no authenticator handles → 401 default-deny
         AuthenticatorChain bearerOnly = new AuthenticatorChain(List.of(bearer));
         check("chain: unsupported credential type → Unauthenticated (RA-4 default-deny)",

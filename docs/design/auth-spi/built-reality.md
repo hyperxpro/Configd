@@ -63,9 +63,11 @@ The wiring, in `configd-server`:
   is the **hardcoded** `"root"` with roles `{"admin"}` (`:720`). There is a **single** static identity today.
 - The credential is extracted as `Authorization: Bearer <token>` (`AdminApiHandler.bearerToken`,
   `AdminApiHandler.java:420-426`).
-- When `--auth-token` is **not** set, `authInterceptor` stays `null`, a four-line `WARNING` banner is printed
-  (`ConfigdServer.java:705-711`), and the gate is **open** (auth disabled). The SPI keeps this "auth disabled"
-  escape exactly as is; it is distinct from "auth enabled, no credential → 401" (§3.2).
+- When `--auth-token` is **not** set, `authInterceptor` stays `null`, a loud multi-line `WARNING` banner is
+  printed (`ConfigdServer.java:705-711`, five `System.err.println` lines), and the gate is **open** (auth
+  disabled). The SPI keeps this "auth disabled" escape as a **separate boot flag outside the authenticator
+  chain** (an empty chain is itself a startup error — it is *not* how auth-disabled is expressed); it is
+  distinct from "auth enabled, no credential → 401" (§3, RA-4).
 
 ### 1.2 mTLS client-certificate Subject DN (edge fan-out / watch subscribe path)
 

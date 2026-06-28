@@ -24,7 +24,13 @@ public final class OidcAuthenticator implements Authenticator {
      * (bounded TTL), verifies the signature, and checks {@code iss}/{@code aud}/{@code exp}/{@code nbf}.
      */
     public interface TokenVerifier {
-        /** Unverified parse of the {@code iss} claim ONLY, for dispatch (cheap, no signature check). */
+        /**
+         * Unverified parse of the {@code iss} claim ONLY, for dispatch (cheap, no signature check). MUST return
+         * {@code null} (NEVER throw) on a non-JWT / unparseable token so dispatch falls through cleanly to the
+         * next authenticator (a real Nimbus impl catches its own {@code ParseException} and returns null) —
+         * otherwise a hostile/foreign credential would fault the resolver (the resolver fails closed anyway as a
+         * backstop, but a compliant peek keeps the static-token-in-an-OIDC-chain case clean).
+         */
         String peekIssuer(String jwt);
 
         /**
@@ -72,8 +78,9 @@ public final class OidcAuthenticator implements Authenticator {
     @Override
     public AuthResult authenticate(Credential credential) throws AuthnUnavailableException {
         String jwt = ((Credential.BearerToken) credential).token();
-        if (!issuer.equals(verifier.peekIssuer(jwt))) {
-            // Recognised the type (a bearer token) but not my issuer → let another authenticator try (RA-2).
+        String iss = verifier.peekIssuer(jwt);                       // dispatch parse; MUST NOT throw on non-JWT
+        if (iss == null || !issuer.equals(iss)) {
+            // Not a JWT, or not my issuer → let another authenticator try (continue; NOT a hard reject).
             return new AuthResult.Rejected(RejectReason.NOT_THIS_AUTHENTICATOR, "issuer not mine");
         }
         Claims claims;

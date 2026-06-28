@@ -20,10 +20,11 @@ resolves its **roles → policies → rules**, and evaluates the access decision
 authenticator never makes an authorization decision; the authz engine never parses a credential.** External
 identity (an OIDC claim, an LDAP group) becomes a **Configd role at the authenticator**, so the authz engine
 is identity-system-agnostic — it only ever sees Configd roles. Because (a) the authz engine is a single
-in-core engine over the same Raft-replicated policy, and (b) the **same** authenticator chain produces the
-**same** `Principal` at both the control-plane read path and the edge watch path (RA-5), a watch authorizes a
-superset operation with the **same-or-stricter** result as a read — **INV-WATCH-READ is preserved across the
-pluggable-authn boundary.**
+in-core engine over the same Raft-replicated policy, and (b) the **same** authenticator chain governs both the
+control-plane read path and the edge watch path (RA-5) — no separate, weaker edge authn — a watch authorizes a
+superset operation with the **same-or-stricter** result as a read **for the watching principal** — so
+**INV-WATCH-READ is preserved across the pluggable-authn boundary** (§3, including the v1 cross-identity
+provisioning caveat).
 
 ---
 
@@ -60,9 +61,12 @@ Principal.roles()  ──►  roles(p)            (the set the engine keys on; A
 - **B-4 (role mapping is at the authenticator).** External identity → Configd role mapping **MUST** happen
   **inside the authenticator** (§2). `Principal.roles` **MUST** contain **Configd role names only** — never a
   raw OIDC claim value or an LDAP DN. The authz engine **MUST** be identity-system-agnostic.
-- **B-5 (one principal, both planes — INV-WATCH-READ).** The **same** authenticator chain **MUST** produce the
-  **same** `Principal` for a given caller at **both** the control-plane and edge enforcement points (RA-5);
-  combined with the single in-core engine over one replicated policy, this preserves INV-WATCH-READ (§3).
+- **B-5 (one chain, both planes — INV-WATCH-READ).** The **same** authenticator chain **MUST** govern **both**
+  the control-plane and edge enforcement points (RA-5) — no separate, weaker edge-only authn — and the **same**
+  credential **MUST** resolve to the **same** `Principal` on whichever plane evaluates it. Combined with the
+  single in-core engine over one replicated policy, this preserves INV-WATCH-READ **per watching principal**
+  (§3). *(It does **not** make a human one principal across planes when they present different credential types
+  — the v1 cross-identity caveat, §3.)*
 
 ---
 
@@ -104,6 +108,14 @@ admin token → the fixed role set `{"admin"}` (the built behavior, [`built-real
 §1.1); `MtlsAuthenticator` maps a cert DN → roles via an optional DN→roles config (or none). Same rule, no
 external directory.
 
+> **Forward hardening (noted, not v1).** Role names are a **flat global namespace** today — any authenticator
+> may mint any Configd role, so adding a low-trust external IdP silently grants it the authority to mint
+> `admin`/`platform-admin`. `Principal` carries the **provenance** (`authenticator`) field precisely so a
+> future policy can constrain *which authenticator may mint which roles* (e.g. `admin` mintable only via
+> `mtls`/`bearer`, never a third-party IdP). v1 trusts the configured authenticators (they are inside the trust
+> boundary, §3); **provenance-scoped role-minting** is the named hardening for when low-trust external IdPs are
+> introduced. (Operator item — adjacent to OA-2/OA-5.)
+
 ---
 
 ## 3. INV-WATCH-READ is preserved across the pluggable-authn boundary
@@ -118,25 +130,41 @@ here is the argument made explicit.
 
 **The boundary is *upstream* of the invariant; the invariant lives *downstream*, in-core.** The pluggability
 ends at the `Principal`. Everything INV-WATCH-READ depends on — the engine, the policy, the evaluation rule —
-is **in-core and unchanged** by the SPI. So the only way the SPI could break the invariant is by feeding the
-two enforcement points **different** principals for the same caller. RA-5 / B-5 forbid exactly that:
+is **in-core and unchanged** by the SPI. INV-WATCH-READ is a **per-principal** property, so the proof is
+stated for the **watching principal** `p` (whoever subscribes at the edge); then we state what RA-5 / B-5 add,
+and — importantly — what they do **not** claim.
 
-- **One chain, both planes (RA-5).** The same authenticator chain, built once at boot, resolves the credential
-  at the control-plane read path **and** at the edge watch path. For a caller `C` presenting credential
-  `cred`, `resolve(cred) = p` is deterministic and **plane-independent**.
-- **One engine, one policy (namespace DL-N-11).** Both planes evaluate `p` against the **same** Raft-replicated
-  policy under `/_acl/`, with the **same** union+deny rule (`PolicySet`), the watch check being the read check
-  applied to a whole target (`WatchAuthz.coversTarget`).
-
-Therefore, for any caller `C` and target `T`:
+For the watching principal `p` and target `T`:
 ```
 watch_authorized(p, T)   ⟺   READ(p) ∧ WATCH(p) cover all of T          (WatchAuthz, namespace §6.1)
-                         ⟹   ∀ k ∈ T :  READ(p) covers k                (coversTarget ⊆ per-key READ)
-                         ⟹   ∀ k ∈ T :  read_authorized(p, k)           (same engine, same policy)
+                         ⟹   ∀ k ∈ T :  READ(p) covers k                (PolicySet.coversTarget ⊆ per-key READ)
+                         ⟹   ∀ k ∈ T :  read_authorized(p, k)           (same engine, same policy — RA-5)
 ```
-and `p` is the **same** principal the read path would use (RA-5). **A watch can never out-read a read for the
-same caller — independently of which authenticator minted `p`.** The pluggable boundary does not touch any
-term in this chain. ∎
+So **a watch never delivers a key its own watching principal could not read** — independently of which
+authenticator minted `p`. ∎ The two RA-5 / B-5 properties keep each term meaningful and the edge honest:
+
+- **One engine, one policy (RA-5 + namespace DL-N-11).** The edge evaluates `p` against the **same**
+  Raft-replicated policy under `/_acl/`, with the **same** union+deny rule (`PolicySet.coversTarget` is the
+  per-key READ check lifted to a whole target), as the control-plane READ path — so "`READ(p)` covers `k`" at
+  the edge means exactly what it means at the control plane. There is no second, drifting ACL at the edge.
+- **No weaker edge authn fabricates identity (RA-5).** The **same chain** authenticates at the edge, so the
+  edge cannot mint a *stronger-than-warranted* `p` from a self-asserted identity (the built design already
+  makes the verified cert principal authoritative over the wire `edgeId`,
+  [`built-reality.md`](built-reality.md) §1.2); a deployment **MUST NOT** run a separate, weaker edge-only
+  authenticator (the rejected per-endpoint option, [`authenticator-spi.md`](authenticator-spi.md) §5.1).
+
+**What RA-5 does NOT claim — the v1 cross-identity caveat (important).** RA-5 is a property of the **chain**
+("the same credential resolves to the same principal on whichever plane evaluates it; no plane invents a
+stronger one") — **not** a claim that one *human* is one *principal* across planes. In v1 the control plane is
+**bearer-only** and the edge is **mTLS-only** (RFC §3 AU3-1/AU3-2), so a single human presents a **different
+credential type** on each plane and is therefore **two principals** — `p_token` (control plane) and `p_cert`
+(edge), with possibly different roles. INV-WATCH-READ holds for **each** (watch ≤ read for `p_cert`; watch ≤
+read for `p_token`), but the operator carries a real obligation: **the cert-DN policy and the bearer/OIDC
+policy for the same human MUST be kept consistent.** Otherwise a human read-restricted under `p_token` could
+hold a `p_cert` that maps to broad READ and **out-read, via a watch under their cert identity, what they
+cannot read on the control plane** — not a violation of the per-principal invariant, but a cross-identity
+**provisioning** gap the operator must close (a token-on-the-edge forward extension, RFC AU3-3, would let a
+deployment avoid it by using one credential type on both planes).
 
 **Honest scope of the guarantee (what it is and isn't).** INV-WATCH-READ is a **consistency** property:
 *watch ≤ read for the same principal.* It is **not** a statement that the authenticator provisions the *right*
@@ -145,9 +173,10 @@ misconfiguration of a trusted module**, not a break of the invariant (the over-b
 `watch ≤ read` — it can simply read more than intended). The authenticator is **inside the trust boundary**,
 like the KMS provider: it is a configured, vetted module trusted to mint correct identities. The SPI's
 contribution to security is making the **edge** able to authorize at all (it produces the `Principal` the
-watch-authz check needs, [`built-reality.md`](built-reality.md) §2.4) and guaranteeing the edge and control
-plane agree on *who the caller is*. Correct role provisioning is the operator's responsibility, separable from
-and additional to the invariant.
+watch-authz check needs, [`built-reality.md`](built-reality.md) §2.4) and guaranteeing the edge cannot
+fabricate a *stronger* identity than the credential warrants (RA-5). Correct role provisioning — both per
+principal and **across a human's two per-plane identities** (the cross-identity caveat above) — is the
+operator's responsibility, separable from and additional to the invariant.
 
 ---
 
@@ -196,7 +225,8 @@ is why the RFC can keep §1's authz taxonomy and add only the **authentication**
 - [ ] The authz engine **never** parses a credential; it consumes a `Principal` + the replicated policy (B-3).
 - [ ] External identity → Configd role mapping is **at the authenticator**; the engine sees **only** Configd
       roles (B-4).
-- [ ] The **same** chain produces the **same** `Principal` at the control-plane and edge planes (RA-5 / B-5),
-      so **INV-WATCH-READ is preserved across the pluggable boundary** (§3).
+- [ ] The **same** chain governs both planes (RA-5 / B-5) — no weaker edge authn — so **INV-WATCH-READ is
+      preserved per watching principal** (§3); the operator keeps a human's two per-plane identities'
+      policies consistent (the v1 cross-identity caveat).
 - [ ] The boundary holds under **both** O-6 outcomes; `Principal` carries `id` **and** `roles` (§4).
 - [ ] The 401 side of the seam is the authenticator; the 403 side is the in-core engine (§5).

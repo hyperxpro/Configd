@@ -61,11 +61,15 @@ team's evidence-based recommendations; the **operator-binding** calls are the **
   engine consumes `roles` (→ policies → rules). The authenticator never authorizes; the engine never parses a
   credential ([`authn-authz-boundary.md`](authn-authz-boundary.md) B-1…B-3).
 - **DL-A-6 — `Credential` is sealed over `{CertChain, BearerToken, Password, Headers}`.** These cover the two
-  built mechanisms **and every named future provider** (OIDC→BearerToken, LDAP→Password, K8s→BearerToken,
-  cloud-IAM→Headers) — a credential is a **wire/transport** concern, not a provider-SDK concern, so a novel
-  shape is a small **versioned core addition** (like a wire frame), not a per-provider fork. Sealing buys
-  exhaustiveness at the transport without blocking the open `Authenticator` interface that out-of-tree modules
-  implement.
+  built mechanisms **and every named, single-credential, request-shaped provider** (OIDC→BearerToken,
+  LDAP→Password, K8s→BearerToken, cloud-IAM→Headers) — a credential is a **wire/transport** concern, not a
+  provider-SDK concern, so a novel *single-shot* shape is a small **versioned core addition** (like a wire
+  frame), not a per-provider fork. Sealing buys exhaustiveness at the transport without blocking the open
+  `Authenticator` interface that out-of-tree modules implement. **Scope, stated honestly:** the single-shot
+  `authenticate(Credential)` and the sealed set do **NOT** cover **multi-leg challenge-response** (Kerberos/SPNEGO,
+  SCRAM/SASL, RADIUS, WebAuthn) or **SAML** redirect flows — those need an interface-level mutual-challenge
+  extension (RFC §3 AU7-3), not a credential-enum add, and stuffing them into `Headers`/`BearerToken` is a type
+  lie to avoid. Not overclaimed as covered ([`authenticator-spi.md`](authenticator-spi.md) §3, §10).
 - **DL-A-7 — Multi-authenticator resolution: credential-type dispatch + first-definitive + fail-closed**
   (recommended; [`authenticator-spi.md`](authenticator-spi.md) §5.1). A credential is dispatched (`canAttempt`)
   to the authenticators that handle its type; the first **definitive** outcome wins. The JAAS-derived,
@@ -87,13 +91,17 @@ team's evidence-based recommendations; the **operator-binding** calls are the **
   providers (OIDC/LDAP/K8s) MUST cache** verification material with a bounded TTL and **fail closed** when
   validation genuinely can't be performed. This bounds, not eliminates, the per-request dependency — stated
   plainly ([`authenticator-spi.md`](authenticator-spi.md) §5.3).
-- **DL-A-10 — INV-WATCH-READ is preserved across the pluggable-authn boundary.** The pluggability ends at the
-  `Principal`; everything the invariant depends on (one in-core engine, one replicated policy, the
-  whole-target subscription check) is downstream and unchanged. The only way the SPI could break it is feeding
-  the two planes **different** principals for the same caller — which RA-5 forbids (one chain, both planes,
-  deterministic `resolve`). The argument is made explicit in
-  [`authn-authz-boundary.md`](authn-authz-boundary.md) §3, with the honest scope note that **correct role
-  provisioning** is the (trusted) authenticator's responsibility, separable from the watch ≤ read invariant.
+- **DL-A-10 — INV-WATCH-READ is preserved across the pluggable-authn boundary — *per watching principal*.** The
+  pluggability ends at the `Principal`; everything the invariant depends on (one in-core engine, one replicated
+  policy, the whole-target subscription check) is downstream and unchanged. The proof is **per-principal**: a
+  watch by `p` delivers only keys `p` could READ, evaluated by the same engine/policy at the edge as at the
+  control plane. RA-5's role is (a) one engine/one policy at both planes and (b) **no separate, weaker edge
+  authn** that could fabricate a stronger identity — **not** a claim that one human is one principal across
+  planes. **Honest v1 caveat:** the control plane is bearer-only and the edge is mTLS-only, so a human is **two
+  principals** (token vs cert); the invariant holds for each, but the operator **MUST** keep their two policies
+  consistent or a human could out-read via a watch under their cert identity what their token identity cannot
+  read — a cross-identity **provisioning** gap, not an invariant break. Made explicit in
+  [`authn-authz-boundary.md`](authn-authz-boundary.md) §3.
 - **DL-A-11 — External identity → Configd role mapping happens AT THE AUTHENTICATOR.** `Principal.roles`
   contains **Configd role names only**; the authz engine never sees an OIDC claim or LDAP group, so it is
   identity-system-agnostic (the Vault alias→group→policy model, prior-art §1.5). Robust under **both** O-6
