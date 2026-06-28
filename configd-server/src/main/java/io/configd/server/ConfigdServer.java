@@ -795,19 +795,22 @@ public final class ConfigdServer {
         // (a non-thread-safe LinkedHashMap). These must be dispatched to
         // the tick thread, not called directly from HTTP handler threads.
         // ---------------------------------------------------------------
-        // Seam D: reads route to the shard that OWNS the key. Every HTTP write is ConfigScope.GLOBAL, so
-        // reads resolve shardFor(GLOBAL, key) — the same scope the write used (single-key linearizability
-        // preserved). getPrefix scatter-gathers across all shards (prefix keys may hash to different
-        // shards). At N=1 every resolution is group 0 ⇒ the single primary store, byte-identical.
+        // Wiring Increment 1: reads route to the shard that OWNS (scope, key) using the per-request scope
+        // the GET handler parses (DL-W1-02), so a read resolves the SAME shard the write of (scope, key)
+        // used (read-your-writes; single-key linearizability preserved). getPrefix scatter-gathers across
+        // all shards (prefix keys may hash to different shards). At N=1 every resolution is group 0 ⇒ the
+        // single primary store, byte-identical. readScope below is the A2-3 GLOBAL default for the legacy
+        // key-only ConfigReader path; the scope-aware reads use the caller's scope.
         final ConfigScope readScope = ConfigScope.GLOBAL;
         // Pass IMMUTABLE copies: the reader is read concurrently by HTTP threads (off the build thread),
         // so a frozen map/list makes the read-only-after-publication contract self-evident (diff-review NIT).
         ConfigReadService.ConfigReader configReader =
                 shardedConfigReader(shardMap, Map.copyOf(runtimesByGid), List.copyOf(runtimes), readScope);
-        // Seam D: linearizable-read leadership is confirmed on the shard that OWNS the key (the ReadIndex
-        // protocol runs on that shard's node via its owner). At N=1 this is group 0 ⇒ byte-identical.
-        ConfigReadService readService = new ConfigReadService(configReader, key -> {
-            int readGid = shardMap.shardFor(readScope, key);
+        // Wiring Increment 1: linearizable-read leadership is confirmed on the shard that OWNS (scope, key)
+        // (the ReadIndex protocol runs on that shard's node via its owner), using the GET handler's
+        // per-request scope. At N=1 this is group 0 ⇒ byte-identical.
+        ConfigReadService readService = new ConfigReadService(configReader, (scope, key) -> {
+            int readGid = shardMap.shardFor(scope, key);
             io.configd.raft.RaftNode readNode = driver.getGroup(readGid);
             if (readNode == null) {
                 return false; // unknown shard — fail closed (treat as not-leader)
@@ -1522,19 +1525,33 @@ public final class ConfigdServer {
      * {@code N=1} every key resolves to group 0 ⇒ the single store, byte-identical to today. Package-private
      * static so {@code ShardedRoutingTest} can drive the real read routing.
      *
-     * @param readScope the scope reads route on (production: {@code GLOBAL}, matching the HTTP write path)
+     * <p>Wiring Increment 1: the scope-aware {@code get(scope, key)} overrides route on the caller's
+     * <em>per-request</em> scope (read-your-writes — a GET of {@code (scope, key)} hits the same shard the
+     * write used). The legacy key-only {@code get(key)} overloads route on {@code readScope}.
+     *
+     * @param readScope the A2-3 default scope for the legacy key-only {@code ConfigReader.get(String)}
+     *                  path (production: {@code GLOBAL}); the scope-aware overloads use the caller's scope
      */
     static ConfigReadService.ConfigReader shardedConfigReader(
             StaticShardMap shardMap, Map<Integer, RaftGroupRuntime> runtimesByGid,
             List<RaftGroupRuntime> runtimes, ConfigScope readScope) {
         return new ConfigReadService.ConfigReader() {
-            private VersionedConfigStore storeFor(String key) {
-                RaftGroupRuntime rt = runtimesByGid.get(shardMap.shardFor(readScope, key));
+            private VersionedConfigStore storeFor(ConfigScope scope, String key) {
+                RaftGroupRuntime rt = runtimesByGid.get(shardMap.shardFor(scope, key));
                 return (rt != null ? rt : runtimes.get(0)).configStore();
             }
-            @Override public io.configd.store.ReadResult get(String key) { return storeFor(key).get(key); }
+            // Legacy key-only reads route on readScope (the A2-3 GLOBAL default the server wires).
+            @Override public io.configd.store.ReadResult get(String key) { return storeFor(readScope, key).get(key); }
             @Override public io.configd.store.ReadResult get(String key, long minVersion) {
-                return storeFor(key).get(key, minVersion);
+                return storeFor(readScope, key).get(key, minVersion);
+            }
+            // Wiring Increment 1: scope-aware reads route on the caller's per-request scope, so a GET of
+            // (scope, key) resolves the SAME shard the write of (scope, key) used (read-your-writes).
+            @Override public io.configd.store.ReadResult get(ConfigScope scope, String key) {
+                return storeFor(scope, key).get(key);
+            }
+            @Override public io.configd.store.ReadResult get(ConfigScope scope, String key, long minVersion) {
+                return storeFor(scope, key).get(key, minVersion);
             }
             @Override public Map<String, io.configd.store.ReadResult> getPrefix(String prefix) {
                 if (runtimes.size() == 1) {

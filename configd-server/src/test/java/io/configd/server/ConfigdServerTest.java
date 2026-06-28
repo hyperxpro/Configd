@@ -525,7 +525,7 @@ class ConfigdServerTest {
                     return t;
                 });
         try {
-        ConfigReadService readService = new ConfigReadService(reader, key -> {
+        ConfigReadService readService = new ConfigReadService(reader, (scope, key) -> {
             java.util.concurrent.CompletableFuture<Boolean> result =
                     new java.util.concurrent.CompletableFuture<>();
             java.util.concurrent.atomic.AtomicLong readIdRef =
@@ -628,7 +628,7 @@ class ConfigdServerTest {
         // in the happy path (not a future per poll iteration).
         AtomicInteger futuresAllocated = new AtomicInteger(0);
 
-        ConfigReadService readService = new ConfigReadService(reader, key -> {
+        ConfigReadService readService = new ConfigReadService(reader, (scope, key) -> {
             // Count the single allocation in the F-0022 path.
             futuresAllocated.incrementAndGet();
             java.util.concurrent.CompletableFuture<Boolean> result =

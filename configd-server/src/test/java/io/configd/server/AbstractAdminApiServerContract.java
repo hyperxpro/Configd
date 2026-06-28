@@ -616,9 +616,9 @@ abstract class AbstractAdminApiServerContract {
             @Override public Map<String, ReadResult> getPrefix(String prefix) { return store.getPrefix(prefix); }
             @Override public long currentVersion() { return store.currentVersion(); }
         };
-        // confirmLeadership(key) == isLeader: a follower (false) makes
-        // linearizableRead return null, modelling an unconfirmable read (Seam D: keyed SAM).
-        return new ConfigReadService(reader, key -> isLeader.get());
+        // confirmLeadership(scope,key) == isLeader: a follower (false) makes
+        // linearizableRead return null, modelling an unconfirmable read (keyed+scoped SAM).
+        return new ConfigReadService(reader, (scope, key) -> isLeader.get());
     }
 
     private int startStrong(VersionedConfigStore store, ConfigReadService readService,
