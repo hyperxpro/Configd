@@ -111,7 +111,7 @@ public class AdminHttpAllocBenchmark {
             nettyServer = new NettyHttpApiServer(
                     0, /* sslContext */ null, new HealthService(), new PrometheusExporter(registry),
                     store, /* writeService */ null, /* readService */ null,
-                    authInterceptor, acl, StrongReadPolicy.defaultPolicy(), key -> NodeId.of(1),
+                    authInterceptor, acl, StrongReadPolicy.defaultPolicy(), (scope, key) -> NodeId.of(1),
                     /* auditLog */ null, /* replayGuard */ null);
             nettyServer.start();
             port = nettyServer.port();
@@ -119,7 +119,7 @@ public class AdminHttpAllocBenchmark {
             jdkServer = new HttpApiServer(
                     0, /* sslContext */ null, new HealthService(), new PrometheusExporter(registry),
                     store, /* writeService */ null, /* readService */ null,
-                    authInterceptor, acl, StrongReadPolicy.defaultPolicy(), key -> NodeId.of(1));
+                    authInterceptor, acl, StrongReadPolicy.defaultPolicy(), (scope, key) -> NodeId.of(1));
             jdkServer.start();
             port = jdkServer.port();
         }
