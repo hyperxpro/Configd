@@ -56,22 +56,31 @@ one-blob-custody contract our SPI copies (its `wrap`/`unwrap` map directly to `E
 
 ### 1.2 `BlobInfo` — the self-describing wrapped-key carrier
 
-`Decrypt` takes a structured carrier, not a bare byte slice (`types.proto`):
+`Decrypt` takes a structured carrier, not a bare byte slice (verified from the generated
+`...v2/types.pb.go`; field numbers verbatim, the hand-written `.proto` comments not read):
 
 ```protobuf
 message BlobInfo {
-  bytes   ciphertext = 1;
-  bytes   iv         = 2;
-  bytes   hmac       = 3;
-  bool    wrapped    = 4;
-  KeyInfo key_info   = 5;   // { Mechanism, WrappedKey, KeyId, Encoding, ... }
+  bytes   ciphertext  = 1;   // class:"public"
+  bytes   iv          = 2;   // class:"secret"
+  bytes   hmac        = 3;   // class:"public"
+  KeyInfo key_info    = 5;
+  Struct  client_data = 8;   // AAD / provenance slot
+}
+message KeyInfo {
+  uint64 mechanism   = 1;
+  string key_id      = 3;    // class:"public" — opaque version/label
+  bytes  wrapped_key = 5;    // class:"secret" — the wrapped DEK
+  bytes  key         = 9;    // class:"secret" — plaintext DEK (optional)
 }
 ```
 
-`BlobInfo` carries the ciphertext **plus the `KeyId` and mechanism** that produced it, so a reader selects
-the right KEK with zero coordination — the direct analogue of our **`WrappedKey(KeyId, ciphertext, context)`**
-([`key-material-types.md`](key-material-types.md) §2.3). The wrapped form is self-describing, exactly as our
-`WrappedKey` is.
+`BlobInfo` carries the ciphertext **plus `KeyInfo{key_id, mechanism, wrapped_key}` and a `client_data` AAD
+slot**, so a reader selects the right KEK with zero coordination — the direct analogue of our
+**`WrappedKey(KeyId, ciphertext, context)`** ([`key-material-types.md`](key-material-types.md) §2.3): `key_id`
+→ `KeyId`, `wrapped_key` → `ciphertext`, `client_data` → `context`. The wrapped form is self-describing,
+exactly as our `WrappedKey` is. (Note the per-field `class:"secret"`/`class:"public"` tags — Vault's
+redaction discipline; see §1.5.)
 
 ### 1.3 Selection by config; auto-unseal calls the Wrapper once at boot
 
@@ -82,26 +91,45 @@ seal "awskms"  { region = "us-east-1"  kms_key_id = "alias/vault-unseal" }
 # or:  seal "pkcs11" { ... }   /  seal "gcpckms" { ... }   /  seal "transit" { ... }
 ```
 
+…and **resolved by a compiled-in `switch` over a closed `WrapperType` string enum** — *not* a `ServiceLoader`
+or out-of-tree plugin. Each case statically imports its provider package and calls `NewWrapper()` +
+`SetConfig()` (config is **pushed via variadic options**, not constructor-injected); the decisive tell is
+that `seal "pkcs11"` is a compile-time case that *errors unless you run the Enterprise HSM binary*
+(`internalshared/configutil/kms.go`). So Vault is the **"explicit, name-keyed, compiled-in registry"**
+alternative I weigh in [`kms-provider-spi.md`](kms-provider-spi.md) §8 — closed set, simplest — against the
+`ServiceLoader` hybrid (open set, no core edit per provider).
+
 At startup Vault calls the seal Wrapper's **`Decrypt` once** to unwrap the root key, then runs on the
-in-memory keyring — *auto-unseal* (no human, no Shamir). This **boot-once, then cached** lifecycle is the R1/
-R2 contract of our SPI ([`kms-provider-spi.md`](kms-provider-spi.md) §3): the KMS is on the rare boot path,
-never the per-operation path. Config-name selection is the model our discovery seam follows
-(`configd.raft.encryption.kms.provider`, §8 of the contract).
+in-memory keyring — *auto-unseal* (no human, no Shamir): *"At startup, Vault connects to the trusted device or
+service and prompts it to decrypt the root key from storage"* (seal concepts). This **boot-once, then
+cached** lifecycle is the R1/R2 contract of our SPI ([`kms-provider-spi.md`](kms-provider-spi.md) §3): the KMS
+is on the rare boot path, never the per-operation path. The cost is a lifecycle coupling, not a throughput
+one — *"Using auto unseal creates a strict Vault lifecycle dependency on the underlying seal mechanism. If a
+seal mechanism such as the Cloud KMS key becomes unavailable or is deleted before you migrate the seal, you
+cannot recover access to the Vault cluster"* — exactly the boot-time-KMS dependency our R3/R4 fail-closed
+contract governs.
 
 ### 1.4 The cautionary exception — "seal wrap" turns KMS into a *runtime* dependency
 
 Vault Enterprise's optional **seal wrap** applies the seal (KMS/HSM) as an *outer* layer on crown-jewel
-values on every access — which converts the KMS from a *boot-time* dependency into a *runtime* one (the KMS
-must then be reachable continuously, not just at unseal). This is the precise anti-pattern our SPI forbids by
-construction (no per-op method → no way to put the KMS on the runtime path). It is the documented data point
-proving the danger is real, not hypothetical.
+values on every access — which converts the KMS from a *boot-time* dependency into a *runtime* one:
+*"This implies that the seal must be available throughout Vault's runtime"* (sealwrap doc), mitigated only for
+reads (*"values will be cached in memory un-seal-wrapped … which will mitigate this for read-heavy
+workloads"*). This is the precise anti-pattern our SPI forbids by construction (no per-op method → no way to
+put the KMS on the runtime path). It is the documented data point proving the danger is real, not
+hypothetical.
 
-### 1.5 Key-material handling (Go)
+### 1.5 Key-material handling (Go) — and a deliberate JVM divergence
 
-Go has no `Destroyable`; the libraries pass `[]byte` and the discipline is **explicit zeroing** of the
-plaintext key after use (the same "wipe ASAP" intent our `RootKey.destroy()` makes structural on the JVM).
-The `Wrapper` never exposes a long-lived plaintext-key getter — plaintext exists only transiently inside
-`Encrypt`/`Decrypt`.
+Go has no `Destroyable`, and — corrected from a first assumption — **`go-kms-wrapping` does NOT zero key
+material**: a grep of `wrapper.go`/`envelope.go`/`const.go`/`signer.go`/`wrappers/aead` finds **zero** hits
+for `zero|wipe|destroy|memzero|mlock`. The library passes plaintext as plain `[]byte` (`Encrypt(plaintext
+[]byte)`, `Decrypt(...) []byte`, `KeyExporter.KeyBytes() []byte`) and relies on the **declarative
+`class:"secret"`/`class:"public"` struct tags** (§1.2) for *log/event redaction* — not memory hygiene (Go's
+copying GC makes reliable zeroing impractical, so they don't try). **Our JVM design deliberately diverges:**
+the JVM *can* wipe (`Destroyable` + `Arrays.fill`), so `RootKey` does — this is an improvement over the
+reference, stated honestly as divergence, not parity. We keep the secret/public-redaction idea (our redacted
+`toString`) and add the wipe the reference lacks.
 
 ---
 
@@ -143,16 +171,23 @@ Two design points carried into our SPI:
 
 ### 2.3 The plugin operates on the **DEK**, never the Secret value
 
-In KMS **v2** the apiserver does the envelope locally: a local DEK AES-GCM-encrypts the Secret; the **plugin
-wraps the 32-byte DEK/seed**, not the Secret. A single seed is wrapped **once per apiserver / per KEK
-rotation** and reused (HKDF-expanded per write). So the plugin is **off the per-object path** — the same
-"KMS wraps a small key, not the bulk data, and is amortized off the hot path" contract as Vault and as our
-SPI (R1).
+In KMS **v2** the apiserver does the envelope locally: a 32-byte seed/DEK AES-GCM-encrypts the Secret; the
+**plugin wraps the DEK/seed**, not the Secret — *"the API server generates a DEK at startup and caches it.
+The API server also makes a call to the KMS plugin to encrypt the DEK using the remote KEK. **This is a
+one-time call at startup and on KEK rotation.** The API server then uses the cached DEK to encrypt the
+resources"* (v2 beta blog). Per-write DEKs are then `HKDF-Expand(SHA-256)` derivations of the seed (KEP-3299:
+*"the crypto properties of KMS v1 (one DEK per write) without the network overhead"*). The contrast with v1 —
+*"a new DEK is generated for every encryption … for every write request, the API server makes a call to the
+KMS plugin"* — is exactly why v2 exists. So the plugin is **off the per-object path** — the same "KMS wraps a
+small key, not the bulk data, amortized off the hot path" contract as Vault and as our SPI (R1).
 
 ### 2.4 Out-of-process over a Unix socket → the core carries no cloud SDK
 
 The plugin is a **separately-shipped binary** the apiserver reaches at `unix:///…/socket.sock`
-(`--encryption-provider-config`). The cloud SDK lives **in the plugin process**, not in kube-apiserver. This
+(`--encryption-provider-config`): *"The KMS provider uses gRPC to communicate with a specific KMS plugin over
+a UNIX domain socket. The KMS plugin, which is implemented as a gRPC server and deployed on the same host(s)
+as the Kubernetes control plane, is responsible for all communication with the remote KMS"* (kms-provider
+doc). The cloud SDK lives **in the plugin process**, not in kube-apiserver. This
 is the architectural ancestor of our **module layering** ([`kms-provider-spi.md`](kms-provider-spi.md) §7):
 the core depends only on the thin contract; each provider's SDK is isolated in its own optional artifact, so
 the core never inherits a cloud SDK's footprint or CVE surface. (Configd's providers are in-process Maven
@@ -161,10 +196,15 @@ mechanism, since Configd providers run trusted in the node JVM.)
 
 ### 2.5 Availability semantics
 
-The plugin's `Status.healthz` is polled; an unhealthy/unreachable KMS plugin makes the apiserver unable to
-decrypt at-rest Secrets — encryption is on the availability path, and the operator is expected to keep the
-KMS reachable. This is the same correlated-dependency caution our R3/R4 fail-closed contract addresses; our
-mitigation is to keep the dependency at **boot only** and continue on the cached root key thereafter.
+The plugin's `Status.healthz` is **polled ~every minute (every 10s when unhealthy)** and flows into the
+apiserver's own health endpoint — *"Any value other than \"ok\" is failing healthz. On failure, the
+associated API server healthz endpoint will contain this value as part of the error message"* (v2 proto). An
+undecryptable resource fails closed on read — *"Any calls to the Kubernetes API that attempt to read that
+resource will fail until it is deleted or a valid decryption key is provided"* (encrypt-data doc). Encryption
+is on the availability path, and the operator is expected to keep the KMS reachable. This is the same
+correlated-dependency caution our R3/R4 fail-closed contract addresses; our mitigation is to keep the
+dependency at **boot only** and continue on the cached root key thereafter. *(The precise "KMS-plugin
+unreachability fails `/readyz` but not `/livez`" startup nuance is KEP-3299-sourced, not verbatim-quoted.)*
 
 ---
 
@@ -189,6 +229,11 @@ custody abstraction. Our **`local` provider** is morally this file/derivation mo
 operator-supplied root of trust = the signing key); the **SPI** is what Cockroach lacks, added so cloud
 custody is a drop-in rather than an external wiring exercise.
 
+*(Nuance: this is CockroachDB **self-hosted** store-level encryption-at-rest, which is exclusively
+file-based. CockroachDB **Cloud** (managed) has a separate **CMEK** feature that does point at cloud KMS — but
+that is a managed-service control plane, not the self-hosted store-key mechanism contrasted here. The
+"config-driven key file, no plugin SPI" framing is accurate for the self-hosted store.)*
+
 ---
 
 ## 4. Cloud-KMS Java SDK shapes — the substrate each provider wraps
@@ -204,15 +249,24 @@ key**, and each is a **separate Maven artifact** (so the core stays SDK-free).
 | **Vault Transit** | HTTP API (or a Vault Java client) | `POST transit/encrypt/:name` (key never leaves Vault); `transit/datakey/...` replicates GenerateDataKey | `POST transit/decrypt/:name` | (HTTP / thin client) |
 | **PKCS#11 HSM** | JCA `SunPKCS11` provider | `Cipher`/`KeyStore` wrap against the HSM token | unwrap against the token | **none — JDK-built-in** |
 
-- **AWS `EncryptionContext`** is a `Map<String,String>` of **additional authenticated data** — non-secret,
-  **exact-match-to-decrypt**; a relocated/renamed blob fails. This is what our `WrappedKey.context` binds
-  (node identity → node A's wrapped key won't unwrap as node B).
-- **Availability caveats (verbatim-class, from the parent research §3.3):** KMS is **regional**; the
-  per-account request rate is a **shared ceiling** (a noisy neighbour can throttle); a **disabled/deleted/
-  denied CMK or a KMS outage** makes `Decrypt` fail outright (AWS's EBS example: *"the attachment fails,
-  because Amazon EBS cannot use the KMS key to decrypt the volume's encrypted data key"*). **Multi-Region
-  keys + exponential backoff** are the documented mitigations. These justify our R3/R4: keep the dependency
-  at boot only, fail closed, and de-risk with multi-Region.
+- **AWS `EncryptionContext`** is a `Map<String,String>` of **additional authenticated data** — *"a collection
+  of non-secret key-value pairs … When you use an encryption context to encrypt data, you must specify the
+  same (an exact case-sensitive match) encryption context to decrypt the data … Otherwise, the request to
+  decrypt fails with an InvalidCiphertextException"* (KMS dev guide). This is what our `WrappedKey.context`
+  binds (node identity → node A's wrapped key won't unwrap as node B). KMS symmetric `Encrypt` plaintext is
+  capped at 4096 bytes — fine for a 256-bit root key.
+- **Availability caveats (verbatim):** KMS is **regional**; the per-account request rate is a **shared
+  ceiling** — *"Throttling is based on all requests on KMS keys of all types in the Region … includes
+  requests from all principals in the AWS account, including … AWS services on your behalf"*; a deleted CMK is
+  terminal — *"After a KMS key is deleted, you can no longer decrypt the data that was encrypted under that
+  KMS key, which means that data becomes unrecoverable"*; a KMS outage makes `Decrypt` fail (the EBS example:
+  *"the attachment fails, because Amazon EBS cannot use the KMS key to decrypt the volume's encrypted data
+  key"*). **Multi-Region keys** are the SPOF mitigation (*"encrypt data in one AWS Region and decrypt it in a
+  different AWS Region without re-encrypting or making a cross-Region call"*) — with the counter-caveat that
+  supports a **single-Region default**: *"For most data security needs, the Regional isolation and fault
+  tolerance of Regional resources make standard AWS KMS single-Region keys a best-fit solution."* These
+  justify our R3/R4: keep the dependency at boot only, fail closed, de-risk with multi-Region only when DR
+  demands it.
 
 ### 4.1 The AWS Encryption SDK — the ecosystem's *provider* abstraction
 
@@ -230,7 +284,7 @@ key/DEK may live before rotation.
 
 | Ecosystem | Live-key representation | Wipe mechanism | Lesson for our types |
 |---|---|---|---|
-| **Go** (Vault, go-kms-wrapping) | `[]byte`, transient | **manual zeroing**; never a long-lived getter | keep plaintext transient; no raw getter → our `RootKey.withMaterial` scoped access |
+| **Go** (Vault, go-kms-wrapping) | `[]byte`, transient | **none** — verified no `zero/wipe/memzero`; relies on `class:"secret"` redaction tags only | the JVM *can* wipe, so we do (deliberate divergence — §1.5); keep plaintext transient |
 | **Java / JCA** | `javax.crypto.SecretKey` | **broken** — `SecretKeySpec.destroy()` throws & doesn't wipe (JDK-8160206, verified JDK 25) | don't use `SecretKeySpec` as the owning type; implement `Destroyable` for real → `RootKey` |
 | **Google Tink** | `SecretBytes` / `Bytes`, gated by `SecretKeyAccess` | access to raw bytes requires an explicit **token** (`InsecureSecretKeyAccess.get()`) — conspicuous, greppable | adopt the *principle* (scoped, conspicuous raw access), not the dependency |
 | **General JVM guidance** | `char[]`/`byte[]` over `String` | wipeable arrays, but GC-copy/heap-dump exposure remains (CWE-316) | wipe on close + redacted `toString`; off-heap is the deeper (deferred) hardening |
@@ -270,28 +324,50 @@ These are applied to the contract in [`kms-provider-spi.md`](kms-provider-spi.md
 *Interface-level sources for this document (the crypto-mechanism sources are in the parent research's
 [`../encryption-at-rest/prior-art.md`](../encryption-at-rest/prior-art.md) source index).*
 
-- **Vault seal SPI:** `github.com/hashicorp/go-kms-wrapping` (`wrapping.go` — the `Wrapper` interface;
-  `types.proto` — `BlobInfo`/`KeyInfo`); developer.hashicorp.com/vault — seal/unseal, seal config stanzas
-  (awskms / azurekeyvault / gcpckms / pkcs11 / transit), seal-wrap.
-- **Kubernetes KMS plugin:** `github.com/kubernetes/kms` (`apis/v1beta1/api.proto`, `apis/v2/api.proto`);
-  kubernetes.io — *Using a KMS provider*; KEP-3299 (KMS v2 improvements); the KMS-v2 beta blog (2023-05).
-- **CockroachDB:** cockroachlabs.com — encryption reference + operational guide (`--enterprise-encryption`,
-  `cockroach gen encryption-key`, the per-file key registry).
-- **Cloud KMS Java SDKs:** AWS SDK for Java v2 `KmsClient` (GenerateDataKey/Decrypt/Encrypt,
-  `EncryptionContext`, `SdkBytes`); GCP `KeyManagementServiceClient`; Azure `CryptographyClient`
-  (wrapKey/unwrapKey); Vault Transit API; the AWS Encryption SDK for Java (`Keyring`/`MasterKeyProvider`/
-  `CachingCryptoMaterialsManager`).
-- **Key-material handling:** JDK bug **JDK-8160206** (`SecretKeySpec` destroy); `javax.security.auth.Destroyable`
-  Javadoc; Google Tink `SecretKeyAccess`/`InsecureSecretKeyAccess`/`SecretBytes`; JEP 478 (`javax.crypto.KDF`);
-  the FFM `MemorySegment`/`Arena` docs; CWE-316.
+- **Vault seal SPI:** `go-kms-wrapping` [`wrapper.go`](https://github.com/hashicorp/go-kms-wrapping/blob/main/wrapper.go)
+  (the `Wrapper` + `HmacComputer`/`InitFinalizer`/`KeyExporter` interfaces), the generated
+  [`...v2/types.pb.go`](https://github.com/hashicorp/go-kms-wrapping/blob/main/github.com.hashicorp.go.kms.wrapping.v2.types.pb.go)
+  (`BlobInfo`/`KeyInfo`/`EnvelopeInfo`), [`const.go`](https://github.com/hashicorp/go-kms-wrapping/blob/main/const.go)
+  (closed `WrapperType` enum), Vault [`internalshared/configutil/kms.go`](https://github.com/hashicorp/vault/blob/main/internalshared/configutil/kms.go)
+  (the compiled-in selection switch); developer.hashicorp.com/vault [seal](https://developer.hashicorp.com/vault/docs/concepts/seal) ·
+  [sealwrap](https://developer.hashicorp.com/vault/docs/enterprise/sealwrap).
+- **Kubernetes KMS plugin:** [`kms/apis/v1beta1/api.proto`](https://github.com/kubernetes/kms/blob/release-1.28/apis/v1beta1/api.proto) ·
+  [`apis/v2/api.proto`](https://github.com/kubernetes/kms/blob/release-1.29/apis/v2/api.proto);
+  [*Using a KMS provider*](https://kubernetes.io/docs/tasks/administer-cluster/kms-provider/) ·
+  [*Encrypting … at Rest*](https://kubernetes.io/docs/tasks/administer-cluster/encrypt-data/) ·
+  [KEP-3299](https://github.com/kubernetes/enhancements/blob/master/keps/sig-auth/3299-kms-v2-improvements/README.md) ·
+  [KMS-v2 beta blog](https://kubernetes.io/blog/2023/05/16/kms-v2-moves-to-beta/) · k8s/k8s PR #78540.
+- **CockroachDB:** [encryption reference](https://www.cockroachlabs.com/docs/stable/encryption)
+  (`--enterprise-encryption`, `cockroach gen encryption-key`, per-file registry; self-hosted vs Cloud CMEK).
+- **Cloud KMS Java SDKs:** AWS [`KmsClient`](https://docs.aws.amazon.com/java/api/latest/software/amazon/awssdk/services/kms/KmsClient.html) ·
+  [GenerateDataKey](https://docs.aws.amazon.com/kms/latest/APIReference/API_GenerateDataKey.html) ·
+  [encryption-context](https://docs.aws.amazon.com/kms/latest/developerguide/encrypt_context.html) ·
+  [request quotas](https://docs.aws.amazon.com/kms/latest/developerguide/requests-per-second.html) ·
+  [unusable keys](https://docs.aws.amazon.com/kms/latest/developerguide/unusable-kms-keys.html) ·
+  [multi-Region keys](https://docs.aws.amazon.com/kms/latest/developerguide/multi-region-keys-overview.html);
+  GCP [envelope encryption](https://cloud.google.com/kms/docs/envelope-encryption) (no GenerateDataKey, Tink);
+  Azure [`CryptographyClient`](https://learn.microsoft.com/en-us/java/api/com.azure.security.keyvault.keys.cryptography.cryptographyclient);
+  Vault [Transit API](https://developer.hashicorp.com/vault/api-docs/secret/transit);
+  [AWS Encryption SDK concepts](https://docs.aws.amazon.com/encryption-sdk/latest/developer-guide/concepts.html)
+  (`Keyring`/`MasterKeyProvider`/`CachingCryptoMaterialsManager`).
+- **Key-material handling:** [JDK-8160206](https://bugs.openjdk.org/browse/JDK-8160206) ("SecretKeySpec should
+  implement destroy()"); [`SecretKeySpec`](https://docs.oracle.com/en/java/javase/25/docs/api/java.base/javax/crypto/spec/SecretKeySpec.html) /
+  [`Destroyable`](https://docs.oracle.com/en/java/javase/25/docs/api/java.base/javax/security/auth/Destroyable.html) Javadoc (JDK 25) +
+  [OpenJDK master source](https://raw.githubusercontent.com/openjdk/jdk/master/src/java.base/share/classes/javax/crypto/spec/SecretKeySpec.java);
+  Tink [access-control design](https://developers.google.com/tink/design/access_control) /
+  [`SecretBytes`](https://github.com/tink-crypto/tink-java/blob/main/src/main/java/com/google/crypto/tink/util/SecretBytes.java);
+  JEP [478](https://openjdk.org/jeps/478)→[510](https://openjdk.org/jeps/510) (`javax.crypto.KDF`, final JDK 25);
+  [`Arena`](https://docs.oracle.com/en/java/javase/25/docs/api/java.base/java/lang/foreign/Arena.html);
+  [CWE-316](https://cwe.mitre.org/data/definitions/316.html).
 
-> **Verification note.** The interface signatures and proto shapes above are stated from the primary sources
-> named in the index (the `go-kms-wrapping` `Wrapper`/`BlobInfo`; the `kubernetes/kms` v1beta1/v2 protos; the
-> cloud SDK Javadocs; the Cockroach CLI flags). Two classes of fact were independently verified this session:
-> the **JDK-8160206 `SecretKeySpec.destroy()` behaviour**, checked **empirically on Corretto JDK 25**
-> ([`key-material-types.md`](key-material-types.md) §1.1), and the **`ConfigdServer`/`NettyTransport` code
-> citations**, checked against the source. The **availability caveats** (AWS regional/throttle/EBS-fail,
-> Vault seal-wrap-as-runtime-dependency) are carried verbatim from the parent research's
-> [`../encryption-at-rest/prior-art.md`](../encryption-at-rest/prior-art.md) §3.3 / §1.6, which verified them
-> against AWS/HashiCorp docs. Where a verbatim quote is not reproduced inline here, the named primary source
-> is the authority.
+> **Verification note.** The interface signatures, proto shapes, and quotes above were gathered by parallel
+> research agents and **verified against the primary sources linked in this index** — `go-kms-wrapping`
+> `wrapper.go`/`types.pb.go`/`const.go` and Vault `kms.go` read at `main`; the `kubernetes/kms` protos read at
+> the release tags; the cloud SDK Javadocs and KMS dev-guide pages; the OpenJDK 25 Javadoc + master source.
+> Two facts were **independently re-verified**: the **`SecretKeySpec.destroy()` behaviour**, checked
+> **empirically on Corretto JDK 25** ([`key-material-types.md`](key-material-types.md) §1.1) *and* against
+> OpenJDK master (the fix is absent in JDK 25 and 26-dev); and the **`ConfigdServer`/`NettyTransport` code
+> citations**, checked against the source. **Could not be pinned verbatim** (flagged honestly): the
+> JDK-8160206 administrative *status label* (issue tracker WAF-blocked — but the code is ground truth) and the
+> JEP 478/510 *Status field* (openjdk.org WAF-blocked — finalization confirmed via the OpenJDK Security Group
+> lead's JDK 25 write-up); and the K8s `/readyz`-not-`/livez` startup nuance (KEP-sourced, paraphrased).

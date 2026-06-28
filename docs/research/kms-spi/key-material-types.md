@@ -53,11 +53,17 @@ symmetric-key type.** A probe run on Corretto JDK 25:
 So `javax.crypto.spec.SecretKeySpec` — the type you get from `new SecretKeySpec(bytes, "AES")` *and*, on
 this JDK, from `KeyGenerator.getInstance("AES").generateKey()` — **does not override `destroy()`**, inherits
 the `Destroyable` default that **throws `DestroyFailedException`**, leaves `isDestroyed()` **false**, and
-**still returns the key via `getEncoded()` afterwards.** This is the long-standing JDK bug **JDK-8160206**
-("`SecretKeySpec` doesn't implement `destroy()`"), still observable in 2026. A key type that cannot be wiped
-is the wrong type for a root key. *(The codebase's existing `K_integrity`/`K_audit` derivations wrap HKDF
-output in `SecretKeySpec` — acceptable for a process-lifetime HMAC key, but **not** the model to copy for a
-root key we explicitly want to scope and wipe.)*
+**still returns the key via `getEncoded()` afterwards.** This is the long-standing JDK enhancement
+**[JDK-8160206](https://bugs.openjdk.org/browse/JDK-8160206)** ("SecretKeySpec should implement `destroy()`"),
+**still unimplemented in 2026** — confirmed not just empirically on JDK 25 but in the
+[OpenJDK master source](https://raw.githubusercontent.com/openjdk/jdk/master/src/java.base/share/classes/javax/crypto/spec/SecretKeySpec.java)
+(JDK 26-dev), which still has no `destroy()` override (only a *package-private* `void clear()` app code cannot
+reach). **A second trap:** the constructor does `this.key = key.clone()` and `getEncoded()` returns
+`this.key.clone()` — so constructing a `SecretKeySpec` makes a **second, independent, un-wipeable heap copy**,
+and wiping *your* input array does not touch it. A key type that cannot be wiped is the wrong type for a root
+key. *(The codebase's existing `K_integrity`/`K_audit` derivations wrap HKDF output in `SecretKeySpec` —
+acceptable for a process-lifetime HMAC key, but **not** the model to copy for a root key we explicitly want to
+scope and wipe.)*
 
 ### 1.2 It is untyped — the compiler can't tell ciphertext from a live key, or root from derived
 
@@ -101,9 +107,10 @@ Each pattern, its fit for "custody + unseal of one per-node root key," and its t
 - **Pro:** the standard interface (`destroy()` + `isDestroyed()`) that signals and, when *properly
   implemented*, enforces the wipe lifecycle. Implementing it makes our intent legible to any security-aware
   consumer.
-- **Con:** the **default methods are a trap** — `destroy()` throws `DestroyFailedException`, `isDestroyed()`
-  returns false (§1.1 [2]). Inheriting the defaults (as `SecretKeySpec` does) is worse than nothing: it
-  *looks* destroyable and isn't.
+- **Con:** the **default methods are a trap** — the JDK 25 Javadoc is explicit: `destroy()` *"Implementation
+  Requirements: The default implementation throws `DestroyFailedException`"*, `isDestroyed()` *"The default
+  implementation returns false"* (§1.1 [2]). Inheriting the defaults (as `SecretKeySpec` does) is worse than
+  nothing: it *looks* destroyable and isn't.
 - **Verdict:** **adopt the interface, override both methods for real.** `RootKey implements Destroyable`
   with a `destroy()` that actually `Arrays.fill(material, (byte)0)` and a truthful `isDestroyed()`. The
   smoke test confirms the backing array is genuinely zeroed and use-after-wipe throws.
@@ -149,9 +156,11 @@ Each pattern, its fit for "custody + unseal of one per-node root key," and its t
 - **Pro:** key bytes in a native `MemorySegment` (allocated from an `Arena`) are **not on the Java heap**, so
   they don't appear in heap dumps and aren't moved/copied by a GC. `configd-common` already depends on
   `org.agrona` (off-heap buffers), so the capability is in-tree.
-- **Con:** real complexity, and a subtle footgun — **`Arena.close()` frees but does not zero** the segment;
-  you must `segment.fill((byte)0)` *before* close to actually wipe (the same explicit-wipe discipline as the
-  heap path, just off-heap). It also doesn't help the unavoidable moment the key crosses into a JCA
+- **Con:** real complexity, and a subtle footgun — **`Arena.close()` frees but does not zero** the segment.
+  Its JDK 25 Javadoc speaks only of *released* / *can no longer be accessed* (*"any off-heap region of memory
+  backing the segments obtained from this arena are also released"*) — **no mention of zeroing** — so you must
+  `segment.fill((byte)0)` *before* close to actually wipe (the same explicit-wipe discipline as the heap path,
+  just off-heap). It also doesn't help the unavoidable moment the key crosses into a JCA
   `SecretKey` (on-heap) for the `Cipher`. For a **boot-only, node-lifetime, single** root key (not a
   high-churn pool), the heap-dump exposure window is small and already mitigated by wiping on close.
 - **Verdict:** **over-engineering for v2's first step — document as a future hardening, not v1 of the SPI.**
@@ -161,22 +170,26 @@ Each pattern, its fit for "custody + unseal of one per-node root key," and its t
 
 ### 2.7 Tink-style token-gated access (`SecretKeyAccess`) — scoped, conspicuous raw access
 
-- **Pro:** Google Tink gates raw key bytes behind a `SecretKeyAccess` token so that obtaining the plaintext
-  is **explicit and greppable** (`InsecureSecretKeyAccess.get()`), never accidental
-  ([`prior-art.md`](prior-art.md) §5). The principle — *raw access is possible but deliberately scoped and
-  conspicuous at the call site* — is exactly right.
+- **Pro:** Google Tink gates raw key bytes behind a `SecretKeyAccess` token — *"Without a token, the actual
+  bytes of the secret key material cannot be accessed"*; the token is functionless, existing only so that
+  obtaining it (`InsecureSecretKeyAccess.get()`) is **greppable/auditable** — *"security reviewers can search
+  their codebase for usages of this function"* (Tink access-control design). The principle — *raw access is
+  possible but deliberately scoped and conspicuous at the call site* — is exactly right.
 - **Con:** Tink's full framework is a large dependency and a different key-management model than a tiny boot
-  SPI needs.
+  SPI needs; and note Tink's `SecretBytes` is **immutable — it gates *access*, it does not *wipe***, so it
+  solves a different problem than `Destroyable`. The two compose (token-gate *and* wipe); we want both.
 - **Verdict:** **adopt the principle, not the dependency.** `RootKey` exposes no raw getter; the one path to
   the bytes is `withMaterial(Function)` — a scoped, conspicuous call that hands the consumer a **clone**
   (the live backing array never escapes), which the consumer wipes. This is the lightweight analogue of
   token-gated access.
 
-### 2.8 `javax.crypto.KDF` (JEP 478) — relevant to the derivation, not the key type
+### 2.8 `javax.crypto.KDF` (JEP 478 → 510) — relevant to the derivation, not the key type
 
 - **Finding (verified on JDK 25):** `javax.crypto.KDF` is **present and non-preview** — `KDF.getInstance(
-  "HKDF-SHA256")` compiles and runs **without `--enable-preview`** (provider `SunJCE`). The JDK now ships
-  HKDF natively; Configd's hand-rolled `io.configd.common.Hkdf` predates it.
+  "HKDF-SHA256")` compiles and runs **without `--enable-preview`** (provider `SunJCE`). It was preview in
+  JDK 24 (JEP 478) and **finalised without change in JDK 25 (JEP 510)**, shipping an RFC-5869 HKDF
+  implementation. The JDK now ships HKDF natively; Configd's hand-rolled `io.configd.common.Hkdf` predates it
+  (OpenJDK itself is refactoring internal HKDF usage onto the new API — JDK-8353578).
 - **Relevance:** marginal to *key-material types* (KDF operates on `SecretKey`s, which is why our
   `toSecretKey` bridge exists), but worth flagging for whoever builds the derivation: the `local` provider
   and the per-segment DEK derivation **could** use `javax.crypto.KDF` instead of the bespoke `Hkdf`. A note

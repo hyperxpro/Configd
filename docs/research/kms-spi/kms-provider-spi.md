@@ -347,7 +347,10 @@ enabling out-of-tree plugins (`sketch/io/configd/kms/KmsProviders.java`):
 **Trade-off, stated:** `ServiceLoader` is new to this codebase (a small amount of plumbing + a discovery
 test) but is the clean way to keep the core cloud-SDK-free while supporting arbitrary providers; a purely
 **explicit registry** (core hard-codes the provider names it knows) is simpler but forces a core change for
-every new provider. The hybrid takes the explicit *name* from config and the *implementation* from
+every new provider. The explicit-registry option is exactly what **Vault** does — a compiled-in `switch` over
+a closed `WrapperType` enum, where e.g. `pkcs11` is a build-time case that errors unless you run the
+Enterprise HSM binary ([`prior-art.md`](prior-art.md) §1.3); it trades open extensibility for a smaller,
+fully-known set. The hybrid takes the explicit *name* from config and the *implementation* from
 `ServiceLoader`, getting both properties. **Operator decision.**
 
 ---
