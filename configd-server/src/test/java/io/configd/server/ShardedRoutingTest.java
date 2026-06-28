@@ -209,8 +209,8 @@ class ShardedRoutingTest {
                 ConfigdServer.raftProposer(fx.driver, fx.shardMap, TIMEOUT_MS, metrics());
         ConfigReadService.ConfigReader reader =
                 ConfigdServer.shardedConfigReader(fx.shardMap, fx.runtimesByGid, fx.runtimes, SCOPE);
-        // Stale path doesn't confirm leadership, but the service requires a (now keyed) confirmer.
-        ConfigReadService readService = new ConfigReadService(reader, key -> true);
+        // Stale path doesn't confirm leadership, but the service requires a (now keyed+scoped) confirmer.
+        ConfigReadService readService = new ConfigReadService(reader, (scope, key) -> true);
 
         // A key on a shard k≠0 — so reading the captured GROUP-0 store (the pre-fix bug) would 404.
         String key = keyOnNonZeroShard(fx.shardMap);
@@ -228,8 +228,8 @@ class ShardedRoutingTest {
         AdminApiHandler handler = new AdminApiHandler(
                 new HealthService(), /* exporter */ null, group0Store, /* writeService */ null,
                 readService, /* auth */ null, /* acl */ null, StrongReadPolicy.defaultPolicy(),
-                k -> {
-                    io.configd.raft.RaftNode owner = fx.driver.getGroup(fx.shardMap.shardFor(SCOPE, k));
+                (scope, k) -> {
+                    io.configd.raft.RaftNode owner = fx.driver.getGroup(fx.shardMap.shardFor(scope, k));
                     return owner != null ? owner.leaderId() : null;
                 },
                 /* auditLog */ null, /* replayGuard */ null);
@@ -239,6 +239,74 @@ class ShardedRoutingTest {
                 "a stale GET of a shard-" + shard + " key must be served via the sharded reader, not 404 "
                         + "from the group-0 store (the pre-fix BLOCKER)");
         assertEquals("sharded-value", new String(resp.body(), StandardCharsets.UTF_8));
+    }
+
+    // ---- Wiring Increment 1: read-your-writes per scope (the same (scope,key) routes write + read) ----
+
+    @Test
+    void scopeAwareReadYourWritesAtN1ForEveryScope(@TempDir Path dataDir) throws Exception {
+        Fixture fx = bringUp(1, dataDir);
+        ConfigWriteService writeService = new ConfigWriteService(
+                ConfigdServer.raftProposer(fx.driver, fx.shardMap, TIMEOUT_MS, metrics()), null, null);
+        ConfigReadService.ConfigReader reader =
+                ConfigdServer.shardedConfigReader(fx.shardMap, fx.runtimesByGid, fx.runtimes, ConfigScope.GLOBAL);
+        ConfigReadService readService = new ConfigReadService(reader, (scope, key) -> true);
+
+        // For EVERY scope, a write to (scope, key) is read back from (scope, key). At N=1 every scope ⇒
+        // group 0, so read-your-writes holds and is byte-identical regardless of scope (the increment is
+        // a no-op on routing at N=1).
+        for (ConfigScope scope : ConfigScope.values()) {
+            String key = "ryow-" + scope;
+            assertInstanceOf(ConfigWriteService.WriteResult.Committed.class,
+                    writeService.put(key, ("val-" + scope).getBytes(StandardCharsets.UTF_8), scope),
+                    "write of (" + scope + ", " + key + ") must commit");
+            io.configd.store.ReadResult rr = readService.staleRead(scope, key);
+            assertTrue(rr.found(), "read of (" + scope + ", " + key + ") must see its own write");
+            assertEquals("val-" + scope, new String(rr.value(), StandardCharsets.UTF_8));
+        }
+        assertEquals(1, fx.runtimes.size(), "N=1 ⇒ one shard; every scope resolved group 0");
+    }
+
+    @Test
+    void scopeIsLoadBearingForRoutingAtNGreaterThanOne(@TempDir Path dataDir) throws Exception {
+        final int n = 4;
+        Fixture fx = bringUp(n, dataDir);
+        ConfigWriteService writeService = new ConfigWriteService(
+                ConfigdServer.raftProposer(fx.driver, fx.shardMap, TIMEOUT_MS, metrics()), null, null);
+        ConfigReadService.ConfigReader reader =
+                ConfigdServer.shardedConfigReader(fx.shardMap, fx.runtimesByGid, fx.runtimes, ConfigScope.GLOBAL);
+
+        // A key whose REGIONAL shard differs from its GLOBAL shard (scope folds into the hash, so the
+        // wiring is NON-vacuous: scope genuinely selects a different shard at N>1).
+        String key = keyWithDifferentShardPerScope(fx.shardMap, ConfigScope.GLOBAL, ConfigScope.REGIONAL);
+        int regionalShard = fx.shardMap.shardFor(ConfigScope.REGIONAL, key);
+        int globalShard = fx.shardMap.shardFor(ConfigScope.GLOBAL, key);
+        assertNotEquals(globalShard, regionalShard, "vacuity: the test key must route differently per scope");
+
+        // Write under REGIONAL → lands in REGIONAL's shard.
+        assertInstanceOf(ConfigWriteService.WriteResult.Committed.class,
+                writeService.put(key, "regional-value".getBytes(StandardCharsets.UTF_8), ConfigScope.REGIONAL));
+
+        // Read-your-writes holds ONLY for the matching scope: a REGIONAL read hits its shard; a GLOBAL
+        // read routes to a DIFFERENT shard and misses. This proves the read path actually routes by the
+        // caller's scope (not vacuously GLOBAL) — the core read-your-writes-per-scope guarantee at N>1.
+        io.configd.store.ReadResult matched = reader.get(ConfigScope.REGIONAL, key);
+        assertTrue(matched.found(), "a REGIONAL read of a REGIONAL write must hit its shard " + regionalShard);
+        assertEquals("regional-value", new String(matched.value(), StandardCharsets.UTF_8));
+
+        io.configd.store.ReadResult mismatched = reader.get(ConfigScope.GLOBAL, key);
+        assertFalse(mismatched.found(),
+                "a GLOBAL read routes to a DIFFERENT shard (" + globalShard + ") and must MISS the REGIONAL write");
+    }
+
+    private static String keyWithDifferentShardPerScope(StaticShardMap map, ConfigScope a, ConfigScope b) {
+        for (int i = 0; i < 100_000; i++) {
+            String cand = "scopekey" + i;
+            if (map.shardFor(a, cand) != map.shardFor(b, cand)) {
+                return cand;
+            }
+        }
+        throw new AssertionError("could not find a key routing differently for " + a + " vs " + b);
     }
 
     // ---- fixture / helpers ------------------------------------------------------------------

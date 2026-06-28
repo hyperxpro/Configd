@@ -7,6 +7,7 @@ import io.configd.api.ConfigReadService;
 import io.configd.api.ConfigWriteService;
 import io.configd.api.HealthService;
 import io.configd.api.ReplayGuard;
+import io.configd.common.ConfigScope;
 import io.configd.common.NodeId;
 import io.configd.netty.NettyTransport;
 import io.configd.observability.PrometheusExporter;
@@ -51,7 +52,7 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
-import java.util.function.Function;
+import java.util.function.BiFunction;
 
 import static io.netty.handler.codec.http.HttpVersion.HTTP_1_1;
 
@@ -125,7 +126,7 @@ public final class NettyHttpApiServer {
                               AuthInterceptor authInterceptor,
                               AclService aclService,
                               StrongReadPolicy strongReadPolicy,
-                              Function<String, NodeId> leaderHintSupplier,
+                              BiFunction<ConfigScope, String, NodeId> leaderHintSupplier,
                               AuditLog auditLog,
                               ReplayGuard replayGuard) {
         this.port = port;

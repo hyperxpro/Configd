@@ -17,9 +17,10 @@ import java.io.IOException;
 import java.net.URI;
 import java.nio.charset.StandardCharsets;
 import java.util.LinkedHashMap;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
-import java.util.function.Function;
+import java.util.function.BiFunction;
 
 /**
  * Transport-agnostic decision core for the admin / control-plane HTTP API (ADR-0043 M2; the DR-N2
@@ -57,10 +58,11 @@ public final class AdminApiHandler {
     private final AuthInterceptor authInterceptor;     // nullable: auth disabled
     private final AclService aclService;               // nullable: ACLs disabled
     private final StrongReadPolicy strongReadPolicy;   // non-null
-    // Multi-Raft Phase 1 (Seam D): KEYED leader hint — resolves the leader of the shard that OWNS the key,
-    // so a read 503's X-Leader-Hint points at the right shard's leader (a keyless hint would loop forever
-    // at N>1). At N=1 every key resolves to group 0. Non-null.
-    private final Function<String, NodeId> leaderHintSupplier;
+    // Wiring Increment 1: KEYED + SCOPED leader hint — resolves the leader of the shard that OWNS
+    // (scope, key), so a read 503's X-Leader-Hint points at the right shard's leader for the read's scope
+    // (a keyless/scopeless hint would loop forever at N>1, mis-routing a REGIONAL/LOCAL retry to the
+    // GLOBAL shard's leader). At N=1 every (scope, key) resolves to group 0. Non-null.
+    private final BiFunction<ConfigScope, String, NodeId> leaderHintSupplier;
     private final AuditLog auditLog;                   // nullable: auditing disabled
     private final ReplayGuard replayGuard;             // nullable: replay protection off
 
@@ -72,7 +74,7 @@ public final class AdminApiHandler {
                            AuthInterceptor authInterceptor,
                            AclService aclService,
                            StrongReadPolicy strongReadPolicy,
-                           Function<String, NodeId> leaderHintSupplier,
+                           BiFunction<ConfigScope, String, NodeId> leaderHintSupplier,
                            AuditLog auditLog,
                            ReplayGuard replayGuard) {
         this.healthService = healthService;
@@ -199,6 +201,19 @@ public final class AdminApiHandler {
             return authDenial(authCheck);
         }
 
+        // Wiring Increment 1: superset key-validation gate (post-auth) + scope parse (DL-W1-01/02).
+        // A read auth FAILURE is audited above; an invalid-key/scope GET is not a mutating attempt and
+        // is not audited (auditing every bad read is a DoS concern, consistent with successful reads).
+        String keyError = keyValidationReason(key);
+        if (keyError != null) {
+            return json(400, keyError);
+        }
+        ScopeResult scopeResult = parseScope(req);
+        if (scopeResult.error() != null) {
+            return json(400, scopeResult.error());
+        }
+        ConfigScope scope = scopeResult.scope();
+
         // RR-020 / ADR-0030 INV-1: GLOBAL/security ("strong-read") keys MUST be served via the
         // fail-closed linearizable path. Requested consistency is IGNORED for these keys, and if the
         // linearizable read cannot be confirmed we DENY (503), never serving a stale value.
@@ -212,21 +227,21 @@ public final class AdminApiHandler {
         if (strongReadKey) {
             if (readService == null) {
                 // No linearizable path wired (stale-only deployment): fail closed.
-                return failClosed(key, "no linearizable read path is configured on this node");
+                return failClosed(scope, key, "no linearizable read path is configured on this node");
             }
-            result = readService.linearizableRead(key);
+            result = readService.linearizableRead(scope, key);
             if (result == null) {
                 // Leadership / ReadIndex confirmation failed: fail CLOSED.
-                return failClosed(key,
+                return failClosed(scope, key,
                         "linearizable read could not be confirmed (not leader / ReadIndex unconfirmed)");
             }
         } else if (linearizableRequested && readService != null) {
-            result = readService.linearizableRead(key);
+            result = readService.linearizableRead(scope, key);
             if (result == null) {
                 // Ordinary key, explicit linearizable request that can't be served: reported as Not
                 // Leader. NOT a strong-read fail-close (a stale read of this key is contract-permitted).
                 Map<String, String> h = jsonHeaders();
-                NodeId hint = leaderHintSupplier.apply(key);
+                NodeId hint = leaderHintSupplier.apply(scope, key);
                 if (hint != null) {
                     h.put("X-Leader-Hint", String.valueOf(hint.id()));
                 }
@@ -238,7 +253,7 @@ public final class AdminApiHandler {
             // ConfigReadService.staleRead delegates to the sharded ConfigReader; at N=1 it resolves group 0
             // (byte-identical). The raw group-0 configStore is the fallback only for a stale-only
             // deployment with no read service wired (single-group by construction).
-            result = (readService != null) ? readService.staleRead(key) : configStore.get(key);
+            result = (readService != null) ? readService.staleRead(scope, key) : configStore.get(key);
         }
 
         if (!result.found()) {
@@ -259,10 +274,10 @@ public final class AdminApiHandler {
      * {@code X-Fail-Closed: strong-read} header, plus {@code X-Leader-Hint} when a leader is known.
      * The local/stale value is NEVER served for a strong-read key on this path.
      */
-    private AdminResponse failClosed(String key, String reason) {
+    private AdminResponse failClosed(ConfigScope scope, String key, String reason) {
         Map<String, String> h = jsonHeaders();
         h.put("X-Fail-Closed", "strong-read");
-        NodeId hint = leaderHintSupplier.apply(key);
+        NodeId hint = leaderHintSupplier.apply(scope, key);
         if (hint != null) {
             h.put("X-Leader-Hint", String.valueOf(hint.id()));
         }
@@ -281,6 +296,19 @@ public final class AdminApiHandler {
             return authDenial(authCheck);
         }
 
+        // Wiring Increment 1: superset key-validation gate (post-auth) + scope parse (DL-W1-01/02).
+        String keyError = keyValidationReason(key);
+        if (keyError != null) {
+            audit(authCheck.principal(), "PUT", key, "rejected: " + keyError);
+            return json(400, keyError);
+        }
+        ScopeResult scopeResult = parseScope(req);
+        if (scopeResult.error() != null) {
+            audit(authCheck.principal(), "PUT", key, "rejected: " + scopeResult.error());
+            return json(400, scopeResult.error());
+        }
+        ConfigScope scope = scopeResult.scope();
+
         AdminResponse replay = replayRejected(req, authCheck.principal(), "PUT", key);
         if (replay != null) {
             return replay;
@@ -293,7 +321,7 @@ public final class AdminApiHandler {
         }
 
         ConfigWriteService.WriteResult result =
-                writeService.put(key, body, ConfigScope.GLOBAL, authCheck.principal()); // S7.5 per-principal limit
+                writeService.put(key, body, scope, authCheck.principal()); // S7.5 per-principal limit
         audit(authCheck.principal(), "PUT", key, auditOutcome(result));
         return writeResult(result);
     }
@@ -306,13 +334,26 @@ public final class AdminApiHandler {
             return authDenial(authCheck);
         }
 
+        // Wiring Increment 1: superset key-validation gate (post-auth) + scope parse (DL-W1-01/02).
+        String keyError = keyValidationReason(key);
+        if (keyError != null) {
+            audit(authCheck.principal(), "DELETE", key, "rejected: " + keyError);
+            return json(400, keyError);
+        }
+        ScopeResult scopeResult = parseScope(req);
+        if (scopeResult.error() != null) {
+            audit(authCheck.principal(), "DELETE", key, "rejected: " + scopeResult.error());
+            return json(400, scopeResult.error());
+        }
+        ConfigScope scope = scopeResult.scope();
+
         AdminResponse replay = replayRejected(req, authCheck.principal(), "DELETE", key);
         if (replay != null) {
             return replay;
         }
 
         ConfigWriteService.WriteResult result =
-                writeService.delete(key, ConfigScope.GLOBAL, authCheck.principal()); // S7.5 per-principal limit
+                writeService.delete(key, scope, authCheck.principal()); // S7.5 per-principal limit
         audit(authCheck.principal(), "DELETE", key, auditOutcome(result));
         return writeResult(result);
     }
@@ -477,6 +518,76 @@ public final class AdminApiHandler {
                 yield json(409, "Conflict: replayed request (nonce already seen)");
             }
         };
+    }
+
+    // -----------------------------------------------------------------------
+    // Wiring Increment 1 — scope parsing + superset key validation (RFC §1 A2/A3)
+    // -----------------------------------------------------------------------
+
+    /**
+     * The parsed {@code ?scope=} result: a valid {@link ConfigScope} (with {@code error == null}), or a
+     * {@code null} scope carrying an {@code error} reason for an unrecognized value (mapped to 400).
+     */
+    private record ScopeResult(ConfigScope scope, String error) {}
+
+    /**
+     * Wiring Increment 1 (DL-W1-02): parses the optional {@code ?scope=} query parameter
+     * case-insensitively into a {@link ConfigScope}. Absent/blank ⇒ {@link ConfigScope#GLOBAL} (the A2-3
+     * default — byte-identical to the prior GLOBAL-pinned surface). An unrecognized value yields an error
+     * (mapped to 400 by the caller) — fail-closed, never a silent coercion that could mis-route (closes
+     * the scope-confusion red-team angle). Scope is a typed field, NEVER a path segment (A2-1).
+     */
+    private static ScopeResult parseScope(AdminRequest req) {
+        String raw = queryParam(req.uri().getQuery(), "scope");
+        if (raw == null || raw.isBlank()) {
+            return new ScopeResult(ConfigScope.GLOBAL, null); // A2-3 default
+        }
+        try {
+            return new ScopeResult(ConfigScope.valueOf(raw.trim().toUpperCase(Locale.ROOT)), null);
+        } catch (IllegalArgumentException e) {
+            return new ScopeResult(null,
+                    "Unknown scope '" + raw + "' (expected GLOBAL, REGIONAL, or LOCAL)");
+        }
+    }
+
+    /**
+     * Wiring Increment 1 (DL-W1-01): the SUPERSET key-validation gate. Enforces only the RFC §1 A3 rules
+     * that are a true superset of the deployed flat keyspace — <b>non-blank</b> and <b>≤ 1024 bytes
+     * UTF-8</b> (the deployed key-length limit, A3-5). Returns the rejection reason, or {@code null} when
+     * the key is acceptable. The key is NOT rewritten/normalized — the strong-read classification
+     * (C6/RR-020) depends on the raw decoded key, and the strict A3 path grammar (absolute, seg-char,
+     * canonical) is the binary/driver-surface contract, deliberately NOT applied to this legacy flat-key
+     * surface (see docs/wiring/increment-1-scope-and-path-validation.md §2).
+     */
+    private static String keyValidationReason(String key) {
+        // Length-before-blank mirrors ConfigWriteService.put's order, so a key that is both yields the
+        // same 400 reason at the edge and in the write service.
+        if (key.getBytes(StandardCharsets.UTF_8).length > 1024) {
+            return "key length exceeds maximum of 1024 bytes";
+        }
+        if (key.isBlank()) {
+            return "key must not be blank";
+        }
+        return null;
+    }
+
+    /**
+     * Returns the first value of query parameter {@code name} from the (already percent-decoded)
+     * {@link URI#getQuery()} string, or {@code null} if the parameter is absent. A present parameter with
+     * no {@code =} yields an empty string. Parameter names are matched exactly (case-sensitive).
+     */
+    private static String queryParam(String query, String name) {
+        if (query == null) {
+            return null;
+        }
+        for (String pair : query.split("&")) {
+            int eq = pair.indexOf('=');
+            String k = (eq >= 0) ? pair.substring(0, eq) : pair;
+            if (k.equals(name)) {
+                return (eq >= 0) ? pair.substring(eq + 1) : "";
+            }
+        }
+        return null;
     }
 
     // -----------------------------------------------------------------------
