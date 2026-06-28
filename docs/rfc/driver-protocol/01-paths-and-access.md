@@ -227,9 +227,10 @@ authorized(C)  ⟺  C ∈ allow  AND  C ∉ deny
   including more-specific paths and including `ADMIN`.
 - **Default-deny**: no matching `ALLOW` ⇒ not authorized.
 
-> This is the Vault model. It supersedes the deployed server-side `AclService`'s longest-match-only
-> evaluation; see [`../../design/namespace-model/access-control.md`](../../design/namespace-model/access-control.md)
-> §4.2 for the migration note. Drivers implement A5-4 verbatim; the server enforces the identical rule.
+> This is the Vault model. It is **BUILT** in the server's `AclService` (Wiring Increment 2, `ee27250`),
+> superseding the former longest-match-only evaluation; see
+> [`../../design/namespace-model/access-control.md`](../../design/namespace-model/access-control.md) §4.2.
+> Drivers implement A5-4 verbatim; the server enforces the identical rule.
 
 ---
 

@@ -449,7 +449,7 @@ public final class AdminApiHandler {
                 ? authed.principal() : "-";
 
         if (aclService != null && authResult instanceof AuthInterceptor.AuthResult.Authenticated authed) {
-            if (!aclService.isAllowed(authed.principal(), key, permission)) {
+            if (!aclService.isAllowed(authed.principal(), authed.roles(), key, permission)) {
                 return AuthCheck.forbidden(authed.principal(),
                         "Access denied: insufficient permissions for key '" + key + "'");
             }

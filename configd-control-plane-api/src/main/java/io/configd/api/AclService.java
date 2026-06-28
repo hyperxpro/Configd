@@ -43,9 +43,30 @@ import java.util.concurrent.ConcurrentSkipListMap;
  * longer prefix granted to a <i>different</i> principal could shadow this principal's shorter grant
  * under the old longest-match, but not under the union.)
  * <p>
+ * <b>Role layer (RFC §01 A5-3; O-6 Seam 1 — additive, dormant in production).</b> Beyond a principal's
+ * own per-prefix grants, authorization also unions the grants of the principal's <b>roles</b>. A
+ * {@link Role} bundles {@link Policy policies}, each a set of {@link PolicyRule}s
+ * ({@code prefix → allow/deny}); roles are defined via {@link #defineRole}. A principal's effective
+ * roles are the <b>union</b> of two additive, empty-by-default sources: the <b>authn-asserted</b> roles
+ * passed to {@link #isAllowed(String, Set, String, Permission)} and the <b>ACL-static</b> bindings added
+ * via {@link #assignRole}. Each resolved role's matching {@link PolicyRule}s contribute into the
+ * <b>same</b> {@code (allow, deny)} accumulators as the own grants, so the identical
+ * union / absolute-deny-precedence / default-deny / effective-{@code WATCH} = {@code WATCH} ∧
+ * {@code READ} rules (A5-4) apply across own and role grants alike — in particular a {@code DENY} from a
+ * role (or own grant) is subtracted with absolute precedence over an {@code ALLOW} from a role (or own
+ * grant). Both role maps are <b>empty by default</b>; when empty the role layer contributes nothing and
+ * {@link #isAllowed} reduces <b>exactly</b> to the historical own-grants-only evaluation (the deployed
+ * config defines no roles, so production decisions are byte-identical). The legacy 3-arg
+ * {@link #isAllowed(String, String, Permission)} delegates to the 4-arg form with no authn-asserted
+ * roles.
+ * <p>
  * Thread safety: a {@link ConcurrentSkipListMap} holds the prefix → (principal → {@link GrantEntry})
  * map; each {@link GrantEntry} is immutable and is swapped wholesale on {@link #grant}/{@link #deny},
- * so a concurrent {@link #isAllowed} always observes a consistent (allow, deny) pair.
+ * so a concurrent {@link #isAllowed} always observes a consistent (allow, deny) pair. The role layer is
+ * held in two {@link ConcurrentHashMap}s — role definitions ({@code roleName → Role}) and per-principal
+ * role bindings ({@code principal → role names}) — storing immutable {@link Role} records and immutable
+ * role-name sets, each swapped wholesale on {@link #defineRole}/{@link #assignRole}; {@link #isAllowed}
+ * reads them lock-free. Both maps are typically populated once at boot.
  */
 public final class AclService {
 
@@ -107,6 +128,14 @@ public final class AclService {
     // navigated via floorKey()/lowerKey().
     private final ConcurrentSkipListMap<String, ConcurrentHashMap<String, GrantEntry>> acls =
             new ConcurrentSkipListMap<>();
+
+    // roleName -> Role definition. EMPTY by default; typically populated at boot (see defineRole).
+    // When empty the role layer contributes nothing and isAllowed is byte-identical to own-grants-only.
+    private final ConcurrentHashMap<String, Role> roleDefinitions = new ConcurrentHashMap<>();
+
+    // principal -> ACL-static role names, additive to the authn-asserted roles passed to isAllowed.
+    // EMPTY by default; each value is an immutable snapshot swapped wholesale on assignRole.
+    private final ConcurrentHashMap<String, Set<String>> principalRoles = new ConcurrentHashMap<>();
 
     /**
      * Grants (ALLOWs) permissions to a principal for a key prefix. Overwrites this principal's prior
@@ -181,16 +210,46 @@ public final class AclService {
     }
 
     /**
-     * Checks if a principal has the given permission for a key, evaluated as union-of-ancestors with
-     * absolute deny-precedence and default-deny (A5-4; see the class doc).
-     * <p>
-     * Walks <b>every</b> ancestor prefix matching the key — {@code floorKey(key)} then {@code lowerKey}
-     * back through the sorted prefix set — accumulating the ALLOW and DENY capability unions into the
-     * effective set {@code eff = allow − deny}, then returns {@code permission ∈ eff} for every
-     * capability <b>except</b> {@code WATCH}, for which it returns the floored decision
-     * {@code WATCH ∈ eff ∧ READ ∈ eff} (INV-WATCH-READ, RFC A5-2 — see below). The walk length is
-     * bounded by the number of stored prefixes ≤ the key; for a control-plane policy set (a small
-     * number of grants; exactly one in the deployed config) this is negligible.
+     * Defines (or replaces) a {@link Role}'s grants. Roles are an <b>additive</b> layer over per-prefix
+     * grants: {@link #isAllowed(String, Set, String, Permission)} unions a resolved role's matching
+     * {@link PolicyRule}s into the same allow/deny accumulators as the principal's own grants (RFC §01
+     * A5-3/A5-4). No role is defined in the deployed production config (the role maps are empty, so
+     * Seam 1 is byte-identical), making this dormant there.
+     *
+     * @param role the role to define, keyed by {@link Role#name()} (non-null)
+     */
+    public void defineRole(Role role) {
+        Objects.requireNonNull(role, "role must not be null");
+        roleDefinitions.put(role.name(), role);
+    }
+
+    /**
+     * Binds a role to a principal as an <b>ACL-static</b> membership, additive to (and unioned with) any
+     * authn-asserted roles passed to {@link #isAllowed(String, Set, String, Permission)}. Empty by
+     * default; idempotent. The binding only takes effect once the role itself is defined via
+     * {@link #defineRole}; an unbound or undefined role name contributes nothing (default-deny).
+     *
+     * @param principal the principal to bind the role to (non-null)
+     * @param roleName  the role name to add to the principal's static role set (non-null)
+     */
+    public void assignRole(String principal, String roleName) {
+        Objects.requireNonNull(principal, "principal must not be null");
+        Objects.requireNonNull(roleName, "roleName must not be null");
+        // Swap an immutable snapshot wholesale (mirrors the GrantEntry discipline): a concurrent
+        // isAllowed reader observes either the old or the new set, never a half-mutated one.
+        principalRoles.compute(principal, (k, v) -> {
+            Set<String> updated = new HashSet<>(v == null ? Set.of() : v);
+            updated.add(roleName);
+            return Set.copyOf(updated);
+        });
+    }
+
+    /**
+     * Checks if a principal has the given permission for a key, with <b>no authn-asserted roles</b> — a
+     * thin overload of {@link #isAllowed(String, Set, String, Permission)} that supplies
+     * {@code Set.of()} for the roles. Existing callers (and the historical evaluation) reach the
+     * role-aware path with an empty role set, so with no roles defined/assigned the decision is
+     * byte-identical to the own-grants-only evaluation. See the 4-arg overload for the full contract.
      *
      * @param principal  the principal name (non-null)
      * @param key        the config key (non-null)
@@ -198,13 +257,112 @@ public final class AclService {
      * @return true if the principal is authorized for the permission on the key
      */
     public boolean isAllowed(String principal, String key, Permission permission) {
+        return isAllowed(principal, Set.of(), key, permission);
+    }
+
+    /**
+     * Checks if a principal has the given permission for a key, evaluated as union-of-ancestors with
+     * absolute deny-precedence and default-deny over the principal's <b>own per-prefix grants unioned
+     * with its role grants</b> (A5-4; see the class doc).
+     * <p>
+     * Accumulates capabilities from two additive sources into a <b>single</b> shared
+     * {@code (allow, deny)} pair:
+     * <ol>
+     *   <li><b>Own grants</b> — walks <b>every</b> ancestor prefix matching the key
+     *       ({@code floorKey(key)} then {@code lowerKey} back through the sorted prefix set;
+     *       {@link #accumulateOwnGrants}).</li>
+     *   <li><b>Role grants</b> — resolves the principal's <b>effective roles</b> (the union of the
+     *       {@code roles} argument and the {@link #assignRole ACL-static} bindings) against the
+     *       {@link #defineRole defined} roles, folding each matching {@link PolicyRule}'s allow/deny into
+     *       the same accumulators.</li>
+     * </ol>
+     * Deny is then subtracted <b>once</b> over the combined set ({@code eff = allow − deny}), so absolute
+     * deny-precedence holds <b>through roles</b> as well as own grants. Returns {@code permission ∈ eff}
+     * for every capability <b>except</b> {@code WATCH}, for which it returns the floored decision
+     * {@code WATCH ∈ eff ∧ READ ∈ eff} (INV-WATCH-READ, RFC A5-2 — see below). With empty role maps and
+     * an empty {@code roles} argument this reduces exactly to the historical own-grants-only evaluation.
+     * The walk length is bounded by the number of stored prefixes ≤ the key plus the principal's role
+     * rules; for a control-plane policy set (a small number of grants; exactly one and no roles in the
+     * deployed config) this is negligible.
+     *
+     * @param principal  the principal name (non-null)
+     * @param roles      the authn-asserted role names for this request (non-null; may be empty; must
+     *                   contain no null element — a null role name would NPE at role lookup; the
+     *                   production path is closed by {@code Authenticated}'s defensive {@code Set.copyOf})
+     * @param key        the config key (non-null)
+     * @param permission the required permission (non-null)
+     * @return true if the principal is authorized for the permission on the key
+     */
+    public boolean isAllowed(String principal, Set<String> roles, String key, Permission permission) {
         Objects.requireNonNull(principal, "principal must not be null");
+        Objects.requireNonNull(roles, "roles must not be null");
         Objects.requireNonNull(key, "key must not be null");
         Objects.requireNonNull(permission, "permission must not be null");
 
         EnumSet<Permission> allow = EnumSet.noneOf(Permission.class);
         EnumSet<Permission> deny = EnumSet.noneOf(Permission.class);
 
+        // (1) The principal's OWN per-prefix grants — the historical union-of-ancestors walk, unchanged.
+        accumulateOwnGrants(principal, key, allow, deny);
+
+        // (2) Role grants. Effective roles = authn-asserted (the `roles` argument) ∪ ACL-static bindings
+        // (assignRole / principalRoles); both empty by default. Each resolved, DEFINED role's flattened
+        // PolicyRules whose literal prefix matches the key fold ALLOW/DENY into the SAME accumulators, so
+        // a role ALLOW composes with own ALLOWs and a role DENY is subtracted with the same absolute
+        // precedence below. When both sources are empty (the deployed config) this adds nothing.
+        Set<String> staticRoles = principalRoles.getOrDefault(principal, Set.of());
+        if (!roles.isEmpty() || !staticRoles.isEmpty()) {
+            Set<String> effectiveRoles;
+            if (staticRoles.isEmpty()) {
+                effectiveRoles = roles;            // common path: no static bindings, no extra allocation
+            } else if (roles.isEmpty()) {
+                effectiveRoles = staticRoles;
+            } else {
+                effectiveRoles = new HashSet<>(roles);
+                effectiveRoles.addAll(staticRoles);
+            }
+            for (String roleName : effectiveRoles) {
+                Role role = roleDefinitions.get(roleName);
+                if (role != null) {
+                    for (PolicyRule rule : role.rules()) {
+                        if (rule.matches(key)) {
+                            allow.addAll(rule.allow());
+                            deny.addAll(rule.deny());
+                        }
+                    }
+                }
+            }
+        }
+
+        // Deny has absolute precedence (subtract it ONCE from the combined own+role allow); default-deny
+        // falls out of the empty initial allow set. `allow` is now the effective set eff = allow − deny.
+        allow.removeAll(deny);
+
+        // INV-WATCH-READ enforcement point (RFC §01 A5-2 R-CAP-2 / access-control.md §2.1,§6; DL-O3-03).
+        // A watch is a streaming read, so effective WATCH is floored by READ: WATCH is authorized only
+        // when BOTH WATCH and READ survive in eff. Consequences — a WATCH-without-READ grant yields no
+        // watch authz; a deny of READ (or of WATCH) at any matching ancestor (own OR role) also removes
+        // effective WATCH. NOTE this floors a SINGLE KEY: the accumulation above unions only `key`'s
+        // ANCESTOR grants, so it cannot see a READ/WATCH deny on a DESCENDANT of `key`. A subtree/FULL
+        // watch is therefore NOT authorized by one isAllowed(p, subtreeRoot, WATCH) call — the O-5
+        // subscribe path must apply this floor over the WHOLE target (per delivered key, or a
+        // whole-target cover-check à la WatchAuthz.authorizeWatch / RFC A6-2/A6-3), else it would
+        // over-expose a denied descendant. Every other capability (READ/LIST/WRITE/ADMIN) is decided by
+        // exact membership.
+        if (permission == Permission.WATCH) {
+            return allow.contains(Permission.WATCH) && allow.contains(Permission.READ);
+        }
+        return allow.contains(permission);
+    }
+
+    /**
+     * Accumulates the principal's OWN per-prefix grants for {@code key} into {@code allow}/{@code deny}:
+     * the union of <b>every</b> matching ancestor prefix (not longest-match-only). This is the historical
+     * {@link #isAllowed} walk, extracted verbatim so the own-grants contribution is unchanged; the role
+     * layer folds into the same two accumulators afterward.
+     */
+    private void accumulateOwnGrants(String principal, String key,
+                                     EnumSet<Permission> allow, EnumSet<Permission> deny) {
         // Union ALL matching ancestor grants (not longest-match-only). floorKey(key) is the greatest
         // prefix <= key; walking back with lowerKey visits every stored prefix <= key in descending
         // order, and key.startsWith(candidate) selects the ones that are ancestors of the key.
@@ -222,26 +380,6 @@ public final class AclService {
             }
             candidate = acls.lowerKey(candidate);
         }
-
-        // Deny has absolute precedence (subtract it from allow); default-deny falls out of the empty
-        // initial allow set. `allow` is now the effective capability set eff = allow − deny.
-        allow.removeAll(deny);
-
-        // INV-WATCH-READ enforcement point (RFC §01 A5-2 R-CAP-2 / access-control.md §2.1,§6; DL-O3-03).
-        // A watch is a streaming read, so effective WATCH is floored by READ: WATCH is authorized only
-        // when BOTH WATCH and READ survive in eff. Consequences — a WATCH-without-READ grant yields no
-        // watch authz; a deny of READ (or of WATCH) at any matching ancestor also removes effective
-        // WATCH. NOTE this floors a SINGLE KEY: the walk above unions only `key`'s ANCESTOR grants, so it
-        // cannot see a READ/WATCH deny on a DESCENDANT of `key`. A subtree/FULL watch is therefore NOT
-        // authorized by one isAllowed(p, subtreeRoot, WATCH) call — the O-5 subscribe path must apply this
-        // floor over the WHOLE target (per delivered key, or a whole-target cover-check à la
-        // WatchAuthz.authorizeWatch / RFC A6-2/A6-3), else it would over-expose a denied descendant.
-        // Every other capability (READ/LIST/WRITE/ADMIN) is decided by exact membership — BYTE-IDENTICAL
-        // to the increment-2 evaluation.
-        if (permission == Permission.WATCH) {
-            return allow.contains(Permission.WATCH) && allow.contains(Permission.READ);
-        }
-        return allow.contains(permission);
     }
 
     /**

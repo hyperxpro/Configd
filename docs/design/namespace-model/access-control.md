@@ -12,16 +12,39 @@ bypass. Normative keywords (MUST / SHOULD / MAY) are used deliberately; the RFC 
 
 ---
 
+## Implementation status (reconciled 2026-06-28 — Wiring Increments 2–4)
+
+This document was written as a **design recommendation**; several recommendations have since been **built
+and merged to `main`**. Where the prose below calls the built `AclService` "longest-match-only", or the
+capabilities/roles "new/unused", read it against this table:
+
+| Recommendation | Status | Landed in |
+|---|---|---|
+| Union-of-ancestors + absolute deny-precedence, superseding longest-match-only — §4 | **BUILT** | Wiring Increment 2 (`ee27250`) |
+| Capabilities `{READ, LIST, WRITE, WATCH, ADMIN}` + per-capability `DENY`; LIST ⊥ READ; effective-WATCH = WATCH ∧ READ — §2, §2.1 | **BUILT** | Wiring Increment 3 (`770d76f`) |
+| Role indirection — `AclService` consumes `AuthResult.roles()`; static role→grant definitions (empty default) — §1, §4.1 | **BUILT (O-6 Seam 1)** | Wiring Increment 4 |
+| Policy-as-config under `/_acl/`, reload-on-apply — §1.2 | unbuilt | O-6 Seam 2 |
+| Path-glob / segment-aware `pathPattern` matching (§1, §3, §4.1) | unbuilt — the built matcher is **literal `key.startsWith(prefix)`** (DL-O3-02-deferred) | — |
+| Scope-in-rule (`rule.scope ⊇ scope`, §4.1) | unbuilt — built evaluation is **scope-blind** (DL-O6-02) | — |
+| Watch-authz at subscription (§6); `list` endpoint (§7) | unbuilt | O-5 / O-2 |
+
+The **built** rule is `(String prefix, allow-caps, deny-caps)` with **literal-prefix** matching — **not**
+the glob `pathPattern` the prose sketches. Role membership is **additive** (authn-asserted `roles()` ∪ an
+ACL-static `principal→roles` map, **both empty by default** ⇒ byte-identical), and the deployed
+`grant("","root",all)` is a **principal-scoped degenerate rule** (DL-O6-01), **not** a "root role".
+
+---
+
 ## 0. The model in one paragraph
 
 Authorization is **path-glob policies bound to principals through roles** (the Vault model, adapted). A
 **policy** is a set of **rules** `(scope, pathPattern) → {capabilities}` (with an optional `DENY`). A
 **role** is a named bundle of policies; a **principal** holds roles (the roles already carried in
-`AuthResult.Authenticated(principal, roles)` but currently unused by `AclService`). A request for
+`AuthResult.Authenticated(principal, roles)`, **now consumed by `AclService`** — Increment 4 / O-6 Seam 1). A request for
 capability `C` on `(scope, path)` is authorized iff the **union** of all the principal's matching `ALLOW`
 rules grants `C` **and no** matching `DENY` rule names `C` — **deny always wins**. Grants are **inherited
-down a subtree** (a rule on `/a/` covers `/a/**`). This supersedes the built `AclService`'s
-**longest-match-only** evaluation (a deliberate, flagged change, §5). A **`WATCH`** capability is added;
+down a subtree** (a rule on `/a/` covers `/a/**`). This **superseded** the former `AclService`
+**longest-match-only** evaluation — **built in Wiring Increment 2** (§4.2). A **`WATCH`** capability is added;
 a watch is authorized **at subscription as a streaming read** — it requires `READ ∧ WATCH` over the entire
 target, and the `full_chain_verify` full-store watch requires a **root-scope** grant (§6).
 
@@ -43,7 +66,7 @@ Principal ──holds──► Role(s) ──bundle──► Policy(ies) ──c
 |---|---|---|
 | Management at scale | **Poor** — every principal grants individually; 1000 service identities = 1000 grant sets | **Good** — define `tenant-payments-rw` once, attach to every payments identity |
 | Multi-tenancy fit | Weak — no natural "tenant role" | **Strong** — a tenant is a role bundling `{READ,LIST,WATCH,WRITE}` on `/tenant/**` |
-| Built substrate | `AclService` keys on `principal` | roles **already carried** in `AuthResult.Authenticated(principal, roles)` — latent, unused |
+| Built substrate | `AclService` keys on `principal` | roles **already carried** in `AuthResult.Authenticated(principal, roles)` — **now consumed by `AclService`** (Increment 4, O-6 Seam 1) |
 | Complexity | **Lower** — one indirection | Higher — principal→role→policy→rule |
 | Revocation | per-principal | revoke a role (affects all its principals) — and per-principal override via a principal-scoped policy |
 
@@ -81,11 +104,11 @@ Raft path** as ordinary config. Consequences:
 | Capability | Grants | Distinct because | Built? |
 |---|---|---|---|
 | **READ** | get the value at a concrete path | the baseline read | ✅ `Permission.READ` |
-| **LIST** | enumerate children/descendants of a path (the names) | **knowing a key exists is sensitive** — listing `/secrets/` reveals secret *names* even without reading values (Vault/ZK lesson, [`prior-art.md`](prior-art.md) §3.2) | ❌ new |
+| **LIST** | enumerate children/descendants of a path (the names) | **knowing a key exists is sensitive** — listing `/secrets/` reveals secret *names* even without reading values (Vault/ZK lesson, [`prior-art.md`](prior-art.md) §3.2) | ✅ `Permission.LIST` (Increment 3) |
 | **WRITE** | put + delete at a concrete path | the baseline mutate | ✅ `Permission.WRITE` |
-| **WATCH** | subscribe to a change stream on a path/subtree | a watch is a **streaming read + a standing subscription** (a resource commitment / potential firehose); operators may grant point `READ` but withhold streaming `WATCH` | ❌ new |
+| **WATCH** | subscribe to a change stream on a path/subtree | a watch is a **streaming read + a standing subscription** (a resource commitment / potential firehose); operators may grant point `READ` but withhold streaming `WATCH` | ✅ `Permission.WATCH` (Increment 3; effective-WATCH = WATCH ∧ READ) |
 | **ADMIN** | manage policies/roles/grants for a subtree (delegated administration); access `/_acl/`,`/_system/` | governs *who may change authorization*, not data | ✅ `Permission.ADMIN` |
-| **DENY** (modifier) | explicitly remove a capability for a subtree, with **absolute precedence** | makes "grant the subtree, carve out a sensitive child" safe (Vault) | ❌ new |
+| **DENY** (modifier) | explicitly remove a capability for a subtree, with **absolute precedence** | makes "grant the subtree, carve out a sensitive child" safe (Vault) | ✅ `deny()` per-capability, absolute precedence (Increment 3) |
 
 ### 2.1 The two capability-relationship rules (normative)
 
@@ -156,29 +179,37 @@ authorized(C) ⟺ C ∈ allowSet ∧ C ∉ denySet      # union to allow; deny a
 - **Deny precedence (absolute).** A matching `DENY` for `C` removes `C` regardless of any `ALLOW`, including
   rules on more-specific paths and including `ADMIN`. *(Vault: deny beats everything, even sudo.)* This makes
   "grant `/a/**`, deny `/a/b/secret/**`" safe and expressible.
-- **Default-deny.** No matching `ALLOW` ⇒ denied. (The built `grant("", "root", all)` catch-all becomes a
-  root policy `ALLOW {all} on /**` for the `root` role.)
+- **Default-deny.** No matching `ALLOW` ⇒ denied. (**BUILT, Increment 4 / DL-O6-01:** the deployed
+  `grant("", "root", all)` catch-all is modeled as a **principal-scoped degenerate rule** — `ALLOW {all}`
+  on the literal prefix `""` for the `root` **principal**, **not** a "root role" — and stays
+  byte-identical. A real `root` role is an optional later refinement.)
 
-### 4.2 This is a deliberate, flagged change from the built ACL — call it out
+### 4.2 BUILT (Wiring Increment 2) — the longest-match → union+deny supersession
 
-The built `AclService.isAllowed` consults **only the single longest-matching prefix** (`AclService.java:87-99`):
-it finds the longest prefix via `floorKey` + walk-back and returns **that prefix's** caps, **ignoring
-shorter (ancestor) prefixes**. So today, a `READ` grant on `/a/` is **silently dropped** for a key under
-`/a/b/` if a separate grant exists on `/a/b/` — even if that grant lacks `READ`. That is a **hierarchy
-footgun**: a parent grant does not compose with a child grant.
+> **Status: BUILT.** This section recommended a change to the then-built ACL; **Wiring Increment 2
+> (`ee27250`) landed it.** The text is kept as the rationale, reconciled to past tense.
 
-**The new model unions ancestors and adds deny.** Relationship to the built behavior:
+The **former** `AclService.isAllowed` consulted **only the single longest-matching prefix**: it found the
+longest prefix via `floorKey` + walk-back and returned **that prefix's** caps, **ignoring shorter
+(ancestor) prefixes**. So a `READ` grant on `/a/` was **silently dropped** for a key under `/a/b/` if a
+separate grant existed on `/a/b/` — even if that grant lacked `READ`. That was a **hierarchy footgun**: a
+parent grant did not compose with a child grant.
+
+**The built model now unions ancestors and adds deny** — `AclService.isAllowed` walks **every** matching
+ancestor (`floorKey`→`lowerKey` + `startsWith`), unions ALLOW, subtracts DENY with absolute precedence,
+default-deny. Relationship to the prior behavior:
 
 - **Superset in the common case.** When a principal has a rule at only one level for a path (the typical
-  case), union == longest-match — **byte-identical decisions**.
+  case), union == longest-match — **byte-identical decisions**. The deployed single-root-grant config is a
+  trivial antichain, so production decisions are byte-identical (pinned by
+  `AclServiceTest.ProductionByteIdentity`).
 - **Deliberate fix in the overlap case.** When a principal has rules at **multiple** levels for a path, the
-  new model **unions** them (the built model dropped all but the longest). This is a **behavior change** to
-  ACL evaluation and **MUST be flagged** to the wiring: the built `AclServiceTest` asserts longest-match-only;
-  those assertions encode the footgun and must be revisited when this lands.
+  built model **unions** them (the prior model dropped all but the longest). `AclServiceTest` now **asserts
+  union-of-ancestors** (the `UnionOfAncestors` / `DenyPrecedence` suites); the old longest-match assertions
+  were replaced when Increment 2 landed.
 - **Not a storage-layer change.** ACL evaluation is **control-plane policy**, not the storage/consensus
-  layer the N=1 byte-identity discipline governs ([`path-model.md`](path-model.md) §6.1). Changing it is a
-  policy decision, not a byte-identity regression — but it is a real, test-visible change and is logged as
-  such ([`decision-log.md`](decision-log.md) DL-N-07).
+  layer the N=1 byte-identity discipline governs ([`path-model.md`](path-model.md) §6.1) — a policy
+  decision, not a byte-identity regression ([`decision-log.md`](decision-log.md) DL-N-07).
 
 ### 4.3 Worked example
 
