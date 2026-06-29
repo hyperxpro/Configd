@@ -67,6 +67,17 @@ import java.util.concurrent.ConcurrentSkipListMap;
  * role bindings ({@code principal → role names}) — storing immutable {@link Role} records and immutable
  * role-name sets, each swapped wholesale on {@link #defineRole}/{@link #assignRole}; {@link #isAllowed}
  * reads them lock-free. Both maps are typically populated once at boot.
+ * <p>
+ * <b>Config-policy layer (RFC §01 A5-3; O-6 Seam 2a — additive, empty in production).</b> Beyond the
+ * imperative role layer, authorization also unions a <b>config-sourced</b> {@link ConfigPolicy} — role
+ * definitions and principal→role bindings loaded by the server from the reserved {@code _acl/} key subtree.
+ * It is held behind a <b>single volatile reference</b> ({@link #publishConfigPolicy}); {@link #isAllowed}
+ * reads it <b>exactly once</b>, so a concurrent reload (a whole-snapshot swap, never an in-place mutation)
+ * is observed entirely-old or entirely-new — never torn. The config layer folds its matching rules into the
+ * <b>same</b> {@code (allow, deny)} accumulators (same union / absolute-deny-precedence / default-deny /
+ * effective-{@code WATCH} = {@code WATCH} ∧ {@code READ} rules), so a config {@code DENY} composes with
+ * absolute precedence across all layers. It is {@link ConfigPolicy#EMPTY} by default; the deployed config
+ * defines no {@code _acl/} keys, so the config layer contributes nothing and decisions are byte-identical.
  */
 public final class AclService {
 
@@ -136,6 +147,14 @@ public final class AclService {
     // principal -> ACL-static role names, additive to the authn-asserted roles passed to isAllowed.
     // EMPTY by default; each value is an immutable snapshot swapped wholesale on assignRole.
     private final ConcurrentHashMap<String, Set<String>> principalRoles = new ConcurrentHashMap<>();
+
+    // O-6 Seam 2a: the CONFIG-SOURCED policy (roles + principal→role bindings loaded from the reserved
+    // `_acl/` subtree), published via a SINGLE volatile reference swap — the atomic-swap point that fixes
+    // the torn-read window (mirrors VersionedConfigStore's one-volatile-snapshot discipline). This is a
+    // SEPARATE, additive layer; the static imperative layer above (acls / roleDefinitions / principalRoles)
+    // is untouched. ConfigPolicy.EMPTY by default ⇒ the config layer contributes nothing ⇒ byte-identical.
+    // isAllowed reads this reference EXACTLY ONCE so a concurrent reload is never observed half-applied.
+    private volatile ConfigPolicy configPolicy = ConfigPolicy.EMPTY;
 
     /**
      * Grants (ALLOWs) permissions to a principal for a key prefix. Overwrites this principal's prior
@@ -245,6 +264,31 @@ public final class AclService {
     }
 
     /**
+     * Publishes a new {@link ConfigPolicy} snapshot via a <b>single volatile reference swap</b> — the
+     * atomic-swap point for config-sourced policy (O-6 Seam 2a). A concurrent {@link #isAllowed} reads the
+     * reference <b>exactly once</b> and therefore observes either the entire old or the entire new policy,
+     * never a torn (half-applied) mix. The snapshot is deeply immutable. The server's config-policy loader
+     * calls this on boot and on each {@code _acl/}-touching apply (an idempotent whole-subtree rebuild);
+     * the static imperative grant layer is untouched and unioned additively. Passing
+     * {@link ConfigPolicy#EMPTY} clears the config layer (the production default ⇒ byte-identical).
+     *
+     * @param snapshot the new config-policy snapshot (non-null)
+     */
+    public void publishConfigPolicy(ConfigPolicy snapshot) {
+        this.configPolicy = Objects.requireNonNull(snapshot, "snapshot must not be null");
+    }
+
+    /**
+     * Returns the current config-policy snapshot — the last value published via
+     * {@link #publishConfigPolicy} (or {@link ConfigPolicy#EMPTY} if none has been published).
+     *
+     * @return the current config-policy snapshot (never null)
+     */
+    public ConfigPolicy configPolicy() {
+        return configPolicy;
+    }
+
+    /**
      * Checks if a principal has the given permission for a key, with <b>no authn-asserted roles</b> — a
      * thin overload of {@link #isAllowed(String, Set, String, Permission)} that supplies
      * {@code Set.of()} for the roles. Existing callers (and the historical evaluation) reach the
@@ -328,6 +372,43 @@ public final class AclService {
                         if (rule.matches(key)) {
                             allow.addAll(rule.allow());
                             deny.addAll(rule.deny());
+                        }
+                    }
+                }
+            }
+        }
+
+        // (3) Config-sourced role grants (O-6 Seam 2a) — an ADDITIVE layer over the static imperative role
+        // layer (2), held behind a single volatile snapshot. Read the reference EXACTLY ONCE (cp) so a
+        // concurrent reload is observed all-old or all-new, never torn. Effective config roles =
+        // authn-asserted (`roles`) ∪ this principal's CONFIG bindings; each DEFINED config role's matching
+        // PolicyRules fold ALLOW/DENY into the SAME accumulators (config ALLOW composes; config DENY keeps
+        // the absolute precedence applied below). The outer guard short-circuits on the EMPTY snapshot
+        // (production defines no _acl/ keys) ⇒ this block contributes nothing ⇒ byte-identical to the
+        // pre-Seam-2a own+static-role evaluation. (The config role layer and the imperative role layer (2)
+        // are independent additive sub-layers — a name is resolved against the source it was bound through,
+        // while an authn-asserted name is resolved against both — see ConfigPolicy / the increment-5 doc.)
+        ConfigPolicy cp = this.configPolicy;
+        if (!cp.roles().isEmpty() || !cp.bindings().isEmpty()) {
+            Set<String> cfgBindings = cp.bindings().getOrDefault(principal, Set.of());
+            if (!roles.isEmpty() || !cfgBindings.isEmpty()) {
+                Set<String> effectiveConfigRoles;
+                if (cfgBindings.isEmpty()) {
+                    effectiveConfigRoles = roles;          // common path: no config bindings for principal
+                } else if (roles.isEmpty()) {
+                    effectiveConfigRoles = cfgBindings;
+                } else {
+                    effectiveConfigRoles = new HashSet<>(roles);
+                    effectiveConfigRoles.addAll(cfgBindings);
+                }
+                for (String roleName : effectiveConfigRoles) {
+                    Role role = cp.roles().get(roleName);
+                    if (role != null) {
+                        for (PolicyRule rule : role.rules()) {
+                            if (rule.matches(key)) {
+                                allow.addAll(rule.allow());
+                                deny.addAll(rule.deny());
+                            }
                         }
                     }
                 }
