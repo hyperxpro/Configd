@@ -20,7 +20,6 @@ import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
-import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * O-6 Seam 2b — the reserved-prefix ADMIN gate, write-time validation, and the auth-disabled refusal,
@@ -327,6 +326,33 @@ class ReservedPrefixAdminGateTest {
         // ...and a reserved READ stays open (auth-off serves it from the store; only writes are the footgun).
         assertNotEquals(403, status(h, "GET", "_acl/roles/x", null, null),
                 "auth-off: a reserved READ is not refused (reads stay open when auth is disabled)");
+    }
+
+    // =============================================================================================
+    // Fail-closed corner — auth configured but NO ACL service: a reserved key requires ADMIN, which
+    // cannot be evaluated without an ACL, so it must DENY for every method (never fall through to ok).
+    // =============================================================================================
+
+    @Test
+    void reservedKeyFailsClosedWhenAuthOnButNoAclService() throws Exception {
+        // AdminApiHandler treats authInterceptor and aclService as INDEPENDENTLY nullable. The standard
+        // server wires them together, but the gate must not assume that: with auth on and acl off, a
+        // reserved key's ADMIN is unevaluable ⇒ 403 for GET/PUT/DELETE; an ordinary key stays authn-only.
+        CapturingProposer proposer = new CapturingProposer();
+        AdminApiHandler h = handler(/* acl */ null, auth(), proposer);
+
+        assertEquals(403, status(h, "GET", "_acl/roles/x", "admin", null),
+                "reserved GET with auth-on but no ACL service must fail closed");
+        assertEquals(403, status(h, "PUT", "_acl/roles/x", "admin", "allow READ app."),
+                "reserved PUT with auth-on but no ACL service must fail closed");
+        assertEquals(403, status(h, "DELETE", "_acl/roles/x", "admin", null),
+                "reserved DELETE with auth-on but no ACL service must fail closed");
+        assertEquals(0, proposer.calls.get(), "no reserved write reached Raft (store unchanged)");
+
+        // An ordinary key with no ACL service is authn-only — the gate changes nothing for non-reserved.
+        assertEquals(200, status(h, "PUT", "app/feature", "admin", "on"),
+                "an ordinary key with no ACL service is authn-only (unchanged)");
+        assertEquals(1, proposer.calls.get(), "only the ordinary write reached Raft");
     }
 
     // =============================================================================================
