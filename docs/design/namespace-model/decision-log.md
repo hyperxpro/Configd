@@ -12,6 +12,26 @@ are the **Open items** at the end (and restated in each doc's §"Open questions"
 
 ---
 
+## Implementation status (reconciled 2026-06-28 — Wiring Increments 2–4)
+
+This log was a **design session** record; several recommendations have since been **built and merged**:
+
+- **DL-N-08** (union-of-ancestors + absolute deny-precedence, superseding longest-match-only) → **BUILT,
+  Wiring Increment 2 (`ee27250`).** `AclServiceTest` now asserts **union-of-ancestors**, not longest-match.
+- **DL-N-09** (capabilities `{READ, LIST, WRITE, WATCH, ADMIN}` + per-capability `DENY`; LIST ⊥ READ;
+  effective-WATCH = WATCH ∧ READ) → **BUILT, Wiring Increment 3 (`770d76f`).**
+- **DL-N-08 role indirection** (roles → grants consumed by `AclService`) → **BUILT (O-6 Seam 1), Wiring
+  Increment 4** — with the **literal-prefix** matcher (glob is DL-O3-02-deferred), **scope out of the rule**
+  (DL-O6-02), and root as a **principal-scoped degenerate rule** (DL-O6-01). See the **O-6 Seam 1
+  decisions** appended below the DL-N-* list.
+
+So Open items **O-3** (capabilities) and **O-4** (composition) are **wired**, and **O-6** is **partially
+wired** (Seam 1 role indirection done; **policy-as-config under `/_acl/` is Seam 2**, unbuilt). The
+methodology note DL-N-01 ("longest-match-only", "roles carried but unused") and the bottom "no production
+code / no `AclService` change" scope note describe the **design session only** and no longer describe `main`.
+
+---
+
 ## Methodology
 
 - **DL-N-01 — Ground-truth the BUILT reality before designing, from source, not ADRs.** Read the load-bearing
@@ -73,8 +93,9 @@ are the **Open items** at the end (and restated in each doc's §"Open questions"
   subtracts DENY (deny wins), default-deny. **Relationship to built behavior:** a **superset** when a
   principal has rules at one level (byte-identical decisions), a **deliberate fix** when rules exist at
   multiple levels. It is **control-plane policy**, not the storage layer — changing it is a policy decision,
-  **not** an N=1 byte-identity regression — but it **is** test-visible (`AclServiceTest` asserts
-  longest-match-only) and **must be flagged** to the wiring. *Operator-confirm* (O-3, O-4).
+  **not** an N=1 byte-identity regression. **BUILT in Wiring Increment 2 (`ee27250`):** `AclServiceTest` now
+  asserts **union-of-ancestors** (it formerly asserted longest-match-only). Role indirection over this engine
+  is **BUILT in Increment 4 (O-6 Seam 1)** — see the O-6 decisions below. *Wired (O-3, O-4).*
 - **DL-N-09 — Capability set `{READ, LIST, WRITE, WATCH, ADMIN}` + `DENY`; LIST ⊥ READ; WATCH requires
   READ** (`access-control.md` §2). **LIST distinct from READ** (enumerating names is separately sensitive —
   Vault/ZK). **WATCH separate but gated by READ** (a watch is a streaming read + a subscription; operators
@@ -113,6 +134,56 @@ are the **Open items** at the end (and restated in each doc's §"Open questions"
   "RFC alongside as decisions land" discipline — the path/namespace decision captured as the contract the
   wiring conforms to.
 
+## O-6 Seam 1 decisions (Wiring Increment 4 — role-aware evaluation, byte-identical)
+
+O-6 ("roles → policies → principals") is built in two seams. **Seam 1** (this increment) adds role
+indirection to the evaluation engine with **static in-memory maps**, **byte-identical** to the deployed
+config. **Seam 2** (next) is policy-as-config under `/_acl/`. The Seam 1 decisions:
+
+- **DL-O6-01 — Root is a principal-scoped degenerate rule, NOT a "root role".** The deployed
+  `ConfigdServer` `grant("","root",all)` is kept **unchanged** and understood as the degenerate rule
+  `ALLOW {all}` on the **literal** prefix `""` for the **principal** `root`. This is the tightest
+  byte-identity (the production grant path is literally untouched) and avoids introducing a privileged
+  "root role". A real `root` role is an optional later refinement.
+- **DL-O6-02 — Scope stays OUT of the rule for Seam 1.** `isAllowed` remains **scope-blind**; the rule is
+  `(prefix, allow-caps, deny-caps)` with no scope field. Adding scope-to-rule changes the `isAllowed`
+  signature and the enforcement call site — a separable ripple deferred to Seam 2 (or its own micro-seam).
+- **DL-O6-03 — Role membership is additive from two sources, both EMPTY by default.** A principal's
+  effective roles = **authn-asserted** roles (`AuthResult.Authenticated.roles()`, passed into `isAllowed`)
+  ∪ an **ACL-static** `principal→roles` map. Their union resolves against role→grant **definitions**
+  (`roleDefinitions`, empty default). Evaluation unions {the principal's own direct grants} ∪ {each role's
+  rules} into **one** `(allow, deny)` accumulator pair, then applies O-4 union/absolute-deny/default-deny
+  and the O-3 effective-WATCH floor **once** over the combined set — so **deny-precedence holds through
+  roles** (a role-contributed ALLOW is overridden by any matching DENY, own or role-contributed; a role
+  cannot escalate past a deny). With both maps empty and no role defined, every decision is byte-identical;
+  in production `roles()`=`{"admin"}` resolves to an **undefined** role ⇒ contributes nothing.
+- **Matcher (carried forward, DL-O3-02):** rules use the **literal `key.startsWith(prefix)`** matcher, NOT
+  the sketch's glob `PathPattern`. Segment-aware/glob matching remains the deferred binary/driver surface.
+
+**Seam 1 review residuals (four-lane review — all APPROVE, 0 must-fix; carried to Seam 2):**
+
+- **Reserved asserted-role name `"admin"` (security-LEAD).** The production authenticator asserts the role
+  name `"admin"` for `root` (`ConfigdServer:720`), but `root`'s authority comes entirely from its
+  principal grant (DL-O6-01), so the asserted `"admin"` is **inert today** (no role named `admin` is
+  defined). Treat `"admin"` as a **reserved** asserted-role name: once roles are live, defining a role
+  literally named `admin` would retroactively affect `root` — a `DENY` rule there would carve `root`'s
+  `allOf`. The roles-live increment (Seam 2) MUST reserve/guard it (or `root` should assert `Set.of()`
+  once `ConfigdServer` is unfrozen). Cannot escalate anyone under the production authenticator (only
+  `root` is ever asserted `admin`, and it is already maximal), hence a SHOULD, not a defect.
+- **`AuthResult.Authenticated` hardened (code-reviewer + security-LEAD, applied this seam):** a compact
+  constructor now `Objects.requireNonNull(roles)` + `Set.copyOf(roles)`, because the role-aware
+  `isAllowed` newly reads `authed.roles()` on the request path from the pluggable `TokenValidator` SPI;
+  closes a null→non-200 and an aliasing/CME gap at the authn/authz seam. Byte-identical in decisions.
+- **Deprovisioning gap (security-LEAD):** `assignRole`/`defineRole` are additive with no
+  `removeRole`/`unassignRole`/`undefineRole`. Acceptable for a boot-populated dormant seam; the roles-live
+  increment should add the inverse operations.
+- **`Role.rules()` recompute (code-reviewer):** flattens policies→rules on every call — dormant in Seam 1
+  (no production caller), but lands on the request hot path the moment Seam 2 wires roles. Precompute the
+  flattened list in the `Role` constructor at Seam 2.
+- **Scope-blind ripple (DL-O6-02):** role rules match literal prefix only, exactly as scope-blind as own
+  grants — no regression now (single `GLOBAL` scope, no live roles). Once scope enters the rule AND roles
+  are live, a scope-blind role rule would over-grant across all scopes; must be addressed then.
+
 ---
 
 ## Open items (operator-binding — confirm before wiring)
@@ -127,12 +198,20 @@ are the **Open items** at the end (and restated in each doc's §"Open questions"
 | **O-6** | Model | **roles → policies → principals** (Vault-shaped), policy-as-config under `/_acl/`,`/_system/`; per-principal = degenerate case | access-control §1 |
 | **O-7** | Recursive delete | **none in v1** (no cross-shard atomicity); best-effort `deleteSubtree` deferred to v2 with a loud non-atomic contract | path-model §4.1 |
 
-None of these are wired; all are recommendations. The operator's confirmation turns them into the contract
-the namespace/path wiring (and the driver protocol, and watches) will conform to.
+**Status (2026-06-28):** **O-3** and **O-4** are **wired** (Increments 3 `770d76f` and 2 `ee27250`); **O-6**
+is **partially wired** — role indirection is Seam 1 (Increment 4), policy-as-config under `/_acl/` is Seam 2
+(unbuilt). **O-1, O-2, O-5, O-7** remain recommendations. The operator's confirmation turns each into the
+contract the namespace/path wiring (and the driver protocol, and watches) conforms to.
 
-## What this design does NOT do (scope honesty)
+## What this design did NOT do (scope honesty — the design session)
 
-No production code; no path/ACL/watch wiring; no `shardFor`, `AclService`, or `ConfigScope` change; no wire
-format; no `list`/`watch` implementation; no EC2, no money. The compile-checked sketch is a **design
-artifact** (standalone, not in the build). The deliverable is a **decided design + a normative RFC section**
-— the contract the wiring conforms to, captured as the decisions landed.
+*(Describes the original 2026-06-28 design session. See [Implementation status](#implementation-status-reconciled-2026-06-28--wiring-increments-24) above for what has since been wired.)*
+
+At design time: No production code; no path/ACL/watch wiring; no `shardFor`, `AclService`, or `ConfigScope`
+change; no wire format; no `list`/`watch` implementation; no EC2, no money. The compile-checked sketch is a
+**design artifact** (standalone, not in the build). The deliverable was a **decided design + a normative RFC
+section** — the contract the wiring conforms to.
+
+**Since then**, Wiring Increments 2–4 built the union+deny engine (DL-N-08/O-4), the capability set
+(DL-N-09/O-3), and **role indirection (O-6 Seam 1)** into `AclService`. `shardFor`/`ConfigScope` remain
+unchanged; **policy-as-config, `list`, `watch`, scope-in-rule, and glob matching remain unbuilt**.

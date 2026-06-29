@@ -2,6 +2,7 @@ package io.configd.api;
 
 import org.junit.jupiter.api.Test;
 
+import java.util.HashSet;
 import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -98,5 +99,30 @@ class AuthInterceptorTest {
 
         assertInstanceOf(AuthInterceptor.AuthResult.Authenticated.class, authenticated);
         assertInstanceOf(AuthInterceptor.AuthResult.Denied.class, denied);
+    }
+
+    // -----------------------------------------------------------------------
+    // Authenticated defensively hardens its roles set (SF-1): a pluggable
+    // TokenValidator cannot hand the authz path a null / mutable / aliased set.
+    // -----------------------------------------------------------------------
+
+    @Test
+    void authenticatedRejectsNullRoles() {
+        assertThrows(NullPointerException.class,
+                () -> new AuthInterceptor.AuthResult.Authenticated("p", null));
+    }
+
+    @Test
+    void authenticatedRolesAreImmutableAndDecoupledFromSource() {
+        var source = new HashSet<String>();
+        source.add("admin");
+        var auth = new AuthInterceptor.AuthResult.Authenticated("p", source);
+
+        // Immutable snapshot: the exposed set cannot be mutated by the authorization path.
+        assertThrows(UnsupportedOperationException.class, () -> auth.roles().add("root"));
+        // Decoupled: mutating the SOURCE set after construction must not change roles().
+        source.add("root");
+        assertEquals(Set.of("admin"), auth.roles(),
+                "roles() must be a snapshot taken at construction, not an alias of the caller's set");
     }
 }

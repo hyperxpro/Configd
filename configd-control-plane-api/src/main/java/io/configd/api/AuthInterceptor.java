@@ -16,8 +16,19 @@ public final class AuthInterceptor {
      * Result of an authentication attempt.
      */
     public sealed interface AuthResult {
-        /** The token was valid and the caller is authenticated. */
-        record Authenticated(String principal, Set<String> roles) implements AuthResult {}
+        /**
+         * The token was valid and the caller is authenticated. {@code roles} is defensively copied to a
+         * non-null, immutable snapshot (null elements rejected), so a pluggable {@link TokenValidator}
+         * cannot hand the authorization path a null, mutable, or aliased role set.
+         */
+        record Authenticated(String principal, Set<String> roles) implements AuthResult {
+            // Compact ctor must be public: a record nested in an interface is implicitly public, and the
+            // canonical constructor cannot reduce that access.
+            public Authenticated {
+                Objects.requireNonNull(roles, "roles must not be null");
+                roles = Set.copyOf(roles); // non-null + immutable snapshot; rejects null elements; fixes aliasing/CME
+            }
+        }
         /** Authentication was denied. */
         record Denied(String reason) implements AuthResult {}
     }
