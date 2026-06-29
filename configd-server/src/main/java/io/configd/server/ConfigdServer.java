@@ -985,6 +985,15 @@ public final class ConfigdServer {
                     new io.configd.distribution.fanout.SlowConsumerGovernor(
                             io.configd.distribution.fanout.SlowConsumerPolicyConfig.defaults(),
                             fanOutMetrics);
+            // RFC §2 watch veneer (Gate 1 2b): the watch-authorization gate. The adapter bridges the
+            // fan-out plane's WatchAuthorizer SPI to the SAME in-core AclService the HTTP admin path
+            // uses (so the watch gate and the admin gate decide identically). When auth is OFF
+            // (aclService == null) the authorizer is null ⇒ the driver fails CLOSED (every
+            // WATCH_CREATE → NOT_AUTHORIZED); the legacy SUBSCRIBE fan-out path is unaffected either way.
+            io.configd.distribution.fanout.WatchAuthorizer watchAuthorizer =
+                    (aclService != null)
+                            ? new io.configd.server.fanout.AclServiceWatchAuthorizer(aclService)
+                            : null;
             // ADR-0043 M3 cutover (slice E): production edge fan-out is the Netty transport. The
             // fast-revert is `git revert` of this commit — restoring `new FanOutServer(...)` (the JDK
             // transport is retained, fully tested by the contract, and a drop-in FanOutEndpoint).
@@ -994,7 +1003,7 @@ public final class ConfigdServer {
                     io.configd.distribution.fanout.FanOutConfig.defaults(),
                     io.configd.server.fanout.FanOutServer.DEFAULT_TRANSPORT_QUEUE_FRAMES,
                     io.configd.server.fanout.FanOutServer.DEFAULT_MAX_SESSIONS,
-                    slowConsumerGovernor, fanOutMetrics, clock);
+                    slowConsumerGovernor, fanOutMetrics, clock, watchAuthorizer);
             // F-0050-style fail-closed: if TLS is enabled on the CLI but the
             // edge endpoint did not receive a TlsManager, refuse to start
             // (no plaintext edge traffic in a TLS deployment).

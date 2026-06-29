@@ -7,10 +7,11 @@ package io.configd.distribution.wire;
  * map their close reasons onto these codes; no free-form error strings ride the
  * wire as a structured cause.
  *
- * <p>The numeric {@link #code()} (1..10) is the byte that goes on the wire in an
- * {@link EdgeFrame.ErrorClose} payload; the human-readable {@code message} field of
- * the frame is diagnostic only. Changing any code value is a wire-format change and
- * MUST bump {@link EdgeFrameCodec#EDGE_WIRE_VERSION}.
+ * <p>The numeric {@link #code()} (1..11) is the byte that goes on the wire in an
+ * {@link EdgeFrame.ErrorClose} payload (and a {@link EdgeFrame.WatchCanceled} per-watch
+ * terminal); the human-readable {@code message} field of the frame is diagnostic only.
+ * Changing any code value is a wire-format change and MUST bump
+ * {@link EdgeFrameCodec#EDGE_WIRE_VERSION}.
  */
 public enum ErrorCode {
 
@@ -51,7 +52,19 @@ public enum ErrorCode {
     SERVER_SHUTDOWN(9),
 
     /** Unexpected frame for the current session state. */
-    PROTOCOL_VIOLATION(10);
+    PROTOCOL_VIOLATION(10),
+
+    /**
+     * Authenticated but not authorized — the 403-class streaming authorization reject for
+     * a watch subscription (RFC §2 W7-5a). Distinct from {@link #AUTH_FAIL} (the 401-class
+     * authentication failure): the identity is acceptable but lacks {@code READ ∧ WATCH}
+     * over the whole watch target (over-broad target, non-root {@code full_chain_verify} /
+     * {@code FULL}, an intersecting {@code DENY}, or a missing capability). It surfaces as a
+     * {@link EdgeFrame.WatchCanceled} per-watch terminal with <b>no data frame emitted
+     * first</b> (W7-5). Code {@code 11} is the next free value after the built {@code 1..10}
+     * taxonomy and rides the {@code 0x02} edge wire-version bump (W1-2 / W7-5a).
+     */
+    NOT_AUTHORIZED(11);
 
     private final int code;
 
@@ -59,7 +72,7 @@ public enum ErrorCode {
         this.code = code;
     }
 
-    /** The on-wire numeric code (1..10). */
+    /** The on-wire numeric code (1..11). */
     public int code() {
         return code;
     }

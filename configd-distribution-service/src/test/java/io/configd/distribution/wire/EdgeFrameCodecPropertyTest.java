@@ -13,14 +13,18 @@ import net.jqwik.api.Provide;
 import net.jqwik.api.constraints.IntRange;
 import net.jqwik.api.constraints.Size;
 
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.zip.CRC32C;
 
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -33,6 +37,8 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * CRC error (never a misparse), and length-cap violations rejected before allocation.
  */
 class EdgeFrameCodecPropertyTest {
+
+    private static final byte V2 = EdgeFrameCodec.EDGE_WIRE_VERSION_V2;
 
     // ---- round-trip ---------------------------------------------------------
 
@@ -198,7 +204,9 @@ class EdgeFrameCodecPropertyTest {
     @Property(tries = 100)
     void wrongVersionWithValidCrcIsRejectedAsBadVersion(
             @ForAll @IntRange(min = 0, max = 255) int rawVersion) {
-        if ((byte) rawVersion == EdgeFrameCodec.EDGE_WIRE_VERSION) {
+        // 0x01 and 0x02 are both accepted versions now (W1-3); only OTHER versions are BAD_WIRE_VERSION.
+        if ((byte) rawVersion == EdgeFrameCodec.EDGE_WIRE_VERSION
+                || (byte) rawVersion == EdgeFrameCodec.EDGE_WIRE_VERSION_V2) {
             return;
         }
         // A minimal CURSOR_ACK frame, then rewrite version + fix CRC.
@@ -228,6 +236,104 @@ class EdgeFrameCodecPropertyTest {
         }
         assertThrows(IllegalArgumentException.class, () -> ErrorCode.fromCode(99));
         assertThrows(IllegalArgumentException.class, () -> FrameType.fromCode(99));
+    }
+
+    // ---- RFC §2 watch frames (0x02) ----------------------------------------
+
+    /** Every watch frame round-trips byte-for-byte through a 0x02 encode/decode. */
+    @Property(tries = 500)
+    void roundTripPreservesEveryWatchFrame(@ForAll("watchFrames") EdgeFrame frame) {
+        byte[] wire = EdgeFrameCodec.encode(frame, V2);
+        assertEquals(V2, wire[4], "watch frame must be stamped 0x02");
+        assertEquals(frame, EdgeFrameCodec.decode(wire), "watch frame must round-trip identically");
+    }
+
+    /**
+     * The per-shard cursor vector (W3-5) round-trips through a WATCH_PROGRESS carrier with
+     * its components preserved in unsigned-ascending order — empty (from-now), single
+     * ({@code N=1}), and multi-component forms.
+     */
+    @Property(tries = 400)
+    void cursorVectorRoundTripsThroughWatchProgress(@ForAll("watchCursors") WatchCursor cursor) {
+        EdgeFrame.WatchProgress wp = new EdgeFrame.WatchProgress(7L, cursor, 123L);
+        EdgeFrame.WatchProgress back =
+                (EdgeFrame.WatchProgress) EdgeFrameCodec.decode(EdgeFrameCodec.encode(wp, V2));
+        assertEquals(cursor, back.cursor());
+        assertEquals(cursor.components(), back.cursor().components(),
+                "components preserved in unsigned-sorted order");
+    }
+
+    /** A WATCH_CREATE cursor (the resume token, W5-4) round-trips for every cursor form. */
+    @Property(tries = 300)
+    void cursorVectorRoundTripsThroughWatchCreate(@ForAll("watchCursors") WatchCursor cursor) {
+        EdgeFrame.WatchCreate wc = new EdgeFrame.WatchCreate(
+                1L, 0, EdgeFrame.WATCH_TARGET_PREFIX, "svc/".getBytes(StandardCharsets.UTF_8), cursor, 0);
+        EdgeFrame.WatchCreate back =
+                (EdgeFrame.WatchCreate) EdgeFrameCodec.decode(EdgeFrameCodec.encode(wc, V2));
+        assertEquals(cursor, back.cursor());
+    }
+
+    /** Construction enforces the cursor invariant: unsigned-ascending gid, no dup, non-negative S. */
+    @Property(tries = 1)
+    void cursorConstructionInvariants() {
+        // Duplicate gid rejected.
+        assertThrows(IllegalArgumentException.class, () -> new WatchCursor(List.of(
+                new WatchCursor.Component(5, 1L), new WatchCursor.Component(5, 2L))));
+        // Unsigned ordering: gid -1 == 0xFFFFFFFF is the LARGEST u32, so it must come last.
+        assertThrows(IllegalArgumentException.class, () -> new WatchCursor(List.of(
+                new WatchCursor.Component(-1, 1L), new WatchCursor.Component(1, 2L))));
+        // Valid unsigned-ascending: 1 then -1 (huge) is fine.
+        WatchCursor ok = new WatchCursor(List.of(
+                new WatchCursor.Component(1, 1L), new WatchCursor.Component(-1, 2L)));
+        assertEquals(2, ok.components().size());
+        assertFalse(ok.isFromNow());
+        // Negative S rejected at the component level.
+        assertThrows(IllegalArgumentException.class, () -> new WatchCursor.Component(0, -1L));
+        // from-now / single factories.
+        assertTrue(WatchCursor.fromNow().isFromNow());
+        assertEquals(0, WatchCursor.of(0, 9L).components().get(0).gid());
+        assertEquals(9L, WatchCursor.of(0, 9L).components().get(0).s());
+    }
+
+    /**
+     * The signed-i32 {@code val_len} sentinel (W5-6) survives a round-trip: a non-empty PUT
+     * (val_len &gt; 0), an empty PUT (val_len == 0, value PRESENT not null), and a DELETE
+     * (val_len == -1, value null) are each reconstructed exactly.
+     */
+    @Property(tries = 1)
+    void watchEventValLenSentinelRoundTrips() {
+        EdgeFrame.WatchEvent ev = new EdgeFrame.WatchEvent(1L, 0, 5L, 9L, List.of(
+                EdgeFrame.WatchChange.put("k1", new byte[]{1, 2, 3}),
+                EdgeFrame.WatchChange.put("empty", new byte[0]),
+                EdgeFrame.WatchChange.delete("k2")));
+        EdgeFrame.WatchEvent back =
+                (EdgeFrame.WatchEvent) EdgeFrameCodec.decode(EdgeFrameCodec.encode(ev, V2));
+        assertEquals(ev, back);
+        List<EdgeFrame.WatchChange> cs = back.changes();
+        assertArrayEquals(new byte[]{1, 2, 3}, cs.get(0).value());
+        assertArrayEquals(new byte[0], cs.get(1).value()); // empty value PRESENT, not null
+        assertFalse(cs.get(1).isDelete());
+        assertNull(cs.get(2).value());                     // DELETE: no value
+        assertTrue(cs.get(2).isDelete());
+    }
+
+    /** A WATCH_* type stamped on a 0x01 frame (CRC repaired) decodes as FRAME_CORRUPT (W5-11). */
+    @Property(tries = 1)
+    void watchTypeStampedV1DecodesAsCorrupt() {
+        byte[] wire = EdgeFrameCodec.encode(new EdgeFrame.WatchCancel(7L), V2);
+        wire[4] = EdgeFrameCodec.EDGE_WIRE_VERSION; // flip version 0x02 -> 0x01
+        CRC32C crc = new CRC32C();
+        crc.update(wire, 0, wire.length - EdgeFrameCodec.TRAILER_SIZE);
+        int v = (int) crc.getValue();
+        int off = wire.length - EdgeFrameCodec.TRAILER_SIZE;
+        wire[off] = (byte) (v >>> 24);
+        wire[off + 1] = (byte) (v >>> 16);
+        wire[off + 2] = (byte) (v >>> 8);
+        wire[off + 3] = (byte) v;
+        EdgeFrameCodec.CodecException ex = assertThrows(EdgeFrameCodec.CodecException.class,
+                () -> EdgeFrameCodec.decode(wire));
+        assertEquals(ErrorCode.FRAME_CORRUPT, ex.code(),
+                "a watch type on a 0x01-stamped frame must read as FRAME_CORRUPT");
     }
 
     // ---- arbitraries --------------------------------------------------------
@@ -301,6 +407,128 @@ class EdgeFrameCodecPropertyTest {
                         Arbitraries.of(ErrorCode.values()),
                         Arbitraries.strings().ofMaxLength(64))
                 .as(EdgeFrame.ErrorClose::new);
+    }
+
+    // ---- watch arbitraries --------------------------------------------------
+
+    @Provide
+    Arbitrary<EdgeFrame> watchFrames() {
+        return Arbitraries.oneOf(
+                watchCreates(),
+                Arbitraries.longs().map(EdgeFrame.WatchCancel::new),
+                watchCreateds(),
+                watchEvents(),
+                watchProgresses(),
+                watchCanceleds(),
+                watchSnapshotBegins(),
+                watchSnapshotChunks(),
+                watchSnapshotEnds());
+    }
+
+    @Provide
+    Arbitrary<WatchCursor> watchCursors() {
+        Arbitrary<WatchCursor.Component> comp = Combinators.combine(
+                        Arbitraries.integers(), // any gid (unsigned u32, incl. high-bit-set)
+                        Arbitraries.longs().between(0, 1_000_000))
+                .as(WatchCursor.Component::new);
+        return comp.list().ofMaxSize(6).map(EdgeFrameCodecPropertyTest::normalizeCursor);
+    }
+
+    /** Dedup by gid (keep first) and sort unsigned, so any random component list is a valid vector. */
+    private static WatchCursor normalizeCursor(List<WatchCursor.Component> raw) {
+        LinkedHashMap<Integer, WatchCursor.Component> byGid = new LinkedHashMap<>();
+        for (WatchCursor.Component c : raw) {
+            byGid.putIfAbsent(c.gid(), c);
+        }
+        List<WatchCursor.Component> sorted = new ArrayList<>(byGid.values());
+        sorted.sort((a, b) -> Integer.compareUnsigned(a.gid(), b.gid()));
+        return new WatchCursor(sorted);
+    }
+
+    private Arbitrary<EdgeFrame> watchCreates() {
+        Arbitrary<byte[]> path = Arbitraries.strings().ofMaxLength(16)
+                .map(s -> s.getBytes(StandardCharsets.UTF_8));
+        return Combinators.combine(
+                        Arbitraries.longs(),
+                        Arbitraries.integers().between(0, 0xFF),       // scope u8
+                        Arbitraries.integers().between(0, 2),          // targetKind
+                        path,
+                        watchCursors(),
+                        Arbitraries.integers().between(0, 0xFF))       // flags u8
+                .as((id, scope, kind, p, cur, flags) -> {
+                    byte[] pathBytes = (kind == EdgeFrame.WATCH_TARGET_FULL) ? new byte[0] : p;
+                    return new EdgeFrame.WatchCreate(id, scope, kind, pathBytes, cur, flags);
+                });
+    }
+
+    private Arbitrary<EdgeFrame> watchCreateds() {
+        Arbitrary<EdgeFrame.ShardMode> shard = Combinators.combine(
+                        Arbitraries.integers(),
+                        Arbitraries.longs().between(0, 1_000_000),
+                        Arbitraries.of(EdgeFrame.Mode.values()))
+                .as(EdgeFrame.ShardMode::new);
+        return Combinators.combine(Arbitraries.longs(), shard.list().ofMaxSize(5))
+                .as(EdgeFrame.WatchCreated::new);
+    }
+
+    private Arbitrary<EdgeFrame> watchEvents() {
+        return Combinators.combine(
+                        Arbitraries.longs(),
+                        Arbitraries.integers(),
+                        Arbitraries.longs().between(0, 1_000_000),
+                        Arbitraries.longs().between(0, 1_700_000_000_000L),
+                        watchChanges().list().ofMaxSize(6))
+                .as(EdgeFrame.WatchEvent::new);
+    }
+
+    private Arbitrary<EdgeFrame.WatchChange> watchChanges() {
+        Arbitrary<EdgeFrame.WatchChange> puts = Combinators.combine(
+                        key(), Arbitraries.bytes().array(byte[].class).ofMaxSize(32))
+                .as(EdgeFrame.WatchChange::put);
+        Arbitrary<EdgeFrame.WatchChange> dels = key().map(EdgeFrame.WatchChange::delete);
+        return Arbitraries.oneOf(puts, dels);
+    }
+
+    private Arbitrary<EdgeFrame> watchProgresses() {
+        return Combinators.combine(
+                        Arbitraries.longs(), watchCursors(), Arbitraries.longs().between(0, Long.MAX_VALUE))
+                .as(EdgeFrame.WatchProgress::new);
+    }
+
+    private Arbitrary<EdgeFrame> watchCanceleds() {
+        return Combinators.combine(
+                        Arbitraries.longs(),
+                        Arbitraries.of(ErrorCode.values()),
+                        Arbitraries.integers().between(0, 1), // has_oldest
+                        watchCursors(),
+                        Arbitraries.strings().ofMaxLength(48))
+                .as((id, code, has, cur, msg) ->
+                        new EdgeFrame.WatchCanceled(id, code, has == 1 ? cur : null, msg));
+    }
+
+    private Arbitrary<EdgeFrame> watchSnapshotBegins() {
+        return Combinators.combine(
+                        Arbitraries.longs(),
+                        Arbitraries.integers(),
+                        Arbitraries.longs().between(0, 1_000_000),
+                        Arbitraries.integers().between(0, 1024),
+                        Arbitraries.longs().between(0, 10_000_000))
+                .as(EdgeFrame.WatchSnapshotBegin::new);
+    }
+
+    private Arbitrary<EdgeFrame> watchSnapshotChunks() {
+        return Combinators.combine(
+                        Arbitraries.longs(),
+                        Arbitraries.integers(),
+                        Arbitraries.integers().between(0, 100_000),
+                        Arbitraries.bytes().array(byte[].class).ofMaxSize(2048))
+                .as(EdgeFrame.WatchSnapshotChunk::new);
+    }
+
+    private Arbitrary<EdgeFrame> watchSnapshotEnds() {
+        return Combinators.combine(
+                        Arbitraries.longs(), Arbitraries.integers(), Arbitraries.longs().between(0, 1_000_000))
+                .as(EdgeFrame.WatchSnapshotEnd::new);
     }
 
     @Provide

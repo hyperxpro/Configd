@@ -481,6 +481,108 @@ public final class AclService {
     }
 
     /**
+     * Assembles the principal's <b>complete effective {@link PolicyRule} set</b> — the union of its own
+     * per-prefix grants, its role grants, and its config-sourced grants — the rule collection the dormant
+     * whole-target predicates {@link #coversTarget} / {@link #authorizesWatch} consume (RFC §02 W7-2a; §01
+     * A5-3/A5-4). This is the <b>gate's rule-assembly step</b> those predicates' javadoc refers to ("the
+     * gate that assembles the principal's unioned rule set and calls this"): a PREFIX/FULL watch (or
+     * {@code list}) authorization needs the <b>whole-subtree</b> cover-check, which {@link #isAllowed}
+     * cannot provide because it unions only a single key's <i>ancestor</i> grants and cannot see an
+     * interior (descendant) {@code DENY}.
+     * <p>
+     * <b>The three sources are resolved EXACTLY as {@link #isAllowed} resolves them</b> (so
+     * {@code authorizesWatch(effectiveRules(p, roles), key)} agrees with {@code isAllowed(p, roles, key, …)}
+     * on every concrete key):
+     * <ol>
+     *   <li><b>Own grants</b> — every prefix at which {@code principal} holds a non-empty
+     *       {@link GrantEntry} becomes one {@link PolicyRule}{@code (prefix, allow, deny)}. The <b>complete</b>
+     *       set is returned (not just ancestors of some target): {@link #coversTarget} itself filters by the
+     *       ancestor-or-equal / interior prefix relationship, so the complete set is both correct and the
+     *       source of the interior-{@code DENY} term. (Production holds one prefix {@code ""}; the walk is
+     *       over a small control-plane policy set — watch creation is infrequent, never per-event.)</li>
+     *   <li><b>Imperative role grants</b> — effective roles = the authn-asserted {@code roles} ∪ the
+     *       {@link #assignRole ACL-static} bindings, resolved against the {@link #defineRole defined} roles;
+     *       each resolved role contributes <b>all</b> its {@link Role#rules() rules}.</li>
+     *   <li><b>Config-sourced role grants</b> — the {@link #configPolicy() config snapshot}, read <b>once</b>
+     *       (never torn): effective config roles = the asserted {@code roles} ∪ this principal's config
+     *       bindings, resolved against the config roles; each contributes all its rules.</li>
+     * </ol>
+     * Each role contributes <b>all</b> its rules (not only those matching some key) because, again,
+     * {@link #coversTarget} does the prefix filtering. With empty role maps and an empty {@code roles}
+     * argument the result is exactly the principal's own grants (the deployed config), so a watch over the
+     * root {@code ""} is authorized iff that principal holds the root {@code READ}∧{@code WATCH} grant.
+     *
+     * @param principal the principal whose effective rules to assemble (non-null)
+     * @param roles     the authn-asserted role names for this request (non-null; may be empty)
+     * @return the principal's complete effective rule set (own ∪ role ∪ config); never null, possibly empty.
+     *         The returned collection is a fresh, caller-owned snapshot.
+     * @see #authorizesWatch(Collection, String)
+     * @see #coversTarget(Collection, String, Permission)
+     */
+    public Collection<PolicyRule> effectiveRules(String principal, Set<String> roles) {
+        Objects.requireNonNull(principal, "principal must not be null");
+        Objects.requireNonNull(roles, "roles must not be null");
+
+        List<PolicyRule> rules = new ArrayList<>();
+
+        // (1) Own per-prefix grants — the COMPLETE set of this principal's prefixes (coversTarget filters by
+        // the ancestor-or-equal / interior prefix relationship, so completeness is what makes the
+        // interior-DENY term observable). Mirrors accumulateOwnGrants' source, lifted from one key to all.
+        for (Map.Entry<String, ConcurrentHashMap<String, GrantEntry>> e : acls.entrySet()) {
+            GrantEntry entry = e.getValue().get(principal);
+            if (entry != null && (!entry.allow().isEmpty() || !entry.deny().isEmpty())) {
+                rules.add(new PolicyRule(e.getKey(), entry.allow(), entry.deny()));
+            }
+        }
+
+        // (2) Imperative role grants — effective roles = asserted ∪ ACL-static bindings, resolved against the
+        // defined roles (the SAME resolution isAllowed performs; both empty by default ⇒ no contribution).
+        Set<String> staticRoles = principalRoles.getOrDefault(principal, Set.of());
+        if (!roles.isEmpty() || !staticRoles.isEmpty()) {
+            for (String roleName : unionRoleNames(roles, staticRoles)) {
+                Role role = roleDefinitions.get(roleName);
+                if (role != null) {
+                    rules.addAll(role.rules());
+                }
+            }
+        }
+
+        // (3) Config-sourced role grants — read the snapshot EXACTLY ONCE (never torn). Effective config
+        // roles = asserted ∪ config bindings, resolved against the config roles (the SAME resolution
+        // isAllowed performs; EMPTY snapshot in production ⇒ no contribution ⇒ own-grants only).
+        ConfigPolicy cp = this.configPolicyRef.get().policy();
+        if (!cp.roles().isEmpty() || !cp.bindings().isEmpty()) {
+            Set<String> cfgBindings = cp.bindings().getOrDefault(principal, Set.of());
+            if (!roles.isEmpty() || !cfgBindings.isEmpty()) {
+                for (String roleName : unionRoleNames(roles, cfgBindings)) {
+                    Role role = cp.roles().get(roleName);
+                    if (role != null) {
+                        rules.addAll(role.rules());
+                    }
+                }
+            }
+        }
+        return rules;
+    }
+
+    /**
+     * The role-name union {@link #isAllowed} computes inline at both the imperative and config layers,
+     * extracted so {@link #effectiveRules} resolves roles identically. Avoids an allocation when either
+     * source is empty (the common paths).
+     */
+    private static Set<String> unionRoleNames(Set<String> asserted, Set<String> bound) {
+        if (bound.isEmpty()) {
+            return asserted;       // common path: no static/config bindings
+        }
+        if (asserted.isEmpty()) {
+            return bound;
+        }
+        Set<String> union = new HashSet<>(asserted);
+        union.addAll(bound);
+        return union;
+    }
+
+    /**
      * Decides whether an effective {@link PolicyRule rule set} grants capability {@code cap} over the
      * <b>entire</b> subtree rooted at {@code target} — the <b>whole-target cover-check</b> a subtree/{@code
      * FULL} watch (or {@code list}) authorization needs, and the one a single-key
