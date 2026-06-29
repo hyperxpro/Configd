@@ -161,8 +161,9 @@ The loader is wired **only when auth is enabled** (`aclService != null`); the no
   whyN1` as the positive witness that the asserted-role vector N1 closes is real.
 - **Snapshot hook** — `ConfigStateMachineSnapshotListenerTest`: fires on success, not on failed restore,
   isolated per-listener. `VersionedConfigStoreTest$PrefixScan` covers `getPrefixVersioned`.
-- Local module test counts: `configd-control-plane-api` **174/0**, `configd-config-store` **264/0**,
-  `configd-server` (loader + contract, targeted) **46/0**.
+- Local test counts: `configd-control-plane-api` **243/0** full module (of which **174** are the ACL/policy
+  classes named above), `configd-config-store` **264/0** full module, `configd-server` **46/0** for the
+  loader + HTTP-contract classes (targeted; the full server suite is validated by CI).
 
 **Review:** five-lane Opus team — security-reviewer (LEAD), divergence-analyst (BYTE-IDENTICAL-CONFIRMED),
 redteam-auditor (NO-BYPASS-FOUND), reliability-engineer, code-reviewer — **all APPROVE, 0 must-fix**. The
