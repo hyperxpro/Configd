@@ -91,8 +91,9 @@ public final class AclService {
      *       privilege because knowing a key <i>exists</i> can be sensitive even without its value.</li>
      *   <li>{@code WRITE} — put or delete at a concrete path.</li>
      *   <li>{@code WATCH} — subscribe to a change stream on a path/subtree.</li>
-     *   <li>{@code ADMIN} — manage policies/roles for a subtree; reach the reserved {@code /_acl/},
-     *       {@code /_system/} subtrees.</li>
+     *   <li>{@code ADMIN} — manage policies/roles for a subtree; reach the reserved {@code _acl/},
+     *       {@code _system/} subtrees (the flat-key prefixes — <b>no</b> leading slash — that the O-6
+     *       Seam 2b reserved-prefix gate requires ADMIN for, on every method).</li>
      * </ul>
      * {@code DENY} is <b>not</b> a permission — it is an effect on a rule, expressed via {@link #deny}
      * and subtracted with absolute precedence (see the class doc).

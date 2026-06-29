@@ -78,6 +78,17 @@ public final class ConfigdMetrics {
      */
     public static final String NAME_TICK_LOOP_THROWABLE_BASE = "configd.tick.loop.throwable";
     public static final String NAME_INBOUND_ROUTING_THROWABLE_BASE = "configd.inbound.routing.throwable";
+    /**
+     * O-6 Seam 2a/2b — ACL config-policy loader counters. {@code load.failed} is incremented on a rejected
+     * (fail-closed-to-last-good) {@code _acl/} reload — the series the {@code ConfigdAclPolicyLoadFailed}
+     * alert queries; {@code reload} on each accepted (re)load. They are PRODUCED by {@code
+     * AclConfigPolicyLoader} (which increments them on this SAME server registry, idempotent), but are
+     * catalogued + eager-created here so the control-plane scrape lists them from the first scrape ({@code
+     * _total 0}, the anti-blind-dashboard property) even before the loader runs, and so the canonical name
+     * has a single home the loader references. This class never increments them (no field).
+     */
+    public static final String NAME_ACL_POLICY_LOAD_FAILED = "configd.acl.policy.load.failed";
+    public static final String NAME_ACL_POLICY_RELOAD = "configd.acl.policy.reload";
 
     private final MetricsRegistry registry;
 
@@ -110,6 +121,12 @@ public final class ConfigdMetrics {
         this.snapshotRebuild = registry.counter(NAME_SNAPSHOT_REBUILD);
         this.writeRejectedOverloaded = registry.counter(NAME_WRITE_REJECTED_OVERLOADED);
         this.raftElections = registry.counter(NAME_RAFT_ELECTIONS);
+        // ACL config-policy loader counters (O-6) — PRODUCED + incremented by AclConfigPolicyLoader on this
+        // same registry (idempotent re-registration). Catalogued + eager-created here so they emit
+        // "_total 0" from the first scrape even before the loader runs; no field (this class never
+        // increments them).
+        registry.counter(NAME_ACL_POLICY_LOAD_FAILED);
+        registry.counter(NAME_ACL_POLICY_RELOAD);
 
         // Histograms — eager creation so PrometheusExporter emits the
         // # TYPE histogram banner with le=+Inf even before any sample.
