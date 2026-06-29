@@ -23,6 +23,36 @@ on:
 permissions:
   contents: read
 
+# Cancel superseded in-progress runs for the SAME PR (a new push obsoletes the
+# old run). Scoped to pull_request only — push-to-main and the nightly schedule
+# always run to completion so every landed commit gets a full, uncancelled CI
+# result.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+# -----------------------------------------------------------------------------
+# PARALLEL FAN-OUT MODEL (CI wall-clock).
+# -----------------------------------------------------------------------------
+# Every gate job below runs INDEPENDENTLY and CONCURRENTLY — there is deliberately
+# NO serial `needs:` chain between gates. Each gate-N job sets its predecessor-SKIP
+# flag (GATE2_SKIP_GATE1, GATE3_SKIP_GATE2, GATE4_SKIP_GATE3, … GATE_PHASE1_SKIP_CHAIN)
+# so it runs ONLY its own unique steps; each prior gate's coverage is supplied by
+# that gate's OWN parallel job, not by re-running the cumulative chain. GitHub
+# Actions runs every job on a fresh, isolated VM (no shared filesystem, no artifact
+# hand-off between gates — they upload only logs), so the former
+# gate-2→gate-3→…→gate-phase1 `needs:` chain provided NO build reuse: it was pure
+# serialization, turning ~10 short gates into a ~1h critical path. Fanning them out
+# drops CI wall-clock to roughly the single slowest gate.
+#
+# The cumulative guarantee — "a green CI ⟹ every gate passed" — is preserved by the
+# `ci-success` aggregator at the bottom: it `needs:` every job and FAILS if any did
+# not succeed. Set `ci-success` as the sole required status check in branch
+# protection (requiring each gate by name also still works — each reports its own
+# status). Where a per-gate comment below says cumulative coverage "comes from the
+# job dependency", that now means the parallel sibling job sealed by `ci-success`,
+# not a serial `needs:` edge.
+# -----------------------------------------------------------------------------
 jobs:
   build-and-test:
     runs-on: ubuntu-latest
@@ -163,14 +193,14 @@ jobs:
 
       - name: Run gate-2 (push/PR — mutation skipped for speed)
         if: github.event_name != 'schedule' && github.event.inputs.run_full_nightly != 'true'
-        run: GATE2_SKIP_MUTATION=1 bash gates/gate-2.sh
+        run: GATE2_SKIP_GATE1=1 GATE2_SKIP_MUTATION=1 bash gates/gate-2.sh
         env:
           GATE2_LOG_DIR: ${{ runner.temp }}/gate2-logs
         timeout-minutes: 90
 
       - name: Run gate-2 FULL (nightly — incl. PIT mutation thresholds)
         if: github.event_name == 'schedule' || github.event.inputs.run_full_nightly == 'true'
-        run: bash gates/gate-2.sh
+        run: GATE2_SKIP_GATE1=1 bash gates/gate-2.sh
         env:
           GATE2_LOG_DIR: ${{ runner.temp }}/gate2-logs
         timeout-minutes: 180
@@ -193,7 +223,6 @@ jobs:
     # walk, the four-phase Compose E2E scenario (docker available on
     # ubuntu-latest), the CT-34 JMH gc-profile check, and (nightly) the
     # new-module PIT floors (edge-cache + edge-node >= 65).
-    needs: gate-2
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -242,7 +271,6 @@ jobs:
     # GATE4_SKIP_NIGHTLY=1 keeps the CI subset in CI time. (RR-106: this block
     # previously claimed C/D/E were "NOT YET IN GATE-4"; the code has run C+D in
     # the subset and E nightly since S4 — comment corrected 2026-06-14.)
-    needs: gate-3
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -291,7 +319,6 @@ jobs:
     # burst rates are ENV-BLOCKED on CI hardware (manifest M-9/M-10); they live as
     # docs/session-5 captures + the perf nightly lane (the nightly path below runs
     # the full gate-5, incl. the unskipped steps, captured).
-    needs: gate-4
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -342,7 +369,6 @@ jobs:
     # for one scenario. gate-6 downloads a pinned promtool. The full multi-node game-day
     # drill is the nightly/ops lane (gates/game-day-drill.sh wraps e2e-compose-scenario.sh,
     # itself a gate-3 step) — captured, not in the fast gate.
-    needs: gate-5
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -386,7 +412,6 @@ jobs:
     # OWASP dependency-check NVD CVE scan (needs NVD_API_KEY + network), the
     # gitleaks secret scan (needs the binary), and the two-build byte-identical
     # reproducibility proof (GATE7_FULL=1). On push/PR they loud-skip.
-    needs: gate-6
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -445,7 +470,6 @@ jobs:
     # surface WITH rehoming injected (zero off-owner fires across tens of thousands of handoffs, groups
     # keep committing). The heavy 20,001-seed deterministic sim runs on the NIGHTLY path (skipped on
     # push/PR for speed; cumulatively covered by gate-1's failover smoke + gate-2's seed sweep).
-    needs: gate-7
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -483,12 +507,11 @@ jobs:
     # Workstream B MERGE gate (gates/gate-B.sh) — the merge-readiness SEAL for the multi-Raft
     # re-threading: R-01 deletion (Stage 1), N>1 owner-isolation (M1), H-4 group-rehoming closure
     # (M2a/M2b), and the coalesced-heartbeat de-regression (M3). Cumulative with gates 1..7 + phase0,
-    # which each run as their own job; this job DEPENDS on gate-phase0, so a green gate-B means the whole
-    # chain passed. It sets GATE_B_SKIP_CHAIN=1 (the chain is supplied by the gate jobs, not re-run) and
+    # which each run as their own PARALLEL job; the ci-success aggregator (not a serial needs: edge) is what
+    # proves the whole chain passed. It sets GATE_B_SKIP_CHAIN=1 (the chain is supplied by the gate jobs, not re-run) and
     # asserts the B milestone artifacts exist (non-vacuity — a deleted contract/gate/coalescing class
     # FAILS, never a silent pass) + records the verified baseline (cedc706, D-010). A green gate-B is the
     # named status the B → main merge is gated on.
-    needs: gate-phase0
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -504,11 +527,10 @@ jobs:
     # multi-shard deterministic simulator with its six invariants (routing correctness, disjoint
     # ownership, per-shard linearizability, cross-shard isolation, stale-map redirect, N=1 equivalence) —
     # each proven NON-VACUOUS (an injected mis-route / wrong-shard / dropped-redirect / N=1-divergence goes
-    # RED). Cumulative with gates 1..7 + phase0 + B (each its own job); this job DEPENDS on gate-B, so a
-    # green gate-phase1 means the whole chain passed. Sets GATE_PHASE1_SKIP_CHAIN=1 (chain supplied by the
+    # RED). Cumulative with gates 1..7 + phase0 + B (each its own PARALLEL job); the ci-success aggregator
+    # (not a serial needs: edge) is what proves the whole chain passed. Sets GATE_PHASE1_SKIP_CHAIN=1 (chain supplied by the
     # gate jobs). Push/PR runs a fast 200-seed sweep; the NIGHTLY path runs the integrated >=10k-seed sweep
     # (charter C5).
-    needs: gate-B
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -590,3 +612,46 @@ jobs:
           else
             echo "No fixture changes in $DIFF_RANGE — wire-compat clean."
           fi
+
+  ci-success:
+    # Aggregator / required-check seal. With the gates fanned out in parallel (no
+    # serial needs: chain), this single job re-establishes the cumulative guarantee:
+    # it depends on EVERY other job and FAILS unless all of them succeeded. Make
+    # THIS the sole required status check in branch protection — it collapses the
+    # 13 parallel jobs back into one green/red signal, and any future job you also
+    # list under `needs:` is then enforced automatically. `if: always()` so a
+    # failed or cancelled upstream still yields a definitive RED here (a skipped
+    # aggregator would read as "no result" to branch protection and could let a
+    # broken build merge).
+    name: CI Success (all gates green)
+    if: always()
+    needs:
+      - build-and-test
+      - tlc-model-check
+      - wire-compat
+      - gate-1
+      - gate-2
+      - gate-3
+      - gate-4
+      - gate-5
+      - gate-6
+      - gate-7
+      - gate-phase0
+      - gate-B
+      - gate-phase1
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require every upstream job to have succeeded
+        run: |
+          set -euo pipefail
+          results="${{ join(needs.*.result, ' ') }}"
+          echo "Upstream job results: $results"
+          failed=0
+          for r in $results; do
+            [ "$r" = "success" ] || failed=1
+          done
+          if [ "$failed" -ne 0 ]; then
+            echo "::error::One or more required CI jobs did not succeed (results: $results)"
+            exit 1
+          fi
+          echo "All required CI jobs succeeded."
