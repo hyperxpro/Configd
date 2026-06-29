@@ -24,6 +24,11 @@
 
 ### Counts (132 items)
 
+> **Note:** these counts are the **snapshot as of the original audit (2026-06-26)**. They have **not**
+> been re-tallied for subsequent row updates — in particular the watch rows (§4.8/6.6, §11.8) were
+> upgraded 🟡/??? → ✅ (N=1, server-side) on 2026-06-29 (watch arc, PRs #28/#29/#30), so the live ✅/🟡
+> split is ~3 items better than shown. See the individual rows for current status.
+
 | Status | Count | Meaning |
 |---|---:|---|
 | ✅ done + evidenced | **86** | named artifact found and verified to exist + (mostly) CI-wired |
@@ -43,7 +48,7 @@ but unwired" traps.
 
 | Item | Pre-fill | Audited | Why |
 |---|---|---|---|
-| 4.8 / 6.6 Watches | ✅ | **🟡** | `WatchService`/`WatchEvent`/`WatchCoalescer` exist and are server-internal-wired (fed by `stateMachine.addListener`, ticked every loop) **but have no client-facing API, no HTTP/SSE route, no wire frame, and zero production registrants** — `tick()` dispatches to nobody; the `watchService()` accessor is test-only. Not a usable v1 client feature. |
+| 4.8 / 6.6 Watches | ✅ | **✅ (N=1, server-side)** | The **RFC §2 client-facing watch protocol is now implemented server-side** on the edge endpoint (`--edge-port`): the `0x02` wire (`WATCH_*` frames + per-shard cursor vector), the multiplex/filter veneer, the whole-target authorization gate (reject-not-filter, fail-closed), per-watch target-filtered delivery + catch-up snapshots, and **bounded revocation under live ACL reload** (W7-7) — PRs #28/#29/#30. N=1 only (N>1 multi-shard watch = **v3**, fail-closed). **Caveats:** no shipped client driver yet (the conforming RFC §1+§2+§3 driver is the next arc); the watch ACL is conditional on segregating watch clients from the co-resident unauthenticated-beyond-mTLS legacy SUBSCRIBE path; single-scope keyspace at N=1 (see known-limitations §2). The legacy in-process `WatchService` is unrelated server-internal plumbing. |
 | 10.12 Buggify | ✅ | **🟡** | `Buggify`/`BuggifyRuntime` built + self-tested but **zero call sites** anywhere; the deterministic sim injects faults via `SimulatedNetwork`, not Buggify. Named primitive is shelfware. |
 | 5.11 BloomFilter | ✅ | **🟡** | Built + property-tested but **zero `src/main` callers**; the `DeltaApplier` half of the item is wired, the bloom half is dormant. |
 | 9.7 24h soak | 🔬/🟡 | **🟡** | The soak **launched** (2026-06-14) and ran leak-clean (FD/threads/heap flat) but only **~3.45 h of 24 h** before the Linux OOM-killer killed a node (box capacity RR-112, not a Configd leak). No full soak (24 h or 72 h) has completed. |
@@ -60,7 +65,7 @@ but unwired" traps.
 | 9.3 Edge read perf | 🟡 | **✅** | Measured: `getHitWithCursor` p50=50 ns/p99=140 ns (JMH, gate-5 enforced) + 53,616 req/s @64 conn (m6i HTTP). |
 | 9.12 Allocation profiling | 🟡 | **✅** | Measured: edge-read 14,999→1,704 B/req (8.80×) on production `NettyEdgeHttpServer`; read-path 0 B/op gated (gate-5). |
 | 6.10 SDK docs | ❌ | **🟡** | `docs/wiki/Integration-Guide.md` has real edge-read/cursor/staleness examples — but partial + stale (Gradle/Java-21 vs actual Maven/Java-25). |
-| 11.8 Watches scope decision | ??? | **🟡** | Recorded in ADR-0006/0018 (event-driven push "replaces polling watches"); the live `WatchService` *is* that push impl, but no ADR scopes a v1 *client* watch API. |
+| 11.8 Watches scope decision | ??? | **✅ (scoped + built, N=1)** | The **RFC §2 driver-protocol watch section** (`docs/rfc/driver-protocol/02-watches.md`, PR #26) scopes the v1 *client* watch surface, and it is now implemented server-side at N=1 (PRs #28/#29/#30 — wire + veneer + authz + bounded revocation). Supersedes the prior "client-facing watches are v2" deferral **for N=1**; N>1 multi-shard watch remains v3. |
 
 ### Documentation-staleness flags (found during audit — docs trailing the code)
 
@@ -120,8 +125,10 @@ recommendation for the go/no-go, **not** a decision.
 
 - **Sharding / multi-Raft production deployment** (2.6–2.9, 2.11) — v1 ships **single-group by design**
   (ADR-0030); the sharding *logic* is sim-verified, the *server wiring* + N×knee measurement are v2/EC2.
-- **No client watch API** (4.8, 6.6) — clients pull via HTTP + the edge delta-stream; document "no watch
-  callbacks in v1."
+- **Watches: server-side protocol done (N=1), no client driver yet** (4.8, 6.6) — the RFC §2 watch wire
+  protocol is implemented server-side (PRs #28/#29/#30); the remaining gap is a conforming client driver
+  (next arc) + the deployment security model (segregate watch clients from the legacy SUBSCRIBE path) +
+  N>1 (v3). Clients without the driver still pull via HTTP + the edge delta-stream.
 - **Client-SDK maturity** (6.6–6.11) — no write-SDK (writes are raw HTTP), Java-only, partial/stale docs.
 - **Per-shard observability** (2.8, 7.10) — irrelevant at N=1 (the v1 topology); becomes real only with
   sharding (v2).
@@ -214,7 +221,7 @@ recommendation for the go/no-go, **not** a decision.
 | 4.5 Slow-consumer governor / backpressure | ✅ | `fanout/SlowConsumerGovernor` + `SubscriberOverflowDemotionTest`, `QuarantineReBootstrapTest` | — |
 | 4.6 Signed-chain streaming (ADR-0038) | ✅ | `FanOutSessionCore`; `FrameBatchingChainIntegrityTest`, `FullChainDeliveryTest` | — |
 | 4.7 Edge frame wire format | ✅ | `EdgeFrameCodec` + golden/property/fuzz/boundary tests | — |
-| 4.8 **Watches** | 🟡 | server-internal only: fed `ConfigdServer.java:568`, ticked `:913`; `WatchServiceTest`/`WatchServicePropertyTest` | **Δ ✅→🟡 — NO client-facing API** (no HTTP/SSE route, no wire frame), **NO production registrant** (zero watchers → ticks to nobody), accessor test-only. **DECIDED 2026-06-27: client-facing watches are v2** (operator); v1 = polling / delta-apply only — documented in known-limitations / README / Integration-Guide |
+| 4.8 **Watches** | ✅ (N=1, server-side) | RFC §2 watch protocol implemented server-side on the edge endpoint: wire `0x02` + `WATCH_*` frames + cursor vector, multiplex/filter veneer, whole-target authz gate, target-filtered delivery + catch-up snapshots, **bounded revocation (W7-7)** (PRs #28/#29/#30); the unrelated legacy in-process `WatchService` stays server-internal | **DECISION UPDATED 2026-06-29: the v1 (N=1) client watch protocol is now built server-side** (supersedes the 2026-06-27 "watches are v2" decision for N=1). Caveats: **no shipped client driver yet** (next arc); watch ACL conditional on SUBSCRIBE-path segregation; single-scope at N=1; **N>1 multi-shard watch = v3** (fail-closed). See known-limitations §2. |
 | 4.9 Subscription manager / prefix subs (ADR-0020) | ✅ | `SubscriptionManager` wired `:852`; `SubscriptionManagerTest`; edge `PrefixStorageFilter` | — |
 | 4.10 Rollout controller (ADR-0008) | 🟡 | constructed `:526` + accessor `:1565` | **Parked library — zero `rolloutController.` call sites in main**, no rollout endpoint |
 | 4.11 Cross-region / WAN replication | ⛔ | single-region per ADR-0030/ADR-0024 (Accepted, defers per-DC Raft to v0.2); WAN leg modeled only in `EdgeStalenessDistributionLoadSimTest` | no cross-region path in code; WAN staleness 🔬 unmeasured |
@@ -252,7 +259,7 @@ recommendation for the go/no-go, **not** a decision.
 | 6.3 Subscription / streaming client | ✅ | `EdgeStreamClient` (mTLS/subscribe/reader+writer/reconnect); `EdgeClientCoreTest` (~30), `EdgeNodeIntegrationTest` | delivers into the edge **local store**, not per-key app callbacks |
 | 6.4 Reconnect / failover | ✅ | `EdgeStreamClient.sessionLoop:259` round-robin + `failoverResumeCursor`; **`EdgeFailoverTest`** | **Δ 🟡→✅** |
 | 6.5 Cursor management | ✅ | `VersionCursor` record + `INITIAL`/`isNewerThan`; `VersionCursorTest` (15) | — |
-| 6.6 Watch API client-side | 🟡 | `WatchService.register(prefix,listener)` real + tested in-process | **in-process server-side only — a remote client CANNOT register a watch / get callbacks** (no route, no caller outside server wiring) |
+| 6.6 Watch API client-side | ✅ (protocol, N=1) | the RFC §2 watch wire protocol (`WATCH_CREATE`/`CANCEL`/`EVENT`/…, `0x02`) is served over the mTLS edge endpoint; a remote client CAN now create/cancel/multiplex watches and receive filtered events + bounded revocation | **the server protocol is live (N=1)**; the remaining piece is a **conforming client driver** (RFC §1+§2+§3) — the next arc. No HTTP/SSE route (the binary edge wire is the surface, by design — W2-7). |
 | 6.7 Write API in SDK | 🟡 | writes are HTTP-only; only Java HTTP-write client is the `configd-linz` test harness `ConfigClient.java:70` | **no SDK write client** — apps hand-roll HTTP PUT/DELETE |
 | 6.8 Language support | 🟡 | Java only across all `src/main` | no polyglot bindings (v1 Java-only) |
 | 6.9 Client backpressure / flow control | 🟡 | bounded queues `EdgeStreamClient:101` (TCP backpressure) + demotion→snapshot `EdgeClientCore:589` | no client-side credit/flow-control class (relies on TCP + server governor) |

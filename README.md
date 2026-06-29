@@ -15,7 +15,11 @@ read/consistency plane, and a Porcupine-backed linearizability harness). **Befor
   (always-linearizable, fail-closed for security-critical keys), **not** confidentiality. **Do not store
   secrets** (passwords, tokens, keys) in Configd — use a dedicated secret manager. At-rest encryption is a
   **v2** item ([RR-098](docs/readiness/production-readiness-register.md)).
-- **No client "watch" / change-subscription API** — v1 is polling / delta-apply only. Watches are **v2**.
+- **Client "watch" / change-subscription:** the RFC §2 watch protocol is **implemented server-side**
+  (N=1) on the edge endpoint (wire `0x02`, multiplex/filter veneer, whole-target authz gate, bounded
+  revocation). A **conforming client driver is the next deliverable**, and N>1 multi-shard watch is **v3**;
+  until a driver ships, use polling / delta-apply. See [known-limitations §2](docs/known-limitations.md)
+  for the guarantees + the deployment security model.
 - **Single Raft group (N=1) by design.** Multi-shard scaling is built and sim-verified but its aggregate
   throughput is **unmeasured** (v2 / EC2). The measured single-group write knee is ~800 writes/s.
 - **Empirical validation deferred** — no completed 24h soak, DR drills not yet executed.

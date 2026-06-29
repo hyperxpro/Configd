@@ -6,8 +6,11 @@ Configd is an embeddable library. This guide covers how to integrate each layer 
 
 - **No change-subscription / "watch" API.** v1 is **pull / delta-apply only**: read via
   `LocalConfigStore.get(...)` (edge) or the control-plane `GET`, and apply deltas from your replication
-  layer (below). There is no client callback that fires on change — clients **poll** (edge reads are
-  in-process and sub-millisecond). Change-subscription (**watches**) is a **v2** feature.
+  layer (below). For change-subscription (**watches**), the **RFC §2 watch protocol is now implemented
+  server-side** (N=1) on the edge endpoint — but a **conforming client driver is the next deliverable**,
+  so until one ships, clients **poll** (edge reads are in-process and sub-millisecond). N>1 multi-shard
+  watch is **v3**. See [known-limitations §2](../known-limitations.md) for the watch guarantees, the
+  deployment security model (segregate watch clients from the legacy SUBSCRIBE path), and the boundaries.
 - **No encryption at rest.** Configd stores values **plaintext** (integrity-checked only — HMAC,
   ADR-0042; **not** encrypted). The `secure/` key prefix is a **read-freshness** guarantee
   (always-linearizable, fail-closed for security-critical keys), **not** confidentiality. **Do not store

@@ -26,17 +26,54 @@ the RR-098 mitigation — which bounds, but does not remove, the exposure.)
   non-goal: if a v1 deployment must store sensitive data or meets a compliance bar, this is a **blocker** —
   raise it before deploying.
 
-### 2. No client-facing watches / change-subscription — polling only (v2)
+### 2. Client-facing watches: the RFC §2 protocol is implemented server-side (N=1); drivers + N>1 are next
 
-v1 exposes **pull reads only**: `GET /v1/config/{key}` (optionally linearizable) plus the edge
-bounded-staleness read path with version cursors. There is **no client-facing change-subscription
-("watch") API** — no HTTP/SSE/long-poll route, no wire frame, no client callback. An internal
-`WatchService` exists but is server-internal, has **zero production registrants**, and is **not a usable
-v1 client feature** (register §4.8, 🟡).
+v1 now implements the **server side of the RFC §2 driver-protocol watch surface** on the edge endpoint
+(`--edge-port`): the `0x02` edge wire (the `WATCH_*` frames + the per-shard cursor vector), the
+multiplex/filter veneer, the **whole-target authorization gate** (`READ ∧ WATCH`, reject-not-filter,
+fail-closed), per-watch target-filtered delivery + catch-up snapshots, and **bounded revocation under
+live ACL reload** (W7-7). It is **N=1** (single Raft group); an **N>1 multi-shard** watch is **v3** (the
+watch protocol layered on top of the separately-deferred v2 sharded edge data plane) — the edge endpoint
+fail-closes at N>1 unless an operator opts into the primary-shard-only partial view. The
+legacy in-process `WatchService` is unrelated server-internal plumbing (register §4.8).
 
-- **v1 pattern:** clients **poll** (the edge read path is in-process and sub-millisecond, designed for
-  frequent reads), or consume the edge delta stream at the edge-node layer.
-- **Change-subscription (watches) is a v2 feature** — at the top of the v2 backlog.
+- **No shipped client driver yet.** The protocol is server-ready, but a **conforming client driver**
+  (RFC §1+§2+§3) is the **next deliverable** — until one ships, watches are not consumable out-of-the-box.
+  The legacy v1 pull pattern — `GET /v1/config/{key}` (optionally linearizable) + the edge
+  bounded-staleness read path with version cursors — remains the supported read path.
+- **Guarantees (rely on exactly these):** per-key and per-shard order ✅ (never cross-shard / global ❌);
+  batch-atomic per shard-commit ✅; at-least-once with **`(gid, S)` dedup** (the driver drops
+  `S ≤ cursor[gid]`); bounded-staleness (edge-served, **ordered not linearizable** — use the strong-read
+  path for read-after-write); bounded revocation latency (≤ the edge idle-poll interval after an `_acl/`
+  reload).
+- **Security model a deployer MUST know** (from the Gate-1 security review — the watch path is internally
+  sound; these are system-boundary/deployment conditions):
+  - **Co-resident legacy SUBSCRIBE.** The same `--edge-port` also serves the pre-existing whole-store
+    SUBSCRIBE fan-out, which has **no per-key ACL** (the trusted server↔edge backbone, ADR-0038). A cert
+    that completes the mTLS handshake can obtain the whole store via SUBSCRIBE, bypassing the watch gate.
+    The watch ACL therefore only constrains clients that **cannot** reach the legacy SUBSCRIBE path —
+    deploy watch clients **segregated** from edge-cache subscribers (separate trust anchor, or the intended
+    server↔edge↔client topology). NOT reachable in the default config (only `root`, which already holds
+    whole-store). Hardening (gate SUBSCRIBE / segregate trust anchors) is a tracked follow-up before any
+    non-root watch grant on a shared port.
+  - **mTLS + explicit grant required.** A watch needs a verified cert-DN **and** an explicit `READ ∧ WATCH`
+    grant to that DN; plaintext ⇒ all watches rejected (fail-closed). The default config grants watch only
+    to `root`, so out-of-the-box no edge cert can watch until the operator adds an `_acl/` grant.
+  - **Single-scope keyspace at N=1.** `scope` carries **no** authorization isolation (gate, store keys,
+    read path, and filter are uniformly scope-blind over the flat keyspace); it is forward-compat metadata.
+  - **Reserved-prefix (`_acl/`, `_system/`) ADMIN** is enforced at the HTTP boundary, not yet mirrored in
+    the watch gate. A KEY/PREFIX watch cannot *name* a reserved key (the watch path grammar requires a
+    leading `/`, disjoint from the flat `_acl/`/`_system/` keys); a FULL / `full_chain_verify` watch *does*
+    span them, but is gated by the **root-only full-scope grant** (only `root` holds the root grant, and
+    `root` is ADMIN) — so no non-root principal can observe reserved keys via any watch kind. A follow-up
+    should still move the reserved-prefix rule into `AclService` so every gate inherits it before any
+    non-root watch grant.
+- **v1 boundaries:** per-connection **shared drain** (W8-6) — all watches on a connection share one cursor,
+  one ack, and one backpressure fate (a slow watch can demote its siblings; per-watch fairness is v2); a
+  connection-level catch-up snapshot maps to the drain-owning (first) watch (single-snapshotting-watch).
+- **Deferred:** N>1 multi-shard watch (v3); per-watch flow-control (W10-8); the `prev_value` /
+  leader-served / long-poll-gateway named extensions (W10-2/4/7); the SUBSCRIBE-co-residence +
+  reserved-prefix hardening; a conforming client driver + a shared conformance suite (the next arc).
 
 ### 3. Sharding: v1 ships single-group (N=1); multi-shard is built but unmeasured (v2)
 
