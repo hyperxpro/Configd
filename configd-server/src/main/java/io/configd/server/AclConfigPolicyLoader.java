@@ -68,6 +68,19 @@ final class AclConfigPolicyLoader {
     /** Success metric: incremented once per accepted (re)load (including the boot seed). */
     static final String NAME_POLICY_RELOAD = "configd.acl.policy.reload";
 
+    /**
+     * The reserved role name a config policy may NOT define (forward-compat for a built-in admin role) and
+     * the reserved principal a config policy may NOT bind config roles to (the break-glass {@code root}).
+     * These are the SINGLE SOURCE OF TRUTH for the reserved sets: {@code ConfigdServer} constructs this
+     * loader with them, AND the O-6 Seam 2b write-time gate ({@code AdminApiHandler} → {@link
+     * #validateAclWrite}) validates against them — so write-time and reload-time reject the IDENTICAL set of
+     * reserved names (never two validators that could drift). See {@link #validateReserved}.
+     */
+    static final String RESERVED_ROLE_ADMIN = "admin";
+    static final String RESERVED_PRINCIPAL_ROOT = "root";
+    static final Set<String> RESERVED_ROLES = Set.of(RESERVED_ROLE_ADMIN);
+    static final Set<String> RESERVED_PRINCIPALS = Set.of(RESERVED_PRINCIPAL_ROOT);
+
     private final AclService aclService;
     private final VersionedConfigStore store;
     private final Set<String> reservedRoles;
@@ -142,6 +155,16 @@ final class AclConfigPolicyLoader {
     }
 
     private void validateReserved(ConfigPolicy policy) {
+        validateReserved(policy, this.reservedRoles, this.reservedPrincipals);
+    }
+
+    /**
+     * Validates that {@code policy} defines no reserved role name and binds no reserved principal, throwing
+     * {@link PolicyParseException} on a violation. {@code static} and shared so the reload path (above) and
+     * the O-6 Seam 2b write-time gate ({@link #validateAclWrite}) run the IDENTICAL check against the
+     * IDENTICAL reserved sets — a single validator, never two that could drift.
+     */
+    static void validateReserved(ConfigPolicy policy, Set<String> reservedRoles, Set<String> reservedPrincipals) {
         for (String roleName : policy.roles().keySet()) {
             if (reservedRoles.contains(roleName)) {
                 throw new PolicyParseException(
@@ -154,5 +177,25 @@ final class AclConfigPolicyLoader {
                         "reserved principal '" + principal + "' may not be bound to roles by config policy");
             }
         }
+    }
+
+    /**
+     * Write-time validation of a SINGLE reserved {@code _acl/} write (O-6 Seam 2b): parses the
+     * {@code {key: value}} singleton with the EXACT same {@link PolicySerializer#parse} the reload path
+     * runs, then applies {@link #validateReserved} against the shared {@link #RESERVED_ROLES} /
+     * {@link #RESERVED_PRINCIPALS}. Returns normally iff the write is acceptable policy; throws
+     * {@link PolicyParseException} on a malformed shape / role-line / binding grammar or a reserved name
+     * ({@code _acl/roles/admin}, {@code _acl/bindings/root}). Because it shares the loader's exact code and
+     * sets, a key that passes here can never freeze a later whole-subtree reload. A well-formed-but-
+     * incomplete policy (a binding to a not-yet-defined role) parses successfully and is intentionally NOT
+     * rejected (DL-O6-06) — single-key validation is exactly the right granularity.
+     *
+     * @param key   the reserved {@code _acl/}-prefixed config key (verbatim, post-strip)
+     * @param value the raw config value bytes
+     * @throws PolicyParseException if the singleton {@code {key: value}} is not acceptable config policy
+     */
+    static void validateAclWrite(String key, byte[] value) {
+        ConfigPolicy policy = PolicySerializer.parse(Map.of(key, value));
+        validateReserved(policy, RESERVED_ROLES, RESERVED_PRINCIPALS);
     }
 }

@@ -183,6 +183,20 @@ groups:
         annotations:
           summary: "Implausible (future-dated) edge frontier — clock skew suspected"
           runbook_url: ops/runbooks/edge-catchup-storm.md
+      # PROPOSED (O-6 Seam 2b): any ACL config-policy load rejection. The loader keeps last-good
+      # (fail-closed — never deny-all / allow-all), so a rejected reload is SILENT to clients yet means an
+      # `_acl/` write did NOT take effect, and one persisted poison key FREEZES every subsequent policy
+      # update until it is removed (AclConfigPolicyLoaderTest#poisonKeyFreezesSubsequentUpdates). 2b's
+      # write-time validation rejects most malformed `_acl/` writes pre-commit, but a key delivered via
+      # snapshot/replay can still trip this. Series RECORDED via AclConfigPolicyLoader (eager-created ⇒
+      # emits `_total 0`, no blind-dashboard series).
+      - alert: ConfigdAclPolicyLoadFailed
+        expr: increase(configd_acl_policy_load_failed_total[15m]) >= 1
+        for: 5m
+        labels: {severity: warn}
+        annotations:
+          summary: "ACL config-policy load REJECTED — last-good policy frozen (an `_acl/` update did not apply)"
+          runbook_url: ops/runbooks/acl-policy-load.md
 
   # ----------------------------------------------------------------------------
   - name: configd-runtime-leaks

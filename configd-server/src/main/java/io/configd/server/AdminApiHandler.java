@@ -6,6 +6,8 @@ import io.configd.api.AuthInterceptor;
 import io.configd.api.ConfigReadService;
 import io.configd.api.ConfigWriteService;
 import io.configd.api.HealthService;
+import io.configd.api.PolicyParseException;
+import io.configd.api.PolicySerializer;
 import io.configd.api.ReplayGuard;
 import io.configd.common.ConfigScope;
 import io.configd.common.NodeId;
@@ -320,6 +322,22 @@ public final class AdminApiHandler {
             return json(400, "Request body must not be empty");
         }
 
+        // O-6 Seam 2b: write-time validation of reserved `_acl/` policy. Runs the IDENTICAL
+        // PolicySerializer.parse + reserved-name check as the reload path (AclConfigPolicyLoader), on the
+        // singleton {key: value}, so a key that passes the write can never freeze a later whole-subtree
+        // reload (never a second hand-rolled validator). Malformed shape / role-line / binding grammar, or
+        // a reserved name (`_acl/roles/admin`, `_acl/bindings/root`) ⇒ 400 PRE-COMMIT (store unchanged). A
+        // well-formed-but-incomplete policy (a binding to a not-yet-defined role) is intentionally NOT an
+        // error (DL-O6-06). Only `_acl/` carries a policy format; `_system/` is gated (ADMIN) but unparsed.
+        if (key.startsWith(PolicySerializer.ACL_PREFIX)) {
+            try {
+                AclConfigPolicyLoader.validateAclWrite(key, body);
+            } catch (PolicyParseException e) {
+                audit(authCheck.principal(), "PUT", key, "rejected: invalid ACL policy: " + e.getMessage());
+                return json(400, "Invalid ACL policy: " + e.getMessage());
+            }
+        }
+
         ConfigWriteService.WriteResult result =
                 writeService.put(key, body, scope, authCheck.principal()); // S7.5 per-principal limit
         audit(authCheck.principal(), "PUT", key, auditOutcome(result));
@@ -433,9 +451,40 @@ public final class AdminApiHandler {
      * Authentication + ACL. A missing/blank/malformed/invalid credential is AUTHENTICATION failure →
      * {@link AuthDecision#UNAUTHENTICATED} (401); an authenticated principal the ACL does not permit →
      * {@link AuthDecision#FORBIDDEN} (403). When auth is not configured the gate is open.
+     *
+     * <p><b>O-6 Seam 2b — the reserved-prefix ADMIN gate.</b> A key under a reserved namespace
+     * ({@link #isReserved}: {@code _acl/} or {@code _system/}) requires {@link AclService.Permission#ADMIN}
+     * for <b>every</b> method (GET/PUT/DELETE), overriding the GET→READ / PUT|DELETE→WRITE mapping — this
+     * closes both policy MUTATION and policy DISCLOSURE (a non-ADMIN read of {@code _acl/} would leak the
+     * access structure; the {@code ADMIN} enum doc states it "reaches the reserved subtrees"). The gate is
+     * <b>fail-closed</b>: a reserved key whose ADMIN cannot be evaluated (no ACL service, or — defensively —
+     * a non-authenticated result) is DENIED, never allowed to fall through to {@link AuthCheck#ok}. It is
+     * byte-identical in production: only {@code root} touches {@code _acl/}, and {@code root} holds
+     * {@code ADMIN} via its {@code allOf} grant, so no production decision changes.
+     *
+     * <p><b>Predicate-alignment invariant (§2.2):</b> the gate keys off
+     * {@code key.startsWith(PolicySerializer.ACL_PREFIX)} on the SAME post-strip key that the loader
+     * ({@code AclConfigPolicyLoader}) and the store ({@code VersionedConfigStore}) use verbatim — so a key
+     * that slips the gate is also invisible to the loader and is a distinct store key. "Evades the gate"
+     * and "is real policy" are therefore mutually exclusive. Do NOT add write-path key normalization here
+     * without applying the identical transform to this predicate.
+     *
+     * <p><b>Auth-off footgun:</b> when auth is disabled (the loudly-warned non-production mode) the gate is
+     * otherwise open, but a WRITE to a reserved prefix is still refused — an {@code _acl/} key written
+     * during an auth-off bring-up would PERSIST and be seeded into policy on the first SECURED boot,
+     * possibly fail-closed-freezing it. Policy is meaningless without auth.
      */
     private AuthCheck checkAuth(AdminRequest req, String key, AclService.Permission permission) {
+        boolean reserved = isReserved(key);
+
         if (authInterceptor == null) {
+            // Auth disabled: the gate is open EXCEPT a reserved-prefix WRITE, refused to close the
+            // bring-up poison footgun (an _acl/ key written here would be seeded into policy on the first
+            // secured boot). Reads stay open (consistent with auth-off being fully open otherwise).
+            if (reserved && permission == AclService.Permission.WRITE) {
+                return AuthCheck.forbidden("-",
+                        "Access denied: reserved key '" + key + "' cannot be written while authentication is disabled");
+            }
             return AuthCheck.ok("-"); // auth not configured: no resolved principal
         }
 
@@ -445,17 +494,48 @@ public final class AdminApiHandler {
             return AuthCheck.unauthenticated("authentication required: " + denied.reason());
         }
 
-        String principal = (authResult instanceof AuthInterceptor.AuthResult.Authenticated authed)
-                ? authed.principal() : "-";
+        // Reserved-prefix keys require ADMIN for ALL methods; otherwise the caller's GET→READ /
+        // PUT|DELETE→WRITE mapping stands. The fail-closed corner below denies when ADMIN can't be evaluated.
+        AclService.Permission required = reserved ? AclService.Permission.ADMIN : permission;
 
-        if (aclService != null && authResult instanceof AuthInterceptor.AuthResult.Authenticated authed) {
-            if (!aclService.isAllowed(authed.principal(), authed.roles(), key, permission)) {
-                return AuthCheck.forbidden(authed.principal(),
-                        "Access denied: insufficient permissions for key '" + key + "'");
+        if (authResult instanceof AuthInterceptor.AuthResult.Authenticated authed) {
+            if (aclService != null) {
+                if (!aclService.isAllowed(authed.principal(), authed.roles(), key, required)) {
+                    return AuthCheck.forbidden(authed.principal(),
+                            "Access denied: insufficient permissions for key '" + key + "'");
+                }
+                return AuthCheck.ok(authed.principal());
             }
+            // No ACL service: an ordinary key is authn-only (unchanged). A reserved key REQUIRES ADMIN,
+            // which cannot be evaluated without an ACL — FAIL CLOSED rather than fall through to ok
+            // (acl/auth are independently nullable, so the deny must be explicit). (§2.1)
+            if (reserved) {
+                return AuthCheck.forbidden(authed.principal(),
+                        "Access denied: reserved key '" + key + "' requires ADMIN but no ACL is configured");
+            }
+            return AuthCheck.ok(authed.principal());
         }
 
-        return AuthCheck.ok(principal);
+        // Unreachable for the sealed AuthResult ({Authenticated, Denied}; Denied handled above), but the
+        // fail-closed corner guarantees a reserved key NEVER reaches ok if a future variant is added.
+        if (reserved) {
+            return AuthCheck.forbidden("-", "Access denied: reserved key '" + key + "' requires ADMIN");
+        }
+        return AuthCheck.ok("-");
+    }
+
+    /** Forward-compat reserved namespace gated to ADMIN alongside {@code _acl/} (no real keys yet). */
+    private static final String SYSTEM_PREFIX = "_system/";
+
+    /**
+     * Whether {@code key} (the post-strip config key) is under a reserved namespace that requires
+     * {@link AclService.Permission#ADMIN} for every method (O-6 Seam 2b). Reuses the
+     * {@link PolicySerializer#ACL_PREFIX} CONSTANT so the gate, the policy loader, and the store key off
+     * the SAME predicate on the SAME verbatim key (the predicate-alignment invariant — see {@link
+     * #checkAuth}); {@code _system/} is reserved forward-compat.
+     */
+    private static boolean isReserved(String key) {
+        return key.startsWith(PolicySerializer.ACL_PREFIX) || key.startsWith(SYSTEM_PREFIX);
     }
 
     private static String bearerToken(AdminRequest req) {

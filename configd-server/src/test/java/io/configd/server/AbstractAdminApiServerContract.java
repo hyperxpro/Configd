@@ -35,6 +35,7 @@ import java.nio.file.Path;
 import java.security.KeyStore;
 import java.time.Duration;
 import java.util.Comparator;
+import java.util.EnumSet;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -1046,5 +1047,123 @@ abstract class AbstractAdminApiServerContract {
     private static void runKeytool(String... command) throws Exception {
         int rc = new ProcessBuilder(command).redirectErrorStream(true).inheritIO().start().waitFor();
         assertEquals(0, rc, "keytool failed: " + String.join(" ", command));
+    }
+
+    // =======================================================================
+    // Section 9 — O-6 Seam 2b: the reserved-prefix ADMIN gate over real HTTP.
+    //
+    // A key under `_acl/` (or `_system/`) requires ADMIN for EVERY method (closing both policy MUTATION and
+    // DISCLOSURE), fail-closed, and byte-identical in production (only root touches _acl/, and root holds
+    // ADMIN). The gate DECISION is the handler's, but the decode-before-gate property rides each adapter's
+    // `new URI(request.uri())` — so a regression in either adapter's URI handling surfaces here on all three
+    // transports. The percent-decoding evasion vectors (%5Facl/, _acl%2F, _acl/../) are sent VERBATIM via
+    // sendRaw so the encoded bytes reach the server unmodified and are decoded by the SAME path the
+    // strong-read C6 vectors rely on. Write-time validation rejects malformed _acl/ policy with a 400.
+    // =======================================================================
+
+    /** root → allOf (break-glass); admin → ADMIN on `_acl/`; writer → broad WRITE but NOT ADMIN. */
+    private static AuthInterceptor gateAuthInterceptor() {
+        return new AuthInterceptor(token -> switch (token) {
+            case "root" -> new AuthInterceptor.AuthResult.Authenticated("root", Set.of());
+            case "admin" -> new AuthInterceptor.AuthResult.Authenticated("adminP", Set.of());
+            case "writer" -> new AuthInterceptor.AuthResult.Authenticated("writerP", Set.of());
+            default -> new AuthInterceptor.AuthResult.Denied("unknown token");
+        });
+    }
+
+    private static AclService gateAclService() {
+        AclService acl = new AclService();
+        acl.grant("", "root", EnumSet.allOf(AclService.Permission.class));
+        acl.grant("_acl/", "adminP", Set.of(AclService.Permission.ADMIN));
+        acl.grant("", "writerP", Set.of(AclService.Permission.READ, AclService.Permission.WRITE));
+        return acl;
+    }
+
+    /** Spec for the gate: the three-principal authenticator + ACL, a committing write service, a seeded _acl/ key. */
+    private int startGate() throws Exception {
+        VersionedConfigStore store = new VersionedConfigStore();
+        store.put("_acl/roles/seed", "allow READ app.".getBytes(), 1);
+        MetricsRegistry registry = new MetricsRegistry();
+        return start(new ServerSpec(null, new HealthService(), new PrometheusExporter(registry),
+                store, committingWriteService(), /* readService */ null, gateAuthInterceptor(), gateAclService(),
+                StrongReadPolicy.defaultPolicy(), (scope, key) -> NodeId.of(1), /* auditLog */ null, /* replayGuard */ null));
+    }
+
+    /** A request to a VERBATIM (already-encoded) path with an optional bearer token + body (evasion vectors). */
+    private HttpResponse<String> sendRaw(int port, String method, String rawPathAndQuery, String token, String body)
+            throws Exception {
+        HttpRequest.Builder b = HttpRequest.newBuilder()
+                .uri(URI.create("http://127.0.0.1:" + port + rawPathAndQuery));
+        if (token != null) {
+            b.header("Authorization", "Bearer " + token);
+        }
+        b.method(method, body == null
+                ? HttpRequest.BodyPublishers.noBody()
+                : HttpRequest.BodyPublishers.ofString(body));
+        return client.send(b.build(), HttpResponse.BodyHandlers.ofString());
+    }
+
+    @Test
+    void reservedPrefixRequiresAdminForEveryMethod() throws Exception {
+        int port = startGate();
+        // writerP has broad WRITE but no ADMIN: every method on _acl/ is 403 (mutation AND disclosure).
+        assertEquals(403, send(port, "GET", "/v1/config/_acl/roles/seed", "writer", null).statusCode(),
+                "a non-ADMIN GET of _acl/ must be 403 (policy DISCLOSURE closed)");
+        assertEquals(403, send(port, "PUT", "/v1/config/_acl/roles/x", "writer", "allow READ app.").statusCode(),
+                "a non-ADMIN PUT of _acl/ must be 403 (escalation closed)");
+        assertEquals(403, send(port, "DELETE", "/v1/config/_acl/roles/seed", "writer", null).statusCode(),
+                "a non-ADMIN DELETE of _acl/ must be 403");
+    }
+
+    @Test
+    void adminAndRootReachReservedPrefix() throws Exception {
+        int port = startGate();
+        assertEquals(200, send(port, "GET", "/v1/config/_acl/roles/seed", "admin", null).statusCode(),
+                "ADMIN may read _acl/");
+        assertEquals(200, send(port, "PUT", "/v1/config/_acl/roles/x", "admin", "allow READ app.").statusCode(),
+                "ADMIN may write a valid _acl/ policy");
+        assertEquals(200, send(port, "GET", "/v1/config/_acl/roles/seed", "root", null).statusCode(),
+                "root (allOf) may read _acl/");
+        assertEquals(200, send(port, "DELETE", "/v1/config/_acl/roles/seed", "root", null).statusCode(),
+                "root may delete _acl/");
+    }
+
+    @Test
+    void writeTimeValidationRejectsMalformedReservedPolicyOverHttp() throws Exception {
+        int port = startGate();
+        // adminP is authorized (ADMIN) but the body is malformed policy ⇒ 400 at write-time (pre-commit).
+        assertEquals(400, send(port, "PUT", "/v1/config/_acl/roles/x", "admin", "allow NOPE app.").statusCode(),
+                "a malformed _acl/ policy body must be rejected 400 even for an ADMIN principal");
+        assertEquals(400, send(port, "PUT", "/v1/config/_acl/roles/admin", "admin", "allow READ app.").statusCode(),
+                "defining the reserved role 'admin' must be rejected 400");
+    }
+
+    @Test
+    void percentDecodingEvasionVectorsAreStillAdminGated() throws Exception {
+        int port = startGate();
+        // Each decodes to an `_acl/` key BEFORE the gate (the adapter's new URI(...).getPath() decodes), so a
+        // non-ADMIN writer is still 403 — the gate keys off the decoded key, exactly like the store/loader.
+        assertEquals(403, sendRaw(port, "PUT", "/v1/config/%5Facl/roles/x", "writer", "v").statusCode(),
+                "%5Facl/ decodes to _acl/ → ADMIN-gated");
+        assertEquals(403, sendRaw(port, "PUT", "/v1/config/_acl%2Froles/x", "writer", "v").statusCode(),
+                "_acl%2F decodes to _acl/ → ADMIN-gated");
+        assertEquals(403, sendRaw(port, "GET", "/v1/config/_acl/../roles/x", "writer", null).statusCode(),
+                "_acl/../ is NOT normalized away from the reserved prefix → ADMIN-gated");
+    }
+
+    @Test
+    void reservedWriteIsRefusedWhenAuthDisabled() throws Exception {
+        // Auth + ACL off (the non-production mode): an _acl/ write is refused (the bring-up poison footgun);
+        // an ordinary write still commits (auth-off is otherwise fully open).
+        VersionedConfigStore store = new VersionedConfigStore();
+        MetricsRegistry registry = new MetricsRegistry();
+        int port = start(new ServerSpec(null, new HealthService(), new PrometheusExporter(registry),
+                store, committingWriteService(), /* readService */ null, /* auth */ null, /* acl */ null,
+                StrongReadPolicy.defaultPolicy(), (scope, key) -> NodeId.of(1), /* auditLog */ null, /* replayGuard */ null));
+
+        assertNotEquals(200, send(port, "PUT", "/v1/config/_acl/roles/x", null, "allow READ app.").statusCode(),
+                "auth-off: an _acl/ write must be refused (non-2xx)");
+        assertEquals(200, send(port, "PUT", "/v1/config/app/feature", null, "on").statusCode(),
+                "auth-off: an ordinary write still commits (only reserved writes are refused)");
     }
 }

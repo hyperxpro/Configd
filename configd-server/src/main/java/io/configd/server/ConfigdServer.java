@@ -102,12 +102,13 @@ public final class ConfigdServer {
     private static final int TICK_PERIOD_MS = 10;
     private static final int DEFAULT_RAFT_GROUP = 0;
 
-    // O-6: the break-glass root principal and the reserved ADMIN role name, sourced from single constants so
-    // the root identity (the principal authenticated + granted allOf) and the config-policy loader's
-    // reserved-name guard (N2/N3) provably reference the SAME literals — a rename can't silently break the
-    // un-carveable-root guarantee.
-    private static final String ROOT_PRINCIPAL = "root";
-    private static final String ADMIN_ROLE = "admin";
+    // O-6: the break-glass root principal — the identity that is authenticated (below) and statically
+    // granted allOf — aliased to AclConfigPolicyLoader.RESERVED_PRINCIPAL_ROOT, the SINGLE SOURCE OF TRUTH
+    // for the reserved-name guard (N2/N3, the loader's reload path) AND the Seam 2b write-time gate
+    // (AdminApiHandler → validateAclWrite). The principal granted allOf is therefore provably the SAME
+    // literal the loader reserves and the gate validates — a rename can't silently break the un-carveable-
+    // root guarantee, and write-time / reload-time reject the identical reserved set.
+    private static final String ROOT_PRINCIPAL = AclConfigPolicyLoader.RESERVED_PRINCIPAL_ROOT;
     /**
      * Multi-Raft static-N ceiling (operator decision N, charter §2): the maximum number of shards a
      * single deploy may configure via {@code configd.raft.shardCount}. M1's static ceiling — ~10–11
@@ -741,7 +742,8 @@ public final class ConfigdServer {
             // catch-up; the boot seed (rebuild) catches a snapshot-restored prefix. Fail-closed-to-last-good
             // on malformed policy; the reserved role/principal names neutralize the carve footgun (N2/N3).
             AclConfigPolicyLoader aclPolicyLoader = new AclConfigPolicyLoader(
-                    aclService, stateMachine.store(), Set.of(ADMIN_ROLE), Set.of(ROOT_PRINCIPAL), metricsRegistry);
+                    aclService, stateMachine.store(),
+                    AclConfigPolicyLoader.RESERVED_ROLES, AclConfigPolicyLoader.RESERVED_PRINCIPALS, metricsRegistry);
             stateMachine.addListener(aclPolicyLoader::onConfigChange);
             stateMachine.addSnapshotListener(aclPolicyLoader::onSnapshotInstalled);
             aclPolicyLoader.rebuild(); // boot seed
