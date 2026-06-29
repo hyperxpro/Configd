@@ -89,28 +89,34 @@ class EdgeFrameCodecGoldenFixtureTest {
     /**
      * The fixture set covers every frame type, every error code, the empty-NOTIFY edge
      * case, and the at-cap chunk — a coverage tripwire so a future type/code addition
-     * cannot land without a golden entry.
+     * cannot land without a golden entry. Coverage is taken across BOTH the v1 fixtures
+     * ({@link EdgeFrameFixtures#build()}) and the v2 fixtures
+     * ({@link EdgeFrameFixtures#buildV2()}): the RFC §2 watch frame types and the
+     * {@link ErrorCode#NOT_AUTHORIZED} code are 0x02-era additions covered in the v2 set.
      */
     @Test
     void fixtureSetCoversEveryTypeAndErrorCode() {
-        Map<String, EdgeFrame> fixtures = EdgeFrameFixtures.build();
-        // Every FrameType present.
+        List<EdgeFrame> all = new ArrayList<>(EdgeFrameFixtures.build().values());
+        all.addAll(EdgeFrameFixtures.buildV2().values());
+
+        // Every FrameType present in some fixture (v1 or v2).
         for (FrameType ft : FrameType.values()) {
-            boolean present = fixtures.values().stream().anyMatch(f -> f.type() == ft);
+            boolean present = all.stream().anyMatch(f -> f.type() == ft);
             if (!present) {
                 fail("no golden fixture covers frame type " + ft);
             }
         }
-        // Every ErrorCode present.
+        // Every ErrorCode present (as an ErrorClose or a WatchCanceled — both carry the code).
         for (ErrorCode ec : ErrorCode.values()) {
-            boolean present = fixtures.values().stream().anyMatch(f ->
-                    f instanceof EdgeFrame.ErrorClose close && close.code() == ec);
+            boolean present = all.stream().anyMatch(f ->
+                    (f instanceof EdgeFrame.ErrorClose close && close.code() == ec)
+                            || (f instanceof EdgeFrame.WatchCanceled wc && wc.code() == ec));
             if (!present) {
                 fail("no golden fixture covers error code " + ec);
             }
         }
-        // Empty-NOTIFY edge case present.
-        boolean emptyNotify = fixtures.values().stream().anyMatch(f ->
+        // Empty-NOTIFY edge case present (v1).
+        boolean emptyNotify = EdgeFrameFixtures.build().values().stream().anyMatch(f ->
                 f instanceof EdgeFrame.Notify n && n.notifications().isEmpty());
         if (!emptyNotify) {
             fail("no golden fixture covers the empty-NOTIFY edge case");

@@ -32,5 +32,18 @@ class EdgeFrameGoldenBytesGenerator {
             byte[] wire = EdgeFrameCodec.encode(e.getValue());
             System.out.println("HEX " + name + " = " + hf.formatHex(wire));
         }
+        // 0x02 (EDGE_WIRE_VERSION_V2) fixtures — the RFC §2 watch frames + reused NOTIFY.
+        for (Map.Entry<String, EdgeFrame> e : EdgeFrameFixtures.buildV2().entrySet()) {
+            String name = e.getKey();
+            byte[] wire = EdgeFrameCodec.encode(e.getValue(), EdgeFrameCodec.EDGE_WIRE_VERSION_V2);
+            if (EdgeFrameFixtures.oversizeV2FixtureNames().contains(name)) {
+                CRC32C crc = new CRC32C();
+                crc.update(wire, 0, wire.length);
+                System.out.println("OVERSIZEV2 " + name + " fullFrameCrc=0x"
+                        + Long.toHexString(crc.getValue()) + "L len=" + wire.length);
+                continue;
+            }
+            System.out.println("HEXV2 " + name + " = " + hf.formatHex(wire));
+        }
     }
 }

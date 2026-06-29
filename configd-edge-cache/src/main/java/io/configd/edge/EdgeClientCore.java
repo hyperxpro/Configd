@@ -389,6 +389,14 @@ public final class EdgeClientCore {
                     throw new IllegalArgumentException("SUBSCRIBE is edge→server, not inbound");
             case EdgeFrame.CursorAck ignored ->
                     throw new IllegalArgumentException("CURSOR_ACK is edge→server, not inbound");
+            // The RFC §2 WATCH_* frames (0x0A..0x12) are the per-watch multiplexed watch protocol —
+            // a SEPARATE client surface. This legacy edge fan-out client subscribes via SUBSCRIBE and
+            // never opens a watch (0x02) connection, so the server never sends it a WATCH_* frame;
+            // receiving one is a mis-wired shell (loud, not silently ignored), like the edge→server
+            // frames above. A default keeps this consumer compiling as the §2 frame family grows.
+            default -> throw new IllegalArgumentException(
+                    frame.type() + " is not an edge fan-out client frame (the RFC §2 WATCH_* watch "
+                            + "protocol is a separate client surface, not the SUBSCRIBE fan-out path)");
         }
     }
 

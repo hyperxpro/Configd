@@ -72,6 +72,19 @@ public final class EdgeFrameCodec {
      */
     public static final byte EDGE_WIRE_VERSION = (byte) 0x01;
 
+    /**
+     * The RFC §2 watch-capable edge wire version (W1-2). A {@code 0x02} connection stamps
+     * {@code 0x02} on <b>every</b> frame it carries — including a reused {@link FrameType#NOTIFY}
+     * (the {@code full_chain_verify} carrier, W5-2) — and is the <b>only</b> version under which
+     * the {@code WATCH_*} frame types may be encoded or decoded (W5-11). This is the
+     * per-connection "design-A" model (W1-3): the version byte is the <b>sole</b> wire difference
+     * between a {@code 0x01} and a {@code 0x02} connection for a shared (e.g. {@code NOTIFY})
+     * frame; the existing {@code 0x01} golden fixtures stay byte-identical and §2 adds separate
+     * {@code 0x02} fixtures rather than rebaselining them. The decoder accepts {@code 0x01} and
+     * {@code 0x02}; any other version is {@link ErrorCode#BAD_WIRE_VERSION}.
+     */
+    public static final byte EDGE_WIRE_VERSION_V2 = (byte) 0x02;
+
     /** Fixed header: 4 (length) + 1 (version) + 1 (type) = 6 bytes. */
     public static final int HEADER_SIZE = 6;
 
@@ -146,9 +159,27 @@ public final class EdgeFrameCodec {
      *                        or a NOTIFY batch exceeds its caps
      */
     public static byte[] encode(EdgeFrame frame) {
+        return encode(frame, EDGE_WIRE_VERSION);
+    }
+
+    /**
+     * Encodes a frame to a newly allocated byte array, stamping the given edge wire
+     * {@code version} (W1-3). Use {@link #EDGE_WIRE_VERSION_V2} for a {@code 0x02}
+     * connection; a {@code WATCH_*} frame may be encoded <b>only</b> under {@code 0x02}.
+     *
+     * @param frame   the frame to encode
+     * @param version {@link #EDGE_WIRE_VERSION} or {@link #EDGE_WIRE_VERSION_V2}
+     * @return the wire bytes
+     * @throws IllegalArgumentException if {@code version} is not a supported edge wire
+     *                                  version, or a {@code WATCH_*} frame is encoded under
+     *                                  {@code 0x01} (W5-11)
+     * @throws CodecException           if the encoded frame would exceed limits (see
+     *                                  {@link #encodeInto(EdgeFrame, FrameSink, byte)})
+     */
+    public static byte[] encode(EdgeFrame frame, byte version) {
         Objects.requireNonNull(frame, "frame must not be null");
         HeapFrameSink sink = new HeapFrameSink(ENCODE_INITIAL_CAPACITY);
-        encodeInto(frame, sink);
+        encodeInto(frame, sink, version);
         return sink.toByteArray();
     }
 
@@ -173,11 +204,41 @@ public final class EdgeFrameCodec {
      *                        discards/releases it)
      */
     public static void encodeInto(EdgeFrame frame, FrameSink sink) {
+        encodeInto(frame, sink, EDGE_WIRE_VERSION);
+    }
+
+    /**
+     * Encodes one frame in a single pass into {@code sink}, stamping the given edge wire
+     * {@code version} on the version byte (W1-3). Identical to
+     * {@link #encodeInto(EdgeFrame, FrameSink)} except the version byte — a legacy frame is
+     * byte-identical under either version save that one byte (and the CRC over it), which is
+     * the design-A "only the version byte differs" property (W5-11). A {@code WATCH_*} frame
+     * is encodable <b>only</b> under {@link #EDGE_WIRE_VERSION_V2}.
+     *
+     * @param frame   the frame to encode
+     * @param sink    the destination (its current {@link FrameSink#writerIndex()} is the start)
+     * @param version {@link #EDGE_WIRE_VERSION} or {@link #EDGE_WIRE_VERSION_V2}
+     * @throws IllegalArgumentException if {@code version} is unsupported, or a {@code WATCH_*}
+     *                                  frame is encoded under {@code 0x01} (W5-11) — a
+     *                                  caller/programming error, kept distinct from the
+     *                                  wire-decode {@link CodecException} taxonomy
+     * @throws CodecException           if the frame exceeds {@link #MAX_EDGE_FRAME_SIZE} or a
+     *                                  NOTIFY batch exceeds its caps
+     */
+    public static void encodeInto(EdgeFrame frame, FrameSink sink, byte version) {
         Objects.requireNonNull(frame, "frame must not be null");
         Objects.requireNonNull(sink, "sink must not be null");
+        if (version != EDGE_WIRE_VERSION && version != EDGE_WIRE_VERSION_V2) {
+            throw new IllegalArgumentException("unsupported edge wire version for encode: 0x"
+                    + Integer.toHexString(version & 0xFF));
+        }
+        if (version == EDGE_WIRE_VERSION && isWatchType(frame.type())) {
+            throw new IllegalArgumentException(frame.type()
+                    + " is a 0x02 watch frame and cannot be encoded on a 0x01 connection (W5-11)");
+        }
         final int start = sink.writerIndex();
         sink.writeInt(0); // total-length placeholder, back-patched below
-        sink.writeByte(EDGE_WIRE_VERSION);
+        sink.writeByte(version);
         sink.writeByte((byte) frame.type().code());
 
         encodePayloadInto(frame, sink);
@@ -208,6 +269,15 @@ public final class EdgeFrameCodec {
             case EdgeFrame.CursorAck f -> sink.writeLong(f.seq());
             case EdgeFrame.Heartbeat f -> encodeHeartbeatInto(f, sink);
             case EdgeFrame.ErrorClose f -> encodeErrorCloseInto(f, sink);
+            case EdgeFrame.WatchCreate f -> encodeWatchCreateInto(f, sink);
+            case EdgeFrame.WatchCancel f -> sink.writeLong(f.watchId());
+            case EdgeFrame.WatchCreated f -> encodeWatchCreatedInto(f, sink);
+            case EdgeFrame.WatchEvent f -> encodeWatchEventInto(f, sink);
+            case EdgeFrame.WatchProgress f -> encodeWatchProgressInto(f, sink);
+            case EdgeFrame.WatchCanceled f -> encodeWatchCanceledInto(f, sink);
+            case EdgeFrame.WatchSnapshotBegin f -> encodeWatchSnapshotBeginInto(f, sink);
+            case EdgeFrame.WatchSnapshotChunk f -> encodeWatchSnapshotChunkInto(f, sink);
+            case EdgeFrame.WatchSnapshotEnd f -> encodeWatchSnapshotEndInto(f, sink);
         }
     }
 
@@ -308,11 +378,139 @@ public final class EdgeFrameCodec {
     }
 
     // -----------------------------------------------------------------------
+    // Encode — RFC §2 watch frames (0x02 only). Layouts per RFC §5.2–5.8.
+    // -----------------------------------------------------------------------
+
+    /** Bytes per encoded cursor component on the wire: gid(u32) + S(u64). */
+    private static final int CURSOR_COMPONENT_BYTES = 12;
+
+    /** Bytes per encoded {@link EdgeFrame.ShardMode}: gid(u32) + latestSeq(u64) + mode(u8). */
+    private static final int SHARD_MODE_BYTES = 13;
+
+    /** Minimum bytes of one encoded {@link EdgeFrame.WatchChange}: keyLen(u32) + kind(u8) + valLen(i32). */
+    private static final int MIN_CHANGE_BYTES = 9;
+
+    /** True iff {@code t} is a {@code 0x0A..0x12} watch frame (legal only under 0x02; W5-11). */
+    private static boolean isWatchType(FrameType t) {
+        return switch (t) {
+            case WATCH_CREATE, WATCH_CANCEL, WATCH_CREATED, WATCH_EVENT, WATCH_PROGRESS,
+                 WATCH_CANCELED, WATCH_SNAPSHOT_BEGIN, WATCH_SNAPSHOT_CHUNK, WATCH_SNAPSHOT_END -> true;
+            default -> false;
+        };
+    }
+
+    /**
+     * Encodes a {@link WatchCursor} as {@code [count u32]( gid u32  S u64 )*count} (W3-5).
+     * The cursor's construction-time invariant guarantees the components are already strictly
+     * ascending by unsigned {@code gid}, so they are written in list order with no re-sort.
+     */
+    private static void encodeCursorInto(WatchCursor cursor, FrameSink sink) {
+        List<WatchCursor.Component> cs = cursor.components();
+        sink.writeInt(cs.size());
+        for (WatchCursor.Component c : cs) {
+            sink.writeInt(c.gid());
+            sink.writeLong(c.s());
+        }
+    }
+
+    private static void encodeWatchCreateInto(EdgeFrame.WatchCreate f, FrameSink sink) {
+        sink.writeLong(f.watchId());
+        sink.writeByte(f.scope());
+        sink.writeByte(f.targetKind());
+        byte[] path = f.pathUnsafe();
+        sink.writeInt(path.length);
+        sink.writeBytes(path);
+        encodeCursorInto(f.cursor(), sink);
+        sink.writeByte(f.flags());
+    }
+
+    private static void encodeWatchCreatedInto(EdgeFrame.WatchCreated f, FrameSink sink) {
+        sink.writeLong(f.watchId());
+        List<EdgeFrame.ShardMode> shards = f.shards();
+        sink.writeInt(shards.size());
+        for (EdgeFrame.ShardMode sm : shards) {
+            sink.writeInt(sm.gid());
+            sink.writeLong(sm.latestSeq());
+            sink.writeByte(sm.mode().ordinal());
+        }
+    }
+
+    private static void encodeWatchEventInto(EdgeFrame.WatchEvent f, FrameSink sink) {
+        sink.writeLong(f.watchId());
+        sink.writeInt(f.gid());
+        sink.writeLong(f.s());
+        sink.writeLong(f.commitTs());
+        List<EdgeFrame.WatchChange> changes = f.changes();
+        sink.writeInt(changes.size());
+        for (EdgeFrame.WatchChange c : changes) {
+            byte[] key = c.key().getBytes(StandardCharsets.UTF_8);
+            sink.writeInt(key.length);
+            sink.writeBytes(key);
+            sink.writeByte(c.kind());
+            byte[] val = c.valueUnsafe();
+            if (val == null) {
+                sink.writeInt(-1); // DELETE: the sole SIGNED i32 length sentinel (W5-6)
+            } else {
+                sink.writeInt(val.length); // >= 0; 0 = empty value present
+                sink.writeBytes(val);
+            }
+        }
+    }
+
+    private static void encodeWatchProgressInto(EdgeFrame.WatchProgress f, FrameSink sink) {
+        sink.writeLong(f.watchId());
+        encodeCursorInto(f.cursor(), sink);
+        sink.writeLong(f.serverNowMillis());
+    }
+
+    private static void encodeWatchCanceledInto(EdgeFrame.WatchCanceled f, FrameSink sink) {
+        sink.writeLong(f.watchId());
+        sink.writeByte(f.code().code());
+        if (f.oldest() != null) {
+            sink.writeByte(1);
+            encodeCursorInto(f.oldest(), sink);
+        } else {
+            sink.writeByte(0);
+        }
+        byte[] msg = f.message().getBytes(StandardCharsets.UTF_8);
+        sink.writeInt(msg.length);
+        sink.writeBytes(msg);
+    }
+
+    private static void encodeWatchSnapshotBeginInto(EdgeFrame.WatchSnapshotBegin f, FrameSink sink) {
+        sink.writeLong(f.watchId());
+        sink.writeInt(f.gid());
+        sink.writeLong(f.snapshotSeq());
+        sink.writeInt(f.chunkCount());
+        sink.writeLong(f.totalBytes());
+    }
+
+    private static void encodeWatchSnapshotChunkInto(EdgeFrame.WatchSnapshotChunk f, FrameSink sink) {
+        byte[] bytes = f.bytesUnsafe();
+        if (bytes.length > MAX_SNAPSHOT_CHUNK_BYTES) {
+            throw new CodecException(ErrorCode.FRAME_TOO_LARGE,
+                    "watch snapshot chunk " + bytes.length + " bytes exceeds MAX_SNAPSHOT_CHUNK_BYTES="
+                            + MAX_SNAPSHOT_CHUNK_BYTES);
+        }
+        sink.writeLong(f.watchId());
+        sink.writeInt(f.gid());
+        sink.writeInt(f.index());
+        sink.writeBytes(bytes);
+    }
+
+    private static void encodeWatchSnapshotEndInto(EdgeFrame.WatchSnapshotEnd f, FrameSink sink) {
+        sink.writeLong(f.watchId());
+        sink.writeInt(f.gid());
+        sink.writeLong(f.snapshotSeq());
+    }
+
+    // -----------------------------------------------------------------------
     // Decode
     // -----------------------------------------------------------------------
 
     /**
-     * Decodes a single complete frame. The array must contain exactly one frame.
+     * Decodes a single complete frame, accepting either negotiated version. The array must
+     * contain exactly one frame.
      *
      * <p>Validation order (deliberate, mirroring {@code FrameCodec}): length bounds →
      * length==data.length → CRC32C → version → type → payload.
@@ -322,6 +520,41 @@ public final class EdgeFrameCodec {
      * @throws CodecException with the mapped {@link ErrorCode} on any structural failure
      */
     public static EdgeFrame decode(byte[] data) {
+        return decode(data, null);
+    }
+
+    /**
+     * Decodes a single complete frame on a connection that negotiated exactly
+     * {@code negotiatedVersion} (W1-3 / W5-11). Identical to {@link #decode(byte[])} except
+     * that, after the CRC and the {@code {0x01, 0x02}} acceptance check, a frame whose stamped
+     * version differs from {@code negotiatedVersion} is rejected with
+     * {@link ErrorCode#BAD_WIRE_VERSION} — this is how a per-connection reader enforces "a
+     * {@code 0x01} connection MUST fail closed on a {@code 0x02} frame" (and vice versa). Use
+     * {@link #peekVersion(byte[])} to establish the negotiated version on the connection's
+     * first frame.
+     *
+     * @param data              the wire bytes
+     * @param negotiatedVersion the connection's agreed version ({@link #EDGE_WIRE_VERSION} or
+     *                          {@link #EDGE_WIRE_VERSION_V2})
+     * @return the decoded frame
+     * @throws IllegalArgumentException if {@code negotiatedVersion} is not a supported version
+     * @throws CodecException           on any structural failure, or if the frame's stamped
+     *                                  version != {@code negotiatedVersion}
+     */
+    public static EdgeFrame decode(byte[] data, byte negotiatedVersion) {
+        if (negotiatedVersion != EDGE_WIRE_VERSION && negotiatedVersion != EDGE_WIRE_VERSION_V2) {
+            throw new IllegalArgumentException("unsupported negotiated edge wire version: 0x"
+                    + Integer.toHexString(negotiatedVersion & 0xFF));
+        }
+        return decode(data, Byte.valueOf(negotiatedVersion));
+    }
+
+    /**
+     * The single decode implementation. {@code expectedVersion} is the per-connection pin
+     * (W5-11): {@code null} accepts either {@code 0x01}/{@code 0x02}; a non-null value also
+     * rejects a frame stamped with the other accepted version as {@link ErrorCode#BAD_WIRE_VERSION}.
+     */
+    private static EdgeFrame decode(byte[] data, Byte expectedVersion) {
         Objects.requireNonNull(data, "data must not be null");
         int minSize = HEADER_SIZE + TRAILER_SIZE;
         if (data.length < minSize) {
@@ -353,11 +586,24 @@ public final class EdgeFrameCodec {
                             + " trailer=0x" + Integer.toHexString(trailer));
         }
 
+        // Accept the built 0x01 and the watch-capable 0x02 (W1-3 / W5-11); any other
+        // version is BAD_WIRE_VERSION. The negotiated version is a per-connection property
+        // the transport tracks; the codec accepts both and the FrameType gates which
+        // payloads are legal under which version (below).
         byte version = buf.get();
-        if (version != EDGE_WIRE_VERSION) {
+        if (version != EDGE_WIRE_VERSION && version != EDGE_WIRE_VERSION_V2) {
             throw new CodecException(ErrorCode.BAD_WIRE_VERSION,
                     "unsupported edge wire version: 0x" + Integer.toHexString(version & 0xFF)
-                            + " (expected 0x" + Integer.toHexString(EDGE_WIRE_VERSION & 0xFF) + ")");
+                            + " (expected 0x" + Integer.toHexString(EDGE_WIRE_VERSION & 0xFF)
+                            + " or 0x" + Integer.toHexString(EDGE_WIRE_VERSION_V2 & 0xFF) + ")");
+        }
+        // Per-connection version pin (W5-11): on a connection that negotiated one version, a
+        // frame stamped with the OTHER accepted version fails closed as BAD_WIRE_VERSION — so a
+        // 0x01 peer cannot be fed a 0x02 watch frame (and vice versa). A null pin accepts either.
+        if (expectedVersion != null && version != expectedVersion.byteValue()) {
+            throw new CodecException(ErrorCode.BAD_WIRE_VERSION,
+                    "frame stamped 0x" + Integer.toHexString(version & 0xFF) + " on a 0x"
+                            + Integer.toHexString(expectedVersion & 0xFF) + "-negotiated connection");
         }
         int typeCode = buf.get() & 0xFF;
         FrameType type;
@@ -365,6 +611,14 @@ public final class EdgeFrameCodec {
             type = FrameType.fromCode(typeCode);
         } catch (IllegalArgumentException e) {
             throw new CodecException(ErrorCode.FRAME_CORRUPT, e.getMessage());
+        }
+        // A WATCH_* type is legal only on a 0x02-stamped frame (W5-11). On a 0x01 frame it
+        // is a protocol violation surfaced as FRAME_CORRUPT (consistent with the codec's
+        // structural-error taxonomy; the CRC has already been verified, so this is a
+        // deliberately-constructed frame, not a bit-flip).
+        if (version == EDGE_WIRE_VERSION && isWatchType(type)) {
+            throw new CodecException(ErrorCode.FRAME_CORRUPT,
+                    type + " is a 0x02 watch frame and is not legal on a 0x01-stamped frame");
         }
 
         // Payload window: [HEADER_SIZE, crcOffset).
@@ -396,6 +650,15 @@ public final class EdgeFrameCodec {
             case CURSOR_ACK -> new EdgeFrame.CursorAck(p.getLong());
             case HEARTBEAT -> new EdgeFrame.Heartbeat(p.getLong(), p.getLong());
             case ERROR_CLOSE -> decodeErrorClose(p);
+            case WATCH_CREATE -> decodeWatchCreate(p);
+            case WATCH_CANCEL -> new EdgeFrame.WatchCancel(p.getLong());
+            case WATCH_CREATED -> decodeWatchCreated(p);
+            case WATCH_EVENT -> decodeWatchEvent(p);
+            case WATCH_PROGRESS -> decodeWatchProgress(p);
+            case WATCH_CANCELED -> decodeWatchCanceled(p);
+            case WATCH_SNAPSHOT_BEGIN -> decodeWatchSnapshotBegin(p);
+            case WATCH_SNAPSHOT_CHUNK -> decodeWatchSnapshotChunk(p);
+            case WATCH_SNAPSHOT_END -> decodeWatchSnapshotEnd(p);
         };
     }
 
@@ -519,6 +782,216 @@ public final class EdgeFrameCodec {
         return new EdgeFrame.ErrorClose(ec, msg);
     }
 
+    // -----------------------------------------------------------------------
+    // Decode — RFC §2 watch frames. Bounds-before-allocation discipline as above;
+    // the WatchCursor / WatchChange / ShardMode constructors enforce the value
+    // invariants, and their IllegalArgumentException is mapped to FRAME_CORRUPT.
+    //
+    // Cross-language contract: the sequence/timestamp u64 fields — cursor S, WATCH_EVENT
+    // S/commitTs, WATCH_CREATED latestSeq, WATCH_SNAPSHOT_* snapshotSeq/totalBytes, and the
+    // WATCH_CANCELED oldest-vector S — are validated >= 0 (their compact ctors reject a
+    // negative), so their effective range is [0, 2^63): a high-bit-set u64 decodes as
+    // FRAME_CORRUPT. A Rust/Go driver using a true u64 MUST keep these fields in [0, 2^63).
+    // watch_id and gid stay opaque full-range u64/u32 (no such constraint).
+    // -----------------------------------------------------------------------
+
+    /**
+     * Decodes a {@link WatchCursor} from {@code [count u32]( gid u32  S u64 )*count} (W3-5).
+     * Bounds {@code count} against the remaining bytes BEFORE allocating, and maps an
+     * unsorted/duplicate {@code gid} (or a negative {@code S}) to {@link ErrorCode#FRAME_CORRUPT}
+     * via the {@link WatchCursor} constructor's invariant.
+     */
+    private static WatchCursor decodeCursor(ByteBuffer p) {
+        if (p.remaining() < 4) {
+            throw new CodecException(ErrorCode.FRAME_CORRUPT, "truncated reading cursor count");
+        }
+        int count = p.getInt();
+        if (count < 0 || (long) count * CURSOR_COMPONENT_BYTES > p.remaining()) {
+            throw new CodecException(ErrorCode.FRAME_CORRUPT, "bad cursor component count: " + count);
+        }
+        List<WatchCursor.Component> cs = new ArrayList<>(count);
+        try {
+            for (int i = 0; i < count; i++) {
+                cs.add(new WatchCursor.Component(p.getInt(), p.getLong()));
+            }
+            return new WatchCursor(cs);
+        } catch (IllegalArgumentException e) {
+            throw new CodecException(ErrorCode.FRAME_CORRUPT, "invalid cursor: " + e.getMessage());
+        }
+    }
+
+    private static EdgeFrame decodeWatchCreate(ByteBuffer p) {
+        long watchId = p.getLong();
+        int scope = p.get() & 0xFF;
+        int targetKind = p.get() & 0xFF;
+        byte[] path = readBytes(p, "path");
+        WatchCursor cursor = decodeCursor(p);
+        if (p.remaining() < 1) {
+            throw new CodecException(ErrorCode.FRAME_CORRUPT, "truncated reading WATCH_CREATE flags");
+        }
+        int flags = p.get() & 0xFF;
+        try {
+            return new EdgeFrame.WatchCreate(watchId, scope, targetKind, path, cursor, flags);
+        } catch (IllegalArgumentException e) {
+            throw new CodecException(ErrorCode.FRAME_CORRUPT, "invalid WATCH_CREATE: " + e.getMessage());
+        }
+    }
+
+    private static EdgeFrame decodeWatchCreated(ByteBuffer p) {
+        long watchId = p.getLong();
+        int count = p.getInt();
+        if (count < 0 || (long) count * SHARD_MODE_BYTES > p.remaining()) {
+            throw new CodecException(ErrorCode.FRAME_CORRUPT, "bad shard count: " + count);
+        }
+        EdgeFrame.Mode[] modes = EdgeFrame.Mode.values();
+        List<EdgeFrame.ShardMode> shards = new ArrayList<>(count);
+        for (int i = 0; i < count; i++) {
+            int gid = p.getInt();
+            long latestSeq = p.getLong();
+            int modeOrd = p.get() & 0xFF;
+            if (modeOrd >= modes.length) {
+                throw new CodecException(ErrorCode.FRAME_CORRUPT, "bad shard mode ordinal: " + modeOrd);
+            }
+            shards.add(new EdgeFrame.ShardMode(gid, latestSeq, modes[modeOrd]));
+        }
+        return new EdgeFrame.WatchCreated(watchId, shards);
+    }
+
+    private static EdgeFrame decodeWatchEvent(ByteBuffer p) {
+        long watchId = p.getLong();
+        int gid = p.getInt();
+        long s = p.getLong();
+        long commitTs = p.getLong();
+        int count = p.getInt();
+        // Each change is >= 9 bytes (keyLen 4 + kind 1 + valLen 4), so the minimum encoded size of
+        // `count` changes is 9*count — a tight pre-allocation bound (the (long) cast binds before the
+        // multiply, so no overflow). Tighter than the looser `count > remaining` legacy pattern.
+        if (count < 0 || (long) count * MIN_CHANGE_BYTES > p.remaining()) {
+            throw new CodecException(ErrorCode.FRAME_CORRUPT, "bad change count: " + count);
+        }
+        List<EdgeFrame.WatchChange> changes = new ArrayList<>(count);
+        for (int i = 0; i < count; i++) {
+            byte[] key = readBytes(p, "change key");
+            int kind = p.get() & 0xFF;
+            int valLen = p.getInt(); // SIGNED i32: -1 = no value (DELETE); >= 0 = value present
+            byte[] val;
+            if (valLen == -1) {
+                val = null;
+            } else if (valLen < 0) {
+                throw new CodecException(ErrorCode.FRAME_CORRUPT, "bad change val length: " + valLen);
+            } else {
+                if (valLen > p.remaining()) {
+                    throw new CodecException(ErrorCode.FRAME_CORRUPT,
+                            "change val length " + valLen + " exceeds remaining " + p.remaining());
+                }
+                val = new byte[valLen];
+                p.get(val);
+            }
+            try {
+                changes.add(new EdgeFrame.WatchChange(new String(key, StandardCharsets.UTF_8), kind, val));
+            } catch (IllegalArgumentException e) {
+                // e.g. kind/value mismatch (a DELETE carrying a value, or a PUT with val_len -1).
+                throw new CodecException(ErrorCode.FRAME_CORRUPT, "invalid change: " + e.getMessage());
+            }
+        }
+        try {
+            return new EdgeFrame.WatchEvent(watchId, gid, s, commitTs, changes);
+        } catch (IllegalArgumentException e) {
+            throw new CodecException(ErrorCode.FRAME_CORRUPT, "invalid WATCH_EVENT: " + e.getMessage());
+        }
+    }
+
+    private static EdgeFrame decodeWatchProgress(ByteBuffer p) {
+        long watchId = p.getLong();
+        WatchCursor cursor = decodeCursor(p);
+        long serverNow = p.getLong();
+        try {
+            return new EdgeFrame.WatchProgress(watchId, cursor, serverNow);
+        } catch (IllegalArgumentException e) {
+            throw new CodecException(ErrorCode.FRAME_CORRUPT, "invalid WATCH_PROGRESS: " + e.getMessage());
+        }
+    }
+
+    private static EdgeFrame decodeWatchCanceled(ByteBuffer p) {
+        long watchId = p.getLong();
+        int code = p.get() & 0xFF;
+        ErrorCode ec;
+        try {
+            ec = ErrorCode.fromCode(code);
+        } catch (IllegalArgumentException e) {
+            throw new CodecException(ErrorCode.FRAME_CORRUPT, "bad error code: " + code);
+        }
+        int hasOldest = p.get() & 0xFF;
+        WatchCursor oldest;
+        if (hasOldest == 1) {
+            oldest = decodeCursor(p);
+        } else if (hasOldest == 0) {
+            oldest = null;
+        } else {
+            throw new CodecException(ErrorCode.FRAME_CORRUPT, "bad has_oldest flag: " + hasOldest);
+        }
+        String msg = readString(p, "message");
+        return new EdgeFrame.WatchCanceled(watchId, ec, oldest, msg);
+    }
+
+    private static EdgeFrame decodeWatchSnapshotBegin(ByteBuffer p) {
+        long watchId = p.getLong();
+        int gid = p.getInt();
+        long snapshotSeq = p.getLong();
+        int chunkCount = p.getInt();
+        long totalBytes = p.getLong();
+        try {
+            return new EdgeFrame.WatchSnapshotBegin(watchId, gid, snapshotSeq, chunkCount, totalBytes);
+        } catch (IllegalArgumentException e) {
+            throw new CodecException(ErrorCode.FRAME_CORRUPT, "invalid WATCH_SNAPSHOT_BEGIN: " + e.getMessage());
+        }
+    }
+
+    private static EdgeFrame decodeWatchSnapshotChunk(ByteBuffer p) {
+        long watchId = p.getLong();
+        int gid = p.getInt();
+        int index = p.getInt();
+        int len = p.remaining();
+        if (len > MAX_SNAPSHOT_CHUNK_BYTES) {
+            throw new CodecException(ErrorCode.FRAME_TOO_LARGE,
+                    "watch snapshot chunk " + len + " bytes exceeds MAX_SNAPSHOT_CHUNK_BYTES="
+                            + MAX_SNAPSHOT_CHUNK_BYTES);
+        }
+        byte[] bytes = new byte[len];
+        p.get(bytes);
+        try {
+            return new EdgeFrame.WatchSnapshotChunk(watchId, gid, index, bytes);
+        } catch (IllegalArgumentException e) {
+            throw new CodecException(ErrorCode.FRAME_CORRUPT, "invalid WATCH_SNAPSHOT_CHUNK: " + e.getMessage());
+        }
+    }
+
+    private static EdgeFrame decodeWatchSnapshotEnd(ByteBuffer p) {
+        long watchId = p.getLong();
+        int gid = p.getInt();
+        long snapshotSeq = p.getLong();
+        try {
+            return new EdgeFrame.WatchSnapshotEnd(watchId, gid, snapshotSeq);
+        } catch (IllegalArgumentException e) {
+            throw new CodecException(ErrorCode.FRAME_CORRUPT, "invalid WATCH_SNAPSHOT_END: " + e.getMessage());
+        }
+    }
+
+    /** Reads a {@code [len u32][bytes]} blob, bounds-checking {@code len} before allocation. */
+    private static byte[] readBytes(ByteBuffer p, String field) {
+        if (p.remaining() < 4) {
+            throw new CodecException(ErrorCode.FRAME_CORRUPT, "truncated reading " + field + " length");
+        }
+        int len = p.getInt();
+        if (len < 0 || len > p.remaining()) {
+            throw new CodecException(ErrorCode.FRAME_CORRUPT,
+                    "bad " + field + " length: " + len + " (remaining " + p.remaining() + ")");
+        }
+        byte[] b = new byte[len];
+        p.get(b);
+        return b;
+    }
+
     private static String readString(ByteBuffer p, String field) {
         if (p.remaining() < 4) {
             throw new CodecException(ErrorCode.FRAME_CORRUPT, "truncated reading " + field + " length");
@@ -534,7 +1007,7 @@ public final class EdgeFrameCodec {
     }
 
     // -----------------------------------------------------------------------
-    // peekLength — bounds-check BEFORE allocation (ADR-0037)
+    // peekLength / peekVersion — cheap pre-decode header reads (ADR-0037)
     // -----------------------------------------------------------------------
 
     /**
@@ -563,5 +1036,29 @@ public final class EdgeFrameCodec {
                             + ", max " + MAX_EDGE_FRAME_SIZE + ")");
         }
         return length;
+    }
+
+    /**
+     * Reads the stamped edge wire version byte (offset 4, after the 4-byte length prefix) so a
+     * per-connection reader can establish or pin the negotiated version on the connection's
+     * first frame (W1-3 / W5-11) before committing to {@link #decode(byte[], byte)}.
+     *
+     * <p><b>This does NOT validate the CRC</b> — it is a cheap pre-decode peek. The returned
+     * byte is the raw stamped version (it is NOT range-checked here either; {@link #decode}
+     * still performs the full CRC-before-interpret validation and rejects an unsupported
+     * version with {@link ErrorCode#BAD_WIRE_VERSION}).
+     *
+     * @param data a buffer with at least {@link #HEADER_SIZE} bytes
+     * @return the stamped version byte (expected {@link #EDGE_WIRE_VERSION} or
+     *         {@link #EDGE_WIRE_VERSION_V2})
+     * @throws CodecException if the buffer is shorter than {@link #HEADER_SIZE}
+     */
+    public static byte peekVersion(byte[] data) {
+        Objects.requireNonNull(data, "data must not be null");
+        if (data.length < HEADER_SIZE) {
+            throw new CodecException(ErrorCode.FRAME_CORRUPT,
+                    "need at least " + HEADER_SIZE + " bytes to read frame version, have " + data.length);
+        }
+        return data[4]; // version byte: [length u32][version u8][type u8]
     }
 }

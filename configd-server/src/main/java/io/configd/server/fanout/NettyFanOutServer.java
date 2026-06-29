@@ -9,6 +9,7 @@ import io.configd.distribution.fanout.FanOutSessionCore;
 import io.configd.distribution.fanout.SlowConsumerGovernor;
 import io.configd.distribution.fanout.SlowConsumerPolicyConfig;
 import io.configd.distribution.fanout.TransportSink;
+import io.configd.distribution.fanout.WatchAuthorizer;
 import io.configd.distribution.wire.EdgeFrame;
 import io.configd.distribution.wire.EdgeFrameCodec;
 import io.configd.distribution.wire.ErrorCode;
@@ -94,6 +95,14 @@ public final class NettyFanOutServer implements FanOutEndpoint {
     private final Clock clock;
     private final int workerThreads;
 
+    /**
+     * The RFC §2 watch-authorization gate (W7), or {@code null} when no watch capability is wired —
+     * the driver then fails CLOSED (every {@code WATCH_CREATE} → {@code NOT_AUTHORIZED}). The
+     * pre-watch constructors pass {@code null}, so existing callers (the contract, the testkit main)
+     * compile and behave unchanged; {@code ConfigdServer} threads a real authorizer.
+     */
+    private final WatchAuthorizer authorizer;
+
     private final NettyTransport.Selection transport;
     private final AtomicBoolean running = new AtomicBoolean(false);
     /** Live connections INCLUDING mid-handshake (the bound is applied before the handshake). */
@@ -140,6 +149,27 @@ public final class NettyFanOutServer implements FanOutEndpoint {
                              SlowConsumerGovernor governor,
                              RegistryFanOutSessionMetrics metrics,
                              Clock clock) {
+        this(bindAddress, tlsManager, source, replaySource, config, transportQueueFrames, maxSessions,
+                governor, metrics, clock, null);
+    }
+
+    /**
+     * Full constructor with the RFC §2 watch-authorization gate ({@code authorizer}, W7). A
+     * {@code null} authorizer fails CLOSED (watches rejected {@code NOT_AUTHORIZED}); the legacy
+     * SUBSCRIBE fan-out path is unaffected regardless. {@code ConfigdServer} threads the
+     * {@code AclServiceWatchAuthorizer} here.
+     */
+    public NettyFanOutServer(InetSocketAddress bindAddress,
+                             TlsManager tlsManager,
+                             CommitNotificationSource source,
+                             ReplaySource replaySource,
+                             FanOutConfig config,
+                             int transportQueueFrames,
+                             int maxSessions,
+                             SlowConsumerGovernor governor,
+                             RegistryFanOutSessionMetrics metrics,
+                             Clock clock,
+                             WatchAuthorizer authorizer) {
         this.bindAddress = Objects.requireNonNull(bindAddress, "bindAddress");
         this.tlsManager = tlsManager; // null = plaintext (test/single-node)
         this.source = Objects.requireNonNull(source, "source");
@@ -159,6 +189,7 @@ public final class NettyFanOutServer implements FanOutEndpoint {
         this.workerThreads = Integer.getInteger("configd.edge.netty.workerThreads",
                 Math.max(2, Runtime.getRuntime().availableProcessors()));
         this.transport = NettyTransport.select();
+        this.authorizer = authorizer; // nullable ⇒ no watch capability ⇒ driver fails closed
     }
 
     @Override
@@ -189,12 +220,16 @@ public final class NettyFanOutServer implements FanOutEndpoint {
                 .childHandler(new ChannelInitializer<Channel>() {
                     @Override
                     protected void initChannel(Channel ch) {
+                        // Construct the per-connection handler FIRST so the outbound encoder can read its
+                        // negotiated wire version (W1-3 / §6a): a watch connection (first WATCH_CREATE)
+                        // flips conn.wireVersion to 0x02 and the encoder stamps it on every outbound frame.
+                        FanOutConnection conn = new FanOutConnection();
                         if (tlsManager != null) {
                             ch.pipeline().addLast(newSslHandler());
                         }
                         ch.pipeline().addLast(new ByteToEdgeFrameDecoder());
-                        ch.pipeline().addLast(new EdgeFrameToByteEncoder());
-                        ch.pipeline().addLast(new FanOutConnection());
+                        ch.pipeline().addLast(new EdgeFrameToByteEncoder(() -> conn.wireVersion));
+                        ch.pipeline().addLast(conn);
                     }
                 });
         try {
@@ -271,6 +306,21 @@ public final class NettyFanOutServer implements FanOutEndpoint {
         private boolean started;          // event-loop-only: the session has been started
         private volatile boolean connectedCounted; // onSubscriberConnected fired (pairs with disconnect)
 
+        /**
+         * Negotiated OUTBOUND edge wire version (W1-3 / §6a). Default {@code 0x01} (legacy); flipped to
+         * {@code 0x02} when this connection's FIRST inbound frame is a {@code WATCH_CREATE} (a watch
+         * connection). The {@link EdgeFrameToByteEncoder} reads it (via the {@code initChannel} supplier
+         * lambda) and stamps it on every outbound frame, so a {@code 0x02} client can decode the
+         * server's {@code WATCH_*} frames (W5-11). Written + read on the event loop; {@code volatile}
+         * for clarity and the cross-handler supplier read. A legacy connection never flips it ⇒ stays
+         * {@code 0x01} ⇒ byte-identical. (The INBOUND version pin is the {@link ByteToEdgeFrameDecoder}'s
+         * self-contained per-connection state.)
+         */
+        volatile byte wireVersion = EdgeFrameCodec.EDGE_WIRE_VERSION;
+
+        /** Event-loop-only: whether the connection-type-deciding first inbound frame has been seen. */
+        private boolean firstInboundSeen;
+
         @Override
         public void channelActive(ChannelHandlerContext ctx) {
             this.channel = ctx.channel();
@@ -333,7 +383,7 @@ public final class NettyFanOutServer implements FanOutEndpoint {
             }
             started = true;
             this.driver = new FanOutConnectionDriver(source, replaySource, this, config, metrics,
-                    clock, governor, identity, this::teardown);
+                    clock, governor, identity, this::teardown, authorizer);
             metrics.onSubscriberConnected();
             connectedCounted = true;
             Thread.ofVirtual().name("edge-netty-session-" + identity)
@@ -342,6 +392,19 @@ public final class NettyFanOutServer implements FanOutEndpoint {
 
         @Override
         protected void channelRead0(ChannelHandlerContext ctx, EdgeFrame frame) {
+            if (!firstInboundSeen) {
+                firstInboundSeen = true;
+                // §6a outbound flip: a WATCH_CREATE-first connection is a 0x02 watch connection, so the
+                // encoder must stamp 0x02 for the client to decode the server's WATCH_* frames (W5-11).
+                // A SUBSCRIBE-first legacy connection stays 0x01 (byte-identical). Flip BEFORE routing,
+                // so the flip happens-before any outbound watch frame the driver later produces. (A
+                // WATCH_CREATE is always 0x02-stamped — the codec forbids WATCH_* under 0x01 — and the
+                // decoder has already pinned this connection's inbound version to 0x02 for the same
+                // reason, so the two version views agree for every real connection.)
+                if (frame instanceof EdgeFrame.WatchCreate) {
+                    wireVersion = EdgeFrameCodec.EDGE_WIRE_VERSION_V2;
+                }
+            }
             FanOutConnectionDriver d = driver;
             if (d != null) {
                 d.onInboundFrame(frame); // routing is the driver's (SUBSCRIBE-first, CURSOR_ACK, …)
