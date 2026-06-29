@@ -4,6 +4,7 @@ import io.configd.api.AclService;
 import io.configd.api.ConfigPolicy;
 import io.configd.api.PolicyParseException;
 import io.configd.api.PolicySerializer;
+import io.configd.observability.ConfigdMetrics;
 import io.configd.observability.MetricsRegistry;
 import io.configd.store.ConfigMutation;
 import io.configd.store.ReadResult;
@@ -63,10 +64,10 @@ final class AclConfigPolicyLoader {
 
     private static final Logger LOG = Logger.getLogger(AclConfigPolicyLoader.class.getName());
 
-    /** Failure metric: incremented once per rejected (re)load. */
-    static final String NAME_POLICY_LOAD_FAILED = "configd.acl.policy.load.failed";
-    /** Success metric: incremented once per accepted (re)load (including the boot seed). */
-    static final String NAME_POLICY_RELOAD = "configd.acl.policy.reload";
+    /** Failure metric (canonical name catalogued in {@link ConfigdMetrics}): once per rejected (re)load. */
+    static final String NAME_POLICY_LOAD_FAILED = ConfigdMetrics.NAME_ACL_POLICY_LOAD_FAILED;
+    /** Success metric (canonical name catalogued in {@link ConfigdMetrics}): once per accepted (re)load. */
+    static final String NAME_POLICY_RELOAD = ConfigdMetrics.NAME_ACL_POLICY_RELOAD;
 
     /**
      * The reserved role name a config policy may NOT define (forward-compat for a built-in admin role) and
