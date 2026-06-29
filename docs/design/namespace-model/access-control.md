@@ -12,7 +12,7 @@ bypass. Normative keywords (MUST / SHOULD / MAY) are used deliberately; the RFC 
 
 ---
 
-## Implementation status (reconciled 2026-06-28 — Wiring Increments 2–4)
+## Implementation status (reconciled 2026-06-29 — Wiring Increments 2–5)
 
 This document was written as a **design recommendation**; several recommendations have since been **built
 and merged to `main`**. Where the prose below calls the built `AclService` "longest-match-only", or the
@@ -23,7 +23,8 @@ capabilities/roles "new/unused", read it against this table:
 | Union-of-ancestors + absolute deny-precedence, superseding longest-match-only — §4 | **BUILT** | Wiring Increment 2 (`ee27250`) |
 | Capabilities `{READ, LIST, WRITE, WATCH, ADMIN}` + per-capability `DENY`; LIST ⊥ READ; effective-WATCH = WATCH ∧ READ — §2, §2.1 | **BUILT** | Wiring Increment 3 (`770d76f`) |
 | Role indirection — `AclService` consumes `AuthResult.roles()`; static role→grant definitions (empty default) — §1, §4.1 | **BUILT (O-6 Seam 1)** | Wiring Increment 4 |
-| Policy-as-config under `/_acl/`, reload-on-apply — §1.2 | unbuilt | O-6 Seam 2 |
+| Policy-as-config under `/_acl/`, **load + reload-on-apply** (serializer + atomic-swap snapshot, byte-identical; fail-closed-to-last-good) — §1.2 | **BUILT (O-6 Seam 2a)** | Wiring Increment 5 |
+| Policy-as-config **enforcement** — `/_acl/` ADMIN gate + reserved-namespace write protection + self-protection (§1.2, the "self-protecting" bullet) | unbuilt | O-6 Seam 2b |
 | Path-glob / segment-aware `pathPattern` matching (§1, §3, §4.1) | unbuilt — the built matcher is **literal `key.startsWith(prefix)`** (DL-O3-02-deferred) | — |
 | Scope-in-rule (`rule.scope ⊇ scope`, §4.1) | unbuilt — built evaluation is **scope-blind** (DL-O6-02) | — |
 | Watch-authz at subscription (§6); `list` endpoint (§7) | unbuilt | O-5 / O-2 |

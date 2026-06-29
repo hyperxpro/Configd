@@ -138,7 +138,11 @@ code / no `AclService` change" scope note describe the **design session only** a
 
 O-6 ("roles → policies → principals") is built in two seams. **Seam 1** (this increment) adds role
 indirection to the evaluation engine with **static in-memory maps**, **byte-identical** to the deployed
-config. **Seam 2** (next) is policy-as-config under `/_acl/`. The Seam 1 decisions:
+config. **Seam 2** is policy-as-config under `/_acl/`, itself split into **2a** (the serializer +
+atomic-swap load/reload, byte-identical — **BUILT**, Wiring Increment 5; see below and
+[`../../wiring/increment-5-policy-as-config-load-reload.md`](../../wiring/increment-5-policy-as-config-load-reload.md))
+and **2b** (the ADMIN gate + reserved-namespace + self-protection — the enforcement increment, next). The
+Seam 1 decisions:
 
 - **DL-O6-01 — Root is a principal-scoped degenerate rule, NOT a "root role".** The deployed
   `ConfigdServer` `grant("","root",all)` is kept **unchanged** and understood as the degenerate rule
@@ -183,6 +187,40 @@ config. **Seam 2** (next) is policy-as-config under `/_acl/`. The Seam 1 decisio
 - **Scope-blind ripple (DL-O6-02):** role rules match literal prefix only, exactly as scope-blind as own
   grants — no regression now (single `GLOBAL` scope, no live roles). Once scope enters the rule AND roles
   are live, a scope-blind role rule would over-grant across all scopes; must be addressed then.
+
+## O-6 Seam 2a decisions (Wiring Increment 5 — policy-as-config load/reload, byte-identical)
+
+Seam 2a makes the Seam-1 role/policy model **loadable from config** under the reserved `_acl/` key subtree,
+**without changing any authorization decision** (production defines no `_acl/` keys ⇒ the config-policy
+snapshot is empty ⇒ byte-identical). Full rationale + proof in the increment-5 doc; the decisions:
+
+- **DL-O6-04 — Serializer = strict line-oriented text, multi-key under `_acl/`** (`_acl/roles/<name>`,
+  `_acl/bindings/<principal>`). No JSON lib exists; text is more operable for operator-authored policy and
+  avoids a JSON parser surface. Literal-prefix only (DL-O3-02), scope out of the rule (DL-O6-02).
+- **DL-O6-05 — Config-policy behind ONE volatile snapshot (atomic swap).** A deeply-immutable
+  `ConfigPolicy` published by a single volatile reference swap (mirrors `VersionedConfigStore`); `isAllowed`
+  reads it **once** so a concurrent reload is never torn. It is a **separate, additive** sub-layer; the
+  static imperative layer (incl. the `grant("","root",all)` of DL-O6-01) is **untouched**; `EMPTY` default
+  ⇒ byte-identical.
+- **DL-O6-06 — Fail-closed-to-last-good.** Malformed / reserved-colliding policy ⇒ reject (SEVERE +
+  metric), **keep the current snapshot** — never deny-all, never allow-all. A well-formed-but-incomplete
+  policy (binding to a not-yet-loaded role) is inert, not a failure (lets the idempotent whole-subtree
+  rebuild converge across out-of-order multi-key writes / the snapshot-WAL split).
+- **DL-O6-07 — "admin" footgun NEUTRALIZED (resolves the Seam-1 residual).** Root is un-carveable by any
+  config role via three closes: **N1** root asserts `Set.of()` (the honest DL-O6-01; byte-identical since
+  `admin` was never defined), **N2** the loader reserves the **root principal** (rejects a config binding
+  to it — closes the binding vector the two charter options miss), **N3** the loader reserves the role
+  **name `admin`** (forward-compat for 2b). Proven: a config binding `root→deny-all` is rejected and root
+  stays fully authorized.
+- **DL-O6-08 — Snapshot-install rebuild hook.** `ConfigStateMachine` gains an additive, empty-default
+  snapshot-install listener (fired after a successful `restoreSnapshot`) so InstallSnapshot-delivered
+  `_acl/` keys (follower catch-up) converge through the same idempotent rebuild. Byte-identical.
+
+**Seam-1 residuals — disposition in 2a:** the **`"admin"` reserved-name** residual is **resolved** (N1/N2/
+N3 above). Still **carried to 2b**: `Role.rules()` precompute (now a hot path under config), deprovisioning
+(`removeRole`/`unassignRole`/`undefineRole`), the scope-blind ripple, and (new) multi-shard `_acl/`
+aggregation at N>1 (a pre-existing single-`aclService` limitation; N=1 production is complete +
+byte-identical).
 
 ---
 
