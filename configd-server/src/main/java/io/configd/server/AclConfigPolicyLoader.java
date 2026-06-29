@@ -189,6 +189,12 @@ final class AclConfigPolicyLoader {
      * sets, a key that passes here can never freeze a later whole-subtree reload. A well-formed-but-
      * incomplete policy (a binding to a not-yet-defined role) parses successfully and is intentionally NOT
      * rejected (DL-O6-06) — single-key validation is exactly the right granularity.
+     * <p>
+     * The reserved sets are the {@code static} {@link #RESERVED_ROLES} / {@link #RESERVED_PRINCIPALS} —
+     * the canonical pair {@code ConfigdServer} also constructs this loader with — so in the production
+     * wiring the write-time gate and the instance reload path validate against the IDENTICAL names. (A
+     * loader instance built with different sets — only tests do that, with value-equal sets — would not
+     * change the write-time validator, which is anchored to the canonical constants.)
      *
      * @param key   the reserved {@code _acl/}-prefixed config key (verbatim, post-strip)
      * @param value the raw config value bytes

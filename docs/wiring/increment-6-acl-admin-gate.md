@@ -119,8 +119,9 @@ counter from the 2a handoff are 2c.)
 
 ## 3. Proof (local; CI is the gate for merge)
 
-- **The 8 negative tests (all green).** `ReservedPrefixAdminGateTest` (handler-level, 9 cases) +
-  `AbstractAdminApiServerContract` Section 9 (5 cases × 3 transports) cover: (1) no-window escalation
+- **The 8 negative tests (all green).** `ReservedPrefixAdminGateTest` (handler-level, 10 cases — the 8
+  scenarios + the auth-on/no-ACL fail-closed corner) + `AbstractAdminApiServerContract` Section 9
+  (5 cases × 3 transports) cover: (1) no-window escalation
   (WRITE-not-ADMIN → PUT/DELETE `_acl/` → 403); (2) ADMIN allowed + root allowed (→ 200); (3) prefix-evasion
   — the percent-decoding vectors `%5Facl/`, `_acl%2F`, `_acl/../` are ADMIN-gated over real HTTP, while the
   distinct-key vectors `/_acl/…` and `_ACL/…` route to a verbatim distinct key (predicate-alignment); (4)
