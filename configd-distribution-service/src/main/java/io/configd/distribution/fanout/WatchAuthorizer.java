@@ -47,4 +47,23 @@ public interface WatchAuthorizer {
      *         {@link Throwable} as {@code false} (fail-closed).
      */
     boolean authorizeWatch(String principal, Set<String> roles, WatchTarget target);
+
+    /**
+     * The current authorization-policy version — a monotonic counter the veneer polls to drive
+     * <b>bounded watch revocation</b> (RFC §2 W7-7). The veneer caches the version each live watch was
+     * last authorized at and, when this value <b>advances</b>, re-runs {@link #authorizeWatch} for every
+     * live watch on the connection, force-closing any whose principal no longer holds {@code READ ∧
+     * WATCH} over its target — within a bounded latency of the policy change. When the version is
+     * unchanged the veneer does no re-authorization work (a single comparison per tick), so a policy
+     * that never changes (the production default, no {@code _acl/} keys) costs nothing.
+     * <p>
+     * The default is the constant {@code 0} — an implementation that does not expose a policy version
+     * (e.g. a fixed test authorizer) thus never triggers re-authorization. The production adapter
+     * overrides this with the live {@code AclService} config-policy version.
+     *
+     * @return a monotonic policy version; the default {@code 0} means "never changes"
+     */
+    default long policyVersion() {
+        return 0L;
+    }
 }

@@ -141,6 +141,15 @@ public final class FanOutConnectionDriver {
     private boolean coreSubscribed;
 
     /**
+     * Session-thread-only: the {@link WatchAuthorizer#policyVersion() policy version} the connection's
+     * live watches were last (re-)authorized at — the bounded-revocation cursor (RFC §2 W7-7).
+     * Initialized at the first watch create; the session loop re-authorizes all live watches whenever
+     * the authorizer's version advances past this, then updates it. {@code Long.MIN_VALUE} until the
+     * first watch (no watch connection ⇒ no re-auth).
+     */
+    private long lastReauthVersion = Long.MIN_VALUE;
+
+    /**
      * The governor identity (cert principal over mTLS; wire edgeId over plaintext). Set by the
      * reader at SUBSCRIBE, read by the session thread — {@code null} until subscribed, and a
      * demotion is impossible before the subscribe command has run.
@@ -372,6 +381,15 @@ public final class FanOutConnectionDriver {
         WatchTarget target = new WatchTarget(create.scope(), create.targetKind(), path,
                 create.fullChainVerify());
 
+        // Snapshot the policy version BEFORE the authorize gate (W7-7 seed correctness): the gate
+        // below authorizes against a snapshot at version >= this, so seeding lastReauthVersion from
+        // this read guarantees any LATER revoking reload (version > the gate's snapshot) is caught by
+        // re-auth. Reading it AFTER authorize would let a reload that lands in the
+        // authorize→seed window seed past its own revocation, so the first watch would never be
+        // re-checked until the next reload (a narrow but unbounded W7-7 miss). 0 when no authorizer
+        // (the create is then rejected below, so the value is unused).
+        long versionAtCreate = (authorizer != null) ? authorizer.policyVersion() : 0L;
+
         // (2) AUTHORIZE the whole target — the security crux. Zero data frames precede a reject.
         if (!authorize(target)) {
             rejectWatch(watchId, ErrorCode.NOT_AUTHORIZED,
@@ -407,6 +425,10 @@ public final class FanOutConnectionDriver {
                 watchId, edgeIdentity, Set.of(), target, requested, create.flags()));
         if (!coreSubscribed) {
             coreSubscribed = true;
+            // Seed the bounded-revocation cursor (W7-7) from the version read BEFORE the authorize
+            // gate (<= the version the gate authorized against), so any later revoking reload advances
+            // past it and triggers re-auth. The authorizer is non-null here (the watch passed the gate).
+            lastReauthVersion = versionAtCreate;
             // The drain-owner's target is BOTH the snapshot content filter (FilteringReplaySource,
             // W5-10/W7-4 — a narrow watch never receives the whole store) AND the fixed
             // WATCH_SNAPSHOT_* tag (F2). Set both before driving onSubscribe.
@@ -455,6 +477,47 @@ public final class FanOutConnectionDriver {
             // addition). The connection and other watches survive.
             watchSink.offerWatchFrame(new EdgeFrame.WatchCanceled(
                     cancel.watchId(), ErrorCode.SERVER_SHUTDOWN, null, "canceled"));
+        }
+    }
+
+    /**
+     * The bounded-revocation tick step (RFC §2 W7-7): re-authorizes the connection's live watches iff
+     * the authorizer's {@link WatchAuthorizer#policyVersion() policy version} has advanced since the
+     * last check, then records the new version. A single volatile-acquire comparison on the common
+     * (unchanged-policy) path. Runs only for a watch connection ({@code coreSubscribed} ⇒ a non-null
+     * authorizer). Extracted as the deterministic test seam (mirrors {@link #drainInboundCommands}):
+     * the session loop calls it each iteration, and a test acting as the session thread calls it
+     * directly after publishing a new policy version.
+     */
+    void maybeReauthorizeWatches() {
+        if (coreSubscribed && authorizer != null) {
+            long policyV = authorizer.policyVersion();
+            if (policyV != lastReauthVersion) {
+                reauthorizeLiveWatches();
+                lastReauthVersion = policyV;
+            }
+        }
+    }
+
+    /**
+     * Re-authorizes every live watch against the CURRENT ACL state and force-closes —
+     * {@code WATCH_CANCELED(NOT_AUTHORIZED)}, which a driver treats as terminal and does not retry
+     * (W7-6) — any whose principal no longer holds {@code READ ∧ WATCH} over its whole target. The
+     * connection and the surviving watches are unaffected (multiplex isolation). Called by
+     * {@link #maybeReauthorizeWatches} ONLY when the policy version has advanced. Bounded by the
+     * live-watch count × the authorizer's per-call cost; non-blocking on the session thread.
+     */
+    private void reauthorizeLiveWatches() {
+        // Snapshot the live entries — we cancel during iteration. Each entry's principal is
+        // edgeIdentity and roles Set.of(), so authorize(target) re-runs the SAME whole-target gate the
+        // create used, now against the reloaded ACL snapshot (fail-closed on any throwable).
+        for (WatchRegistry.WatchEntry e : List.copyOf(watchRegistry.liveEntries())) {
+            if (!authorize(e.target())) {
+                watchSink.offerWatchFrame(new EdgeFrame.WatchCanceled(e.watchId(),
+                        ErrorCode.NOT_AUTHORIZED, null,
+                        "watch revoked: ACL policy no longer grants READ ∧ WATCH over the target"));
+                watchRegistry.cancel(e.watchId());
+            }
         }
     }
 
@@ -562,6 +625,9 @@ public final class FanOutConnectionDriver {
                         governor.evaluate(id, nowMillis);
                     }
                 }
+
+                // Bounded watch revocation (RFC §2 W7-7) — the version-gated re-auth tick step.
+                maybeReauthorizeWatches();
 
                 boolean madeProgress = drainedCommand
                         || session.cursor() != beforeCursor
