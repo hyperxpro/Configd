@@ -481,6 +481,129 @@ public final class AclService {
     }
 
     /**
+     * Decides whether an effective {@link PolicyRule rule set} grants capability {@code cap} over the
+     * <b>entire</b> subtree rooted at {@code target} — the <b>whole-target cover-check</b> a subtree/{@code
+     * FULL} watch (or {@code list}) authorization needs, and the one a single-key
+     * {@link #isAllowed(String, Set, String, Permission)} structurally <b>cannot</b> provide (RFC §02
+     * <b>W7-2a</b> — the universal-quantifier lift of §01 A5-4; §01 §6 <b>A6-1..A6-4</b>). It is
+     * deliberately {@code static}: it reads <b>no</b> instance ACL state, so it can decide only from the
+     * rules handed in — the strongest possible proof it changes no existing behavior.
+     * <p>
+     * Over the literal-prefix model ({@link PolicyRule#matches} is {@code key.startsWith(prefix)}), in
+     * <b>one</b> O(<i>#rules</i>) pass:
+     * <pre>
+     *   coversTarget(rules, target, cap)  ⟺
+     *       (∃ A ∈ rules:  cap ∈ A.allow ∧ target.startsWith(A.prefix))                                   (i)
+     *     ∧ (∄ D ∈ rules:  cap ∈ D.deny  ∧ (target.startsWith(D.prefix) ∨ D.prefix.startsWith(target)))   (ii)
+     * </pre>
+     * <ul>
+     *   <li><b>(i) an ancestor-or-equal ALLOW carries {@code cap}.</b> {@code target.startsWith(A.prefix)}
+     *       means {@code A.prefix} is an ancestor of (or equals) {@code target}, so its grant blankets the
+     *       whole subtree. A union of ALLOWs lying strictly <i>below</i> {@code target} <b>cannot</b> cover
+     *       it — an unbounded subtree has descendants none of them reach.</li>
+     *   <li><b>(ii) no {@code cap}-DENY intersects the subtree.</b> The first disjunct
+     *       {@code target.startsWith(D.prefix)} is an <b>ancestor DENY</b> (at or above {@code target}); the
+     *       second disjunct <b>{@code D.prefix.startsWith(target)} is the INTERIOR-DENY term</b> — it matches a
+     *       DENY at or below {@code target}, its <i>unique</i> contribution (the case the first disjunct misses)
+     *       being a DENY strictly <i>below</i> {@code target} that carves a hole inside the subtree. <b>This interior term
+     *       is the whole reason a single-key check is insufficient:</b> {@link #isAllowed} unions only a
+     *       key's <i>ancestor</i> grants, so (as its own "{@code NOTE this floors a SINGLE KEY}" comment
+     *       records) it cannot observe a {@code READ}/{@code WATCH} deny on a <i>descendant</i> of the key.
+     *       Evaluating A5-4 once at the target root would therefore miss exactly this hole and over-expose
+     *       the denied descendant — which RFC W7-2a forbids.</li>
+     * </ul>
+     * Computed as two flags over a single pass returning {@code granted && !denied} — no early return,
+     * clarity over micro-optimization for a security-crux predicate. Deny-precedence is absolute: (ii) can
+     * reject regardless of (i).
+     * <p>
+     * <b>DORMANT (this increment).</b> There are <b>no call sites</b> for this method; the runtime is
+     * byte-identical. The whole-target authorization <b>gate</b> that assembles the principal's unioned rule
+     * set and calls this is a later increment (the O-5 watch-subscribe path,
+     * {@code FanOutSessionCore.onSubscribe}); see the docs-only {@code WatchAuthz#authorizeWatch} for the
+     * shape it realizes in the literal-prefix model.
+     * <p>
+     * <b>The {@code rules} collection is the principal's unioned rule set</b> — own ∪ role ∪ config, the
+     * <b>same</b> sources {@link #isAllowed} accumulates (§01 A5-3/A5-4) — assembled by that gate (each own
+     * {@code (allow, deny)} grant at a prefix becomes one {@link PolicyRule}). {@code coversTarget} is
+     * <b>source-agnostic</b>: it sees a single flat rule collection and does not care which layer a rule
+     * came from.
+     * <p>
+     * <b>Literal, not segment-aware.</b> Matching is the same raw {@code startsWith} {@link #isAllowed} and
+     * {@link PolicyRule#matches} use, so {@code coversTarget} is <b>exactly faithful to the literal model
+     * {@code isAllowed} enforces</b> — it never reports a subtree covered when {@code isAllowed} would deny
+     * some key in it, i.e. <b>no exposure beyond {@code isAllowed}</b>. Segment-aware matching is the deferred
+     * <b>DL-O3-02</b> debt, accepted for V1 and pinned by a test; measured against segment-aware <i>intent</i>
+     * the deferral cuts <b>both ways</b> — an ALLOW on {@code "team"} over-grants coverage of {@code "teamX"}
+     * while a DENY on {@code "team"} over-denies it — so a segment-confusable carve-out stays fail-closed while
+     * a segment-confusable grant over-covers, exactly as the deployed flat-key {@code isAllowed} already does.
+     * <p>
+     * <b>FULL ⟺ {@code target == ""}.</b> {@code "".startsWith(A.prefix)} holds <b>only</b> when
+     * {@code A.prefix == ""}, so FULL coverage requires a <b>root-prefix ALLOW</b> carrying {@code cap}; and
+     * at {@code target == ""} the interior disjunct {@code D.prefix.startsWith("")} is true for <b>every</b>
+     * deny, so <b>any</b> {@code cap}-DENY anywhere blocks FULL — exactly "root grant ∧ no {@code cap}-DENY
+     * anywhere." FULL coverage thus requires a <b>root-prefix {@code ""} ALLOW</b> carrying {@code cap}; which
+     * principal may hold that grant is the Increment-5 reserved-root invariant (in the deployed config, only
+     * {@code grant("", "root", allOf)}) — so RFC W7-3 / A6-3's full-scope requirement falls straight out of the
+     * predicate.
+     * <p>
+     * <b>Cost.</b> O(<i>#rules</i>), one pass, with <b>no</b> store scan and <b>no</b> key enumeration: the
+     * subtree is authorized once, not per delivered key.
+     *
+     * @param rules  the principal's effective (unioned own ∪ role ∪ config) rule set (non-null; the gate is
+     *               responsible for non-null elements — a null element NPEs at {@link PolicyRule#allow})
+     * @param target the subtree root to cover — a literal key prefix; {@code ""} is FULL/root (non-null)
+     * @param cap    the capability that must cover the whole subtree (non-null)
+     * @return whether {@code cap} is granted over <b>all</b> of the {@code target} subtree (an
+     *         ancestor-or-equal ALLOW carries it and no intersecting DENY removes it)
+     * @see #authorizesWatch(Collection, String)
+     * @see #isAllowed(String, Set, String, Permission)
+     */
+    public static boolean coversTarget(Collection<PolicyRule> rules, String target, Permission cap) {
+        Objects.requireNonNull(rules, "rules must not be null");
+        Objects.requireNonNull(target, "target must not be null");
+        Objects.requireNonNull(cap, "cap must not be null");
+
+        boolean granted = false;   // (i)  ∃ ancestor-or-equal ALLOW carrying cap
+        boolean denied  = false;   // (ii) ∃ INTERSECTING DENY carrying cap (ancestor OR interior)
+        for (PolicyRule rule : rules) {
+            if (rule.allow().contains(cap) && target.startsWith(rule.prefix())) {
+                granted = true;
+            }
+            if (rule.deny().contains(cap)
+                    && (target.startsWith(rule.prefix()) || rule.prefix().startsWith(target))) {
+                // ancestor deny (target.startsWith(D.prefix)) OR interior deny (D.prefix.startsWith(target))
+                denied = true;
+            }
+        }
+        return granted && !denied;
+    }
+
+    /**
+     * The INV-WATCH-READ floor of {@link #isAllowed} (effective {@code WATCH} = {@code WATCH} ∧ {@code READ})
+     * <b>lifted to the whole {@code target} subtree</b>: a watch over a subtree/{@code FULL} target is
+     * authorized only when the rule set {@linkplain #coversTarget covers} the entire subtree with <b>both</b>
+     * {@code READ} <b>and</b> {@code WATCH} (RFC §02 <b>W7-1</b> "{@code READ(T) ∧ WATCH(T)} covering all of
+     * T"; §01 <b>A6-1/A6-4</b>). A watch is a streaming read, so it MUST NEVER expose what a read could not;
+     * over a subtree that floor must hold at <b>every</b> key, which is exactly what {@link #coversTarget}'s
+     * interior-DENY term enforces and a single {@code isAllowed(p, subtreeRoot, WATCH)} cannot. Pure and
+     * {@code static}, like {@link #coversTarget} (null-arg validation is delegated to it).
+     * <p>
+     * <b>DORMANT (this increment):</b> no call sites; the whole-target watch gate that assembles the rule set
+     * and calls this is the O-5 subscribe path ({@code FanOutSessionCore.onSubscribe}); cf. the docs-only
+     * {@code WatchAuthz#authorizeWatch}.
+     *
+     * @param rules  the principal's effective (unioned own ∪ role ∪ config) rule set (non-null)
+     * @param target the subtree root to authorize a watch over; {@code ""} is FULL/root (non-null)
+     * @return whether the principal may watch <b>all</b> of the {@code target} subtree — {@code READ}
+     *         <b>and</b> {@code WATCH} both cover it
+     * @see #coversTarget(Collection, String, Permission)
+     */
+    public static boolean authorizesWatch(Collection<PolicyRule> rules, String target) {
+        return coversTarget(rules, target, Permission.READ)
+                && coversTarget(rules, target, Permission.WATCH);
+    }
+
+    /**
      * Accumulates the principal's OWN per-prefix grants for {@code key} into {@code allow}/{@code deny}:
      * the union of <b>every</b> matching ancestor prefix (not longest-match-only). This is the historical
      * {@link #isAllowed} walk, extracted verbatim so the own-grants contribution is unchanged; the role
