@@ -717,13 +717,27 @@ public final class ConfigdServer {
                 if (java.security.MessageDigest.isEqual(
                         expectedToken.getBytes(java.nio.charset.StandardCharsets.UTF_8),
                         token.getBytes(java.nio.charset.StandardCharsets.UTF_8))) {
-                    return new AuthInterceptor.AuthResult.Authenticated("root", Set.of("admin"));
+                    // O-6 Seam 2a (N1): root asserts NO roles — its break-glass authority is purely the
+                    // static principal grant below (DL-O6-01), decoupled from any config-loadable role so no
+                    // `_acl/` role can carve it via assertion. Byte-identical: the prior {"admin"} role was
+                    // never defined, so {"admin"} and Set.of() always decided identically.
+                    return new AuthInterceptor.AuthResult.Authenticated("root", Set.of());
                 }
                 return new AuthInterceptor.AuthResult.Denied("invalid token");
             });
             aclService = new AclService();
             // Grant root principal full access to all keys
             aclService.grant("", "root", EnumSet.allOf(AclService.Permission.class));
+            // O-6 Seam 2a: config-sourced policy under `_acl/`. ADDITIVE on top of the static grant above
+            // (no `_acl/` keys in production ⇒ empty snapshot ⇒ byte-identical). Registered BEFORE the tick
+            // loop so it observes every `_acl/`-touching apply; the snapshot-install hook covers follower
+            // catch-up; the boot seed (rebuild) catches a snapshot-restored prefix. Fail-closed-to-last-good
+            // on malformed policy; the reserved role/principal names neutralize the carve footgun (N2/N3).
+            AclConfigPolicyLoader aclPolicyLoader = new AclConfigPolicyLoader(
+                    aclService, stateMachine.store(), Set.of("admin"), Set.of("root"), metricsRegistry);
+            stateMachine.addListener(aclPolicyLoader::onConfigChange);
+            stateMachine.addSnapshotListener(aclPolicyLoader::onSnapshotInstalled);
+            aclPolicyLoader.rebuild(); // boot seed
         }
 
         // ---------------------------------------------------------------

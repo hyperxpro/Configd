@@ -49,6 +49,12 @@ public final class ConfigStateMachine implements StateMachine {
     private final VersionedConfigStore store;
     private final Clock clock;
     private final List<ConfigChangeListener> listeners = new CopyOnWriteArrayList<>();
+    // O-6 Seam 2a: listeners notified AFTER a successful snapshot install (restoreSnapshot). A snapshot
+    // install wholesale-replaces the store WITHOUT any per-mutation apply notification, so a consumer that
+    // only watches apply() (e.g. the config-policy loader) would MISS `_acl/` keys delivered via
+    // InstallSnapshot (follower catch-up / runtime restore). EMPTY by default ⇒ no behavioral change ⇒
+    // byte-identical. Like apply listeners, invoked on the apply/owner thread; must be fast + non-blocking.
+    private final List<Runnable> snapshotListeners = new CopyOnWriteArrayList<>();
 
     /**
      * Optional invariant monitor for runtime assertion checking (Rule 13).
@@ -414,6 +420,10 @@ public final class ConfigStateMachine implements StateMachine {
         try {
             restoreSnapshotImpl(snapshot);
             metrics.onSnapshotRebuildSuccess();
+            // O-6 Seam 2a: a snapshot install changed the store contents wholesale with no per-mutation
+            // notification — let snapshot listeners (e.g. the config-policy loader) re-derive. Fired only
+            // on SUCCESS (after the store is consistently replaced); a failed install does not notify.
+            notifySnapshotListeners();
         } catch (RuntimeException e) {
             metrics.onSnapshotInstallFailed();
             throw e;
@@ -599,6 +609,20 @@ public final class ConfigStateMachine implements StateMachine {
         return listeners.remove(listener);
     }
 
+    /**
+     * Registers a listener invoked AFTER a successful {@link #restoreSnapshot} (snapshot install). Because a
+     * snapshot install wholesale-replaces the store without per-mutation {@link ConfigChangeListener}
+     * notifications, this is how a consumer (e.g. the config-policy loader, O-6 Seam 2a) learns the store
+     * contents changed via InstallSnapshot (follower catch-up / runtime restore) and can re-derive its
+     * view. Invoked on the apply thread in registration order; implementations must be fast + non-blocking.
+     *
+     * @param listener the snapshot-install callback (non-null)
+     */
+    public void addSnapshotListener(Runnable listener) {
+        Objects.requireNonNull(listener, "listener must not be null");
+        snapshotListeners.add(listener);
+    }
+
     // -----------------------------------------------------------------------
     // Signing
     // -----------------------------------------------------------------------
@@ -750,6 +774,12 @@ public final class ConfigStateMachine implements StateMachine {
     private void notifyListeners(List<ConfigMutation> mutations, long version) {
         for (ConfigChangeListener listener : listeners) {
             listener.onConfigChange(mutations, version);
+        }
+    }
+
+    private void notifySnapshotListeners() {
+        for (Runnable listener : snapshotListeners) {
+            listener.run();
         }
     }
 
