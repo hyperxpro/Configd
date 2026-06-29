@@ -303,6 +303,80 @@ class AclServiceByteIdentityDifferentialTest {
         assertTrue(assertions >= 1000, "expected a substantial guard-flip space; ran " + assertions);
     }
 
+    // -----------------------------------------------------------------------
+    // (d) O-6 Seam 2a: an EMPTY config-policy is the PRODUCTION state (no _acl/ keys) — it must not perturb
+    // a single decision. Nor must a config-policy whose roles cannot be resolved for the query: a binding to
+    // an UNDEFINED config role (flips the config-block guard, resolution finds nothing), or a DEFINED-but-
+    // UNBOUND, un-asserted config role with broad rules (no principal holds it). The oracle has no config
+    // concept, so each must leave every decision equal to the own-grants oracle — byte-identical, exactly
+    // as in production. This is the 2a analog of {@link #undefinedStaticBindingFlipsGuardYetStaysByteIdentical}.
+    // -----------------------------------------------------------------------
+    @Test
+    void configPolicyEmptyOrNonContributingStaysByteIdentical() {
+        Random r = new Random(0xC0FD_2A0FFL);
+        int assertions = 0;
+        final int configs = 50;
+
+        for (int c = 0; c < configs; c++) {
+            AclService acl = new AclService();
+            OracleAcl oracle = new OracleAcl();
+            List<String> opLog = new ArrayList<>();
+
+            int ops = 1 + r.nextInt(12);
+            for (int i = 0; i < ops; i++) {
+                String prefix = PREFIXES[r.nextInt(PREFIXES.length)];
+                String principal = GRANT_PRINCIPALS[r.nextInt(GRANT_PRINCIPALS.length)];
+                EnumSet<AclService.Permission> caps = randomCaps(r);
+                if (r.nextBoolean()) {
+                    acl.grant(prefix, principal, caps);
+                    oracle.grant(prefix, principal, caps);
+                    opLog.add("grant(\"" + prefix + "\",\"" + principal + "\"," + caps + ")");
+                } else {
+                    acl.deny(prefix, principal, caps);
+                    oracle.deny(prefix, principal, caps);
+                    opLog.add("deny(\"" + prefix + "\",\"" + principal + "\"," + caps + ")");
+                }
+            }
+
+            // Three config-policy states that must each contribute NOTHING:
+            //   (i)   EMPTY                       — the production state (guard short-circuits);
+            //   (ii)  bindings to an UNDEFINED role — flips the bindings guard; cp.roles().get() is null;
+            //   (iii) a DEFINED-but-UNBOUND, un-asserted role with allOf on "" — no principal resolves it.
+            String undefRole = "cfg-undef-" + r.nextInt(1_000_000);
+            Map<String, Set<String>> undefBindings = new HashMap<>();
+            for (String p : QUERY_PRINCIPALS) {
+                undefBindings.put(p, Set.of(undefRole));
+            }
+            Role unboundRole = new Role("cfg-unbound-" + r.nextInt(1_000_000),
+                    List.of(new Policy("p", List.of(
+                            new PolicyRule("", EnumSet.allOf(AclService.Permission.class), Set.of())))));
+            List<ConfigPolicy> nonContributing = List.of(
+                    ConfigPolicy.EMPTY,
+                    new ConfigPolicy(Map.of(), undefBindings),
+                    new ConfigPolicy(Map.of(unboundRole.name(), unboundRole), Map.of()));
+
+            for (ConfigPolicy cp : nonContributing) {
+                acl.publishConfigPolicy(cp);
+                for (String principal : QUERY_PRINCIPALS) {
+                    for (String key : KEYS) {
+                        for (AclService.Permission perm : PERMS) {
+                            boolean expected = oracle.decide(principal, key, perm);
+                            assertEquals(expected, acl.isAllowed(principal, key, perm),
+                                    divergence("2a cfg 3-arg", opLog, principal, key, perm));
+                            assertEquals(expected, acl.isAllowed(principal, Set.of(), key, perm),
+                                    divergence("2a cfg L2 empty", opLog, principal, key, perm));
+                            assertEquals(expected, acl.isAllowed(principal, Set.of("admin"), key, perm),
+                                    divergence("2a cfg L3 {\"admin\"}", opLog, principal, key, perm));
+                            assertions += 3;
+                        }
+                    }
+                }
+            }
+        }
+
+        assertTrue(assertions >= 5000, "expected a large 2a config-policy differential space; ran " + assertions);
+    }
+
     /** Lazy, fully-detailed divergence message: the config op-log and the exact (principal, key, perm). */
     private static java.util.function.Supplier<String> divergence(
             String lens, List<String> opLog, String principal, String key, AclService.Permission perm) {
