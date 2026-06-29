@@ -333,6 +333,38 @@ public final class AclService {
     }
 
     /**
+     * The current <b>config-policy version</b> — the monotonic store version the live
+     * {@link ConfigPolicy} snapshot was derived from (the {@code _acl/} reload version). It is
+     * {@link Long#MIN_VALUE} until the first policy is published (the production default, since no
+     * {@code _acl/} keys are deployed), and advances on <b>every</b> {@code _acl/} reload (each
+     * {@link #publishConfigPolicy} bumps it; the versioned overload installs the store version
+     * monotonically). Because the imperative grant layer is boot-static, this version captures all
+     * <b>runtime</b> authorization changes.
+     * <p>
+     * <b>INVARIANT (W7-7 trigger completeness).</b> This version advances <b>only</b> on a
+     * {@code _acl/} config-policy reload, <b>not</b> on the imperative mutators ({@link #grant} /
+     * {@link #deny} / {@link #revoke} / {@link #defineRole} / {@link #assignRole}). That is correct
+     * <b>only because those mutators are boot-static</b> (in the deployed wiring the sole runtime call
+     * is the boot root grant; every runtime ACL change flows through the versioned {@code _acl/}
+     * loader). If a future increment ever wires a <b>runtime</b> imperative-ACL mutation path (e.g. an
+     * admin endpoint calling {@link #deny}/{@link #revoke}), it <b>MUST</b> also advance a version the
+     * watch re-authorization observes — extend this version, or have those mutators bump a parallel
+     * counter folded into it — otherwise a revocation through that path would be silently missed by
+     * bounded watch revocation (W7-7).
+     * <p>
+     * It is the trigger for <b>bounded watch revocation</b> (RFC §2 W7-7): the watch veneer caches
+     * the version a live watch was last authorized at and re-authorizes when it advances, force-closing
+     * any watch whose principal no longer holds {@code READ ∧ WATCH} over its target. When no
+     * {@code _acl/} key is touched the version never changes, so re-authorization costs nothing (a
+     * single comparison per tick). A single volatile-acquire read; never torn.
+     *
+     * @return the current config-policy version ({@link Long#MIN_VALUE} if none published)
+     */
+    public long configPolicyVersion() {
+        return configPolicyRef.get().version();
+    }
+
+    /**
      * Checks if a principal has the given permission for a key, with <b>no authn-asserted roles</b> — a
      * thin overload of {@link #isAllowed(String, Set, String, Permission)} that supplies
      * {@code Set.of()} for the roles. Existing callers (and the historical evaluation) reach the

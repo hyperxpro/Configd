@@ -84,4 +84,15 @@ public final class AclServiceWatchAuthorizer implements WatchAuthorizer {
         // (3) PREFIX (subtree) → whole-subtree cover (READ ∧ WATCH over all of it, interior-DENY rejects).
         return aclService.authorizesWatch(aclService.effectiveRules(principal, roles), target.path());
     }
+
+    /**
+     * The live {@code AclService} config-policy version (the {@code _acl/} reload version) — the
+     * bounded-revocation trigger (RFC §2 W7-7). It is {@link Long#MIN_VALUE} until the first
+     * {@code _acl/} policy is published and advances on every reload, so the veneer re-authorizes live
+     * watches exactly when a runtime ACL change could have revoked a grant, and not otherwise.
+     */
+    @Override
+    public long policyVersion() {
+        return aclService.configPolicyVersion();
+    }
 }
