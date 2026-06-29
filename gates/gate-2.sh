@@ -42,6 +42,11 @@
 #                   UNVERIFIED row).
 #
 # Environment knobs:
+#   GATE2_SKIP_GATE1=1     skip step (a) — reported LOUDLY (CI runs gate-1 as its
+#                          own parallel job, so re-running it here is pure
+#                          duplication; cumulative coverage is supplied by that
+#                          job, sealed by the ci-success aggregator). Mirrors the
+#                          GATE3_SKIP_GATE2 / GATE4_SKIP_GATE3 / … pattern.
 #   GATE2_SKIP_MUTATION=1  skip step (e) — reported LOUDLY (local convenience;
 #                          CI must not set it; ~25 min/module on 2 vCPU)
 #   GATE2_SKIP_JCSTRESS=1  skip step (f) — reported LOUDLY
@@ -57,6 +62,10 @@ export GATE2_LOG_DIR="$LOGDIR"
 MVN="$ROOT/mvnw -B"
 
 step_gate1() {
+  if [ "${GATE2_SKIP_GATE1:-0}" = "1" ]; then
+    echo "GATE-2 gate1: SKIPPED by GATE2_SKIP_GATE1=1 (LOUD: gate-1 NOT verified this run; CI runs gate-1 as its own parallel job)"
+    return 0
+  fi
   bash "$ROOT/gates/gate-1.sh" 2>&1 | tee "$LOGDIR/gate1.log" | tail -8
   grep -qE "TOTAL +PASS" "$LOGDIR/gate1.log" || { echo "GATE-2 gate1: gate-1 did not PASS"; return 1; }
 }
