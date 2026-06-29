@@ -7,6 +7,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
 
 import static io.configd.api.AclService.Permission.ADMIN;
@@ -151,28 +152,30 @@ class AclServiceConfigPolicyTest {
     }
 
     /**
-     * Torn-read stress: a writer hammers {@link AclService#publishConfigPolicy} with STRUCTURALLY different
-     * snapshots (different role + binding maps) while a reader spins {@link AclService#isAllowed}. Because
-     * each snapshot is a deeply-immutable object published by a single volatile write, the reader must
-     * (a) NEVER throw (a non-atomic in-place mutation would risk ConcurrentModificationException/NPE during
-     * iteration) and (b) observe BOTH decisions (liveness — the swap really alternates). A torn read is
-     * impossible by construction; this guards against a regression to non-atomic mutation.
+     * Torn-read stress (strong shape). Two snapshots A and B BOTH grant {@code alice READ} on {@code x.} —
+     * but via <b>different</b> role names ({@code roleA} vs {@code roleB}). So the only correct decision is
+     * {@code true} under <b>either</b> whole snapshot. A torn / read-more-than-once {@link
+     * AclService#isAllowed} (e.g. reading {@code alice}'s bindings from one snapshot but the role
+     * definitions from the other) would resolve {@code alice} to a role that is undefined in the snapshot
+     * the definitions came from ⇒ {@code false}, a value <b>impossible</b> for either whole snapshot. So
+     * "always {@code true}" is a genuine torn-read detector (not merely no-throw), and it is
+     * <b>deterministic</b> — no scheduler-dependent "observe both decisions" liveness flake. The reader must
+     * also never throw (a non-atomic in-place mutation would risk CME/NPE during iteration).
      */
     @Test
     void concurrentReloadIsNeverTorn() throws Exception {
         AclService acl = new AclService();
         ConfigPolicy a = new ConfigPolicy(
-                Map.of("ra", role("ra", allow("x.", READ))), Map.of("alice", Set.of("ra")));
-        // Structurally different: different role name, different prefix, extra binding, deny rule.
+                Map.of("roleA", role("roleA", allow("x.", READ))), Map.of("alice", Set.of("roleA")));
         ConfigPolicy b = new ConfigPolicy(
-                Map.of("rb", role("rb", allow("y.", WRITE), deny("z.", ADMIN))),
-                Map.of("bob", Set.of("rb"), "carol", Set.of("rb")));
+                Map.of("roleB", role("roleB", allow("x.", READ))), Map.of("alice", Set.of("roleB")));
+        acl.publishConfigPolicy(a); // seed a granting snapshot so the reader never observes the empty default
 
-        final int swaps = 100_000;
+        final int swaps = 200_000;
         AtomicReference<Throwable> failure = new AtomicReference<>();
-        AtomicBoolean sawTrue = new AtomicBoolean();
-        AtomicBoolean sawFalse = new AtomicBoolean();
+        AtomicBoolean tornOrInconsistent = new AtomicBoolean();
         AtomicBoolean done = new AtomicBoolean();
+        AtomicLong reads = new AtomicLong();
 
         Thread writer = new Thread(() -> {
             try {
@@ -188,15 +191,10 @@ class AclServiceConfigPolicyTest {
         Thread reader = new Thread(() -> {
             try {
                 while (!done.get()) {
-                    // alice is granted READ on x. only under snapshot A; under B she has nothing.
-                    if (acl.isAllowed("alice", "x.y", READ)) {
-                        sawTrue.set(true);
-                    } else {
-                        sawFalse.set(true);
+                    if (!acl.isAllowed("alice", "x.y", READ)) {
+                        tornOrInconsistent.set(true);   // false is impossible: BOTH snapshots grant it
                     }
-                    // exercise the role-resolution + rule-iteration path under churn (CME/NPE catcher)
-                    acl.isAllowed("bob", "y.q", WRITE);
-                    acl.isAllowed("carol", "z.q", ADMIN);
+                    reads.incrementAndGet();
                 }
             } catch (Throwable t) {
                 failure.compareAndSet(null, t);
@@ -208,8 +206,37 @@ class AclServiceConfigPolicyTest {
         reader.join();
 
         assertNull(failure.get(), () -> "isAllowed threw under concurrent reload: " + failure.get());
-        assertTrue(sawTrue.get() && sawFalse.get(),
-                "expected the reader to observe BOTH decisions across swaps (liveness)");
+        assertFalse(tornOrInconsistent.get(),
+                "isAllowed observed a torn/inconsistent decision (false) though BOTH snapshots grant alice READ");
+        assertTrue(reads.get() > 0, "reader must actually have run under contention");
+
+        // Deterministic behaviour-change check: the swap really does change the decision wholesale.
+        acl.publishConfigPolicy(a);
+        assertTrue(acl.isAllowed("alice", "x.y", READ));
+        acl.publishConfigPolicy(ConfigPolicy.EMPTY);
+        assertFalse(acl.isAllowed("alice", "x.y", READ));
+    }
+
+    @Test
+    void staleVersionedPublishDoesNotClobberNewerPolicy() {
+        AclService acl = new AclService();
+        ConfigPolicy newer = new ConfigPolicy(
+                Map.of("r", role("r", allow("x.", READ))), Map.of("alice", Set.of("r")));
+        // Publish a NEWER store version first.
+        acl.publishConfigPolicy(100L, newer);
+        assertTrue(acl.isAllowed("alice", "x.y", READ));
+        // An out-of-order rebuild that scanned an OLDER store version must be IGNORED (monotonic publish),
+        // so it cannot resurrect the empty/older policy over the newer one (the redteam clobber scenario).
+        acl.publishConfigPolicy(50L, ConfigPolicy.EMPTY);
+        assertTrue(acl.isAllowed("alice", "x.y", READ),
+                "a stale (older-version) publish must not clobber the newer policy");
+        assertEquals(newer, acl.configPolicy());
+        // Equal version is also ignored (idempotent rebuild at the same version).
+        acl.publishConfigPolicy(100L, ConfigPolicy.EMPTY);
+        assertTrue(acl.isAllowed("alice", "x.y", READ), "an equal-version publish must not clobber");
+        // A strictly-newer version DOES supersede.
+        acl.publishConfigPolicy(150L, ConfigPolicy.EMPTY);
+        assertFalse(acl.isAllowed("alice", "x.y", READ));
     }
 
     // ---------------- carve mechanism (motivates the loader's reservation) ----------------
@@ -251,5 +278,26 @@ class AclServiceConfigPolicyTest {
             assertTrue(acl.isAllowed("root", Set.of(), "anything", perm),
                     () -> "root (asserting no roles) must be immune to an unbound config 'admin' role");
         }
+    }
+
+    /**
+     * The positive witness for WHY N1 (root asserts {@code Set.of()} in {@code ConfigdServer}) is needed:
+     * if root instead asserted the role name {@code "admin"} AND a config role named {@code "admin"} carries
+     * a deny, the deny WOULD carve root through the asserted-role vector. This is exactly the footgun N1
+     * removes at the source (and N3 — reserving the {@code admin} role name in the loader — backstops). The
+     * wired server never reaches this state, but this proves the vector is real, so N1 is not vacuous.
+     */
+    @Test
+    void rootAssertingAdminRoleWouldBeCarvedByAConfigAdminRole_whyN1() {
+        AclService acl = new AclService();
+        acl.grant("", "root", EnumSet.allOf(AclService.Permission.class));
+        acl.publishConfigPolicy(new ConfigPolicy(
+                Map.of("admin", role("admin", deny("", EnumSet.allOf(AclService.Permission.class)
+                        .toArray(new AclService.Permission[0])))),
+                Map.of()));
+        // Asserting {"admin"} (the PRE-N1 production shape) resolves the config "admin" deny-all ⇒ root carved.
+        assertFalse(acl.isAllowed("root", Set.of("admin"), "anything", READ),
+                "asserting the 'admin' role with a config 'admin' deny-all role present carves root — this is "
+                        + "the vector N1 (root asserts Set.of()) and N3 (reserve 'admin') close");
     }
 }

@@ -272,6 +272,35 @@ public final class VersionedConfigStore {
         return results;
     }
 
+    /**
+     * A {@link #getPrefixVersioned prefix scan} paired with the store version it observed.
+     *
+     * @param version the store version of the snapshot the scan read
+     * @param entries the matched key → value entries (insertion-ordered)
+     */
+    public record PrefixScan(long version, Map<String, ReadResult> entries) {
+    }
+
+    /**
+     * Like {@link #getPrefix} but also returns the store version of the <b>same snapshot</b> the scan
+     * observed — both derived from a <b>single</b> volatile read of {@code currentSnapshot}, so the version
+     * and the entries are mutually consistent (no read-skew). Callers that publish a derived view can use
+     * the returned version to order their publishes monotonically (e.g. {@code AclConfigPolicyLoader} →
+     * {@code AclService.publishConfigPolicy(version, …)}, so an out-of-order rebuild never clobbers a newer
+     * one). Same O(N) full-snapshot scan cost as {@link #getPrefix}.
+     */
+    public PrefixScan getPrefixVersioned(String prefix) {
+        Objects.requireNonNull(prefix, "prefix must not be null");
+        ConfigSnapshot snap = currentSnapshot;            // single volatile read: version + data consistent
+        Map<String, ReadResult> results = new LinkedHashMap<>();
+        snap.data().forEach((key, vv) -> {
+            if (key.startsWith(prefix)) {
+                results.put(key, ReadResult.found(vv.valueUnsafe(), vv.version()));
+            }
+        });
+        return new PrefixScan(snap.version(), results);
+    }
+
     /** Returns the current monotonic version number. */
     public long currentVersion() {
         return currentSnapshot.version();

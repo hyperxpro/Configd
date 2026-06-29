@@ -420,14 +420,17 @@ public final class ConfigStateMachine implements StateMachine {
         try {
             restoreSnapshotImpl(snapshot);
             metrics.onSnapshotRebuildSuccess();
-            // O-6 Seam 2a: a snapshot install changed the store contents wholesale with no per-mutation
-            // notification — let snapshot listeners (e.g. the config-policy loader) re-derive. Fired only
-            // on SUCCESS (after the store is consistently replaced); a failed install does not notify.
-            notifySnapshotListeners();
         } catch (RuntimeException e) {
             metrics.onSnapshotInstallFailed();
             throw e;
         }
+        // O-6 Seam 2a: a snapshot install changed the store contents wholesale with no per-mutation
+        // notification — let snapshot listeners (e.g. the config-policy loader) re-derive. Fired only after
+        // a SUCCESSFUL, fully-accounted install (OUTSIDE the try) so a misbehaving listener can neither be
+        // mis-counted as an install failure nor abort a restore that already replaced the store; each
+        // listener is additionally isolated (see notifySnapshotListeners) so it cannot break this
+        // Raft-critical path.
+        notifySnapshotListeners();
     }
 
     private void restoreSnapshotImpl(byte[] snapshot) {
@@ -614,7 +617,10 @@ public final class ConfigStateMachine implements StateMachine {
      * snapshot install wholesale-replaces the store without per-mutation {@link ConfigChangeListener}
      * notifications, this is how a consumer (e.g. the config-policy loader, O-6 Seam 2a) learns the store
      * contents changed via InstallSnapshot (follower catch-up / runtime restore) and can re-derive its
-     * view. Invoked on the apply thread in registration order; implementations must be fast + non-blocking.
+     * view. Invoked on the snapshot-install/restore thread (expected to be the group owner thread, the same
+     * thread as {@link #apply}, though — unlike {@code apply} — {@link #restoreSnapshot} does not itself
+     * assert the owner thread) in registration order; implementations must be fast + non-blocking, and a
+     * throwing listener is isolated and logged rather than allowed to fail the install.
      *
      * @param listener the snapshot-install callback (non-null)
      */
@@ -779,7 +785,15 @@ public final class ConfigStateMachine implements StateMachine {
 
     private void notifySnapshotListeners() {
         for (Runnable listener : snapshotListeners) {
-            listener.run();
+            try {
+                listener.run();
+            } catch (RuntimeException e) {
+                // A snapshot-install listener must be fast + non-blocking; isolate a misbehaving one so it
+                // cannot fail an already-successful InstallSnapshot (this runs on the Raft-critical restore
+                // path). The wired loader is itself fail-closed and never throws; this guards the general hook.
+                LOG.log(Level.WARNING,
+                        "Snapshot-install listener threw; ignoring to protect the restore path", e);
+            }
         }
     }
 

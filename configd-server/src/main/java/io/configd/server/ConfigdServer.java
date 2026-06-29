@@ -101,6 +101,13 @@ public final class ConfigdServer {
 
     private static final int TICK_PERIOD_MS = 10;
     private static final int DEFAULT_RAFT_GROUP = 0;
+
+    // O-6: the break-glass root principal and the reserved ADMIN role name, sourced from single constants so
+    // the root identity (the principal authenticated + granted allOf) and the config-policy loader's
+    // reserved-name guard (N2/N3) provably reference the SAME literals — a rename can't silently break the
+    // un-carveable-root guarantee.
+    private static final String ROOT_PRINCIPAL = "root";
+    private static final String ADMIN_ROLE = "admin";
     /**
      * Multi-Raft static-N ceiling (operator decision N, charter §2): the maximum number of shards a
      * single deploy may configure via {@code configd.raft.shardCount}. M1's static ceiling — ~10–11
@@ -721,20 +728,20 @@ public final class ConfigdServer {
                     // static principal grant below (DL-O6-01), decoupled from any config-loadable role so no
                     // `_acl/` role can carve it via assertion. Byte-identical: the prior {"admin"} role was
                     // never defined, so {"admin"} and Set.of() always decided identically.
-                    return new AuthInterceptor.AuthResult.Authenticated("root", Set.of());
+                    return new AuthInterceptor.AuthResult.Authenticated(ROOT_PRINCIPAL, Set.of());
                 }
                 return new AuthInterceptor.AuthResult.Denied("invalid token");
             });
             aclService = new AclService();
             // Grant root principal full access to all keys
-            aclService.grant("", "root", EnumSet.allOf(AclService.Permission.class));
+            aclService.grant("", ROOT_PRINCIPAL, EnumSet.allOf(AclService.Permission.class));
             // O-6 Seam 2a: config-sourced policy under `_acl/`. ADDITIVE on top of the static grant above
             // (no `_acl/` keys in production ⇒ empty snapshot ⇒ byte-identical). Registered BEFORE the tick
             // loop so it observes every `_acl/`-touching apply; the snapshot-install hook covers follower
             // catch-up; the boot seed (rebuild) catches a snapshot-restored prefix. Fail-closed-to-last-good
             // on malformed policy; the reserved role/principal names neutralize the carve footgun (N2/N3).
             AclConfigPolicyLoader aclPolicyLoader = new AclConfigPolicyLoader(
-                    aclService, stateMachine.store(), Set.of("admin"), Set.of("root"), metricsRegistry);
+                    aclService, stateMachine.store(), Set.of(ADMIN_ROLE), Set.of(ROOT_PRINCIPAL), metricsRegistry);
             stateMachine.addListener(aclPolicyLoader::onConfigChange);
             stateMachine.addSnapshotListener(aclPolicyLoader::onSnapshotInstalled);
             aclPolicyLoader.rebuild(); // boot seed

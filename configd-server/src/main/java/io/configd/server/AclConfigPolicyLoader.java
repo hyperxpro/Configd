@@ -22,9 +22,10 @@ import java.util.logging.Logger;
  * {@link AclService} and keeps it converged as the store changes (O-6 Seam 2a).
  *
  * <h2>Idempotent whole-subtree rebuild</h2>
- * Every (re)load is the SAME operation: re-read the entire {@code _acl/} subtree, {@link PolicySerializer
- * parse} it, validate reserved names, and {@link AclService#publishConfigPolicy publish} the result via a
- * single volatile swap. It is NOT a delta apply. Re-reading the same keys yields the same policy, so this
+ * Every (re)load is the SAME operation: re-read the entire {@code _acl/} subtree <b>together with the store
+ * version it was scanned at</b> ({@code getPrefixVersioned}), {@link PolicySerializer parse} it, validate
+ * reserved names, and {@link AclService#publishConfigPolicy(long, ConfigPolicy) publish} the result tagged
+ * with that version. It is NOT a delta apply. Re-reading the same keys yields the same policy, so this
  * converges correctly regardless of how the underlying writes arrived — multi-key policy spread across
  * separate writes, the boot snapshot / WAL-suffix split, follower catch-up via InstallSnapshot, and any
  * overlap between the boot seed and replay. A binding that names a not-yet-loaded role is simply inert
@@ -39,11 +40,16 @@ import java.util.logging.Logger;
  * <h2>Threading — non-blocking on the apply/owner thread</h2>
  * {@link #onConfigChange} runs on the Raft apply/owner thread. It first does a cheap O(delta) scan of the
  * mutation list and returns immediately unless an {@code _acl/} key was touched; only then does it run the
- * O(N) {@code getPrefix} rebuild. In production no {@code _acl/} key is ever written, so the gate always
- * short-circuits and the apply loop carries zero added cost. {@link #onSnapshotInstalled} rebuilds
- * unconditionally (snapshot installs are rare and carry no per-key signal). The loader holds no mutable
- * state beyond thread-safe counters; the volatile publish makes concurrent boot-seed / apply-thread
- * rebuilds safe and last-write-wins (each reflects a consistent committed store snapshot).
+ * rebuild. The rebuild scan is <b>O(total store keys)</b> (a full snapshot scan — the HAMT has no ordered
+ * prefix iteration), <b>not</b> O(policy size); it runs on the owner thread, so on a very large store an
+ * {@code _acl/}-touching apply (or a snapshot install) is a bounded but non-trivial owner-thread cost. In
+ * production no {@code _acl/} key is ever written, so the gate always short-circuits and the apply loop
+ * carries <b>zero</b> added cost; {@code _acl/} writes are rare admin ops. ({@link #onSnapshotInstalled}
+ * rebuilds unconditionally — snapshot installs are rare and carry no per-key signal.) The loader holds no
+ * mutable state beyond thread-safe counters; concurrent boot-seed / apply-thread rebuilds are safe AND
+ * recency-correct because the publish is <b>version-ordered</b> — a rebuild that scanned an older store
+ * version cannot clobber a newer one (see {@link AclService#publishConfigPolicy(long, ConfigPolicy)}).
+ * (A secondary {@code _acl/} index / off-owner-thread rebuild for large stores is a 2b item.)
  *
  * <h2>"admin" footgun neutralization (reserved names)</h2>
  * The break-glass root principal's authority is its static {@code acls} grant; a config role could only
@@ -96,14 +102,16 @@ final class AclConfigPolicyLoader {
      */
     void rebuild() {
         try {
-            Map<String, ReadResult> sub = store.getPrefix(PolicySerializer.ACL_PREFIX);
-            Map<String, byte[]> bytes = new HashMap<>(sub.size());
-            for (Map.Entry<String, ReadResult> e : sub.entrySet()) {
+            // Scan the _acl/ subtree AND the store version it was read at, from ONE consistent snapshot, so
+            // the publish below can be ordered monotonically (a stale rebuild never clobbers a newer one).
+            VersionedConfigStore.PrefixScan scan = store.getPrefixVersioned(PolicySerializer.ACL_PREFIX);
+            Map<String, byte[]> bytes = new HashMap<>(scan.entries().size());
+            for (Map.Entry<String, ReadResult> e : scan.entries().entrySet()) {
                 bytes.put(e.getKey(), e.getValue().value());
             }
             ConfigPolicy policy = PolicySerializer.parse(bytes);
             validateReserved(policy);
-            aclService.publishConfigPolicy(policy);
+            aclService.publishConfigPolicy(scan.version(), policy);
             reloaded.increment();
             LOG.info(() -> "ACL config policy loaded: " + policy.roles().size() + " role(s), "
                     + policy.bindings().size() + " binding(s)");

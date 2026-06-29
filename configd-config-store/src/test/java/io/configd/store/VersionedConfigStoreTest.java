@@ -259,6 +259,23 @@ class VersionedConfigStoreTest {
             Map<String, ReadResult> results = store.getPrefix("app.");
             assertTrue(results.isEmpty());
         }
+
+        @Test
+        void getPrefixVersionedReturnsVersionAndEntriesFromOneSnapshot() {
+            store.put("db.host", bytes("localhost"), 1);
+            store.put("db.port", bytes("5432"), 2);
+            store.put("cache.ttl", bytes("60"), 3);
+            VersionedConfigStore.PrefixScan scan = store.getPrefixVersioned("db.");
+            // version is the store version of the SAME snapshot the scan observed
+            assertEquals(store.currentVersion(), scan.version());
+            assertEquals(3, scan.version());
+            // entries are exactly the prefix matches — identical to getPrefix
+            assertEquals(2, scan.entries().size());
+            assertTrue(scan.entries().containsKey("db.host"));
+            assertTrue(scan.entries().containsKey("db.port"));
+            assertFalse(scan.entries().containsKey("cache.ttl"));
+            assertEquals(store.getPrefix("db.").keySet(), scan.entries().keySet());
+        }
     }
 
     // -----------------------------------------------------------------------

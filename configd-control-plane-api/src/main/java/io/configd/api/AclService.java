@@ -3,6 +3,7 @@ package io.configd.api;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentSkipListMap;
+import java.util.concurrent.atomic.AtomicReference;
 
 /**
  * Per-key-prefix ACL enforcement.
@@ -149,12 +150,21 @@ public final class AclService {
     private final ConcurrentHashMap<String, Set<String>> principalRoles = new ConcurrentHashMap<>();
 
     // O-6 Seam 2a: the CONFIG-SOURCED policy (roles + principal→role bindings loaded from the reserved
-    // `_acl/` subtree), published via a SINGLE volatile reference swap — the atomic-swap point that fixes
-    // the torn-read window (mirrors VersionedConfigStore's one-volatile-snapshot discipline). This is a
-    // SEPARATE, additive layer; the static imperative layer above (acls / roleDefinitions / principalRoles)
-    // is untouched. ConfigPolicy.EMPTY by default ⇒ the config layer contributes nothing ⇒ byte-identical.
-    // isAllowed reads this reference EXACTLY ONCE so a concurrent reload is never observed half-applied.
-    private volatile ConfigPolicy configPolicy = ConfigPolicy.EMPTY;
+    // `_acl/` subtree) plus the store version it was derived from, in ONE immutable holder published via a
+    // SINGLE AtomicReference swap — the atomic-swap point that fixes the torn-read window (a get() is a
+    // volatile-acquire read; isAllowed reads it EXACTLY ONCE so a concurrent reload is never observed
+    // half-applied). This is a SEPARATE, additive layer; the static imperative layer above (acls /
+    // roleDefinitions / principalRoles) is untouched. EMPTY by default ⇒ the config layer contributes
+    // nothing ⇒ byte-identical. The version makes the versioned publish MONOTONIC: an out-of-order rebuild
+    // (e.g. a slow boot seed vs a concurrent apply-thread rebuild) carrying an OLDER store version is
+    // ignored, so it can never clobber a newer policy with stale state (the swap fixes torn READS; the
+    // version fixes out-of-order WRITES).
+    private record VersionedConfigPolicy(long version, ConfigPolicy policy) {
+        static final VersionedConfigPolicy EMPTY = new VersionedConfigPolicy(Long.MIN_VALUE, ConfigPolicy.EMPTY);
+    }
+
+    private final AtomicReference<VersionedConfigPolicy> configPolicyRef =
+            new AtomicReference<>(VersionedConfigPolicy.EMPTY);
 
     /**
      * Grants (ALLOWs) permissions to a principal for a key prefix. Overwrites this principal's prior
@@ -264,18 +274,51 @@ public final class AclService {
     }
 
     /**
-     * Publishes a new {@link ConfigPolicy} snapshot via a <b>single volatile reference swap</b> — the
+     * Unconditionally publishes a new {@link ConfigPolicy} snapshot, superseding the current one — the
      * atomic-swap point for config-sourced policy (O-6 Seam 2a). A concurrent {@link #isAllowed} reads the
      * reference <b>exactly once</b> and therefore observes either the entire old or the entire new policy,
-     * never a torn (half-applied) mix. The snapshot is deeply immutable. The server's config-policy loader
-     * calls this on boot and on each {@code _acl/}-touching apply (an idempotent whole-subtree rebuild);
-     * the static imperative grant layer is untouched and unioned additively. Passing
-     * {@link ConfigPolicy#EMPTY} clears the config layer (the production default ⇒ byte-identical).
+     * never a torn (half-applied) mix. The snapshot is deeply immutable. This overload carries no store
+     * version (each call simply supersedes the prior); production reload goes through the
+     * <b>version-ordered</b> {@link #publishConfigPolicy(long, ConfigPolicy)} instead, so a stale rebuild
+     * cannot clobber a newer policy. Passing {@link ConfigPolicy#EMPTY} clears the config layer (the
+     * production default ⇒ byte-identical).
      *
      * @param snapshot the new config-policy snapshot (non-null)
      */
     public void publishConfigPolicy(ConfigPolicy snapshot) {
-        this.configPolicy = Objects.requireNonNull(snapshot, "snapshot must not be null");
+        Objects.requireNonNull(snapshot, "snapshot must not be null");
+        VersionedConfigPolicy cur;
+        VersionedConfigPolicy next;
+        do {
+            cur = configPolicyRef.get();
+            next = new VersionedConfigPolicy(cur.version() + 1, snapshot);
+        } while (!configPolicyRef.compareAndSet(cur, next));
+    }
+
+    /**
+     * Publishes a config-policy snapshot tagged with the <b>store version it was derived from</b>, applied
+     * <b>monotonically</b>: if a snapshot with a version &ge; {@code derivedFromVersion} has already been
+     * published, this call is <b>ignored</b> (O-6 Seam 2a). This closes the out-of-order-write window — an
+     * idempotent whole-subtree rebuild that read an OLDER store snapshot (e.g. a slow boot seed racing a
+     * concurrent apply-thread rebuild) cannot clobber a newer policy with stale state. The single volatile
+     * swap already prevents torn READS; this prevents stale WRITES. Same exactly-once read contract for
+     * {@link #isAllowed}. (Store versions advance monotonically across applies and forward-only snapshot
+     * installs, so a higher version always means strictly newer committed state.)
+     *
+     * @param derivedFromVersion the store version the snapshot was scanned at (see
+     *                           {@code VersionedConfigStore.getPrefixVersioned})
+     * @param snapshot           the new config-policy snapshot (non-null)
+     */
+    public void publishConfigPolicy(long derivedFromVersion, ConfigPolicy snapshot) {
+        Objects.requireNonNull(snapshot, "snapshot must not be null");
+        VersionedConfigPolicy next = new VersionedConfigPolicy(derivedFromVersion, snapshot);
+        VersionedConfigPolicy cur;
+        do {
+            cur = configPolicyRef.get();
+            if (derivedFromVersion <= cur.version()) {
+                return; // stale-or-equal — a newer (or same-version) policy is already published; ignore
+            }
+        } while (!configPolicyRef.compareAndSet(cur, next));
     }
 
     /**
@@ -285,7 +328,7 @@ public final class AclService {
      * @return the current config-policy snapshot (never null)
      */
     public ConfigPolicy configPolicy() {
-        return configPolicy;
+        return configPolicyRef.get().policy();
     }
 
     /**
@@ -388,7 +431,7 @@ public final class AclService {
         // pre-Seam-2a own+static-role evaluation. (The config role layer and the imperative role layer (2)
         // are independent additive sub-layers — a name is resolved against the source it was bound through,
         // while an authn-asserted name is resolved against both — see ConfigPolicy / the increment-5 doc.)
-        ConfigPolicy cp = this.configPolicy;
+        ConfigPolicy cp = this.configPolicyRef.get().policy();   // single acquire read — never torn
         if (!cp.roles().isEmpty() || !cp.bindings().isEmpty()) {
             Set<String> cfgBindings = cp.bindings().getOrDefault(principal, Set.of());
             if (!roles.isEmpty() || !cfgBindings.isEmpty()) {

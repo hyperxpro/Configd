@@ -197,11 +197,16 @@ snapshot is empty ⇒ byte-identical). Full rationale + proof in the increment-5
 - **DL-O6-04 — Serializer = strict line-oriented text, multi-key under `_acl/`** (`_acl/roles/<name>`,
   `_acl/bindings/<principal>`). No JSON lib exists; text is more operable for operator-authored policy and
   avoids a JSON parser surface. Literal-prefix only (DL-O3-02), scope out of the rule (DL-O6-02).
-- **DL-O6-05 — Config-policy behind ONE volatile snapshot (atomic swap).** A deeply-immutable
-  `ConfigPolicy` published by a single volatile reference swap (mirrors `VersionedConfigStore`); `isAllowed`
-  reads it **once** so a concurrent reload is never torn. It is a **separate, additive** sub-layer; the
-  static imperative layer (incl. the `grant("","root",all)` of DL-O6-01) is **untouched**; `EMPTY` default
-  ⇒ byte-identical.
+- **DL-O6-05 — Config-policy behind ONE versioned snapshot (atomic swap + MONOTONIC publish).** A
+  deeply-immutable `ConfigPolicy` + the store version it was derived from, published via a single
+  `AtomicReference` swap; `isAllowed` reads it **once** so a concurrent reload is never torn (torn-READ
+  fix). The loader's publish is **version-ordered** (`publishConfigPolicy(long, ConfigPolicy)` ignores a
+  stale/older-version publish, paired with `VersionedConfigStore.getPrefixVersioned`) so an out-of-order
+  rebuild — a slow boot seed racing a concurrent apply-thread rebuild — cannot resurrect stale state over a
+  newer policy (out-of-order-WRITE fix; redteam-confirmed clobber, closed). It is a **separate, additive**
+  sub-layer; the static imperative layer (incl. the `grant("","root",all)` of DL-O6-01) is **untouched**;
+  `EMPTY` default ⇒ byte-identical. (An authn-asserted role name resolves against config roles, so
+  `AuthResult.roles()` MUST come from a trusted authenticator — dormant in 2a.)
 - **DL-O6-06 — Fail-closed-to-last-good.** Malformed / reserved-colliding policy ⇒ reject (SEVERE +
   metric), **keep the current snapshot** — never deny-all, never allow-all. A well-formed-but-incomplete
   policy (binding to a not-yet-loaded role) is inert, not a failure (lets the idempotent whole-subtree

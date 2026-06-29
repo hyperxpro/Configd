@@ -139,6 +139,41 @@ class AclConfigPolicyLoaderTest {
         assertFalse(acl.isAllowed("alice", "app.x", AclService.Permission.WRITE), "not allow-all");
     }
 
+    /**
+     * Characterization (INTENTIONAL behavior, not a bug): the whole-subtree parse is all-or-nothing, so one
+     * persisted malformed {@code _acl/} key freezes ALL subsequent policy updates until it is removed —
+     * every rebuild re-reads it and re-rejects the whole subtree (keeping last-good). This is the deliberate
+     * "reject whole load, never silently partial" tradeoff (a partial/truncated policy is more dangerous);
+     * the residual is loudly observable on {@code configd.acl.policy.load.failed} and is closed by 2b's
+     * validate-at-write-time gate (which still cannot clear an already-committed / snapshot-delivered key).
+     */
+    @Test
+    void poisonKeyFreezesSubsequentUpdates() {
+        AclService acl = new AclService();
+        VersionedConfigStore store = new VersionedConfigStore();
+        MetricsRegistry reg = new MetricsRegistry();
+        put(store, "_acl/roles/reader", "allow READ app.");
+        put(store, "_acl/bindings/alice", "reader");
+        AclConfigPolicyLoader l = loader(acl, store, reg);
+        l.rebuild(); // good: alice READ
+        assertTrue(acl.isAllowed("alice", "app.x", AclService.Permission.READ));
+
+        // A single persisted poison key (unrecognized _acl/ shape) makes every rebuild reject the WHOLE
+        // subtree from now on.
+        put(store, "_acl/zzz", "junk");
+        l.onConfigChange(put("_acl/zzz"), 10L);
+        assertEquals(1L, metric(reg, AclConfigPolicyLoader.NAME_POLICY_LOAD_FAILED));
+
+        // Even a subsequent VALID write (charlie → reader) does not apply while the poison key persists.
+        put(store, "_acl/bindings/charlie", "reader");
+        l.onConfigChange(put("_acl/bindings/charlie"), 11L);
+        assertEquals(2L, metric(reg, AclConfigPolicyLoader.NAME_POLICY_LOAD_FAILED), "still frozen");
+        assertFalse(acl.isAllowed("charlie", "app.x", AclService.Permission.READ),
+                "a valid update cannot apply while a poison _acl/ key persists (whole-load reject)");
+        // Last-good still serves alice (fail-closed, not deny-all/allow-all).
+        assertTrue(acl.isAllowed("alice", "app.x", AclService.Permission.READ), "last-good preserved");
+    }
+
     // ---------------- reserved-name validation (the "admin"/root carve neutralization) ----------------
 
     @Test
