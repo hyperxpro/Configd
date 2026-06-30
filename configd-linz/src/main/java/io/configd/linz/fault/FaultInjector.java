@@ -98,7 +98,10 @@ public final class FaultInjector implements AutoCloseable {
             return;
         }
         Process p = new ProcessBuilder(cmd).redirectErrorStream(true).start();
-        byte[] out = p.getInputStream().readAllBytes();
+        byte[] out;
+        try (var in = p.getInputStream()) {
+            out = in.readAllBytes();
+        }
         if (!p.waitFor(20, TimeUnit.SECONDS)) {
             p.destroyForcibly();
             throw new IOException("iptables timed out: " + String.join(" ", cmd));
