@@ -4,8 +4,8 @@ import io.configd.common.NodeId;
 
 import java.net.InetSocketAddress;
 import java.nio.file.Path;
+import java.util.Arrays;
 import java.util.HashMap;
-import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.stream.Collectors;
@@ -214,7 +214,7 @@ public record ServerConfig(
         if (peersStr.isBlank()) {
             return Set.of();
         }
-        return List.of(peersStr.split(",")).stream()
+        return Arrays.stream(peersStr.split(","))
                 .map(String::trim)
                 .filter(s -> !s.isEmpty())
                 .map(Integer::parseInt)
@@ -267,7 +267,7 @@ public record ServerConfig(
         if (str.isBlank()) {
             return Set.of(); // explicit opt-out
         }
-        return List.of(str.split(",")).stream()
+        return Arrays.stream(str.split(","))
                 .map(String::trim)
                 .filter(s -> !s.isEmpty())
                 .collect(Collectors.toUnmodifiableSet());
