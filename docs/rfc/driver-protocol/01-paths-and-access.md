@@ -272,6 +272,11 @@ terminal reject.
 
 ## 7. Error taxonomy
 
+> *The full cross-section error/status taxonomy — every HTTP status code and streaming `ErrorCode`, each with
+> its required driver reaction — is consolidated in [§07](07-errors.md) (the single source of truth). This
+> section's authorization (`401`/`403`) rows are restated there; where they overlap, §07 and this section
+> **MUST** agree.*
+
 **A7-1.** Authorization outcomes use the deployed control-plane taxonomy:
 
 | Condition | Unary (HTTP) | Streaming (watch) |
