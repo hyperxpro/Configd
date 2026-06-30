@@ -37,6 +37,8 @@ public final class SafeLog {
 
     private static final Pattern SAFE_LOG_VALUE = Pattern.compile("[a-zA-Z0-9._\\-/]{1,128}");
 
+    private static final char[] HEX_DIGITS = "0123456789abcdef".toCharArray();
+
     private SafeLog() {}
 
     /**
@@ -55,7 +57,8 @@ public final class SafeLog {
             byte[] hash = md.digest(value.getBytes(java.nio.charset.StandardCharsets.UTF_8));
             StringBuilder sb = new StringBuilder(16);
             for (int i = 0; i < 8; i++) {
-                sb.append(String.format("%02x", hash[i]));
+                int b = hash[i] & 0xff;
+                sb.append(HEX_DIGITS[b >>> 4]).append(HEX_DIGITS[b & 0x0f]);
             }
             return sb.toString();
         } catch (java.security.NoSuchAlgorithmException e) {
