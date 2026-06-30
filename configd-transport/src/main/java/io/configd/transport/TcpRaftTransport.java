@@ -211,6 +211,7 @@ public final class TcpRaftTransport implements RaftTransportEndpoint {
      *
      * @throws IOException if the server socket cannot be bound
      */
+    @Override
     public void start() throws IOException {
         if (!running.compareAndSet(false, true)) {
             throw new IllegalStateException("Transport already started");
@@ -232,6 +233,7 @@ public final class TcpRaftTransport implements RaftTransportEndpoint {
      *
      * @return the TlsManager, or null if plaintext
      */
+    @Override
     public TlsManager tlsManager() {
         return tlsManager;
     }
@@ -243,6 +245,7 @@ public final class TcpRaftTransport implements RaftTransportEndpoint {
      *
      * @return total dropped frames since construction
      */
+    @Override
     public long framesDropped() {
         return framesDropped.get();
     }
@@ -253,6 +256,7 @@ public final class TcpRaftTransport implements RaftTransportEndpoint {
      *
      * @return the local port number
      */
+    @Override
     public int localPort() {
         ServerSocket ss = serverSocket;
         if (ss == null) {
@@ -309,8 +313,8 @@ public final class TcpRaftTransport implements RaftTransportEndpoint {
         acceptedSockets.clear();
 
         // Close all outbound connections (wakes blocked writers/readers)
-        for (var entry : outbound.entrySet()) {
-            entry.getValue().close();
+        for (PeerConnection conn : outbound.values()) {
+            conn.close();
         }
         outbound.clear();
 
@@ -322,6 +326,7 @@ public final class TcpRaftTransport implements RaftTransportEndpoint {
 
     /** Inbound connections refused because the accepted live-set hit {@link #maxInboundConnections}
      *  (F-S7-FUZZ-1 metric / negative-test seam). Monotonic. */
+    @Override
     public long inboundConnectionsRefused() {
         return inboundConnectionsRefused.get();
     }
