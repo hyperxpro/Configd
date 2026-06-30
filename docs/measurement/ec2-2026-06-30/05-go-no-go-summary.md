@@ -9,8 +9,8 @@ separately). Full detail in the sibling docs; raw captures in `captures/`.
 
 | Claim | Measured | Verdict |
 |---|---|---|
-| Single-group write bound (RR-113 ~800/s) | ~450/s closed-loop; **leadership-churn-bound at ~20% CPU / ~16% NVMe** (26–43 elections/20s), NOT fsync/CPU | ✅ confirmed + root-caused |
-| Sharding lifts aggregate write throughput | **~450→~1100/s (~2.5×) by N=4**, and it **removes the churn** (N=4/8: 0–2 elections) | ✅ directionally validated |
+| Single-group write knee (RR-113 ~800/s) | **~800/s open-loop knee reproduced** (758 at 800 offered); **leadership-churn-bound** at ~20% CPU / ~16% NVMe, NOT fsync/CPU. (Closed-loop overdrive degrades it to ~450/s.) | ✅ confirmed + root-caused |
+| Sharding lifts aggregate write throughput | single-box **~800→~1100/s ≈ 1.4× by N=4** (plateaus); the bigger win is **churn-removal** (N=4/8: 0–2 elections vs N=1's 26–43) | 🟡 modest raw lift + stability win on one box; true N× unproven |
 | Leader-loss failover | **~372 ms** write-availability gap, single bounded election (no storm) | ✅ pass |
 | No committed-write loss on fault | **0 loss** across leader-kill, WAL-replay restart, wipe+InstallSnapshot (1000/1000 keys each) | ✅ durability contract holds |
 | Node recovery RTO | **~4.2 s** (WAL replay) / **~5.9 s** (snapshot rebuild) | ✅ pass |
@@ -24,8 +24,9 @@ separately). Full detail in the sibling docs; raw captures in `captures/`.
    (3 JVMs sharing 16 cores + one NVMe + loopback replication), not the load generator. The N× claim is
    fundamentally about N groups across **separate machines** (each its own CPU/disk/NIC), which one box
    cannot represent. **A true multi-machine N×knee (3+ instances × N groups) remains the open empirical
-   item** — a v1 ship caveat or a v2 measurement. What *is* shown is a conservative floor: sharding ~2.5×
-   and de-churns on one box; real multi-machine scaling should exceed ~1100/s by an unmeasured factor.
+   item** — a v1 ship caveat or a v2 measurement. What *is* shown on one box: sharding gives only ~1.4×
+   raw throughput (~800→~1100/s) but de-churns the cluster; real multi-machine scaling should exceed
+   ~1100/s by an unmeasured factor.
 
 2. **Soak (6 h leak/OOM burn-in): IN PROGRESS** — see `04-soak.md` (this section updated on completion).
    The prior 24 h attempt OOM'd at 3.45 h; this run targets 6 h on NVMe with 2 g ZGC heaps + NMT, watching
@@ -40,8 +41,9 @@ None merged this session (per charter).
 ## Bottom line for the v1 ship line
 - **Durability & availability: GREEN.** Sub-second failover, zero committed-write loss under three fault
   modes, single-digit-second recovery — measured on metal.
-- **Single-node performance: characterised + root-caused.** The write ceiling is leadership churn, not
-  resource saturation; sharding relieves it ~2.5× on one box.
+- **Single-node performance: characterised + root-caused.** The single-group write knee is ~800/s (RR-113)
+  and is leadership churn, not resource saturation; sharding lifts the single-box aggregate only ~1.4×
+  (~800→~1100/s) but removes the churn (a stability win, not a throughput-scaling win).
 - **Horizontal scale (N× across machines): UNPROVEN — the one empirical item this session could not close
   on a single box.** Recommend either (a) shipping v1 with an explicit "per-cell ~1100 w/s on comparable
   hardware; multi-machine N× is a v2 measurement" caveat, or (b) a short follow-up multi-instance run
