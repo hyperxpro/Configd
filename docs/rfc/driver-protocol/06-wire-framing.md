@@ -28,10 +28,10 @@ and a prior RFC claim disagree, **the code wins**. This section is **normative**
   `CommandCodec`/snapshot blobs. The cursor codec (F8) is the one §02 §3 (W3-5) references.
 - [`03-authentication.md`](03-authentication.md) — the **mTLS** handshake is the edge authentication (AU3-2);
   §06 F9 gives its concrete TLS profile.
-- `07-errors.md` (**planned; not yet written — this arc**) — the `ErrorCode` taxonomy carried in `ERROR_CLOSE`
+- [`07-errors.md`](07-errors.md) — the `ErrorCode` taxonomy carried in `ERROR_CLOSE`
   (`0x09`) and `WATCH_CANCELED` (`0x0F`). §06 specifies the *byte* (a `u8` code 1–11); §07 will own the
   *meaning* and the driver reaction.
-- `00-overview.md` (**planned; not yet written — this arc**) — the two-plane architecture.
+- [`00-overview.md`](00-overview.md) — the two-plane architecture.
 
 Clauses are referenced as **`F<n>-<m>`** (the framing-section clause prefix; parallel to §1 `A`, §2 `W`, §3
 `AU`, §4 `D`, §5 `R`), so the composed RFC has no clashing identifiers.

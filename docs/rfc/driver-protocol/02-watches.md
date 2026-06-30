@@ -65,15 +65,19 @@ moment the cluster shards.** This is the single most important rule in this sect
 
 **W1-2 (the watch frames extend the edge wire; they require a version bump).** The watch frames in §5 are
 **new frame types and one new error code** on the **existing** edge wire format (the `EdgeFrameCodec`
-length-prefixed, CRC32C-checked, version-byte framing; ADR-0037). Adding them is a wire-format change and
-**MUST** bump the edge wire version from `0x01` to **`0x02`** (§5.9). The version is part of the
-driver-protocol version negotiated at connection setup (§1 [§1.3](01-paths-and-access.md#13-versioning),
-§3 [§1.3](03-authentication.md#13-versioning)); a wire-version bump is **operator-gated**, exactly as every
-prior Configd wire bump (ADR-0037 rebaseline rule).
+length-prefixed, CRC32C-checked, version-byte framing — the wire-format-v1 discipline of
+[`adr-0029-wire-format-v1.md`](../../decisions/adr-0029-wire-format-v1.md); the concrete edge byte layout is
+[`06-wire-framing.md`](06-wire-framing.md) §F2, the `EdgeFrameCodec` edge transport per ADR-0037). Adding them
+is a wire-format change and **MUST** bump the edge wire version from `0x01` to **`0x02`** (§5.9). The version
+is **pinned by the first frame** of the connection — there is **no** negotiation handshake
+([`00-overview.md`](00-overview.md) §4, [`06-wire-framing.md`](06-wire-framing.md) §F4; §1
+[§1.3](01-paths-and-access.md#13-versioning), §3 [§1.3](03-authentication.md#13-versioning)); a wire-version
+bump is **operator-gated**, exactly as every prior Configd wire bump (the operator-gated wire-bump rule).
 
 **W1-3 (per-connection version; existing frame payloads unchanged — design-A; fail-closed on unknown).** The
-edge wire version is negotiated **per connection** and stamped on **every** frame of that connection (the
-`EdgeFrameCodec` version byte). A `0x02` connection stamps `0x02` on **every** frame it carries, **including**
+edge wire version is **pinned per connection by the first frame** (*"negotiated"* here = first-frame-pinned,
+**not** a handshake; [`06-wire-framing.md`](06-wire-framing.md) §F4) and stamped on **every** frame of that
+connection (the `EdgeFrameCodec` version byte). A `0x02` connection stamps `0x02` on **every** frame it carries, **including**
 a reused `NOTIFY` (W5-2); a `0x01` connection stays entirely `0x01`. §2 **MUST NOT** change the **payload
 byte layout** of any existing frame type (`SUBSCRIBE`, `SUBSCRIBE_OK`, `NOTIFY`, `SNAPSHOT_{BEGIN,CHUNK,END}`,
 `CURSOR_ACK`, `HEARTBEAT`, `ERROR_CLOSE`) — only the version byte differs between a `0x01` and a `0x02`
@@ -495,7 +499,9 @@ in order, **MUST NOT** act on a partial snapshot before `END`, and on `END` **MU
 ### 5.9 Wire version and negotiation
 
 **W5-11.** Per W1-2, the §2 frames require edge wire version **`0x02`**. A connection speaks **exactly one**
-edge wire version for its lifetime, agreed at connection setup (the per-connection "design-A" model, W1-3).
+edge wire version for its lifetime, **pinned by the first frame** — *agreed* here means first-frame-pinned,
+**not** a negotiation handshake (no hello/capabilities frame; [`06-wire-framing.md`](06-wire-framing.md) §F4) —
+the per-connection "design-A" model (W1-3).
 On a `0x02` connection **every** frame — including a reused `NOTIFY` (W5-2) — carries the `0x02` version
 byte; on a `0x01` connection every frame carries `0x01`. A `0x02`-capable server **MUST** still serve a
 `0x01` connection (the existing fan-out plane) **byte-identically** — the `0x01` golden fixtures stay valid,
@@ -656,9 +662,10 @@ unauthorized `WATCH_CREATE` **MUST** be terminated by a `WATCH_CANCELED` carryin
 `WATCH_CREATED`, `WATCH_SNAPSHOT_*`, `WATCH_EVENT`, `WATCH_PROGRESS`, **or (in `full_chain_verify` mode)
 `NOTIFY`** frames for that watch precede the close (i.e. **no payload-bearing server→client frame**, W7-1).
 A failed **authentication** (the mTLS handshake / identity) is the **`401`-class** `AUTH_FAIL`,
-surfaced at the **connection** level (the handshake fails, or a connection-level `ERROR_CLOSE(AUTH_FAIL)` —
-§3 [AU4-1](03-authentication.md#4-the-connection-lifecycle--authenticate-before-any-data),
-[AU5-1](03-authentication.md#5-error-taxonomy-the-401-side-composes-with-1-7)). A conforming server
+surfaced at the **connection** level: the **TLS handshake fails / the connection is reset** — `AUTH_FAIL` is a
+server-side close-reason/metric, **not** a wire frame a driver receives (§3
+[AU4-1](03-authentication.md#4-the-connection-lifecycle--authenticate-before-any-data),
+[AU5-1](03-authentication.md#5-error-taxonomy-the-401-side-composes-with-1-7); §07 E3-1). A conforming server
 implementation **MUST** have a regression test proving that **(a)** an over-broad-target watch and **(b)** a
 non-root-scope `full_chain_verify`/`FULL` watch are **each** rejected with a `403`-class `WATCH_CANCELED`
 and **zero** preceding data frames — and case **(b) MUST explicitly assert zero `NOTIFY` frames** precede

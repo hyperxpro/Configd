@@ -15,8 +15,8 @@ Design rationale is in [`../../design/auth-spi/`](../../design/auth-spi/) (`buil
   side, the watch-authz contract). §03 owns **authentication** (the 401 side); it does **not** redefine
   authorization. The shared error taxonomy is §1 [§7](01-paths-and-access.md#7-error-taxonomy), restated here
   for the connection lifecycle.
-- `02-watches.md` (the watch section, from the watch research — **planned; not yet written**) — a watch subscription authenticates **before**
-  any subscribe/snapshot frame ([AU4](#au4--the-connection-lifecycle); the integration points are flagged in
+- [`02-watches.md`](02-watches.md) — the watch section — a watch subscription authenticates **before**
+  any subscribe/snapshot frame ([AU4](#4-the-connection-lifecycle--authenticate-before-any-data); the integration points are flagged in
   [§8](#8-composition-with-1-and-2)).
 
 Clauses in this section are referenced as **`AU<n>-<m>`** (the authentication-section clause prefix, parallel
@@ -42,8 +42,9 @@ server's authenticator.**
 
 ### 1.3 Versioning
 
-The credential mechanisms and the error taxonomy in this section are **version-1**, part of the driver-protocol
-version negotiated at connection setup (§1 [§1.3](01-paths-and-access.md#13-versioning)). A driver **MUST NOT**
+The credential mechanisms and the error taxonomy in this section are **version-1** of the driver protocol —
+versioned by the `/v1/` HTTP path prefix and the binary edge's **first-frame version pin** (no negotiation
+handshake; [`00-overview.md`](00-overview.md) §4, `06-wire-framing.md` §F4; §1 [§1.3](01-paths-and-access.md#13-versioning)). A driver **MUST NOT**
 assume an authentication mechanism the server does not offer, and **MUST** fail closed on an unrecognized
 authentication mechanism or challenge (AU7-1).
 

@@ -34,8 +34,10 @@ vector's role** for `list` pagination and references it for watch authorization.
 
 ### 1.3 Versioning
 
-This address model and capability set are part of the driver-protocol version negotiated at connection
-setup. The path encoding and capability identifiers in this section are **version-1**. A driver **MUST NOT**
+This address model and capability set are **version-1** of the driver protocol — versioned by the `/v1/` HTTP
+path prefix and, on the binary edge, by the **first-frame version pin** (there is **no** negotiation handshake;
+see [`00-overview.md`](00-overview.md) §4 and `06-wire-framing.md` §F4). The path encoding and capability
+identifiers in this section are **version-1**. A driver **MUST NOT**
 assume a capability identifier or path rule it does not recognize; unknown capabilities **MUST** be treated
 as **not granted** (fail closed).
 

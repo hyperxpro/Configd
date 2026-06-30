@@ -21,7 +21,7 @@ This section is **normative**; it **composes with**:
   flow-control / cap behaviors (§06 F10).
 - [`01-paths-and-access.md`](01-paths-and-access.md) (§7 authz) and [`03-authentication.md`](03-authentication.md)
   (§5 authn) — the `401`/`403` rows, consolidated here (E5).
-- `00-overview.md` (**planned; not yet written — this arc**).
+- [`00-overview.md`](00-overview.md).
 
 Clauses are referenced as **`E<n>-<m>`** (the error-section clause prefix; parallel to §1 `A`, §2 `W`, §3 `AU`,
 §4 `D`, §5 `R`, §6 `F`), so the composed RFC has no clashing identifiers.
