@@ -135,7 +135,17 @@ public final class NettyEdgeHttpServer {
                         ch.pipeline().addLast(new ReadHandler());
                     }
                 });
-        serverChannel = b.bind(new InetSocketAddress(port)).sync().channel();
+        boolean started = false;
+        try {
+            serverChannel = b.bind(new InetSocketAddress(port)).sync().channel();
+            started = true;
+        } finally {
+            if (!started) {
+                // bind/sync failed (e.g. port in use) or was interrupted after the event-loop
+                // groups were created — release them so a failed start() leaks no threads/FDs.
+                stop();
+            }
+        }
     }
 
     /** The actual bound port (resolves an ephemeral port 0 after {@link #start()}). */
