@@ -1,0 +1,49 @@
+# EC2 measurement — go/no-go summary (2026-06-30)
+
+The single paid hardware measurement of the sharding/scale/durability claims that were sim-verified but
+never measured on metal. Box: `m6id.4xlarge` (16 vCPU, NVMe), `main` @ `ce7d719`, JDK 25, ZGC, Epoll.
+Plaintext-loopback throughput methodology (matches the RR-113 baseline + wsC/s75; mTLS proven functional
+separately). Full detail in the sibling docs; raw captures in `captures/`.
+
+## What's proven (measured, holds)
+
+| Claim | Measured | Verdict |
+|---|---|---|
+| Single-group write bound (RR-113 ~800/s) | ~450/s closed-loop; **leadership-churn-bound at ~20% CPU / ~16% NVMe** (26–43 elections/20s), NOT fsync/CPU | ✅ confirmed + root-caused |
+| Sharding lifts aggregate write throughput | **~450→~1100/s (~2.5×) by N=4**, and it **removes the churn** (N=4/8: 0–2 elections) | ✅ directionally validated |
+| Leader-loss failover | **~372 ms** write-availability gap, single bounded election (no storm) | ✅ pass |
+| No committed-write loss on fault | **0 loss** across leader-kill, WAL-replay restart, wipe+InstallSnapshot (1000/1000 keys each) | ✅ durability contract holds |
+| Node recovery RTO | **~4.2 s** (WAL replay) / **~5.9 s** (snapshot rebuild) | ✅ pass |
+| mTLS on the production CLI path | 3-node Raft peer mTLS + API serve, curl-P12 → 200 | ✅ functional |
+
+## What's NOT proven (the honest gaps)
+
+1. **The "scales ~N× horizontally" claim is NOT established.** Aggregate write throughput **plateaus at
+   ~1100/s by N=4** on this single 3-co-located-node box — N=8 adds nothing, at only ~30% CPU / ~15% NVMe /
+   zero churn, and *more* load (3 concurrent drivers → ~590/s) makes it worse. This is a single-box ceiling
+   (3 JVMs sharing 16 cores + one NVMe + loopback replication), not the load generator. The N× claim is
+   fundamentally about N groups across **separate machines** (each its own CPU/disk/NIC), which one box
+   cannot represent. **A true multi-machine N×knee (3+ instances × N groups) remains the open empirical
+   item** — a v1 ship caveat or a v2 measurement. What *is* shown is a conservative floor: sharding ~2.5×
+   and de-churns on one box; real multi-machine scaling should exceed ~1100/s by an unmeasured factor.
+
+2. **Soak (6 h leak/OOM burn-in): IN PROGRESS** — see `04-soak.md` (this section updated on completion).
+   The prior 24 h attempt OOM'd at 3.45 h; this run targets 6 h on NVMe with 2 g ZGC heaps + NMT, watching
+   heap/RSS/GC/FD. [PASS/BLOCKER — pending.]
+
+## Allocation hypotheses (oracle)
+- server `ByteBufFrameSink` per-connection reuse — **real win ~176 B/op** (confirmed). Follow-up to merge.
+- edge-node static `byte[]` error bodies — **negligible** (per-request floor is the ~33 KB/op HTTP shell).
+- edge-cache `PrefixStorageFilter.isEmpty()` — clean-but-tiny; follow-up to merge.
+None merged this session (per charter).
+
+## Bottom line for the v1 ship line
+- **Durability & availability: GREEN.** Sub-second failover, zero committed-write loss under three fault
+  modes, single-digit-second recovery — measured on metal.
+- **Single-node performance: characterised + root-caused.** The write ceiling is leadership churn, not
+  resource saturation; sharding relieves it ~2.5× on one box.
+- **Horizontal scale (N× across machines): UNPROVEN — the one empirical item this session could not close
+  on a single box.** Recommend either (a) shipping v1 with an explicit "per-cell ~1100 w/s on comparable
+  hardware; multi-machine N× is a v2 measurement" caveat, or (b) a short follow-up multi-instance run
+  before committing to the horizontal-scale claim in v1 docs.
+- Soak verdict pending (gates the leak/OOM concern).
