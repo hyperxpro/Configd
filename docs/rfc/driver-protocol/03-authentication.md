@@ -131,6 +131,10 @@ presenting a credential.
 
 ## 5. Error taxonomy (the 401 side; composes with §1 §7)
 
+> *The consolidated cross-section taxonomy is [§07](07-errors.md) (the single source of truth); this section's
+> authentication (`401`, and the `503`-class "authenticator unavailable") rows are restated there. Where they
+> overlap, §07 and this section **MUST** agree.*
+
 **AU5-1 (401 unauthenticated vs 403 forbidden).** The authentication/authorization outcomes use the deployed
 control-plane taxonomy of §1 [§7](01-paths-and-access.md#7-error-taxonomy) — the 401/403 rows are identical;
 this section **extends** it with an authentication-specific **"authenticator unavailable"** row (AU5-2):

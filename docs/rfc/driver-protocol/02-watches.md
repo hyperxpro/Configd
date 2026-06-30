@@ -595,6 +595,10 @@ cross-shard; a driver **MUST NOT** generalize it to a global guarantee.
 
 ## 7. The watch-authorization contract
 
+> *The full streaming `ErrorCode` reaction table — including `NOT_AUTHORIZED` (the `403`-class per-watch reject
+> this section defines, carried in `WATCH_CANCELED`) and the catch-up ladder — is consolidated in
+> [§07](07-errors.md) (the single source of truth); §07 and this section **MUST** agree.*
+
 A watch is authorized as a **streaming read**. This section **restates §1
 [§6](01-paths-and-access.md#6-the-watch-authorization-contract-normative) normatively**; both **MUST
 agree**, and **§2 MUST NOT weaken §1** (§1
