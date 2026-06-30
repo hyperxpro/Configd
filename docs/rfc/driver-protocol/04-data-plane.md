@@ -19,19 +19,19 @@ that file unless noted). Where this section and a prior RFC claim disagree, **th
   the capability/authorization model. §04 references it for `scope`, key validation, and the `READ`/`WRITE`/
   `ADMIN` gating; it does **not** redefine them.
 - [`03-authentication.md`](03-authentication.md) — how a unary request is authenticated (bearer; AU3-1).
-- `05-routing.md` (**planned; not yet written — this arc**) — what a driver does with a `503` +
+- [`05-routing.md`](05-routing.md) — what a driver does with a `503` +
   `X-Leader-Hint`; leader-following is **REQUIRED even at N = 1**. Every write and every linearizable read in
   this section can return `503`. **Until §05 lands, the essential rule is self-contained here** (D4-6's
   driver-reaction column + D11-1): on `503` **with** a hint, retry the hinted node; on `503` **without** a
   hint or a `504`/5xx, back off and retry (safe because writes are idempotent LWW, D4-3); do **not** retry
   `400`/`401`/`403`, and honor `Retry-After` on `429`.
-- `06-wire-framing.md` (**planned; not yet written — this arc**) — the binary edge plane's framing (not the
+- [`06-wire-framing.md`](06-wire-framing.md) — the binary edge plane's framing (not the
   HTTP data plane); referenced only to delimit scope (D2-6).
-- `07-errors.md` (**planned; not yet written — this arc**) — the single error/status taxonomy. §04 names the
+- [`07-errors.md`](07-errors.md) — the single error/status taxonomy. §04 names the
   status codes it returns **and** gives the required driver reaction inline (D4-6, D3-8, §11); §07 will be the
   consolidated cross-section table. A v1 driver is **not** blocked on §07: every code §04 returns carries its
   reaction here.
-- `00-overview.md` (**planned; not yet written — this arc**) — the two-plane architecture + doc map.
+- [`00-overview.md`](00-overview.md) — the two-plane architecture + doc map.
 
 Clauses in this section are referenced as **`D<n>-<m>`** (the data-plane clause prefix, parallel to §1's
 `A<n>-<m>`, §2's `W<n>-<m>`, §3's `AU<n>-<m>`), so the composed RFC has no clashing identifiers.
@@ -60,7 +60,7 @@ but **GLOBAL-only in the deployed topology** (D7-4).
 `Accept`/`Content-Type` version negotiation, **no** version header, and **no** capabilities/hello exchange on
 the HTTP surface (`handle`, :130–145, routes on the literal path only). A driver **MUST** address the data
 plane under `/v1/` and **MUST NOT** expect to negotiate an HTTP API version. (The *binary edge* version is a
-separate, frame-pinned mechanism — planned §06; do not conflate them.)
+separate, frame-pinned mechanism — §06; do not conflate them.)
 
 **D1-2.** A future HTTP API revision will be a new path prefix (`/v2/…`), not a renegotiation of `/v1/`. A
 driver **MUST NOT** assume forward-compatible behavior changes within `/v1/`.
@@ -109,7 +109,7 @@ surface (`escapeJson` applies only to `/health` bodies, :699). A driver **MUST N
 markup (a reflected-input hazard); treat it as a logging/diagnostic string only.
 
 **D2-6 (no writes on the edge plane).** Writes exist **only** on this HTTP plane. The binary edge plane
-(§02/planned §06) is read/watch/fan-out only. A driver that needs to `put`/`delete` **MUST** use the HTTP API.
+(§02/§06) is read/watch/fan-out only. A driver that needs to `put`/`delete` **MUST** use the HTTP API.
 
 **D2-7 (no `201`/`204`).** A successful write or delete is **`200`** with a body, never `201`/`204`; a
 read of a 0-length value is **`200`** with a 0-length `application/octet-stream` body (the `found` flag, not
@@ -196,7 +196,7 @@ a deployment with a linearizable read path wired, if a driver requests `?consist
 **ordinary** (non-strong-read) key and this node cannot serve it linearizably, the server returns **`503` `Not
 Leader - cannot serve linearizable read`** + `X-Leader-Hint` (when a leader is known) (:240–251). This is
 **distinct** from a strong-read fail-close: **`X-Fail-Closed` is absent**, because a stale read of an ordinary
-key is contract-permitted. A driver **MAY** follow the hint (planned §05) and retry, **or** fall back to a
+key is contract-permitted. A driver **MAY** follow the hint (§05) and retry, **or** fall back to a
 stale read of the same key — both are valid; the server has refused only the *linearizable* read, not the key.
 (In a **stale-only** deployment this `503` does not occur — the request is served stale and mislabeled per
 D3-2a.)
@@ -210,7 +210,7 @@ D10-2.)* Authorization failures are `401`/`403` (§07; see §1 §5–§7 and §3
 audited; a successful read is **not** audited per-event (a DoS concern).
 
 **D3-8 (read is side-effect-free and safe to retry).** A `GET` never mutates. A driver **MAY** retry any read
-freely (subject to planned-§05 backoff). A `503` or a transport timeout on a read means "couldn't serve now"
+freely (subject to §05 backoff). A `503` or a transport timeout on a read means "couldn't serve now"
 — re-read. (The application never returns `504` on a `GET`; `504` is a write-only outcome, D4-6/D4-8.)
 
 ---
@@ -231,7 +231,7 @@ body-vs-header asymmetry is the single most common data-plane driver bug; see §
 
 **D4-3 (idempotent last-writer-wins).** A `put` is an idempotent **LWW** upsert: re-applying the identical
 `PUT` after an indeterminate outcome (`504`/timeout, D4-6/D4-8) is **safe** — it overwrites with the same
-value and yields a (possibly new) `seq`. This idempotency is what makes the planned-§05 retry contract safe.
+value and yields a (possibly new) `seq`. This idempotency is what makes the §05 retry contract safe.
 A driver **MUST NOT** assume a `put` is a compare-and-set; there is **no** conditional-write / `If-Match` in v1
 (D11-4). *(If the optional replay guard is **enabled** — D11-3 — a retried mutation **MUST** carry a **fresh**
 `X-Configd-Timestamp` + `X-Configd-Nonce`; re-sending the original stamp/nonce is rejected `409`, not
@@ -332,7 +332,7 @@ differ (`seq` vs. version) but the number space is **one**.
 **strictly increasing across all writes that shard applies** — not per-key, and **not** ordered across shards.
 At **N = 1** there is one shard, so it is a single global sequence. A driver **MUST NOT** compare `seq`/version
 values **across shards** for ordering (at N > 1 two keys on different shards have incomparable sequences — §1
-A4-2, planned-§05 no-client-sharding). A driver **MUST** treat the value as an **opaque monotonic `uint64`**
+A4-2, §05 no-client-sharding). A driver **MUST** treat the value as an **opaque monotonic `uint64`**
 within a shard and **MUST NOT** assume it increments by 1 between two writes to the same key (it advances by
 the shard's total mutation count, so gaps are normal).
 
@@ -343,7 +343,7 @@ parameter — the store supports a min-version read internally (`get(key, minVer
 HTTP**. So a driver **cannot** request a bounded-staleness "wait for my write" read. To **guarantee**
 read-your-writes, a driver **MUST** either read with `?consistency=linearizable` (D3-4, in a deployment with a
 linearizable path) — which serves from the leader's linearization point — or use a strong-read (`secure/`) key
-(D3-5), and/or follow the leader hint (planned §05). A plain stale read **MAY** lag and return a version
+(D3-5), and/or follow the leader hint (§05). A plain stale read **MAY** lag and return a version
 `< seq`.
 
 **D6-5 (the cursor relationship is the same one §1/§2 use — a modeling reuse, not an on-wire vector here).**
@@ -449,7 +449,7 @@ D2-2). A driver typically does not scrape `/metrics`; an operator's collector do
 
 **D11-1 (every write/strong-read can redirect — leader-following is mandatory, even at N = 1).** Any
 `PUT`/`DELETE`, any `?consistency=linearizable` read, and any strong-read can return **`503`** (D3-5, D3-6,
-D4-6). A driver **MUST** implement a leader-follow + backoff-retry loop (the full contract is the planned §05;
+D4-6). A driver **MUST** implement a leader-follow + backoff-retry loop (the full contract is §05;
 the **essentials are inline here**, D4-6's reaction column). Crucially, the `503` **MAY omit `X-Leader-Hint`**
 when the leader is unknown — e.g. **during an election**, which is the **normal N = 1 case** (a single node's
 only `503` window is pre-election; once elected it stays leader and writes succeed, and `raftNode.leaderId()`
@@ -459,7 +459,7 @@ and retrying the same endpoint** (there is no distinct leader to follow); it **M
 
 **D11-2 (errors).** The status codes named here (`200`/`400`/`401`/`403`/`404`/`405`/`429`/`503`/`504`, plus
 `409` under the optional replay guard, D11-3) each carry their required driver reaction **inline** (D4-6,
-D3-8, D11-1). The planned §07 will consolidate the cross-section taxonomy in one table; a v1 driver is **not**
+D3-8, D11-1). §07 consolidates the cross-section taxonomy in one table; a v1 driver is **not**
 blocked on it.
 
 **D11-3 (optional replay guard — `409`/`401`).** A deployment **MAY** enable an opt-in replay guard

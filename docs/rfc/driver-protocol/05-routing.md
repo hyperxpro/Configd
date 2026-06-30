@@ -27,7 +27,7 @@ with**:
   keyspace (A2-4). §05 relies on the fact that a subtree scatters and the shard hash is **server-side**.
 - [`03-authentication.md`](03-authentication.md) — the credential a driver presents (and re-presents to a
   hinted node, §8); the `401` boundary.
-- `07-errors.md` (**planned; not yet written — this arc**) — the consolidated per-code taxonomy. §05 gives the
+- [`07-errors.md`](07-errors.md) — the consolidated per-code taxonomy. §05 gives the
   routing-relevant driver reaction per status inline (§6); §07 will be the cross-section table. A v1 driver is
   **not** blocked on §07.
 
@@ -47,7 +47,7 @@ The keywords **MUST**, **MUST NOT**, **REQUIRED**, **SHALL**, **SHALL NOT**, **S
 
 This section is the **unary control-plane (HTTP)** routing/redirect/retry contract. It applies to **both**
 N = 1 and N > 1 — the routing logic is identical (R5). The binary edge plane has its own connection/session
-model (§02 / planned §06) and is out of scope here.
+model (§02 / §06) and is out of scope here.
 
 ### 1.3 Versioning
 
@@ -190,7 +190,7 @@ assumption *or* a "this node owns only some shards" assumption — following R5 
 ## 6. Retry / backoff / idempotency contract (unary plane)
 
 **R6-1 (outcome → driver action).** A driver **MUST** react to a unary response as follows (the routing view;
-§04 / planned §07 give the full per-code detail):
+§04 / §07 give the full per-code detail):
 
 | Result | Meaning | Driver action |
 |---|---|---|
@@ -236,7 +236,7 @@ only against a deployment with the guard **disabled** (the default); against an 
 
 **R7-1 (where the codes come from).** §04 produces the `503`/`504`/`X-Leader-Hint`/`429`/`409`; §01 is the
 `(scope, path)` + server-side-shard model R5 relies on; §03 is the credential re-presented on a follow (§8);
-planned §07 will consolidate the per-code taxonomy. §05 owns only the **routing/redirect/retry** view.
+§07 will consolidate the per-code taxonomy. §05 owns only the **routing/redirect/retry** view.
 
 **R7-2 (named forward extensions — fail closed).** The following are **named** v1 omissions a driver **MUST
 NOT** assume and **MUST** fail closed on: a **topology / shard-map / membership discovery endpoint** (R3-2; a

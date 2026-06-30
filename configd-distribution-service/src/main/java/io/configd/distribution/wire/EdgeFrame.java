@@ -28,8 +28,9 @@ import java.util.Objects;
  * (multiplex / filter veneer over the connection-level fan-out) and are encodable/decodable
  * <b>only</b> under {@link EdgeFrameCodec#EDGE_WIRE_VERSION_V2} (W1-3 / W5-11). Their wire
  * layouts are normative (RFC §5.2–5.8); they carry the per-shard {@link WatchCursor} vector
- * (never a scalar, even at {@code N = 1}; W1-1). This family is <b>defined but not yet
- * driven</b> by any session — the veneer that emits/consumes them is a later increment.
+ * (never a scalar, even at {@code N = 1}; W1-1). This family is <b>driven by the watch veneer</b> — the
+ * N = 1 client-facing watch surface (multiplex / filter over the connection-level fan-out), wired in the
+ * RFC §2 watch-veneer increments.
  */
 public sealed interface EdgeFrame
         permits EdgeFrame.Subscribe, EdgeFrame.SubscribeOk, EdgeFrame.Notify,
