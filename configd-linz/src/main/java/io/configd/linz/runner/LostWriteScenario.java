@@ -132,7 +132,7 @@ public final class LostWriteScenario {
      * commits — expected during stabilization, not the bug under test — so we re-probe the
      * leader and retry. Returns the committing attempt's result, or the last attempt.
      */
-    static ConfigClient.OpResult putCommitted(ConfigClient client, Cluster cluster,
+    private static ConfigClient.OpResult putCommitted(ConfigClient client, Cluster cluster,
             int leaderHint, String key, String value, int attempts) throws InterruptedException {
         ConfigClient.OpResult last = null;
         for (int i = 0; i < attempts; i++) {
@@ -153,7 +153,7 @@ public final class LostWriteScenario {
     }
 
     /** Waits until a single node's local applied state for {@code key} equals {@code value}. */
-    static boolean awaitApplied(ConfigClient client, ClusterNode node, String key,
+    private static boolean awaitApplied(ConfigClient client, ClusterNode node, String key,
             String value, long budgetMs) throws InterruptedException {
         long deadline = System.nanoTime() + budgetMs * 1_000_000L;
         while (System.nanoTime() < deadline) {

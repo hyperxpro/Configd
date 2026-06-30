@@ -18,7 +18,7 @@ public final class Cluster implements AutoCloseable {
     private final List<ClusterNode> nodes;
 
     private Cluster(List<ClusterNode> nodes) {
-        this.nodes = nodes;
+        this.nodes = List.copyOf(nodes);
     }
 
     public static Cluster create(int n, int raftBase, int apiBase, Path baseDir, Path jar,

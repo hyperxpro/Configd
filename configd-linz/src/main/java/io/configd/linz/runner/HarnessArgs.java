@@ -33,19 +33,5 @@ final class HarnessArgs {
         return -1;
     }
 
-    /** Polls until the elected leader is some node other than {@code excludeId}; -1 on timeout. */
-    static int awaitLeaderOtherThan(Cluster cluster, int excludeId, long timeoutMs) throws InterruptedException {
-        ConfigClient c = new ConfigClient();
-        long deadline = System.nanoTime() + timeoutMs * 1_000_000L;
-        while (System.nanoTime() < deadline) {
-            int l = c.probeLeader(cluster.nodes());
-            if (l > 0 && l != excludeId) {
-                return l;
-            }
-            Thread.sleep(250);
-        }
-        return -1;
-    }
-
     private HarnessArgs() {}
 }
