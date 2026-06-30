@@ -85,7 +85,7 @@ public final class HealthService {
      * unhealthy if any check fails.
      */
     public HealthStatus readiness() {
-        List<CheckResult> results = new ArrayList<>();
+        List<CheckResult> results = new ArrayList<>(readinessChecks.size());
         boolean allHealthy = true;
 
         for (HealthCheck check : readinessChecks) {
