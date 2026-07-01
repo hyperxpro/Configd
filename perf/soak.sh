@@ -62,12 +62,18 @@ while [[ $# -gt 0 ]]; do
 done
 
 OUT_DIR="${OUT_DIR:-$ROOT/perf/results/soak-$(date -u +%Y%m%dT%H%M%SZ)}"
-BASE="/tmp/configd-soak-$$"
+# SOAK_BASE: data+WAL root. Default /tmp (legacy callers / dev-box). On the EC2
+# measurement box set SOAK_BASE=/mnt/nvme/... for the fsync-honest WAL path.
+BASE="${SOAK_BASE:-/tmp/configd-soak-$$}"
 RAFT_BASE=9290
 API_BASE=8280
 PEERS_ADDR="1=127.0.0.1:9291,2=127.0.0.1:9292,3=127.0.0.1:9293"
 HEAP="${SOAK_HEAP:--Xmx1g -Xms1g}"
 GCFLAGS="${SOAK_GC:--XX:+UseZGC}"   # ADR-0041: ZGC for serving JVMs
+# SOAK_JVM_EXTRA: extra per-node JVM flags (default none). On the EC2 box used to
+# add -XX:NativeMemoryTracking=summary + -XX:+HeapDumpOnOutOfMemoryError so an
+# off-heap/direct-buffer leak or an OOM is captured, not just inferred.
+JVM_EXTRA="${SOAK_JVM_EXTRA:-}"
 PIDS=()
 
 mkdir -p "$OUT_DIR" "$BASE"
@@ -91,14 +97,21 @@ trap cleanup EXIT
 # -----------------------------------------------------------------------------
 # Launch the 3-node ZGC cluster, each with its own gc log for cumulative pause.
 # -----------------------------------------------------------------------------
-echo "[soak] launching 3-node cluster ($GCFLAGS $HEAP) under $BASE; out=$OUT_DIR"
+# Shared cluster signing key, mounted OUTSIDE every node data dir. Required since the D-1
+# fail-closed guard (ADR-0043): the PA-2021 at-rest integrity key is derived from the signing
+# key, so a key co-located inside the data dir it protects is REFUSED at boot. Default to the
+# pre-generated key from deploy/compose/setup-secrets.sh; override with SOAK_SIGNKEY.
+SIGNKEY="${SOAK_SIGNKEY:-$ROOT/deploy/compose/secrets/signing-key.bin}"
+[ -s "$SIGNKEY" ] || fail "shared signing key not found: $SIGNKEY (run deploy/compose/setup-secrets.sh)"
+echo "[soak] launching 3-node cluster ($GCFLAGS $HEAP) under $BASE; out=$OUT_DIR; signing-key=$SIGNKEY"
 for k in 1 2 3; do
   peers=$(echo "1 2 3" | tr ' ' '\n' | grep -v "^$k$" | paste -sd,)
   dd="$BASE/n$k"; mkdir -p "$dd"
-  java $GCFLAGS $HEAP --enable-preview \
+  java $GCFLAGS $HEAP $JVM_EXTRA --enable-preview \
     -Xlog:gc:"$GCLOG_DIR/n$k.gc.log" \
     -jar "$JAR" \
     --node-id "$k" --data-dir "$dd" --peers "$peers" \
+    --signing-key-file "$SIGNKEY" \
     --bind-address 127.0.0.1 --bind-port $((RAFT_BASE + k)) \
     --api-port $((API_BASE + k)) --peer-addresses "$PEERS_ADDR" \
     > "$BASE/n$k.log" 2>&1 &
@@ -107,7 +120,7 @@ done
 
 # Wait for all 3 readiness endpoints == 200 (leader elected => ready).
 ready=0
-for i in $(seq 1 60); do
+for i in $(seq 1 120); do
   ok=0
   for k in 1 2 3; do
     code=$(curl -s -o /dev/null -w "%{http_code}" --max-time 1 "http://$(api $k)/health/ready" 2>/dev/null)

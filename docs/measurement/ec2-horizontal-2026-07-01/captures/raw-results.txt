@@ -1,0 +1,45 @@
+=== BURST GATE + N=3 KNEE (plaintext cross-box, 1-1-1) @ 2026-07-01T11:55:43Z ===
+Topology: N=3 groups, one JVM/box, leaders 1-1-1 (cp1=g0 cp2=g2 cp3=g1), ownerPool=3, ZGC, epoll.
+Load: ShardAwareWriteDriver calibrate-sharded (closed-loop) from dedicated load box, 512B values.
+
+calibrate-sharded C=128 dur=30s: sustained=1607/s committed_200=48212 non200=0 retargets=0  [CLEAN, 1-1-1 held, elections=2]
+  per-box CPU busy: cp1=61% cp2=64% cp3=64%  (evenly loaded; ~38% idle -> ceiling is consensus churn, not CPU)
+calibrate-sharded C=128 dur=20s (first burst): sustained=1677/s 200=28506 503=698
+calibrate-sharded C=160 dur=20s: sustained=1831/s non200=1059 (CHURN ONSET, dist->0-1-2)  [peak-but-shedding]
+calibrate-sharded C=192 dur=20s: sustained=1256/s (COLLAPSE, dist->2-0-1)
+calibrate-sharded C=256 dur=20s: sustained=723/s (504 timeouts, churn)
+calibrate-sharded C=384: 459/s ; C=512: 197/s  (deeper collapse)
+
+BASELINES: ~800/s single-group open-loop (RR-113); ~450/s single-group closed-loop; ~1100/s single-box multi-group plateau (closed-loop).
+N=3 clean = 1607/s = 2.0x single-group open-loop / 1.46x single-box plateau. Peak (churn-onset) 1831/s.
+GATE DECISION: PASSED (aggregate clearly crosses 1100; horizontal scaling REAL). Proceed to N=1/N=2 curve.
+
+=== N=1 (single group, cross-machine, plaintext) @ 2026-07-01T12:00:06Z ===
+closed-loop calibrate: C=16->468(clean) C=24->560 C=32->652(CLEAN,knee) C=48->756 but non200=3693(sheds)
+open-loop atrate (C=64): 600off->598ach(clean,0bp) 800off->592ach(1163 backpressure) 1000off->71(collapse)
+N=1 clean single-group cross-machine ~= 650/s (both methods). LOWER than single-box loopback ~800 (network replication cost vs loopback). Leader on 1 box; other 2 pure followers.
+
+=== N=2 (two groups, 2 leaders on 2 boxes 1-0-1, plaintext) @ 2026-07-01T12:01:55Z ===
+closed-loop calibrate: C=48->1062(CLEAN,knee) C=64->897(clean) C=96->1295 non200=667(sheds,churn onset)
+N=2 clean knee ~= 1062/s. Peak-with-shedding ~1295.
+
+=== SCALING CURVE (closed-loop clean knee, plaintext cross-box) ===
+N=1: 652/s (1 leader machine)
+N=2: 1062/s (2 leader machines) = 1.63x
+N=3: 1607/s (3 leader machines) = 2.46x
+~linear: +410 (1->2), +545 (2->3); ~+475/s per added leader-machine.
+
+=== DRIVER-HEADROOM CHECK (N=3 1-1-1) @ 2026-07-01T12:07:26Z ===
+single-driver calibrate C=128: sustained=1602/s (repeat of the 1607 knee), dist held 1-1-1.
+LOAD BOX avg CPU busy during run = 15.35%  <-- driver has ~85% headroom.
+=> 1607/s is CLUSTER-bound (consensus churn), NOT driver-bound. Confirmed by: throughput FALLS as concurrency rises (churn), server CPU only ~62%, 504s are server-side.
+N=3 C=128 repeats: 1677, 1607(clean 30s), 1602 -> stable ~1600/s.
+
+=== STABILITY REPEATS @ 2026-07-01T12:10:01Z ===
+N=2 C=48: 1082, 1071 (+ earlier 1062) -> clean ~1075/s stable.
+N=1 C=32: 652, 663, 655 (all clean non200=0) -> ~656/s stable.
+
+=== INTER-NODE NETWORK @ 2026-07-01T12:12:52Z (N=3, dist 2-1-0, 1628/s) ===
+Per-box ens5 (ENA) during C=128: cp1 rx6.4/tx18.5 MB/s; cp2 rx12.4/tx8.3; cp3 rx8.9/tx0.08 MB/s.
+Peak tx ~18.5 MB/s (~148 Mbps) = <1% of the m6i.xlarge ENA NIC; sar %ifutil ~0.00. NETWORK NOT A CEILING.
+Note: this run on 2-1-0 still gave 1628/s (~= the 1-1-1 1607) — aggregate robust as long as leadership is spread.

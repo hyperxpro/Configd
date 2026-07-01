@@ -1,0 +1,34 @@
+=== Configd DR drills @ 2026-06-30T20:41:51Z ===
+[dr] jar=/mnt/nvme/Configd/configd-server/target/configd-server-0.1.0-SNAPSHOT.jar base=/mnt/nvme/run/dr-85613 seed_keys=1000 load_rate=300 heap=-Xmx4g -Xms4g
+[dr] initial leader = node 3
+[dr] seeding 1000 known keys via leader 3...
+[dr] seeded_ok=1000 / 1000
+[dr] leader commit_index after seed = 1002
+[dr] 
+[dr] ===== DRILL A: LEADER-LOSS under load =====
+[dr] background load pid=88912 (60s @ 300/s)
+[dr] killed leader node 3 (pid 85691) at t_kill; measuring failover...
+[dr] failover: new write-leader = node 2; write-availability GAP = 372 ms
+[dr] elections_total: before_kill=2 after_settle=3 (delta=1 — bounded election, not a storm)
+[dr] seeded read-back via node 2: intact=1000 missing=0 mismatch=0
+[dr] DRILL A VERDICT: NO committed-write loss (all 1000 seeded keys survived leader loss)
+[dr] restarting ex-leader node 3 (rejoin via its own data dir)...
+[dr] node 3 rejoined
+[dr] 
+[dr] ===== DRILL B: NODE RECOVERY via WAL replay (kill+restart, same data dir) =====
+[dr] leader=1 follower-to-recover=2
+[dr] leader commit_index = 3339
+[dr] killed follower 2; restarting from its OWN data dir (WAL/snapshot replay)...
+[dr] WAL-replay recovery: ready_in=1667ms converged_in=4211ms (follower ci>=leader ci=3339)
+[dr] DRILL B read-back via recovered node 2: intact=1000 missing=0 mismatch=0
+[dr] DRILL B VERDICT: recovered, NO loss (RTO=4211ms)
+[dr] 
+[dr] ===== DRILL C: NODE RECOVERY via wipe + InstallSnapshot (leader streams state) =====
+[dr] leader=1 follower-to-wipe=2
+[dr] leader commit_index = 5019
+[dr] killed + WIPED follower 2 data dir; restarting EMPTY (leader must InstallSnapshot)...
+[dr] wipe+InstallSnapshot recovery: converged_in=5931ms (empty node caught up to leader ci=5019)
+[dr] DRILL C read-back via rebuilt node 2: intact=1000 missing=0 mismatch=0
+[dr] DRILL C VERDICT: rebuilt from snapshot, NO loss (RTO=5931ms)
+[dr] 
+[dr] === DR drills complete @ 2026-06-30T20:42:52Z ===

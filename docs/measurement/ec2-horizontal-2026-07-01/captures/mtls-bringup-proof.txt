@@ -1,0 +1,33 @@
+=== Cross-box mTLS bring-up proof (charter §3) @ 2026-07-01T11:34:27Z ===
+Topology: N=3 groups, one JVM per box (cp1/cp2/cp3), peer-addresses cp1:9291/cp2:9291/cp3:9291
+Certs: shared server.pem (SAN dns:cp1,cp2,cp3), cross-box via /etc/hosts. No cert regen.
+
+--- readiness over mTLS (probed from load box) ---
+cp1=200
+cp2=200
+cp3=200
+READY_COUNT=3/3
+
+--- leader distribution + elections (mTLS) ---
+LEADER_DIST: cp1=2 cp2=1 cp3=0  TOTAL_LED=3
+MAX_ELECTIONS=2
+
+--- peer-channel + API mTLS evidence (per-node startup log) ---
+[cp1]
+  TLS          : enabled
+  Shard map    : StaticShardMap[N=3, epoch=0] [Multi-Raft Phase 1 C4a; N fixed at deploy, ceiling 16]
+  Owner pool   : 3 owner thread(s) [Phase 0 B Stage 1B — R-01 deleted, consensus via ownerExecutor(gid)]
+INFO: NettyRaftTransport listening on /[0:0:0:0:0:0:0:0]:9291 (mTLS) [tier=epoll]
+[cp2]
+  TLS          : enabled
+  Shard map    : StaticShardMap[N=3, epoch=0] [Multi-Raft Phase 1 C4a; N fixed at deploy, ceiling 16]
+  Owner pool   : 3 owner thread(s) [Phase 0 B Stage 1B — R-01 deleted, consensus via ownerExecutor(gid)]
+INFO: NettyRaftTransport listening on /[0:0:0:0:0:0:0:0]:9291 (mTLS) [tier=epoll]
+[cp3]
+  TLS          : enabled
+  Shard map    : StaticShardMap[N=3, epoch=0] [Multi-Raft Phase 1 C4a; N fixed at deploy, ceiling 16]
+  Owner pool   : 3 owner thread(s) [Phase 0 B Stage 1B — R-01 deleted, consensus via ownerExecutor(gid)]
+INFO: NettyRaftTransport listening on /[0:0:0:0:0:0:0:0]:9291 (mTLS) [tier=epoll]
+
+--- explicit curl over mTLS (P12 client cert), cross-box from load ---
+cp1 https /health/ready = 200

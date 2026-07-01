@@ -1,0 +1,37 @@
+# Benchmark mode: Average time, time/op
+# Benchmark: io.configd.edge.node.EdgeHttpAllocBenchmark.configGet
+                 gc.alloc.rate.norm: 35848.206 B/op
+                 gc.alloc.rate.norm: 35762.552 B/op
+                 gc.alloc.rate.norm: 35763.645 B/op
+                 gc.alloc.rate.norm: 35762.207 B/op
+                 gc.alloc.rate.norm: 35747.943 B/op
+Result "io.configd.edge.node.EdgeHttpAllocBenchmark.configGet":
+Secondary result "io.configd.edge.node.EdgeHttpAllocBenchmark.configGet:gc.alloc.rate":
+Secondary result "io.configd.edge.node.EdgeHttpAllocBenchmark.configGet:gc.alloc.rate.norm":
+  35776.910 ±(99.9%) 155.469 B/op [Average]
+Secondary result "io.configd.edge.node.EdgeHttpAllocBenchmark.configGet:gc.count":
+Secondary result "io.configd.edge.node.EdgeHttpAllocBenchmark.configGet:gc.time":
+# Benchmark mode: Average time, time/op
+# Benchmark: io.configd.edge.node.EdgeHttpAllocBenchmark.healthLive
+                 gc.alloc.rate.norm: 33450.472 B/op
+                 gc.alloc.rate.norm: 33401.076 B/op
+                 gc.alloc.rate.norm: 33403.603 B/op
+                 gc.alloc.rate.norm: 33402.407 B/op
+                 gc.alloc.rate.norm: 33404.951 B/op
+Result "io.configd.edge.node.EdgeHttpAllocBenchmark.healthLive":
+Secondary result "io.configd.edge.node.EdgeHttpAllocBenchmark.healthLive:gc.alloc.rate":
+Secondary result "io.configd.edge.node.EdgeHttpAllocBenchmark.healthLive:gc.alloc.rate.norm":
+  33412.502 ±(99.9%) 81.921 B/op [Average]
+Secondary result "io.configd.edge.node.EdgeHttpAllocBenchmark.healthLive:gc.count":
+Secondary result "io.configd.edge.node.EdgeHttpAllocBenchmark.healthLive:gc.time":
+Benchmark                                             Mode  Cnt      Score     Error   Units
+EdgeHttpAllocBenchmark.configGet                      avgt    5     94.992 ±   9.135   us/op
+EdgeHttpAllocBenchmark.configGet:gc.alloc.rate        avgt    5    359.248 ±  33.327  MB/sec
+EdgeHttpAllocBenchmark.configGet:gc.alloc.rate.norm   avgt    5  35776.910 ± 155.469    B/op
+EdgeHttpAllocBenchmark.configGet:gc.count             avgt    5      3.000            counts
+EdgeHttpAllocBenchmark.configGet:gc.time              avgt    5      8.000                ms
+EdgeHttpAllocBenchmark.healthLive                     avgt    5     91.906 ±   4.292   us/op
+EdgeHttpAllocBenchmark.healthLive:gc.alloc.rate       avgt    5    346.650 ±  15.638  MB/sec
+EdgeHttpAllocBenchmark.healthLive:gc.alloc.rate.norm  avgt    5  33412.502 ±  81.921    B/op
+EdgeHttpAllocBenchmark.healthLive:gc.count            avgt    5      3.000            counts
+EdgeHttpAllocBenchmark.healthLive:gc.time             avgt    5      9.000                ms
