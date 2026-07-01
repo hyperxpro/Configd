@@ -15,13 +15,13 @@
 
 # Start node 0
 java --enable-preview \
-  -XX:+UseZGC -XX:+ZGenerational \
+  -XX:+UseZGC \
   -Xms512m -Xmx2g \
   -XX:+ExitOnOutOfMemoryError \
   -jar configd-server/target/configd-server-0.1.0-SNAPSHOT.jar \
-  --node-id node-0 \
+  --node-id 0 \
   --data-dir /var/lib/configd/data \
-  --peers node-0,node-1,node-2 \
+  --peer-addresses 0=configd-0:9090,1=configd-1:9090,2=configd-2:9090 \
   --bind-address 0.0.0.0 \
   --bind-port 9090 \
   --api-port 8080 \
@@ -35,16 +35,19 @@ java --enable-preview \
 
 | Flag | Required | Default | Description |
 |------|----------|---------|-------------|
-| `--node-id` | Yes | - | Unique node identifier |
+| `--node-id` | Yes | - | Unique integer node ID for this node |
 | `--data-dir` | Yes | - | Path for WAL, snapshots, and state |
-| `--peers` | Yes | - | Comma-separated list of all node IDs |
+| `--peer-addresses` | Yes | - | Map of node ID to host:port for all cluster members, e.g. `0=host0:9090,1=host1:9090,2=host2:9090` |
 | `--bind-address` | No | `0.0.0.0` | Raft transport bind address |
-| `--bind-port` | No | `9090` | Raft transport port |
-| `--api-port` | No | `8080` | HTTP API / health check port |
-| `--tls-cert` | No | - | Path to PKCS12 keystore |
-| `--tls-key` | No | - | Path to PKCS12 key file |
-| `--tls-trust-store` | No | - | Path to PKCS12 trust store |
-| `--auth-token` | No | - | Bearer token for write/admin API |
+| `--bind-port` | No | `9090` | Raft transport (inter-node) port |
+| `--api-port` | No | `8080` | Control-plane / admin API and health port |
+| `--edge-port` | No | - | Edge fan-out port; enables the edge plane when set |
+| `--tls-cert` | No | - | Path to the PKCS12 keystore |
+| `--tls-key` | No | - | Path to the PKCS12 key file |
+| `--tls-trust-store` | No | - | Path to the PKCS12 trust store |
+| `--auth-token` | No | - | Bearer token required for write and admin API calls |
+| `--signing-key-file` | No | `<data-dir>/signing-key.bin` | Cluster signing key; must live outside `--data-dir` or the server fails closed (see [adr-0044](../adr/adr-0044-signing-key-management.md)) |
+| `--strong-read-prefixes` | No | `secure/` | Key prefixes served as fail-closed linearizable reads |
 
 ## API Endpoints
 
@@ -61,11 +64,13 @@ java --enable-preview \
 
 ### Garbage Collection
 
-Use ZGC Generational for sub-millisecond GC pauses on the edge read path:
+Use ZGC for sub-millisecond GC pauses on the edge read path. On Java 25, ZGC is generational by default, so pass only:
 
 ```
--XX:+UseZGC -XX:+ZGenerational
+-XX:+UseZGC
 ```
+
+Do not pass `-XX:+ZGenerational` - that flag was removed in JDK 24.
 
 ### Heap Sizing
 
@@ -115,7 +120,7 @@ keytool -importcert -alias ca -keystore truststore.p12 -storetype PKCS12 \
 
 1. Generate new certificates signed by the same CA (or a new CA added to the trust store)
 2. Replace certificate files on disk
-3. The `TlsManager` supports hot-reload - call the admin endpoint or send SIGHUP
+3. The server re-reads the certificate files from disk automatically, about every 60 seconds - no restart, signal, or endpoint is needed
 4. Connections using the old certificate will drain naturally
 5. See `docs/runbooks/cert-rotation.md` for the full procedure
 
@@ -146,7 +151,8 @@ Key features of the k8s deployment:
 | Propagation delay p99 | < 500ms | 5m |
 | Control plane availability | 99.999% | 30d |
 | Edge read availability | 99.9999% | 30d |
-| Write throughput baseline | > 10,000/s | 5m |
+
+Throughput is a capacity figure, not an SLO. Measured: a single Raft group commits about 800 writes/s and a single cluster about 1600 writes/s; the 10,000/s figure is a sharded, multi-machine aggregate target, not a single-cluster baseline (see the [measurement archive](../archive/measurement/)).
 
 ### Burn-Rate Alerts
 

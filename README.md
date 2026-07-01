@@ -1,6 +1,6 @@
 # Configd
 
-A strongly-consistent, sharded, mTLS-secured configuration store. Writes go through sharded Raft for durability and horizontal scale; committed changes fan out to a planet-wide edge that serves reads from an in-process, lock-free cache in microseconds.
+A strongly-consistent, sharded, mTLS-securable configuration store. Writes go through sharded Raft for durability and horizontal scale; committed changes fan out to a region-local fleet of edge readers that serve reads from an in-process, lock-free cache in microseconds.
 
 The split is the point: consensus gives you linearizable, durable writes, and the edge gives you fast local reads without paying a consensus round trip on the read path.
 
@@ -8,8 +8,9 @@ The split is the point: consensus gives you linearizable, durable writes, and th
 
 - **Durable, linearizable writes** through Raft, with strong reads available via ReadIndex and bounded-staleness reads at the edge by default.
 - **Sharded for horizontal scale.** A single region-local group is the default (N=1); sharding is wired and proven, and scale is near-linear across machines.
-- **mTLS throughout**, with a per-key authorization model (roles, policies, deny-precedence) and a keyed-HMAC audit log.
+- **mTLS on the edge and replication surfaces**, with a per-key authorization model (roles, policies, deny-precedence) and a keyed-HMAC audit log. The admin API is HTTPS with a bearer token rather than client certificates, and edge reads are plaintext by design.
 - **At-rest integrity**, meaning tamper detection, not encryption. Values are stored in plaintext and integrity-checked; do not put secrets in Configd (see the limitations below).
+- **Secure by configuration, not by default.** TLS and mTLS, authentication, the audit log, and replay protection are off until you turn them on (the server warns loudly while they are off). See the [operator runsheet](docs/operations/operator-runsheet.md).
 
 ## What v1 proved on real hardware
 

@@ -8,7 +8,7 @@
 ## 1. Linearizability Scope
 
 ### Linearizable Operations
-All write operations to any Raft group (global or regional) are **linearizable**:
+All write operations to any Raft group are **linearizable**:
 - `PUT(key, value)` - config creation/update
 - `DELETE(key)` - config removal
 - `BATCH(mutations[])` - atomic batch of puts/deletes within a single Raft group - **PLANNED, not yet wired**: `HttpApiServer` exposes only `PUT`/`GET`/`DELETE` on `/v1/config/{key}`; there is no BATCH endpoint. The guarantee is specified here for when BATCH lands; it is not a claim about the current API surface.
@@ -171,8 +171,8 @@ All writes to the same key are totally ordered. Guaranteed by Raft: single leade
 ### Cross-Key Order Within Same Raft Group: GUARANTEED
 All writes within the same Raft group share a single log, so they are totally ordered.
 
-### Cross-Key Order Across Raft Groups: N/A under the single-group topology (ADR-0030)
-Configd runs a single region-local Raft group (`DEFAULT_RAFT_GROUP = 0`; ADR-0030), so there is no cross-group order to specify. If a future multi-group deployment is adopted, a cross-group ordering mechanism is re-specified at that time (the descoped per-entry HLC was never a real mechanism - see section 4 and ADR-0035). Applications needing two keys ordered must route both to the same Raft group (same scope).
+### Cross-Key Order Across Raft Groups: not guaranteed
+At the N=1 default there is a single region-local Raft group (`DEFAULT_RAFT_GROUP = 0`), so the question is moot. When sharding is enabled (N>1), each group carries its own independent sequence and there is no ordering guarantee across groups (the descoped per-entry HLC was never a real mechanism - see section 4 and ADR-0035). Applications that need two keys ordered must route both to the same Raft group (same scope and shard).
 
 ### Formal Invariant
 ```
@@ -275,7 +275,7 @@ The previously-listed `assert_sequence_monotonic` / `assert_sequence_gap_free` r
 | Read-your-writes | Cross-region | Opt-in (cursor or ReadIndex) | Explicit client action |
 | Per-key total order | All replicas | Guaranteed | Raft single-leader serialization |
 | Cross-key order (same group) | All replicas | Guaranteed | Shared Raft log |
-| Cross-key order (cross group) | N/A | N/A under ADR-0030 single-group topology | - (per-entry HLC descoped, ADR-0035) |
+| Cross-key order (cross group) | Not guaranteed | Independent per-group sequences; route co-ordered keys to one group | - (per-entry HLC descoped, ADR-0035) |
 | Version monotonicity | All nodes | Guaranteed | Monotonic sequence numbers |
 
 > **Note: The `secure/` strong-read class is a *freshness* guarantee, not *confidentiality*.** It means

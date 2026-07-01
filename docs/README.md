@@ -25,4 +25,4 @@ A map of what lives here and where to go.
 
 ## What v1 is
 
-A strongly-consistent, sharded, mTLS-secured configuration store. Writes go through Raft for durability; reads are served from a lock-free edge cache in microseconds. v1 runs a single region-local group by default, with sharding wired and horizontal scale proven but operator-managed. At-rest protection is integrity (tamper detection), not encryption. See [`architecture/`](architecture/) for the full picture and [`operations/known-limitations.md`](operations/known-limitations.md) for the honest edges.
+A strongly-consistent, sharded, mTLS-securable configuration store. Writes go through Raft for durability; reads are served from a lock-free edge cache in microseconds. v1 runs a single region-local group by default, with sharding wired and horizontal scale proven but operator-managed. At-rest protection is integrity (tamper detection), not encryption. See [`architecture/`](architecture/) for the full picture and [`operations/known-limitations.md`](operations/known-limitations.md) for the honest edges.
