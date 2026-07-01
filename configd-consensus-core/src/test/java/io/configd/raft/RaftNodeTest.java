@@ -603,6 +603,98 @@ class RaftNodeTest {
             RaftNode leader = cluster.nodes.get(NodeId.of(1));
             assertFalse(leader.transferLeadership(NodeId.of(99)));
         }
+
+        @Test
+        void committedWritesSurviveTransferAndLeadershipIsRestorable() {
+            TestCluster cluster = new TestCluster(3);
+            cluster.electLeader(NodeId.of(1));
+            RaftNode leader1 = cluster.nodes.get(NodeId.of(1));
+
+            byte[] cmdA = {1, 2, 3};
+            byte[] cmdB = {4, 5, 6};
+            assertEquals(ProposalResult.ACCEPTED, leader1.propose(cmdA).result());
+            assertEquals(ProposalResult.ACCEPTED, leader1.propose(cmdB).result());
+            cluster.deliverAllMessages(20);
+            cluster.tickLeaderHeartbeatAndDeliver();
+            long committedBefore = leader1.log().commitIndex();
+            assertTrue(committedBefore >= 2, "both proposals must have committed on the leader");
+
+            // Transfer leadership to node 2.
+            assertTrue(leader1.transferLeadership(NodeId.of(2)), "the leader initiates the transfer");
+            cluster.deliverAllMessages(20);
+            RaftNode node2 = cluster.nodes.get(NodeId.of(2));
+            assertEquals(RaftRole.LEADER, node2.role(), "node 2 becomes leader after the transfer");
+
+            // No committed-write loss: the previously committed entries survive in the new leader's log,
+            // and its state machine already applied both original commands.
+            assertTrue(node2.log().lastIndex() >= committedBefore,
+                    "the new leader must retain every previously committed entry (no write loss)");
+            TestStateMachine sm2 = cluster.stateMachines.get(NodeId.of(2));
+            assertTrue(containsCommand(sm2, cmdA) && containsCommand(sm2, cmdB),
+                    "both committed writes must be present in the new leader's applied state (durable across transfer)");
+
+            // The group stays available under the new leader: it accepts and commits a fresh write.
+            assertEquals(ProposalResult.ACCEPTED, node2.propose(new byte[]{7, 8, 9}).result());
+            cluster.deliverAllMessages(20);
+            cluster.tickLeaderHeartbeatAndDeliver();
+            assertTrue(node2.log().commitIndex() > committedBefore,
+                    "the new leader commits a fresh write - the group stays available");
+
+            // Restorable: leadership can be moved back to node 1 (operator-manageable, not one-way).
+            cluster.deliverAllMessages(20);
+            assertTrue(node2.transferLeadership(NodeId.of(1)), "leadership must be transferable back");
+            cluster.deliverAllMessages(20);
+            assertEquals(RaftRole.LEADER, cluster.nodes.get(NodeId.of(1)).role(),
+                    "leadership is restored to node 1 - placement is operator-manageable in both directions");
+        }
+
+        private static boolean containsCommand(TestStateMachine sm, byte[] command) {
+            for (TestStateMachine.AppliedEntry e : sm.applied) {
+                if (java.util.Arrays.equals(e.command(), command)) {
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        @Test
+        void stalledTransferAbortsAfterElectionTimeoutAndWritesResumeWithoutStepDown() {
+            // A 4-voter config where node 4 is a configured voter that never runs (removed from the
+            // routing map = permanently partitioned). The live majority {1,2,3} keeps the leader's quorum,
+            // so the leader stays up; node 4 never catches up, so a transfer to it can never complete.
+            TestCluster cluster = new TestCluster(4);
+            cluster.nodes.remove(NodeId.of(4));
+            cluster.transports.remove(NodeId.of(4));
+            cluster.electLeader(NodeId.of(1));
+            RaftNode leader = cluster.nodes.get(NodeId.of(1));
+            assertEquals(RaftRole.LEADER, leader.role());
+            cluster.deliverAllMessages(10);
+
+            // Transfer to the unreachable voter: it is a legal target (a configured voter, not self), so
+            // transferTarget is set, but maybeSendTimeoutNow never fires (node 4 never catches up).
+            assertTrue(leader.transferLeadership(NodeId.of(4)), "the transfer to the partitioned voter is initiated");
+            assertNotNull(leader.transferTarget(), "the transfer is in progress (target never catches up)");
+            assertEquals(ProposalResult.TRANSFER_IN_PROGRESS, leader.propose(new byte[]{1}).result(),
+                    "every write is wedged while the transfer is in progress");
+
+            // Drive the leader past one election timeout, keeping the live majority {1,2,3} exchanging so
+            // its quorum holds (the leader must NOT step down). Node 4 is gone, so it never acks.
+            int electionTimeout = leader.electionTimeoutTicksForTest();
+            for (int i = 0; i <= electionTimeout; i++) {
+                for (RaftNode n : cluster.nodes.values()) {
+                    n.tick();
+                }
+                cluster.deliverAllMessages(5);
+            }
+
+            // The stalled transfer is aborted (section 3.10): target cleared, leader still leads, writes resume.
+            assertNull(leader.transferTarget(),
+                    "the stalled transfer must be aborted after about one election timeout");
+            assertEquals(RaftRole.LEADER, leader.role(),
+                    "the leader must NOT step down on abort - the group stays available under the same leader");
+            assertEquals(ProposalResult.ACCEPTED, leader.propose(new byte[]{2}).result(),
+                    "writes must resume once the stalled transfer is aborted");
+        }
     }
 
     // Log conflict resolution tests

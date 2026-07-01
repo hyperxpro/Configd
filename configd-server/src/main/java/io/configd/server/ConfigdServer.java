@@ -893,6 +893,12 @@ public final class ConfigdServer {
         // AdminApiHandler the JDK HttpApiServer used. Documented fast-revert: change
         // `new NettyHttpApiServer(` back to `new HttpApiServer(` (identical arg list) - the JDK adapter
         // is retained and CI-green as the revert target.
+        // The ADMIN-gated leadership-transfer control endpoint. Backed by the driver: it posts the
+        // owner-thread-confined RaftNode.transferLeadership onto the group's owner executor and drives it
+        // through the built AdminService guard. Gives operators a remedy for post-failover leadership drift
+        // (otherwise the sharded aggregate collapses toward the single-group plateau with no lever).
+        DriverLeadershipAdmin leadershipAdmin = new DriverLeadershipAdmin(driver);
+
         NettyHttpApiServer httpApiServer;
         try {
             // The read 503 X-Leader-Hint is SHARD- AND SCOPE-AWARE - resolved for the shard that owns
@@ -907,7 +913,7 @@ public final class ConfigdServer {
                         io.configd.raft.RaftNode owner = driver.getGroup(shardMap.shardFor(scope, key));
                         return owner != null ? owner.leaderId() : null;
                     },
-                    auditLog, replayGuard);
+                    auditLog, replayGuard, leadershipAdmin);
             httpApiServer.start();
         } catch (Exception e) {
             throw new RuntimeException("Failed to start HTTP API server on port " + config.apiPort(), e);

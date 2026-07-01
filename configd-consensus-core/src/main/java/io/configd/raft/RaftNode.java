@@ -64,6 +64,9 @@ public final class RaftNode {
     private int electionTimeoutTicks;  // randomized target in [min, max] ticks
     private int electionTicksElapsed;
     private int heartbeatTicksElapsed;
+    // Ticks elapsed since the in-flight leadership transfer started (only meaningful while
+    // transferTarget != null). Drives the section-3.10 transfer-timeout abort in tickHeartbeat.
+    private int transferTicksElapsed;
 
     // Election state
     /** Tracks which nodes granted votes (needed for joint consensus dual-majority). */
@@ -604,6 +607,7 @@ public final class RaftNode {
             return false; // Unsafe during reconfig - could split-brain
         }
         this.transferTarget = target;
+        this.transferTicksElapsed = 0; // start the section-3.10 abort clock for this transfer
         // Send entries to catch up the target, then check if already caught up
         sendAppendEntries(target);
         maybeSendTimeoutNow();
@@ -1419,6 +1423,22 @@ public final class RaftNode {
     }
 
     private void tickHeartbeat() {
+        // Leadership-transfer timeout abort (Raft dissertation section 3.10). A transfer whose target is a
+        // configured voter but is lagging or unreachable never catches up, so maybeSendTimeoutNow never
+        // fires and transferTarget stays set - and while it is set propose() rejects EVERY write with
+        // TRANSFER_IN_PROGRESS. Without this abort a single bad target write-wedges an otherwise-healthy
+        // group for the rest of the term, with no recovery. After about one election timeout with no
+        // completion the leader abandons the transfer: it clears transferTarget so writes resume. The
+        // leader does NOT step down - the group stays available under the same leader. Runs every leader
+        // tick (like the heartbeat counter below); the counter advances only while a transfer is in flight
+        // and is zeroed when one starts (transferLeadership) or completes (maybeSendTimeoutNow).
+        if (transferTarget != null && ++transferTicksElapsed >= electionTimeoutTicks) {
+            NodeId abandoned = transferTarget;
+            transferTarget = null;
+            transferTicksElapsed = 0;
+            System.err.println("RaftNode: aborted stalled leadership transfer to " + abandoned
+                    + " after " + electionTimeoutTicks + " ticks (target never caught up); resuming proposals");
+        }
         heartbeatTicksElapsed++;
         if (heartbeatTicksElapsed >= heartbeatTimeoutTicks) {
             heartbeatTicksElapsed = 0;
@@ -2527,6 +2547,7 @@ public final class RaftNode {
         if (targetMatchIndex >= log.lastIndex()) {
             transport.send(transferTarget, new TimeoutNowRequest(currentTerm, config.nodeId()));
             transferTarget = null; // Transfer initiated, clear target
+            transferTicksElapsed = 0; // transfer completed - stop the abort clock
         }
     }
 

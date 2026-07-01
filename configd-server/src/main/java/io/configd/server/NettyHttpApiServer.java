@@ -129,11 +129,33 @@ public final class NettyHttpApiServer {
                               BiFunction<ConfigScope, String, NodeId> leaderHintSupplier,
                               AuditLog auditLog,
                               ReplayGuard replayGuard) {
+        this(port, sslContext, healthService, prometheusExporter, configStore, writeService, readService,
+                authInterceptor, aclService, strongReadPolicy, leaderHintSupplier, auditLog, replayGuard, null);
+    }
+
+    /**
+     * As the full constructor, plus the {@link AdminApiHandler.LeadershipAdmin} seam that backs the
+     * ADMIN-gated leadership-transfer endpoint. A {@code null} seam leaves that endpoint unrouted.
+     */
+    public NettyHttpApiServer(int port,
+                              SSLContext sslContext,
+                              HealthService healthService,
+                              PrometheusExporter prometheusExporter,
+                              VersionedConfigStore configStore,
+                              ConfigWriteService writeService,
+                              ConfigReadService readService,
+                              AuthInterceptor authInterceptor,
+                              AclService aclService,
+                              StrongReadPolicy strongReadPolicy,
+                              BiFunction<ConfigScope, String, NodeId> leaderHintSupplier,
+                              AuditLog auditLog,
+                              ReplayGuard replayGuard,
+                              AdminApiHandler.LeadershipAdmin leadershipAdmin) {
         this.port = port;
         this.sslContext = sslContext;
         this.handler = new AdminApiHandler(healthService, prometheusExporter, configStore, writeService,
                 readService, authInterceptor, aclService, strongReadPolicy, leaderHintSupplier,
-                auditLog, replayGuard);
+                auditLog, replayGuard, leadershipAdmin);
         this.workerThreads = Integer.getInteger("configd.server.netty.workerThreads",
                 Math.max(2, Runtime.getRuntime().availableProcessors()));
         this.requestTimeoutMillis = Long.getLong("configd.server.netty.requestTimeoutMillis", 30_000L);
