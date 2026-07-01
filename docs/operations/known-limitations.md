@@ -48,14 +48,26 @@ legacy in-process `WatchService` is unrelated server-internal plumbing (register
   reload).
 - **Security model a deployer MUST know** (from the Gate-1 security review - the watch path is internally
   sound; these are system-boundary/deployment conditions):
-  - **Co-resident legacy SUBSCRIBE.** The same `--edge-port` also serves the pre-existing whole-store
-    SUBSCRIBE fan-out, which has **no per-key ACL** (the trusted server-to-edge backbone, ADR-0038). A cert
-    that completes the mTLS handshake can obtain the whole store via SUBSCRIBE, bypassing the watch gate.
-    The watch ACL therefore only constrains clients that **cannot** reach the legacy SUBSCRIBE path -
-    deploy watch clients **segregated** from edge-cache subscribers (separate trust anchor, or the intended
-    server-to-edge-to-client topology). NOT reachable in the default config (only `root`, which already holds
-    whole-store). Hardening (gate SUBSCRIBE / segregate trust anchors) is a tracked follow-up before any
-    non-root watch grant on a shared port.
+  - **Co-resident legacy SUBSCRIBE (now authorized).** The same `--edge-port` also serves the
+    pre-existing whole-store SUBSCRIBE fan-out (the trusted server-to-edge backbone, ADR-0038). With
+    auth **ON** it is now gated at admission on a **whole-store READ cover** - a root-prefix `READ` grant
+    with no intersecting `READ` deny anywhere; `WATCH` is not required (SUBSCRIBE is a read feed). A cert
+    that completes the mTLS handshake but lacks root READ is refused `NOT_AUTHORIZED` before any frame
+    flows, so a watch-only principal (subtree `READ  and  WATCH`, no root READ) can no longer escalate to
+    the whole store via SUBSCRIBE - **the prior bypass is closed**. The edge/hydration identity (the edge
+    node's cert-DN) MUST therefore hold READ over the root prefix `""` or edge hydration is refused.
+    **Authentication is not authorization:** the gate is active **only when ACL/auth is enabled**
+    (an `--auth-token` is set), which is **decoupled from TLS**. With auth **OFF** but mTLS **ON** (the
+    `--tls-*` triple set, no `--auth-token`) the authorizer is absent, so **every valid edge cert still
+    pulls the whole store** - per-cert trust plus network segregation is the operator's only control in
+    that posture (see [`deployer-must-know.md` section 2](deployer-must-know.md)). Over a **plaintext**
+    edge port with auth **ON** the identity is the literal `"plaintext"`, denied unless `"plaintext"`
+    holds root READ. **Admission-time only (no bounded revocation):** unlike a watch (re-authorized on
+    every `_acl/` policy-version bump), a SUBSCRIBE is authorized once at admission and never re-checked -
+    revoking an edge identity's root READ does NOT tear down its existing whole-store feed, which streams
+    until reconnect; revoke by disconnecting the session or rotating the edge cert. This is a broader
+    exposure (the whole store) with weaker revocation (none) than a watch. NOT reachable-as-a-bypass in
+    the default config (only `root`, which already holds whole-store).
   - **mTLS + explicit grant required.** A watch needs a verified cert-DN **and** an explicit `READ  and  WATCH`
     grant to that DN; without mTLS all watches are rejected (fail-closed). The default config grants watch only
     to `root`, so out-of-the-box no edge cert can watch until the operator adds an `_acl/` grant.
@@ -72,8 +84,8 @@ legacy in-process `WatchService` is unrelated server-internal plumbing (register
   one ack, and one backpressure fate (a slow watch can demote its siblings; per-watch fairness is v2); a
   connection-level catch-up snapshot maps to the drain-owning (first) watch (single-snapshotting-watch).
 - **Deferred:** N>1 multi-shard watch (v3); per-watch flow-control (W10-8); the `prev_value` /
-  leader-served / long-poll-gateway named extensions (W10-2/4/7); the SUBSCRIBE-co-residence +
-  reserved-prefix hardening; a conforming client driver + a shared conformance suite (the next arc).
+  leader-served / long-poll-gateway named extensions (W10-2/4/7); the reserved-prefix watch-gate
+  hardening; a conforming client driver + a shared conformance suite (the next arc).
 
 ### 3. Sharding: v1 ships single-group (N=1); multi-shard is built, server-wired, and metal-proven
 
