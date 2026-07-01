@@ -11,14 +11,14 @@ import java.util.random.RandomGeneratorFactory;
 
 /**
  * Deterministic simulated network with the full adversarial fault set
- * (adversarial-sim-design §2): seeded latency, drop windows, message
+ * (adversarial-sim-design section 2): seeded latency, drop windows, message
  * duplication, delay spikes, message reorder, and uni/bi-directional partitions.
  * <p>
  * It is a standalone network (not a subclass of the {@code final}
  * {@link SimulatedNetwork}) so the adversarial harness owns every source of
  * non-determinism. All randomness comes from a single seed-derived stream
- * ({@code mixSeed(seed, TAG_NET)}), so a run is byte-replayable by seed alone —
- * the RR-010 invariant must continue to hold with all faults active.
+ * ({@code mixSeed(seed, TAG_NET)}), so a run is byte-replayable by seed alone - 
+ * the determinism invariant must continue to hold with all faults active.
  * <p>
  * <b>Determinism note.</b> Delivery is a {@link PriorityQueue} ordered first by
  * {@code deliverAtMs} and then by a strictly-increasing {@code seq} tie-break
@@ -27,7 +27,7 @@ import java.util.random.RandomGeneratorFactory;
  * {@code SimulatedNetwork} had). Reorder is produced by widening the latency band,
  * not by perturbing the tie-break, so determinism is preserved.
  * <p>
- * Not thread-safe; the simulation is single-threaded (R-01).
+ * Not thread-safe; the simulation is single-threaded.
  */
 final class AdversarialNetwork {
 
@@ -113,12 +113,12 @@ final class AdversarialNetwork {
         partitions.clear();
     }
 
-    /** Current base drop rate (S4/RR-095 diagnosis seam — read the end-of-run network state). */
+    /** Current base drop rate (diagnosis seam - read the end-of-run network state). */
     double dropRateForTest() {
         return dropRate;
     }
 
-    /** Number of active directed partition edges (S4/RR-095 diagnosis seam). */
+    /** Number of active directed partition edges (diagnosis seam). */
     int activePartitionsForTest() {
         return partitions.size();
     }
@@ -148,7 +148,7 @@ final class AdversarialNetwork {
 
     /**
      * Lifetime count of duplicated sends (diagnostic; the C5 dup-channel non-vacuity
-     * witness). Counting only — never consumes an RNG draw, so digests are untouched.
+     * witness). Counting only - never consumes an RNG draw, so digests are untouched.
      */
     long dupCount() {
         return dupCount;

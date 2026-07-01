@@ -32,17 +32,15 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.fail;
 
 /**
- * End-to-end process-level test for the C2 edge node (CT-23 wire-level signed chain,
- * CT-35 RYW through the real path, CT-03 stale header, CT-05 readiness): a REAL
- * single-node {@link ConfigdServer} (self-elects; signs every delta with its persistent
- * Ed25519 key) with its live {@code --edge-port} fan-out endpoint, and a REAL
- * {@link EdgeNodeMain} edge node on loopback whose verify key was produced by the REAL
- * distribution path ({@link VerifyKeyExporter} over {@code signing-key.bin} — C2 design
- * §3.6). Writes are driven through the server's HTTP API; reads through the edge's.
+ * End-to-end process-level test: a REAL single-node {@link ConfigdServer} (self-elects;
+ * signs every delta with its persistent Ed25519 key) with its live {@code --edge-port}
+ * fan-out endpoint, and a REAL {@link EdgeNodeMain} edge node on loopback whose verify key
+ * was produced by the REAL distribution path ({@link VerifyKeyExporter} over
+ * {@code signing-key.bin}). Writes are driven through the server's HTTP API; reads through
+ * the edge's.
  *
- * <p>Deadline-polling only — no sleep-as-synchronization (the FanOutServerIntegrationTest
- * discipline); the per-method {@link Timeout} is pure hang detection, generous for the
- * throttled 2-vCPU box (RR-094).
+ * <p>Deadline-polling only - no sleep-as-synchronization; the per-method {@link Timeout}
+ * is pure hang detection.
  */
 @Timeout(120)
 class EdgeNodeIntegrationTest {
@@ -73,9 +71,7 @@ class EdgeNodeIntegrationTest {
         }
     }
 
-    // -----------------------------------------------------------------------
     // Fixture
-    // -----------------------------------------------------------------------
 
     /** Starts a plaintext single-node server with an ephemeral edge port + signing key. */
     private ConfigdServer startServer() throws Exception {
@@ -105,9 +101,7 @@ class EdgeNodeIntegrationTest {
         return EdgeNodeMain.start(cfg);
     }
 
-    // -----------------------------------------------------------------------
     // Tests
-    // -----------------------------------------------------------------------
 
     @Test
     void writePropagatesOverSignedChainAndServesWithCursor() throws Exception {
@@ -117,7 +111,7 @@ class EdgeNodeIntegrationTest {
         String serverBase = "http://127.0.0.1:" + server.apiPort();
         String edgeBase = "http://127.0.0.1:" + edge.apiPort();
 
-        // --- write → propagate → read with cursor (RYW through the real path, CT-35) ---
+        // --- write -> propagate -> read with cursor (read-your-writes through the real path) ---
         long seq1 = putCommitted(serverBase, "svc/a", "v-a");
         HttpResponse<String> read1 = pollUntilServed(edgeBase, "svc/a", seq1);
         assertEquals("v-a", read1.body());
@@ -133,12 +127,12 @@ class EdgeNodeIntegrationTest {
         HttpResponse<String> read2 = pollUntilServed(edgeBase, "svc/a", seq2);
         assertEquals("v-a2", read2.body());
 
-        // --- the chain really verified (CT-23 positive half) ---
+        // --- the signed chain verified (positive case) ---
         assertTrue(edge.core().appliedCount() >= 2, "deltas applied through the verifier");
         assertEquals(0, edge.core().verifyRejections(),
                 "a correctly signed chain must not be rejected");
 
-        // --- skew sanity (CT-08): same-host clocks, ordered stream → no implausible samples ---
+        // --- skew sanity: same-host clocks, ordered stream -> no implausible samples ---
         assertEquals(0, edge.metricsRegistry()
                         .counter(io.configd.edge.StalenessTracker.IMPLAUSIBLE_METRIC).get(),
                 "no implausible frontier samples on an ordered same-clock stream");
@@ -153,8 +147,8 @@ class EdgeNodeIntegrationTest {
 
     @Test
     void edgeWithoutVerifyKeyRejectsTheSignedChainFailClosed() throws Exception {
-        // CT-23 negative half (F-0052): the server signs every delta; an edge with NO
-        // verify key configured must reject the signed chain fail-closed — never apply.
+        // The server signs every delta; an edge with NO verify key configured must reject
+        // the signed chain fail-closed — never apply.
         server = startServer();
         edge = startEdge("edge-it-noverify", null, server.fanOutServer().localPort());
         String serverBase = "http://127.0.0.1:" + server.apiPort();
@@ -183,7 +177,7 @@ class EdgeNodeIntegrationTest {
         server.shutdown();
         server = null;
 
-        // CT-03: >500ms behind → STALE → the header appears on served reads (the data is
+        // >500ms behind -> STALE -> the header appears on served reads (the data is
         // still served — serve-stale-with-notification; only cursor-behind refuses).
         await("stale header appears on reads", () -> {
             HttpResponse<String> r = get(edgeBase + "/v1/config/svc/c");
@@ -191,28 +185,26 @@ class EdgeNodeIntegrationTest {
                     && r.headers().firstValue(EdgeHttpServer.HDR_STALE).isPresent();
         });
 
-        // CT-04: the STALE transition incremented the contract-named counter — and it is
-        // detected even though the edge has NO live stream (the disconnected-pump path).
+        // The STALE transition must increment the counter — even when the edge has no live
+        // stream (the disconnected-pump path drives the clock forward independently).
         await("configd_edge_staleness_violation_total moved",
                 () -> get(edgeBase + "/metrics").body().lines().anyMatch(l ->
                         l.startsWith("configd_edge_staleness_violation_total ")
                                 && !l.endsWith(" 0")));
 
-        // CT-05: >5s behind → DEGRADED → unhealthy to the load balancer; liveness stays up.
+        // >5s behind -> DEGRADED -> unhealthy to the load balancer; liveness stays up.
         await("readiness flips 503 at DEGRADED",
                 () -> get(edgeBase + "/health/ready").statusCode() == 503);
         assertEquals(200, get(edgeBase + "/health/live").statusCode(),
                 "liveness is process-liveness, not staleness");
     }
 
-    // -----------------------------------------------------------------------
     // Helpers (deadline-polling; no sleep-as-sync)
-    // -----------------------------------------------------------------------
 
     /**
      * Polls the edge read with {@code X-Configd-Cursor: seq} until served. Every non-200
      * along the way MUST be the consistent refusal (404 + cursor-behind) — never a stale
-     * 200 below the cursor (the contract §3 refusal clause).
+     * 200 below the cursor.
      */
     private HttpResponse<String> pollUntilServed(String edgeBase, String key, long seq)
             throws Exception {

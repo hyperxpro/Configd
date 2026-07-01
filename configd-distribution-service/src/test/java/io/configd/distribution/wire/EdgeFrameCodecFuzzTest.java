@@ -25,9 +25,9 @@ import static org.junit.jupiter.api.Assertions.fail;
 
 /**
  * Adversarial fuzz suite for {@link EdgeFrameCodec#decode} and
- * {@link EdgeFrameCodec#peekLength} (S7 charter §6).
+ * {@link EdgeFrameCodec#peekLength}.
  *
- * <p>Complements — does NOT duplicate — {@link EdgeFrameCodecPropertyTest},
+ * <p>Complements - does NOT duplicate - {@link EdgeFrameCodecPropertyTest},
  * which already proves round-trip fidelity, truncation, single-bit corruption,
  * oversize-length-at-peek, length mismatch, and wrong-version. This suite adds
  * the security <b>resource oracle</b> for wholly arbitrary / adversarial input.
@@ -36,10 +36,10 @@ import static org.junit.jupiter.api.Assertions.fail;
  * {@link EdgeFrameCodec#decode} catches every {@link RuntimeException} from a
  * structurally-valid-but-malformed payload and re-wraps it as a
  * {@link EdgeFrameCodec.CodecException} (FRAME_CORRUPT). So for any non-null
- * input the ONLY permitted escape is a {@code CodecException}. Anything else —
+ * input the ONLY permitted escape is a {@code CodecException}. Anything else -
  * {@link OutOfMemoryError}, {@link NullPointerException},
  * {@link ArrayIndexOutOfBoundsException}, {@link NegativeArraySizeException}, a
- * raw {@link java.nio.BufferUnderflowException}, or a hang — is a defect. This is
+ * raw {@link java.nio.BufferUnderflowException}, or a hang - is a defect. This is
  * a stronger oracle than the Raft one precisely because the edge codec promises
  * a single typed failure mode to its session layer.
  *
@@ -91,7 +91,7 @@ class EdgeFrameCodecFuzzTest {
             @ForAll("validFrames") byte[] valid,
             @ForAll("hostileLengths") int hostileLength) {
         if (hostileLength == valid.length) {
-            return; // not a lie — unchanged prefix
+            return; // not a lie - unchanged prefix
         }
         byte[] frame = valid.clone();
         ByteBuffer.wrap(frame).putInt(hostileLength);
@@ -131,7 +131,7 @@ class EdgeFrameCodecFuzzTest {
         ByteBuffer.wrap(frame).putInt(at, hostile);
         repairCrc(frame);
         // With the CRC valid, the codec must still reject any structurally bad
-        // inner length via its own bounds checks — and only as a CodecException.
+        // inner length via its own bounds checks - and only as a CodecException.
         assertTimeoutPreemptively(DECODE_BUDGET, () -> {
             try {
                 EdgeFrame f = EdgeFrameCodec.decode(frame);
@@ -140,7 +140,7 @@ class EdgeFrameCodecFuzzTest {
                 // forbids a forbidden throwable; a successful decode is fine.
                 assertNotNull(f);
             } catch (EdgeFrameCodec.CodecException expected) {
-                // correct — inner bounds check fired
+                // correct - inner bounds check fired
             } catch (Throwable t) {
                 failForbidden("inner-length-lie", frame, t);
             }
@@ -203,7 +203,7 @@ class EdgeFrameCodecFuzzTest {
     }
 
     // -----------------------------------------------------------------------
-    // 5. RFC §2 watch frames (0x02). Same single-typed-failure oracle.
+    // 5. Watch frames (0x02). Same single-typed-failure oracle.
     // -----------------------------------------------------------------------
 
     /** Truncating a valid 0x02 watch frame at any boundary yields a CodecException only. */
@@ -248,7 +248,7 @@ class EdgeFrameCodecFuzzTest {
             try {
                 assertNotNull(EdgeFrameCodec.decode(frame));
             } catch (EdgeFrameCodec.CodecException expected) {
-                // correct — an inner bounds/invariant check fired
+                // correct - an inner bounds/invariant check fired
             } catch (Throwable t) {
                 failForbidden("watch inner-length-lie", frame, t);
             }

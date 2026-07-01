@@ -29,35 +29,35 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 /**
- * Live-mode driver for the {@link PropagationProbe} (Session 3 Phase V2 — charter §3 V2):
+ * Live-mode driver for the {@link PropagationProbe}:
  * a CLI that measures real, wall-clock propagation latency on this box, with honest
- * caveats. It is the live counterpart to the simulator probe; Session 5 uses it for the
- * real p99 &lt; 500 ms target — here it must merely work and produce honest numbers.
+ * caveats. It is the live counterpart to the simulator probe for the
+ * real p99 &lt; 500 ms target - here it must merely work and produce honest numbers.
  *
  * <h2>Modes</h2>
  * <ul>
  *   <li><b>{@code --mode boundary}</b> (implemented): starts a single in-process
  *       single-node {@link ConfigdServer}, drives {@code --writes} HTTP PUTs over
  *       loopback (parsing {@code Committed: seq=S}), and tails
- *       {@link ConfigdServer#commitNotificationSource()} with the ADR-0034 consumer loop
+ *       {@link ConfigdServer#commitNotificationSource()} with the commit-notification handoff consumer loop
  *       (read since cursor; replay on GAP). It records publish ts =
  *       {@link CommitNotification#commitTimestampMillis()} (the leader-assigned commit
- *       timestamp, contract §2 / ADR-0035 §2) and visible ts =
+ *       timestamp, contract section 2 / per the commit-timestamp spec section 2) and visible ts =
  *       {@link System#currentTimeMillis()} at consumption. This measures
- *       <b>commit→boundary-visibility</b> wall time — the only propagation that exists
- *       today (RR-001).</li>
- *   <li><b>{@code --mode edge}</b> (implemented at C6 — the edge data plane now exists):
- *       starts the same in-process single-node {@link ConfigdServer} WITH its C1 fan-out
+ *       <b>commit-to-boundary-visibility</b> wall time - the only propagation that exists
+ *       today.</li>
+ *   <li><b>{@code --mode edge}</b> (the edge data plane now exists):
+ *       starts the same in-process single-node {@link ConfigdServer} WITH its fan-out
  *       edge endpoint, plus a real in-process {@link EdgeNodeMain} (plaintext transport,
  *       real Ed25519 verify key via the {@link VerifyKeyExporter} path) subscribed to it.
- *       Drives {@code --writes} HTTP PUTs; one watcher loop tails the ADR-0034 boundary
+ *       Drives {@code --writes} HTTP PUTs; one watcher loop tails the commit-notification handoff boundary
  *       (recording publish ts = leader commit timestamp per seq) and samples the edge's
  *       applied cursor, recording visible ts = {@link System#currentTimeMillis()} for
- *       each seq the edge newly covers. This measures <b>commit→edge-visibility</b> wall
- *       time through the REAL wire path (server fan-out → socket → verify → apply).
+ *       each seq the edge newly covers. This measures <b>commit-to-edge-visibility</b> wall
+ *       time through the REAL wire path (server fan-out -> socket -> verify -> apply).
  *       Honest caveats in the header: single box, loopback, cursor sampled by polling
- *       (recorded latency ≥ true latency by up to the poll granularity), throttled
- *       2-vCPU hardware — mechanism check, not a perf target (Session 5 owns p99).</li>
+ *       (recorded latency >= true latency by up to the poll granularity), throttled
+ *       2-vCPU hardware - mechanism check, not a performance target.</li>
  * </ul>
  *
  * <h2>How to run</h2>
@@ -71,7 +71,7 @@ import java.util.regex.Pattern;
  * }</pre>
  *
  * <p><b>Wall-clock honesty.</b> The output header records the 2-vCPU throttled hardware
- * caveat and the boundary-only scope verbatim. No sleeps are used as synchronization —
+ * caveat and the boundary-only scope verbatim. No sleeps are used as synchronization - 
  * every wait polls a condition against a deadline.
  *
  * @see PropagationProbe
@@ -79,7 +79,7 @@ import java.util.regex.Pattern;
 public final class LivePropagationProbeMain {
 
     /**
-     * Historical exit code for the pre-C6 {@code --mode edge} stub ("the edge data plane
+     * Historical exit code for the old {@code --mode edge} stub ("the edge data plane
      * is not yet built"). The mode is implemented now; the constant remains so older
      * scripts referencing it keep compiling, but it is no longer returned.
      */
@@ -91,7 +91,7 @@ public final class LivePropagationProbeMain {
     /** The edge-process observer id ({@code --mode edge}). */
     private static final int EDGE_OBSERVER_ID = 1;
 
-    /** {@code Committed: seq=<S>} — the ADR-0033 200 body the consumer parses. */
+    /** {@code Committed: seq=<S>} - the quorum-commit 200 response body the consumer parses. */
     private static final Pattern COMMITTED_SEQ = Pattern.compile("Committed: seq=(\\d+)");
 
     private LivePropagationProbeMain() {
@@ -99,7 +99,7 @@ public final class LivePropagationProbeMain {
 
     public static void main(String[] args) throws Exception {
         // This is a single-host DEV probe: it boots a throwaway ConfigdServer whose signing key is
-        // co-located in a /tmp data dir. Opt out of the D-1 fail-closed co-location guard (which
+        // co-located in a /tmp data dir. Opt out of the fail-closed signing-key co-location guard (which
         // refuses such a layout in production); harmless here, and the probe is never a prod path.
         if (System.getProperty("configd.security.allowColocatedSigningKey") == null) {
             System.setProperty("configd.security.allowColocatedSigningKey", "true");
@@ -117,7 +117,7 @@ public final class LivePropagationProbeMain {
     }
 
     // -----------------------------------------------------------------------
-    // edge mode (C6): commit -> edge-visibility through the real wire path
+    // edge mode: commit -> edge-visibility through the real wire path
     // -----------------------------------------------------------------------
 
     private static int runEdge(Options opts) throws Exception {
@@ -125,7 +125,7 @@ public final class LivePropagationProbeMain {
 
         Path dataDir = Files.createTempDirectory("configd-probe-edge-");
         // Real signing/verify key pair via the production path (the EdgeFailoverTest
-        // pattern): the server signs its fan-out stream; the edge verifies (F-0052).
+        // pattern): the server signs its fan-out stream; the edge verifies.
         Path signingKey = dataDir.resolve("signing-key.bin");
         SigningKeyStore.loadOrCreate(signingKey);
         Path verifyKey = dataDir.resolve("verify-key.der");
@@ -143,7 +143,7 @@ public final class LivePropagationProbeMain {
                 Map.<NodeId, InetSocketAddress>of(),
                 signingKey,
                 Set.of("secure/"),
-                0));                       // C1 edge fan-out endpoint, ephemeral port
+                0));                       // edge fan-out endpoint, ephemeral port
         int edgeFanOutPort = server.fanOutServer().localPort();
 
         EdgeNodeMain edge = EdgeNodeMain.start(new EdgeNodeConfig(
@@ -169,13 +169,13 @@ public final class LivePropagationProbeMain {
         try {
             awaitLeader(http, base, opts);
 
-            // METHODOLOGY §3c: the edge staleness sampler runs on a FIXED wall-clock cadence
-            // at the edge CONCURRENTLY with the open-loop write drive — its clock does NOT
+            // METHODOLOGY section 3c: the edge staleness sampler runs on a FIXED wall-clock cadence
+            // at the edge CONCURRENTLY with the open-loop write drive - its clock does NOT
             // pause when the data plane stalls. Run the watcher on its own daemon thread so
             // each committed seq's visibility is recorded at the moment the edge's applied
-            // cursor covers it (true commit→edge propagation), NOT after all writes finish
-            // driving (which would fold the write-drive duration into every early sample — the
-            // pre-S5 serial-watch artifact that produced a false ~400 ms p50). The probe is
+            // cursor covers it (true commit-to-edge propagation), NOT after all writes finish
+            // driving (which would fold the write-drive duration into every early sample - the
+            // serial-watch artifact that produced a false ~400 ms p50). The probe is
             // thread-safe (synchronized record/read); a single watcher thread keeps
             // recordPublished-before-recordVisible ordering per seq structural.
             Thread watcherThread = null;
@@ -194,7 +194,7 @@ public final class LivePropagationProbeMain {
 
             long lastSeq = driveWrites(http, base, opts);
 
-            // Drain: wait — by polling, never a fixed sleep — until the edge has been observed
+            // Drain: wait - by polling, never a fixed sleep - until the edge has been observed
             // covering every committed seq, or the deadline expires. With the concurrent
             // watcher this only OBSERVES progress; without it, this thread pumps the watcher.
             long deadline = System.nanoTime() + opts.drainDeadline.toNanos();
@@ -235,10 +235,10 @@ public final class LivePropagationProbeMain {
     }
 
     /**
-     * The single-threaded edge-mode watcher: tails the ADR-0034 boundary (publish ts =
+     * The single-threaded edge-mode watcher: tails the commit-notification handoff boundary (publish ts =
      * leader commit timestamp per seq) and samples the edge node's applied cursor,
      * recording visible ts for each newly covered, already-published seq. Single thread
-     * ⇒ recordPublished always precedes recordVisible for any seq.
+     * => recordPublished always precedes recordVisible for any seq.
      */
     private static final class EdgeWatcher {
         private final CommitNotificationSource source;
@@ -335,7 +335,7 @@ public final class LivePropagationProbeMain {
 
         PropagationProbe probe = new PropagationProbe();
         AtomicBoolean draining = new AtomicBoolean(false);
-        // Tail the ADR-0034 boundary in-process on its own thread. The consumer loop
+        // Tail the commit-notification handoff boundary in-process on its own thread. The consumer loop
         // records publish ts = commit timestamp and visible ts = now at consumption.
         ConsumerLoop consumer = new ConsumerLoop(
                 server.commitNotificationSource(), server.replaySource(), probe, draining);
@@ -353,7 +353,7 @@ public final class LivePropagationProbeMain {
 
             long lastSeq = driveWrites(http, base, opts);
 
-            // Wait — by polling, never a fixed sleep — until the consumer has observed
+            // Wait - by polling, never a fixed sleep - until the consumer has observed
             // every committed seq (cursor reached lastSeq) or the deadline expires.
             awaitConsumed(probe, lastSeq, opts);
         } finally {
@@ -398,7 +398,7 @@ public final class LivePropagationProbeMain {
     /**
      * PUTs a single key and returns the committed seq, retrying across transient 503/504
      * (leader churn / in-flight) until {@code opts.writeDeadline} elapses. No sleep is
-     * used as synchronization — the loop re-issues immediately and bails on a deadline.
+     * used as synchronization - the loop re-issues immediately and bails on a deadline.
      */
     private static long putCommitted(HttpClient http, String base, String key, String body,
             Options opts) throws Exception {
@@ -420,7 +420,7 @@ public final class LivePropagationProbeMain {
                     throw new IllegalStateException(
                             "200 without parseable seq: " + resp.body());
                 }
-                // 503/504/429 — transient (leader churn / in-flight / backpressure). Retry.
+                // 503/504/429 - transient (leader churn / in-flight / backpressure). Retry.
             } catch (IOException | InterruptedException e) {
                 last = (e instanceof InterruptedException) ? new Exception(e) : (Exception) e;
                 if (e instanceof InterruptedException) {
@@ -435,7 +435,7 @@ public final class LivePropagationProbeMain {
 
     /**
      * Polls {@code /health/ready} until the single node has elected itself leader (200),
-     * bounded by {@code opts.writeDeadline}. No fixed sleep — re-polls on a deadline.
+     * bounded by {@code opts.writeDeadline}. No fixed sleep - re-polls on a deadline.
      */
     private static void awaitLeader(HttpClient http, String base, Options opts) throws Exception {
         long deadline = System.nanoTime() + opts.writeDeadline.toNanos();
@@ -451,7 +451,7 @@ public final class LivePropagationProbeMain {
                     return;
                 }
             } catch (IOException ignored) {
-                // server still binding — re-poll
+                // server still binding - re-poll
             }
         }
         throw new IllegalStateException("single node did not become ready within "
@@ -465,7 +465,7 @@ public final class LivePropagationProbeMain {
      */
     private static void awaitConsumed(PropagationProbe probe, long lastSeq, Options opts) {
         if (lastSeq < 0) {
-            return; // nothing committed (no writes) — nothing to await
+            return; // nothing committed (no writes) - nothing to await
         }
         long deadline = System.nanoTime() + opts.drainDeadline.toNanos();
         while (System.nanoTime() < deadline) {
@@ -474,15 +474,15 @@ public final class LivePropagationProbeMain {
             }
             Thread.onSpinWait();
         }
-        // Deadline hit — the report below shows the partial count honestly.
+        // Deadline hit - the report below shows the partial count honestly.
     }
 
     /**
-     * The ADR-0034 boundary consumer loop, run on its own thread. Holds a cursor; each
+     * The commit-notification handoff boundary consumer loop, run on its own thread. Holds a cursor; each
      * pass calls {@code readSince(cursor)}; on {@code Ok} it records each notification
      * (publish ts = commit timestamp, visible ts = now) and advances the cursor; on
      * {@code Gap} it replays a snapshot from the {@link ReplaySource} (the consumer
-     * advances its cursor to the replay seq — a snapshot carries no per-seq commit
+     * advances its cursor to the replay seq - a snapshot carries no per-seq commit
      * timestamps to sample, so replayed seqs are not double-counted as latency samples).
      */
     private static final class ConsumerLoop implements Runnable {
@@ -536,7 +536,7 @@ public final class LivePropagationProbeMain {
                     yield !ns.isEmpty();
                 }
                 case CommitNotificationSource.Result.Gap gap -> {
-                    // Recover via the authoritative replay seam (ADR-0034 handoff step 2):
+                    // Recover via the authoritative replay seam (commit-notification handoff step 2):
                     // apply the snapshot wholesale and resume tailing from its seq floor.
                     ReplaySource.Replay replay = replaySource.replayFromSnapshot();
                     cursor = replay.seq();
@@ -555,16 +555,16 @@ public final class LivePropagationProbeMain {
         return new ServerConfig(
                 NodeId.of(opts.nodeId),
                 dataDir,
-                Set.of(),                 // empty peers → single-node, self-elects
+                Set.of(),                 // empty peers -> single-node, self-elects
                 "127.0.0.1",
                 opts.bindPort,
                 opts.apiPort,
                 null, null, null,          // TLS off
                 null,                      // no auth token
-                Map.<NodeId, InetSocketAddress>of(), // no peer addresses → no-op transport
+                Map.<NodeId, InetSocketAddress>of(), // no peer addresses -> no-op transport
                 null,                      // signing key kept under data dir
                 Set.of("secure/"),         // default strong-read prefix
-                null);                     // no C1 edge endpoint in the boundary probe
+                null);                     // no fan-out edge endpoint in the boundary probe
     }
 
     private static void printHeader(Options opts) {
@@ -611,9 +611,9 @@ public final class LivePropagationProbeMain {
         Duration writeDeadline = Duration.ofSeconds(10);
         Duration drainDeadline = Duration.ofSeconds(30);
         /**
-         * Edge mode (§3c): run the edge staleness sampler on a concurrent fixed-cadence
-         * watcher thread (true, default — the honest measurement) vs the pre-S5 serial
-         * drive-then-watch path (false — kept for the before/after, folds write-drive
+         * Edge mode (section 3c): run the edge staleness sampler on a concurrent fixed-cadence
+         * watcher thread (true, default - the honest measurement) vs the serial
+         * drive-then-watch path (false - kept for the before/after, folds write-drive
          * duration into every sample).
          */
         boolean concurrentWatch = true;

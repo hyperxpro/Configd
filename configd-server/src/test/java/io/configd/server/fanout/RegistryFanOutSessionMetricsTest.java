@@ -10,8 +10,8 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * Verifies {@link RegistryFanOutSessionMetrics} registers the design §4 series eagerly (RR-013:
- * a metric the exporter can find from the first scrape, not one that blinks in on first event)
+ * Verifies {@link RegistryFanOutSessionMetrics} registers the design section 4 series eagerly (a
+ * metric the exporter can find from the first scrape, not one that blinks in on first event)
  * and that they render with the exact {@code edge_fanout_*} Prometheus names.
  */
 class RegistryFanOutSessionMetricsTest {
@@ -23,7 +23,7 @@ class RegistryFanOutSessionMetricsTest {
 
         String out = new PrometheusExporter(registry).export();
 
-        // Counters -> *_total; gauges bare. (RR-013: present at value 0 before any event.)
+        // Counters -> *_total; gauges bare. (Present at value 0 before any event.)
         assertTrue(out.contains("edge_fanout_heartbeats_total"), out);
         assertTrue(out.contains("edge_fanout_slow_consumer_warnings_total"), out);
         assertTrue(out.contains("edge_fanout_notify_batches_total"), out);
@@ -39,7 +39,7 @@ class RegistryFanOutSessionMetricsTest {
         // Per-reason session-closed counters.
         assertTrue(out.contains("edge_fanout_sessions_closed_server_shutdown_total"), out);
         assertTrue(out.contains("edge_fanout_sessions_closed_quarantined_total"), out); // C4
-        // C4 slow-consumer policy series (design §2 names, verbatim).
+        // C4 slow-consumer policy series (design section 2 names, verbatim).
         assertTrue(out.contains("edge_fanout_slow_transitions_total"), out);
         assertTrue(out.contains("edge_fanout_quarantines_total"), out);
         assertTrue(out.contains("edge_fanout_unhealthy_total"), out);

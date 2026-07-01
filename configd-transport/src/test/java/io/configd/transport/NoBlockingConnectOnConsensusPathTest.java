@@ -16,26 +16,22 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.fail;
 
 /**
- * RR-002 REGRESSION GUARD (static source scan).
- * <p>
- * Fails if a <em>deadline-less</em> blocking socket establishment call reappears
- * in the transport/consensus source. This is the structural defect behind RR-002:
- * a timeout-less {@code new Socket(host, port)} / {@code factory.createSocket(host,
- * port)} / unbounded {@code startHandshake()} reached on the single tick thread
- * froze the whole node for ~127 s when a peer black-holed SYNs.
+ * Static source scan: fails if a deadline-less blocking socket establishment call reappears
+ * in the transport/consensus source.
+ *
+ * <p>A timeout-less {@code new Socket(host, port)} / {@code factory.createSocket(host, port)} /
+ * unbounded {@code startHandshake()} on the tick thread froze the whole node for ~127 s when
+ * a peer black-holed SYNs (the structural defect behind the non-blocking-send invariant).
  *
  * <h3>Why a static scan rather than a runtime watchdog</h3>
  * A runtime tripwire (e.g. a tick-duration assertion) would only fire if a test
  * happened to drive the exact black-hole path, and is inherently timing-sensitive
- * — doubly fragile on this CPU-credit-throttled 2-vCPU box where timing tests
- * already flake (RR-094). The defect, by contrast, is purely structural: it is a
- * specific shape of source code. A static scan is fully deterministic, has zero
- * timing dependence, runs in milliseconds, and catches the regression at the
- * exact site regardless of test path coverage. It directly encodes the charter
- * invariant: connect/handshake must be bounded and must not appear outside the
- * dedicated connector. The discriminating behavioural proof lives in
- * {@link TcpRaftTransportBlackholeTest} and the live drill; this guard is the
- * cheap, robust tripwire that keeps the structural fix from silently rotting.
+ * on a CPU-credit-throttled box where timing tests can flake. The defect is purely
+ * structural - a specific shape of source code. A static scan is fully deterministic,
+ * has zero timing dependence, runs in milliseconds, and catches the regression at the
+ * exact site regardless of test path coverage. The discriminating behavioural proof
+ * lives in {@link TcpRaftTransportBlackholeTest}; this guard is the cheap, robust
+ * tripwire that keeps the structural fix from silently rotting.
  */
 class NoBlockingConnectOnConsensusPathTest {
 
@@ -46,7 +42,7 @@ class NoBlockingConnectOnConsensusPathTest {
             moduleSrc("configd-server"));
 
     /**
-     * Timeout-less {@code new Socket(host, port)} — the two-arg (and four-arg)
+     * Timeout-less {@code new Socket(host, port)} - the two-arg (and four-arg)
      * connecting constructors connect synchronously with no timeout. The
      * no-arg {@code new Socket()} (then {@code connect(addr, timeoutMs)}) is fine.
      */
@@ -55,7 +51,7 @@ class NoBlockingConnectOnConsensusPathTest {
 
     /**
      * Timeout-less {@code factory.createSocket(host, port, ...)} on an
-     * SSLSocketFactory — connects synchronously. The no-arg
+     * SSLSocketFactory - connects synchronously. The no-arg
      * {@code createSocket()} (then bounded {@code connect}) is fine.
      */
     private static final Pattern CREATE_SOCKET_CONNECTING =
@@ -66,19 +62,17 @@ class NoBlockingConnectOnConsensusPathTest {
      * pattern is present: a {@code setSoTimeout(...)} call within the preceding
      * {@link #HANDSHAKE_LOOKBACK_LINES} non-blank code lines of the same file, so a
      * peer that connects but stalls mid-handshake cannot park the calling thread
-     * forever. This is pattern-scoped, not file-scoped (the original file-scoped
-     * exemption for {@code TcpRaftTransport.java} was a known evasion gap — see the
-     * RR-002 second-agent review notes; it would also have silently exempted any
-     * future UNBOUNDED handshake added to that file). Both legitimate sites —
-     * {@code TcpRaftTransport.createClientSocket} (connector thread) and
-     * {@code FanOutServer.handleConnection} (accept-side virtual thread, S3/C1) —
+     * forever. This is pattern-scoped, not file-scoped (a file-scoped exemption would
+     * silently permit any future unbounded handshake added to that file). Both
+     * legitimate sites - {@code TcpRaftTransport.createClientSocket} (connector thread)
+     * and {@code FanOutServer.handleConnection} (accept-side virtual thread) -
      * satisfy the pattern; both also keep establishment off the tick thread, which
      * the behavioural tests pin.
      */
     private static final Pattern START_HANDSHAKE =
             Pattern.compile("\\.startHandshake\\s*\\(");
 
-    /** A {@code setSoTimeout(} call — the bounding half of the handshake pattern. */
+    /** A {@code setSoTimeout(} call - the bounding half of the handshake pattern. */
     private static final Pattern SET_SO_TIMEOUT =
             Pattern.compile("\\.setSoTimeout\\s*\\(");
 
@@ -146,7 +140,7 @@ class NoBlockingConnectOnConsensusPathTest {
 
     /**
      * True when one of the last {@link #HANDSHAKE_LOOKBACK_LINES} non-blank code
-     * lines contains a {@code setSoTimeout(} call — the bounded-handshake pattern.
+     * lines contains a {@code setSoTimeout(} call - the bounded-handshake pattern.
      */
     private static boolean boundedHandshake(List<String> precedingCodeLines) {
         int from = Math.max(0, precedingCodeLines.size() - HANDSHAKE_LOOKBACK_LINES);

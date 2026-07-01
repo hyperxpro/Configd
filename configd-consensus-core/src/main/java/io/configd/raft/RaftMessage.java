@@ -5,7 +5,7 @@ package io.configd.raft;
  * <p>
  * Using a sealed hierarchy instead of {@code Object} allows the JIT to
  * prove a closed type set, enabling devirtualization and eliminating
- * megamorphic call sites on the Raft I/O thread hot path (AV-4 fix).
+ * megamorphic call sites on the Raft I/O thread hot path.
  * <p>
  * Every message exchanged between Raft peers must implement this interface.
  */

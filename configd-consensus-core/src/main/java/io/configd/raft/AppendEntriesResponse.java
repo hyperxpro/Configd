@@ -3,7 +3,7 @@ package io.configd.raft;
 import io.configd.common.NodeId;
 
 /**
- * Raft AppendEntries RPC response (Raft §5.3).
+ * Raft AppendEntries RPC response (Raft section 5.3).
  *
  * @param term       current term of the responding node, for leader to update itself
  * @param success    true if follower contained entry matching prevLogIndex and prevLogTerm

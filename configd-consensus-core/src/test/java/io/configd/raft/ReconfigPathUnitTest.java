@@ -15,13 +15,13 @@ import static org.junit.jupiter.api.Assertions.*;
 
 /**
  * Discriminating tests for the Raft joint-consensus reconfiguration path
- * (Raft §6) that target the SURVIVING mutants the broader scenario tests in
+ * (Raft section 6) that target the cases the broader scenario tests in
  * {@link ReconfigurationTest} did not pin: the static codec helpers
  * ({@link RaftNode#isConfigChangeEntry}, {@link RaftNode#deserializeConfigChange}),
  * the {@code proposeConfigChange} preconditions, and the exact membership
  * boundary of {@code deserializeConfigChange}'s voter-count validation.
  * <p>
- * S2/mutation-gap (RR-085, TF-3). {@link ReconfigurationTest} already drives the
+ * {@link ReconfigurationTest} already drives the
  * full multi-node joint->final lifecycle; this class adds the cheap,
  * line-discriminating cases that the lifecycle tests leave green when mutated
  * (a magic-length boundary, a rejected precondition, a voter-count guard). All
@@ -107,9 +107,7 @@ class ReconfigPathUnitTest {
         }
     }
 
-    // ====================================================================
-    // Static codec helpers — isConfigChangeEntry / deserializeConfigChange
-    // ====================================================================
+    // Static codec helpers: isConfigChangeEntry / deserializeConfigChange
 
     @Nested
     class Codec {
@@ -152,9 +150,7 @@ class ReconfigPathUnitTest {
         }
     }
 
-    // ====================================================================
-    // proposeConfigChange — preconditions (single elected leader)
-    // ====================================================================
+    // proposeConfigChange: preconditions (single elected leader)
 
     @Nested
     class ProposePreconditions {
@@ -182,10 +178,8 @@ class ReconfigPathUnitTest {
         }
     }
 
-    // ====================================================================
-    // Full lifecycle (target-routing 3-node cluster) — joint materializes and
+    // Full lifecycle (target-routing 3-node cluster): joint materializes and
     // the change reaches the final simple config, pending clears.
-    // ====================================================================
 
     @Nested
     class Lifecycle {

@@ -24,7 +24,7 @@ public record VersionedValue(byte[] value, long version, long timestamp) {
         if (timestamp < 0) {
             throw new IllegalArgumentException("timestamp must be non-negative: " + timestamp);
         }
-        // Defensive copy — callers cannot mutate our internal state
+        // Defensive copy - callers cannot mutate our internal state
         value = value.clone();
     }
 

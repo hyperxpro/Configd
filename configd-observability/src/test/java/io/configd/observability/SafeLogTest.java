@@ -63,7 +63,7 @@ class SafeLogTest {
             assertTrue(seen.size() <= 8,
                     "must not produce more than 8 distinct buckets, got " + seen.size());
             // Random data with 1000 keys into 8 buckets should hit all 8 with overwhelming
-            // probability — confirms we're actually distributing rather than always hashing
+            // probability - confirms we're actually distributing rather than always hashing
             // to the same bucket.
             assertTrue(seen.size() >= 4, "expected reasonable spread, got " + seen.size());
         }

@@ -26,25 +26,25 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * RED-TEAM suite for the O-6 Seam 1 <b>role indirection</b> of {@link AclService} (RFC §01 A5-3/A5-4;
- * {@code access-control.md} §4; {@code decision-log.md} DL-O6-01..03). Sibling to, and deliberately
- * disjoint from, {@code AclServiceRedTeamTest} (which attacks the own-grants-only union) and
- * {@code AclServiceRoleTest} (the happy-path role wiring).
+ * RED-TEAM suite for the <b>role indirection</b> of {@link AclService} ({@code access-control.md}
+ * section 4). Sibling to, and deliberately disjoint from, {@code AclServiceRedTeamTest} (which attacks
+ * the own-grants-only union) and {@code AclServiceRoleTest} (the happy-path role wiring).
  * <p>
- * The change folds a principal's <b>own</b> per-prefix grants and its <b>role</b> grants (authn-asserted
- * {@code roles} argument ∪ {@link AclService#assignRole} ACL-static bindings) into a <b>single</b> shared
- * {@code (allow, deny)} pair, subtracts deny <b>once</b> over that combined set, then applies the
- * effective-{@code WATCH} = {@code WATCH} ∧ {@code READ} floor. Each test here <b>constructs an attack</b>
- * against that role indirection and asserts the <b>correct, secure decision</b>; a failing assertion means
- * the attack succeeded and the test names the defect.
+ * The role layer folds a principal's <b>own</b> per-prefix grants and its <b>role</b> grants
+ * (authn-asserted {@code roles} argument union {@link AclService#assignRole} ACL-static bindings) into a
+ * <b>single</b> shared {@code (allow, deny)} pair, subtracts deny <b>once</b> over that combined set,
+ * then applies the effective-{@code WATCH} = {@code WATCH} AND {@code READ} floor. Each test here
+ * <b>constructs an attack</b> against that role indirection and asserts the <b>correct, secure
+ * decision</b>; a failing assertion means the attack succeeded and the test names the defect.
  * <p>
  * The own-grants-only properties (walk-stop/decoy evasion, deny order/specificity independence, union
  * never manufactures, prefix-boundary, revoke residue, cross-principal isolation, concurrency,
- * WATCH-never-out-reads-READ, LIST⊥READ, per-cap DENY inevadable, single-key-vs-whole-target) are already
- * proven in {@code AclServiceRedTeamTest}. This suite <b>extends each relevant property THROUGH the role
- * layer</b> rather than duplicating the own-grants case. The crown jewels are the WATCH-floor tests that
- * fail if a future refactor evaluates own vs. role grants <i>separately and OR-combines them</i> instead
- * of subtracting deny once over the combined set (which would leak a denied descendant's watch).
+ * WATCH-never-out-reads-READ, LIST independent of READ, per-cap DENY inevadable,
+ * single-key-vs-whole-target) are already proven in {@code AclServiceRedTeamTest}. This suite
+ * <b>extends each relevant property THROUGH the role layer</b> rather than duplicating the own-grants
+ * case. The crown jewels are the WATCH-floor tests that fail if a future refactor evaluates own vs. role
+ * grants <i>separately and OR-combines them</i> instead of subtracting deny once over the combined set
+ * (which would leak a denied descendant's watch).
  */
 @DisplayName("AclService — red-team / adversarial role-aware authorization (O-6 Seam 1)")
 class AclServiceRoleRedTeamTest {
@@ -75,11 +75,11 @@ class AclServiceRoleRedTeamTest {
     }
 
     // =====================================================================================
-    // ROLE-ATTACK 1 — ESCALATION PAST DENY (deny-precedence is order-independent THROUGH roles).
+    // ROLE-ATTACK 1 - ESCALATION PAST DENY (deny-precedence is order-independent THROUGH roles).
     // A role ALLOW must be overridden by a DENY of the same cap whether the deny is (a) an OWN grant,
-    // (b) ANOTHER role's grant, or (c) a SAME-role rule — in BOTH the deny-at-ancestor/allow-at-descendant
+    // (b) ANOTHER role's grant, or (c) a SAME-role rule - in BOTH the deny-at-ancestor/allow-at-descendant
     // and deny-at-descendant/allow-at-ancestor directions, and in EVERY ordering of the setup calls.
-    // Because isAllowed reads final state and subtracts deny ONCE over the combined own∪role set, the
+    // Because isAllowed reads final state and subtracts deny ONCE over the combined own union role set, the
     // decision must not depend on grant/deny/defineRole/assignRole ordering.
     // =====================================================================================
     @Nested
@@ -184,7 +184,7 @@ class AclServiceRoleRedTeamTest {
     }
 
     // =====================================================================================
-    // ROLE-ATTACK 2 — UNION NEVER MANUFACTURES. No combination of roles + own grants whose rules grant
+    // ROLE-ATTACK 2 - UNION NEVER MANUFACTURES. No combination of roles + own grants whose rules grant
     // only {READ, WRITE} can ever yield ADMIN, LIST, or effective-WATCH. Exhaustive small enumeration
     // across own grants AND two role sources mixed (mirrors own-grants Attack 1, extended through roles).
     // =====================================================================================
@@ -236,7 +236,7 @@ class AclServiceRoleRedTeamTest {
     }
 
     // =====================================================================================
-    // ROLE-ATTACK 3 — NO-ESCALATION / DEFAULT-DENY. Degenerate role shapes must grant NOTHING: an
+    // ROLE-ATTACK 3 - NO-ESCALATION / DEFAULT-DENY. Degenerate role shapes must grant NOTHING: an
     // undefined role name, an assigned-but-undefined role, an empty Role (no policies), a Policy with no
     // rules, a PolicyRule with an empty allow set. An unknown principal carrying arbitrary UNDEFINED roles
     // is denied every capability.
@@ -292,8 +292,8 @@ class AclServiceRoleRedTeamTest {
     }
 
     // =====================================================================================
-    // ROLE-ATTACK 4 — WATCH FLOOR THROUGH ROLES (the crown jewels). effective-WATCH = WATCH ∧ READ over
-    // the COMBINED own∪role set. The strongest test: a role that, evaluated in ISOLATION, would authorize
+    // ROLE-ATTACK 4 - WATCH FLOOR THROUGH ROLES (the crown jewels). effective-WATCH = WATCH AND READ over
+    // the COMBINED own union role set. The strongest test: a role that, evaluated in ISOLATION, would authorize
     // the watch (it holds READ+WATCH) must STILL be floored by a READ-deny that lives in a DIFFERENT
     // source (own grant) on the key's chain. A per-source OR-combine would leak this; the shared
     // accumulator + single deny-subtract must not.
@@ -378,7 +378,7 @@ class AclServiceRoleRedTeamTest {
     }
 
     // =====================================================================================
-    // ROLE-ATTACK 5 — DECOY / PREFIX-BOUNDARY THROUGH ROLES. Role rules match by the SAME literal
+    // ROLE-ATTACK 5 - DECOY / PREFIX-BOUNDARY THROUGH ROLES. Role rules match by the SAME literal
     // key.startsWith(prefix). A role rule on a NON-ancestor prefix must not bleed; a role deny on
     // app.secret. must not affect the lexical sibling app.secretZ.
     // =====================================================================================
@@ -430,7 +430,7 @@ class AclServiceRoleRedTeamTest {
     }
 
     // =====================================================================================
-    // ROLE-ATTACK 6 — CROSS-PRINCIPAL / CROSS-ROLE ISOLATION. assignRole(alice,…) must not affect bob; a
+    // ROLE-ATTACK 6 - CROSS-PRINCIPAL / CROSS-ROLE ISOLATION. assignRole(alice,...) must not affect bob; a
     // role's grants reach ONLY principals who hold it (authn-asserted OR assignRole); a role's DENY reaches
     // only its holders too (never shadows a non-holder's own allow).
     // =====================================================================================
@@ -478,7 +478,7 @@ class AclServiceRoleRedTeamTest {
     }
 
     // =====================================================================================
-    // ROLE-ATTACK 7 — CONCURRENCY. A standing DENY (role or own) must never leak while a writer churns
+    // ROLE-ATTACK 7 - CONCURRENCY. A standing DENY (role or own) must never leak while a writer churns
     // defineRole/assignRole/grant/revoke of the same cap, and isAllowed must never throw on a torn read.
     // Iterations kept modest for the 2-vCPU box (mirrors own-grants Attack 9).
     // =====================================================================================
@@ -493,7 +493,7 @@ class AclServiceRoleRedTeamTest {
         @DisplayName("standing ROLE deny (via assignRole) holds while a writer churns own grant/revoke(WRITE)")
         void standingRoleDenyHoldsUnderOwnGrantChurn() throws InterruptedException {
             acl.defineRole(role("blocker", denyRule("", WRITE))); // global WRITE deny
-            acl.assignRole("alice", "blocker");                   // PERMANENT — never removed
+            acl.assignRole("alice", "blocker");                   // PERMANENT - never removed
             acl.grant("", "alice", Set.of(READ, WRITE));          // base own allow (deny must still win)
 
             AtomicBoolean stop = new AtomicBoolean(false);
@@ -533,7 +533,7 @@ class AclServiceRoleRedTeamTest {
         @DisplayName("standing OWN deny holds while a writer churns defineRole/assignRole of a WRITE-granting role")
         void standingOwnDenyHoldsUnderRoleChurn() throws InterruptedException {
             acl.grant("", "alice", Set.of(READ, WRITE));
-            acl.deny("", "alice", Set.of(WRITE));   // PERMANENT own WRITE deny — never removed
+            acl.deny("", "alice", Set.of(WRITE));   // PERMANENT own WRITE deny - never removed
             acl.assignRole("alice", "granter");     // static binding present; the role's CONTENT is churned
 
             AtomicBoolean stop = new AtomicBoolean(false);
@@ -558,7 +558,7 @@ class AclServiceRoleRedTeamTest {
 
             int leaks = 0;
             for (int i = 0; i < READS; i++) {
-                // Reader passes an authn-asserted role too, exercising the effectiveRoles = roles ∪ static union
+                // Reader passes an authn-asserted role too, exercising the effectiveRoles = roles union static
                 // branch under churn. The own absolute WRITE deny must hold regardless of the role's content.
                 if (acl.isAllowed("alice", Set.of("granter"), "a.x", WRITE)) {
                     leaks++;
@@ -613,8 +613,8 @@ class AclServiceRoleRedTeamTest {
     }
 
     // =====================================================================================
-    // ROLE-ATTACK 8 — AUTHN-TRUST BOUNDARY & NAME-COLLISION. Roles are taken at FACE VALUE from the caller
-    // (by design — authn asserts them). Principal grants live in `acls` keyed by principal; role grants in
+    // ROLE-ATTACK 8 - AUTHN-TRUST BOUNDARY & NAME-COLLISION. Roles are taken at FACE VALUE from the caller
+    // (by design - authn asserts them). Principal grants live in `acls` keyed by principal; role grants in
     // `roleDefinitions` keyed by role name. A principal and a role that share a NAME must NOT share grants.
     // =====================================================================================
     @Nested
@@ -658,7 +658,7 @@ class AclServiceRoleRedTeamTest {
                     () -> assertTrue(acl.isAllowed("ops", Set.of(), "log.x", READ), "own grant intact"),
                     () -> assertFalse(acl.isAllowed("ops", Set.of(), "cfg.x", WRITE),
                             "principal ops does not get role ops's WRITE unless it asserts/holds the role"),
-                    // Principal ops, asserting role "ops": now BOTH apply (own READ + role WRITE) — additive, still disjoint stores
+                    // Principal ops, asserting role "ops": now BOTH apply (own READ + role WRITE) - additive, still disjoint stores
                     () -> assertTrue(acl.isAllowed("ops", Set.of("ops"), "cfg.x", WRITE),
                             "asserting role ops adds the role's WRITE on cfg."),
                     () -> assertFalse(acl.isAllowed("ops", Set.of("ops"), "cfg.x", READ),
@@ -671,10 +671,10 @@ class AclServiceRoleRedTeamTest {
     }
 
     // =====================================================================================
-    // ROLE-ATTACK 9 — SINGLE-KEY FLOOR THROUGH ROLES (contract boundary, mirrors own-grants Attack 13).
-    // isAllowed unions only a key's ANCESTOR grants — own AND role — so it can NEVER see a deny on a
+    // ROLE-ATTACK 9 - SINGLE-KEY FLOOR THROUGH ROLES (contract boundary, mirrors own-grants Attack 13).
+    // isAllowed unions only a key's ANCESTOR grants - own AND role - so it can NEVER see a deny on a
     // DESCENDANT. A role that watches a subtree, checked once at the root, does NOT prove READ over the
-    // whole subtree; the O-5 subscribe path must re-check per delivered key. Pins the boundary so the gap
+    // whole subtree; the subscribe path must re-check per delivered key. Pins the boundary so the gap
     // stays visible now that role grants also flow through it.
     // =====================================================================================
     @Nested

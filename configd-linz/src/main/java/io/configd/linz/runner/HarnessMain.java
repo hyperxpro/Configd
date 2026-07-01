@@ -18,10 +18,9 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * GATE (iii)/(iv) runner: brings up a real {@code n}-node cluster, drives a seeded
- * concurrent workload over a small keyspace while a seeded fault schedule runs
- * continuously, records a faithful client-side history, and checks it with the
- * trusted Porcupine checker.
+ * Brings up a real {@code n}-node cluster, drives a seeded concurrent workload over a
+ * small keyspace while a seeded fault schedule runs continuously, records a faithful
+ * client-side history, and checks it with the trusted Porcupine checker.
  *
  * <pre>
  *   HarnessMain --seed S --nodes N [--clients C] [--keys K] [--duration MS]
@@ -84,7 +83,7 @@ public final class HarnessMain {
 
             long t0 = System.nanoTime();
 
-            // ---- workload threads ----
+            // workload threads
             List<Thread> workers = new ArrayList<>();
             for (int c = 0; c < clients; c++) {
                 final int clientId = c;
@@ -94,7 +93,7 @@ public final class HarnessMain {
                 workers.add(t);
             }
 
-            // ---- fault thread (sequential single faults) ----
+            // fault thread (sequential single faults)
             Thread faultThread = Thread.ofPlatform().unstarted(
                     () -> runFaults(schedule.faults, cluster, faults, t0));
 
@@ -115,7 +114,7 @@ public final class HarnessMain {
             }
             Thread.sleep(500);
 
-            // ---- check ----
+            // check
             List<Op> ops = recorder.ops();
             Path histFile = outDir.resolve("history-" + seed + "-n" + nodes + ".json");
             io.configd.linz.history.PorcupineHistoryWriter.write(ops, histFile);

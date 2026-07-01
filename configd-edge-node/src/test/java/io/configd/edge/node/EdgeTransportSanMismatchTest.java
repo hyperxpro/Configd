@@ -32,27 +32,23 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.fail;
 
 /**
- * Session-7 NEGATIVE mTLS test for the DATA plane: wrong-SAN / identity rejection on the CLIENT
- * side. This is the gap left by {@code EdgeTransportMtlsTest.untrustedServerCertIsRejectedByTheClient}
- * (which rejects a server cert NOT in the trust store): here the server cert IS trusted (a valid CA
- * in the edge's trust store), but its SAN does NOT cover the host the edge connects to. The edge's
- * HTTPS endpoint identification (F-0051, set in {@code EdgeStreamClient.createClientSocket}) must
- * reject it — peer pinning is not satisfied by a trusted CA alone.
+ * Negative mTLS test for the DATA plane: wrong-SAN / identity rejection on the CLIENT side. This
+ * complements {@code EdgeTransportMtlsTest.untrustedServerCertIsRejectedByTheClient} (which
+ * rejects a server cert NOT in the trust store): here the server cert IS trusted, but its SAN does
+ * NOT cover the host the edge connects to. HTTPS endpoint identification in
+ * {@code EdgeStreamClient.createClientSocket} must reject it — a trusted CA alone is not enough.
  *
- * <p>This is the data-plane analogue of the control-plane
- * {@code TcpRaftTransportTest.find0051_clientHandshakeRejectsCertWithWrongHostname}; together they
- * prove SAN/identity verification on both planes (charter §2.1).
+ * <p>Data-plane analogue of
+ * {@code TcpRaftTransportTest.find0051_clientHandshakeRejectsCertWithWrongHostname}; together
+ * they prove SAN/identity verification on both planes.
  *
- * <h2>Wiring</h2>
- * The edge connects to {@code 127.0.0.1}. The server presents a cert whose SAN is {@code
- * dns:other-host.invalid} only — no {@code ip:127.0.0.1}, no {@code dns:localhost} — so the connect
- * host is not covered. The cert is imported into the edge's trust store, so trust-anchor
- * verification PASSES and the ONLY remaining gate is endpoint identification.
+ * <p>The edge connects to {@code 127.0.0.1}. The server presents a cert whose SAN is
+ * {@code dns:other-host.invalid} only — no {@code ip:127.0.0.1}, no {@code dns:localhost}. The
+ * cert is imported into the edge's trust store so trust-anchor verification PASSES and the ONLY
+ * remaining gate is endpoint identification.
  *
- * <h2>Observation discipline</h2>
- * Mirrors EdgeTransportMtlsTest: the rejection surfaces on first I/O under TLS 1.3, so we assert the
- * edge never subscribes (mode stays null, store never advances) while its reconnect machinery keeps
- * trying — not a specific handshake exception.
+ * <p>The rejection surfaces on first I/O under TLS 1.3, so we assert the edge never subscribes
+ * (mode stays null, store never advances) while its reconnect machinery keeps trying.
  */
 class EdgeTransportSanMismatchTest {
 
@@ -129,7 +125,7 @@ class EdgeTransportSanMismatchTest {
     @Timeout(120)
     void serverCertWithWrongSanIsRejectedByTheClient() throws Exception {
         // The server presents a TRUSTED cert whose SAN does not cover 127.0.0.1; the edge connects
-        // to 127.0.0.1. F-0051 endpoint identification must reject it -> the edge never subscribes,
+        // to 127.0.0.1. Endpoint identification must reject it -> the edge never subscribes,
         // while its reconnect machinery demonstrably keeps trying (proving the rejection is at the
         // handshake, not a config that simply never attempts a connection).
         int port = startMtlsServer();
@@ -142,9 +138,7 @@ class EdgeTransportSanMismatchTest {
         assertEquals(0, edge.core().currentVersion());
     }
 
-    // -----------------------------------------------------------------------
-    // Fixture plumbing (the EdgeTransportMtlsTest pattern)
-    // -----------------------------------------------------------------------
+    // Fixture plumbing
 
     private int startMtlsServer() throws Exception {
         TlsConfig serverTls = new TlsConfig(
@@ -188,7 +182,7 @@ class EdgeTransportSanMismatchTest {
         fail("edge did not attempt " + n + " reconnects within the deadline");
     }
 
-    // ---- keytool fixture builders (the EdgeTransportMtlsTest pattern; SAN passed per cert) ----
+    // Keytool fixture builders (SAN passed per cert)
 
     private static void genKeyPair(Path keyStore, String alias, String dname, String sanExt)
             throws Exception {

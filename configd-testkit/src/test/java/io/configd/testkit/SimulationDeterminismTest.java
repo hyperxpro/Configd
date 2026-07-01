@@ -16,15 +16,15 @@ import java.util.HexFormat;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
 /**
- * Discriminating test for RR-010: the simulation must be deterministic —
+ * The simulation must be deterministic - 
  * the same master seed must produce a byte-identical execution schedule.
  * <p>
  * The harness claims "same seed = same execution" (see {@link RaftSimulation}
  * and {@link ConsistencyPropertyTests}), but every RNG consumer must actually
- * be derived from the master seed for that to hold. Prior to the RR-010 fix the
+ * be derived from the master seed for that to hold. Previously, the
  * per-node election RNG was constructed entropy-seeded
- * ({@code RandomGenerator.of("L64X128MixRandom")}), so election timeouts — and
- * therefore the whole election schedule — diverged run to run even at a fixed
+ * ({@code RandomGenerator.of("L64X128MixRandom")}), so election timeouts - and
+ * therefore the whole election schedule - diverged run to run even at a fixed
  * seed. A failing seed was unreplayable.
  * <p>
  * This test runs the identical scenario twice in-process under the same seed,
@@ -34,14 +34,14 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
  * election-timeout choices: a divergence in any node's election timeout shifts
  * a role/term transition to a different tick, which changes the digest.
  * <p>
- * It deliberately does <em>not</em> mock anything — it exercises the real
+ * It deliberately does <em>not</em> mock anything - it exercises the real
  * {@link RaftSimulation} wiring used by {@link ConsistencyPropertyTests} and
  * {@code SeedSweepTest}.
  */
 class SimulationDeterminismTest {
 
     /**
-     * Number of nodes — 5 matches the safety sweep ({@code SeedSweepTest}),
+     * Number of nodes - 5 matches the safety sweep ({@code SeedSweepTest}),
      * the configuration most sensitive to election-timeout jitter.
      */
     private static final int NODE_COUNT = 5;
@@ -70,7 +70,7 @@ class SimulationDeterminismTest {
 
     /**
      * A second seed, to confirm the property holds generally (and that the
-     * two seeds genuinely diverge from each other — i.e. the digest is not a
+     * two seeds genuinely diverge from each other - i.e. the digest is not a
      * constant that would pass vacuously).
      */
     @Test
@@ -94,7 +94,7 @@ class SimulationDeterminismTest {
      * <p>
      * The scenario is fixed and seed-independent in structure (elect, write,
      * isolate the leader, let a new leader emerge, keep ticking) so the only
-     * source of run-to-run variation is the RNG — exactly what we are testing.
+     * source of run-to-run variation is the RNG - exactly what we are testing.
      */
     private static String runScenarioDigest(long seed) {
         ConsistencyPropertyTests.ClusterHarness cluster =

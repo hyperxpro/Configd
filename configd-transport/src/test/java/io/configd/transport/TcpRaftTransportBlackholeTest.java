@@ -17,31 +17,31 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.fail;
 
 /**
- * RR-002 (P0) regression tests: a send to a black-holed peer must NEVER park the
- * calling thread on connect / TLS handshake.
+ * Regression tests: a send to a black-holed peer must NEVER park the calling thread on
+ * connect / TLS handshake.
  * <p>
- * In production the caller is the single {@code configd-tick} thread, which owns
- * all RaftNode state (R-01). Before the fix, {@link TcpRaftTransport#send} reached
+ * In production the caller is the single {@code configd-tick} thread, which owns all
+ * RaftNode state. Before the fix, {@link TcpRaftTransport#send} reached
  * {@code createClientSocket} on the caller's thread and blocked on a timeout-less
- * {@code new Socket(addr, port)} / {@code startHandshake()} for the full OS SYN
- * timeout (~127 s) when the peer black-holed inbound SYNs — freezing the node.
+ * {@code new Socket(addr, port)} / {@code startHandshake()} for the full OS SYN timeout
+ * (~127 s) when the peer black-holed inbound SYNs, freezing the node.
  * <p>
- * These tests use {@value #BLACKHOLE_HOST} (a non-routable host whose SYNs are
- * silently dropped) so the OS connect parks exactly as in the production failure
- * mode, with no sudo/iptables required.
+ * These tests use {@value #BLACKHOLE_HOST} (a non-routable host whose SYNs are silently
+ * dropped) so the OS connect parks exactly as in the production failure mode, with no
+ * sudo/iptables required.
  * <p>
- * NOTE: this class deliberately does NOT carry {@link TcpRaftTransportTest}'s
- * class-level {@code @Timeout(10)} budget. Pre-fix, the worker thread we observe
- * stays parked for ~127 s; we bound our OBSERVATION of it to {@link #OBSERVE_MS}
- * (well under that) and fail the assertion rather than waiting out the SYN timeout.
+ * NOTE: this class deliberately does NOT carry {@link TcpRaftTransportTest}'s class-level
+ * {@code @Timeout(10)} budget. Pre-fix the worker thread stays parked for ~127 s; we bound
+ * our observation to {@link #OBSERVE_MS} (well under that) and fail rather than waiting out
+ * the SYN timeout.
  */
 @Timeout(60)
 class TcpRaftTransportBlackholeTest {
 
     /**
-     * A non-routable destination on 10.255.255.0/24. SYNs sent here are dropped
-     * (no RST), so {@code connect()} parks for the full OS SYN timeout — the same
-     * behaviour an iptables {@code -j DROP} produces against a real peer.
+     * A non-routable destination on 10.255.255.0/24. SYNs sent here are dropped (no RST), so
+     * {@code connect()} parks for the full OS SYN timeout - the same behaviour an iptables
+     * {@code -j DROP} produces against a real peer.
      */
     private static final String BLACKHOLE_HOST = "10.255.255.1";
     private static final int BLACKHOLE_PORT = 9999;
@@ -66,15 +66,15 @@ class TcpRaftTransportBlackholeTest {
     }
 
     /**
-     * DISCRIMINATING TEST (RR-002): a {@code send} to a black-holed peer must
-     * release the calling thread within {@link #CALLER_RELEASE_BUDGET_MS}.
+     * A {@code send} to a black-holed peer must release the calling thread within
+     * {@link #CALLER_RELEASE_BUDGET_MS}.
      * <p>
-     * Pre-fix: the worker parks in {@code connect()} / {@code startHandshake()};
-     * the {@code returned} latch never fires within the observation window, and
-     * the test fails after capturing a stack snippet proving the park location.
+     * Pre-fix: the worker parks in {@code connect()} / {@code startHandshake()}; the
+     * {@code returned} latch never fires within the observation window, and the test fails
+     * after capturing a stack snippet proving the park location.
      * <p>
-     * Post-fix: connection establishment is off the caller's thread and the
-     * caller returns immediately (enqueue-or-drop), so the latch fires fast.
+     * Post-fix: connection establishment is off the caller's thread and the caller returns
+     * immediately (enqueue-or-drop), so the latch fires fast.
      */
     @Test
     void callingThreadReleasedWhenPeerBlackholed() throws Exception {
@@ -111,7 +111,7 @@ class TcpRaftTransportBlackholeTest {
             // timeout. (Post-fix this branch is never taken.)
             String stack = stackSnippet(worker);
             // Give it the rest of the observation window only to enrich the
-            // diagnostic — the assertion has already conceptually failed.
+            // diagnostic - the assertion has already conceptually failed.
             returned.await(OBSERVE_MS - CALLER_RELEASE_BUDGET_MS, TimeUnit.MILLISECONDS);
             fail("RR-002: send() to a black-holed peer did NOT release the calling "
                     + "thread within " + CALLER_RELEASE_BUDGET_MS + "ms — the tick "

@@ -12,7 +12,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
  * Encoder-side bounds regression tests for {@link FrameCodec}.
  *
  * <p>{@link FrameCodecPropertyTest} exercises the decoder bounds via
- * post-encode payload corruption — it does not cover the encoder
+ * post-encode payload corruption - it does not cover the encoder
  * paths {@link FrameCodec#encode(MessageType, int, long, byte[])}
  * and {@link FrameCodec#encode(ByteBuffer, MessageType, int, long, byte[])}
  * for oversize payloads or undersized destination buffers.
@@ -59,7 +59,7 @@ class FrameCodecEncoderBoundsTest {
     @Test
     void byteBufferEncodeRejectsTooSmallDestination() {
         // Buffer with one byte less than required must throw
-        // before any write — the destination must remain pristine.
+        // before any write - the destination must remain pristine.
         byte[] payload = new byte[16];
         int needed = FrameCodec.frameSize(payload.length);
         ByteBuffer buf = ByteBuffer.allocate(needed - 1);
@@ -70,7 +70,7 @@ class FrameCodecEncoderBoundsTest {
         assertThrows(IllegalArgumentException.class,
                 () -> FrameCodec.encode(buf, MessageType.HEARTBEAT, 1, 1L, payload));
 
-        // Verify the sentinel byte survived — no partial write occurred.
+        // Verify the sentinel byte survived - no partial write occurred.
         assertEquals((byte) 0x42, buf.get(0));
     }
 

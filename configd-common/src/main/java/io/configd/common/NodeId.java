@@ -2,7 +2,7 @@ package io.configd.common;
 
 /**
  * Unique identifier for a node in the Configd cluster.
- * Value type — two NodeIds with the same id are equal.
+ * Value type - two NodeIds with the same id are equal.
  */
 public record NodeId(int id) implements Comparable<NodeId> {
 

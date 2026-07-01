@@ -36,15 +36,12 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.fail;
 
 /**
- * CT-11 / CT-12 at process level — multi-endpoint failover with consistent refusal:
- * two fan-out endpoints over the SAME commit-notification boundary (the ADR-0034 seams a
- * second fan-out node would drain in production), the subscribed one killed mid-stream.
- * The edge reconnects to the other carrying its resume cursor (the §3
- * {@code failoverResumeCursor} reserved field); reads stay cursor-monotonic across the
- * reconnect; and during catch-up, cursor-behind reads REFUSE (404 +
- * {@code X-Configd-Refused: cursor-behind}) — the consistent-refusal semantics the
- * contract pass amended into §3 steps 3–4 (ADR-0035 + ADR-0039; NEVER
- * block-and-serve-stale).
+ * Multi-endpoint failover with consistent refusal: two fan-out endpoints over the SAME
+ * commit-notification boundary (as a second fan-out node would in production), the
+ * subscribed one killed mid-stream. The edge reconnects to the other carrying its resume
+ * cursor (the section 3 {@code failoverResumeCursor} reserved field); reads stay
+ * cursor-monotonic across the reconnect; and during catch-up, cursor-behind reads REFUSE
+ * (404 + {@code X-Configd-Refused: cursor-behind}) — NEVER block-and-serve-stale.
  */
 @Timeout(120)
 class EdgeFailoverTest {
@@ -115,7 +112,7 @@ class EdgeFailoverTest {
         // A write that commits at the control plane while the edge has no live stream.
         long seq2 = putCommitted(serverBase, "svc/x", "v2");
 
-        // CT-12 consistent refusal, deterministic window (no endpoint is reachable):
+        // Consistent-refusal, deterministic window (no endpoint is reachable):
         // cursor-behind reads REFUSE — never block, never serve the stale v1 under a
         // seq2 cursor. The cursorless read still serves (stale serving is contract-legal;
         // only cursor-behind refuses).
@@ -131,7 +128,7 @@ class EdgeFailoverTest {
         assertEquals(200, cursorless.statusCode());
         assertEquals("v1", cursorless.body(), "cursorless reads may serve the old value");
 
-        // --- bring up endpoint B over the SAME ADR-0034 seams; the edge fails over ---
+        // --- bring up endpoint B over the SAME fan-out seams; the edge fails over ---
         endpointB = new FanOutServer(
                 new InetSocketAddress("127.0.0.1", portB), null,
                 server.commitNotificationSource(), server.replaySource(),
@@ -157,13 +154,11 @@ class EdgeFailoverTest {
                         + metrics.lines().filter(l -> l.startsWith("edge_"))
                                 .reduce("", (a, b) -> a + b + "\n"));
 
-        // And the failover never regressed the store (monotonic cursor, INV-M1).
+        // And the failover never regressed the store (monotonic cursor).
         assertTrue(edge.core().currentVersion() >= seq2);
     }
 
-    // -----------------------------------------------------------------------
     // Helpers (deadline-polling; no sleep-as-sync)
-    // -----------------------------------------------------------------------
 
     /** Polls until served at the cursor; every non-200 must be the consistent refusal. */
     private HttpResponse<String> pollUntilServed(String edgeBase, String key, long seq)

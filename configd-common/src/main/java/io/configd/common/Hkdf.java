@@ -10,10 +10,9 @@ import java.util.Arrays;
  * {@code "HmacSHA256"}.
  * <p>
  * HKDF is the extract-then-expand key derivation function. We use it to derive
- * the at-rest integrity HMAC key ({@code K_integrity}) from the existing cluster
- * Ed25519 signing key (ADR-0042 Layer B), so no new key file or distribution
- * channel is introduced. Both the persist side and the verify side run the same
- * derivation.
+ * the at-rest integrity HMAC key from the existing cluster Ed25519 signing key,
+ * so no new key file or distribution channel is introduced. Both the persist side
+ * and the verify side run the same derivation.
  * <p>
  * The JDK ships no public HKDF before {@code javax.crypto.KDF} (JEP 478, still
  * preview); this ~RFC-faithful implementation is intentionally small and is unit
@@ -31,7 +30,7 @@ public final class Hkdf {
     }
 
     /**
-     * HKDF-Extract (RFC 5869 §2.2): {@code PRK = HMAC-Hash(salt, IKM)}.
+     * HKDF-Extract (RFC 5869 section 2.2): {@code PRK = HMAC-Hash(salt, IKM)}.
      * A null/empty salt is replaced with a string of {@code HashLen} zero bytes,
      * per the RFC.
      *
@@ -45,11 +44,11 @@ public final class Hkdf {
     }
 
     /**
-     * HKDF-Expand (RFC 5869 §2.3): expands {@code prk} to {@code length} bytes of
+     * HKDF-Expand (RFC 5869 section 2.3): expands {@code prk} to {@code length} bytes of
      * output keying material bound to {@code info}.
      *
      * @param prk    a pseudorandom key of at least {@code HashLen} bytes (non-null)
-     * @param info   optional context/application-specific info (may be null → empty)
+     * @param info   optional context/application-specific info (may be null, treated as empty)
      * @param length desired output length in bytes; {@code 1 <= length <= 255*HashLen}
      * @return the derived {@code length}-byte output keying material
      */

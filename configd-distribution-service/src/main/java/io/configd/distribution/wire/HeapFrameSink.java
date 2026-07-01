@@ -4,12 +4,12 @@ import java.util.Arrays;
 import java.util.zip.CRC32C;
 
 /**
- * A growable heap {@code byte[]} {@link FrameSink} — the JDK-side / test-side backend for the
+ * A growable heap {@code byte[]} {@link FrameSink} - the JDK-side / test-side backend for the
  * single-pass {@link EdgeFrameCodec#encodeInto}. Big-endian, matching {@code ByteBuffer}'s default.
  *
  * <p><b>Reuse is the point.</b> Constructed once and {@link #reset()} between frames, the backing
  * array grows only to a connection's high-water frame and is then reused, so the steady-state
- * per-frame allocation of the framing itself is ~0 — what remains is exactly the codec-internal
+ * per-frame allocation of the framing itself is ~0 - what remains is exactly the codec-internal
  * message-building floor ({@code CommandCodec.encodeBatch} + signature/nonce clones). That is the
  * 25,520 B/op (batch 64) the head-to-head proved is transport-independent. A fresh sink per call
  * (as {@link EdgeFrameCodec#encode(EdgeFrame)} uses for the cold/test path) is also supported.

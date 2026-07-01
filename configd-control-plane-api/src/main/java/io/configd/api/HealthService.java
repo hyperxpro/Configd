@@ -9,10 +9,10 @@ import java.util.Objects;
  * <p>
  * Provides three levels of health checks:
  * <ul>
- *   <li><b>Liveness</b> — is the process alive? Always true if reachable.</li>
- *   <li><b>Readiness</b> — can this node serve traffic? Checks Raft state,
+ *   <li><b>Liveness</b> - is the process alive? Always true if reachable.</li>
+ *   <li><b>Readiness</b> - can this node serve traffic? Checks Raft state,
  *       store health, and connectivity.</li>
- *   <li><b>Detailed</b> — full diagnostic report for operators.</li>
+ *   <li><b>Detailed</b> - full diagnostic report for operators.</li>
  * </ul>
  */
 public final class HealthService {

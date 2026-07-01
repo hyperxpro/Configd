@@ -18,7 +18,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.fail;
 
 /**
- * RR-003 (P0) — restart-after-compaction silent data loss.
+ * Covers restart-after-compaction silent data loss.
  * <p>
  * The crash-recovery matrix. Each cell takes a single-node leader through a
  * sequence of committed writes, takes a snapshot (which compacts the WAL
@@ -32,14 +32,14 @@ import static org.junit.jupiter.api.Assertions.fail;
  * <p>
  * Crash points:
  * <ul>
- *   <li><b>(a) BEFORE snapshot persist</b> — crash before any snapshot byte is
+ *   <li><b>(a) BEFORE snapshot persist</b> - crash before any snapshot byte is
  *       durable. The pre-snapshot WAL must still be fully intact, so recovery
  *       replays the whole log and loses nothing.</li>
- *   <li><b>(b) AFTER persist, BEFORE WAL truncate</b> — the snapshot is durable
+ *   <li><b>(b) AFTER persist, BEFORE WAL truncate</b> - the snapshot is durable
  *       but the WAL prefix has not yet been deleted. Recovery may use either the
  *       snapshot or the still-present WAL; either way no committed entry is
  *       lost.</li>
- *   <li><b>(c) AFTER truncate</b> — the steady state after a successful
+ *   <li><b>(c) AFTER truncate</b> - the steady state after a successful
  *       snapshot: the WAL prefix is gone and the only record of [1..S] is the
  *       persisted snapshot. This is the cell that loses data pre-fix.</li>
  * </ul>
@@ -48,7 +48,7 @@ import static org.junit.jupiter.api.Assertions.fail;
  * below it may be lost).
  *
  * @see CrashStorage harness modelling unsynced-write loss (also the foundation
- *      for the RR-086 fsync-mutation work)
+ *      for the fsync-mutation work)
  */
 class SnapshotCrashRecoveryTest {
 
@@ -67,7 +67,7 @@ class SnapshotCrashRecoveryTest {
         }
     };
 
-    /** No-op transport — single-node cluster sends to no peers. */
+    /** No-op transport; single-node cluster sends to no peers. */
     private static final RaftTransport NO_PEERS = (target, message) -> { };
 
     /** Drives a fresh single-node leader over the given storage and returns it. */
@@ -95,12 +95,10 @@ class SnapshotCrashRecoveryTest {
         }
     }
 
-    // ========================================================================
     // The matrix
-    // ========================================================================
 
     /**
-     * (c) AFTER truncate — the steady state. This is the RR-003 data-loss cell:
+     * (c) AFTER truncate - the steady state. This is the restart-after-compaction cell:
      * the WAL prefix is gone and only the persisted snapshot remembers [1..S].
      */
     @Test
@@ -145,9 +143,9 @@ class SnapshotCrashRecoveryTest {
 
     /**
      * Torn-tail cell: a crash mid-append of the final WAL record leaves a partial
-     * trailing frame on disk. Recovery (FileStorage.readLog, F-0011) must discard
+     * trailing frame on disk. Recovery (FileStorage.readLog) must discard
      * the never-fully-fsynced trailing record and recover exactly the entries
-     * below it — without violating the durable-prefix/no-gap invariant. Uses a
+     * below it - without violating the durable-prefix/no-gap invariant. Uses a
      * real {@link io.configd.common.FileStorage} so the byte-level torn frame is
      * genuine (the frame-granular CrashStorage cannot model a sub-frame tear).
      */
@@ -171,7 +169,7 @@ class SnapshotCrashRecoveryTest {
         assertEquals(Map.of("a", "1", "b", "2"), committedBeforeTear);
 
         // Simulate a torn final record: append a partial frame (a length header
-        // with no complete data/CRC) directly to the WAL file — exactly what a
+        // with no complete data/CRC) directly to the WAL file - exactly what a
         // crash mid-appendToLog leaves behind.
         Path wal = tempDir.resolve("raft-log.wal");
         byte[] tornFrame = new byte[] {0, 0, 0, 32, 1, 2, 3}; // claims len=32, only 3 bytes follow
@@ -200,7 +198,7 @@ class SnapshotCrashRecoveryTest {
     /**
      * Gap-detection: when a snapshot boundary exists on disk but the snapshot
      * BYTES are genuinely unrecoverable (e.g. the blob file is lost to disk
-     * corruption), recovery must FAIL LOUDLY — the no-gap invariant
+     * corruption), recovery must FAIL LOUDLY - the no-gap invariant
      * ({@code durable_prefix_no_gap}) fires rather than the pre-fix silent skip
      * that advanced lastApplied past the hole and served an empty store. This is
      * the defense-in-depth that the persist-before-truncate fix backstops: even
@@ -228,14 +226,14 @@ class SnapshotCrashRecoveryTest {
 
         // Simulate UNRECOVERABLE loss of the snapshot bytes (disk corruption):
         // delete the persisted blob file while the boundary meta + (empty) WAL
-        // remain. This is NOT the RR-003 software bug (the fix persisted it) — it
+        // remain. This is not the silent-loss scenario (persistent snapshot prevents it) - it
         // models a hardware/medium failure to prove the invariant is a real net.
         Files.deleteIfExists(tempDir.resolve("raft-log.snapshot.dat"));
 
         RaftLog log2 = new RaftLog(storage);
         KvStateMachine sm2 = new KvStateMachine();
         // Recovery (constructor + any apply) walks into the [1..snapshotIndex]
-        // hole with no bytes to fill it. The throwing checker must fire — the
+        // hole with no bytes to fill it. The throwing checker must fire - the
         // pre-fix silent skip would have advanced lastApplied over the hole and
         // booted with an empty store.
         AssertionError thrown = null;
@@ -256,21 +254,21 @@ class SnapshotCrashRecoveryTest {
     }
 
     /**
-     * fsync-LIE (S4/B-rest, charter §4 — "verify fsync is actually durable, not just called").
+     * fsync-LIE (S4/B-rest, contract: "verify fsync is actually durable, not just called").
      * A node that "fsynced" the snapshot blob (the device ACKed the write) then lost it on a
      * power cut must, on restart, DETECT the resulting gap and FAIL LOUD
-     * ({@code durable_prefix_no_gap}) — never silently serve missing committed state.
+     * ({@code durable_prefix_no_gap}) - never silently serve missing committed state.
      * <p>
      * This is the injection-path-agnostic twin of
      * {@link #gapDetectionFiresWhenSnapshotBlobUnrecoverable}: there the blob file was deleted
-     * (disk corruption); here {@link CrashStorage#lieOnSyncForKey} models the firmware lie — the
-     * {@code put} returns success but the bytes never reach the platter — so the recovered durable
+     * (disk corruption); here {@link CrashStorage#lieOnSyncForKey} models the firmware lie - the
+     * {@code put} returns success but the bytes never reach the platter - so the recovered durable
      * image is IDENTICAL (no blob + truncated WAL = a gap below the snapshot boundary), and the
      * same oracle catches it. Proving it via the lie path closes the kill-matrix fsync-lie cell.
      * <p>
      * The REAL-firmware detection boundary (a device with a volatile write cache under a true
-     * power cut) stays ENVIRONMENT-BLOCKED — staging recipe in
-     * {@code docs/session-4/storage-fault-layer-design.md §3} ({@code hdparm -W1}, no {@code fua}).
+     * power cut) stays environment-blocked - staging recipe in
+     * {@code docs/session-4/storage-fault-layer-design.md section 3} ({@code hdparm -W1}, no {@code fua}).
      */
     @Test
     void gapDetectionFiresWhenSnapshotFsyncLied() {
@@ -294,7 +292,7 @@ class SnapshotCrashRecoveryTest {
         CrashStorage recovered = storage.recoveredView();
 
         // Restart: recovery walks the [1..snapshotIndex] hole with no bytes to fill it. The
-        // throwing checker MUST fire — a silent skip would advance lastApplied over the hole and
+        // throwing checker MUST fire - a silent skip would advance lastApplied over the hole and
         // boot with missing committed state.
         AssertionError thrown = null;
         try {
@@ -363,11 +361,11 @@ class SnapshotCrashRecoveryTest {
             }
             // Make the post-snapshot WAL durable, then crash (point (c)).
             if (cp == CrashPoint.AFTER_TRUNCATE) {
-                storage.crash(); // drop nothing extra — the suffix was synced by append/commit
+                storage.crash(); // drop nothing extra - the suffix was synced by append/commit
             }
         }
 
-        // -------- Restart over the surviving durable image --------
+        // Restart over the surviving durable image
         CrashStorage recovered = storage.recoveredView();
         Harness h2;
         try {
@@ -402,7 +400,7 @@ class SnapshotCrashRecoveryTest {
      * during the snapshot.
      * <p>
      * Note: pre-fix there is no snapshot-blob persist, so the BEFORE_PERSIST and
-     * AFTER_PERSIST_BEFORE_TRUNCATE triggers never fire — the cell then runs as
+     * AFTER_PERSIST_BEFORE_TRUNCATE triggers never fire - the cell then runs as
      * a clean compaction followed by restart, which still loses the compacted
      * prefix (the bug), so those cells fail pre-fix too.
      */
@@ -419,7 +417,7 @@ class SnapshotCrashRecoveryTest {
                 storage.crashBeforeWalDelete(WAL_NAME); // belt-and-suspenders
             }
             case AFTER_TRUNCATE -> {
-                // Let the whole compaction complete durably, then crash — the
+                // Let the whole compaction complete durably, then crash - the
                 // steady state where only the persisted snapshot remembers
                 // [1..S].
                 h.node.triggerSnapshot();

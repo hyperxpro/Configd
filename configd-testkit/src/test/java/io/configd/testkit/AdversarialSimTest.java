@@ -17,10 +17,10 @@ import java.util.HexFormat;
 import static org.junit.jupiter.api.Assertions.*;
 
 /**
- * Verifies the §4.3 adversarial simulation: faults inject, invariants hold (no
+ * Verifies the section 4.3 adversarial simulation: faults inject, invariants hold (no
  * safety violation across a batch of seeds), the run is byte-replayable by seed
- * alone (RR-010 determinism survives the new fault machinery), and the run does
- * real work (RR-012 activity predicate). A safety violation, were one to occur,
+ * alone (determinism survives the new fault machinery), and the run does
+ * real work (activity predicate). A safety violation, were one to occur,
  * would surface as a thrown {@link SimInvariants.SafetyViolation} that fails the
  * seed with replay context.
  */
@@ -63,7 +63,7 @@ class AdversarialSimTest {
             }
         }
         // Liveness is reported, not asserted per-seed, but a healthy fraction must
-        // elect — an all-stall result would mean the faults are pathological.
+        // elect - an all-stall result would mean the faults are pathological.
         double electRate = (double) leaderElected / batch;
         assertTrue(electRate >= 0.5,
                 "Most seeds should still elect under faults (liveness sanity); got "
@@ -71,9 +71,9 @@ class AdversarialSimTest {
     }
 
     /**
-     * RR-010 determinism under faults: the same seed produces a byte-identical
+     * Determinism under faults: the same seed produces a byte-identical
      * execution schedule even with all fault machinery active. This is the
-     * foundation — if any new fault source broke same-seed-same-schedule it would
+     * foundation - if any new fault source broke same-seed-same-schedule it would
      * be a bug in the new code.
      */
     @Test

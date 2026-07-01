@@ -21,7 +21,7 @@ import java.util.Objects;
  *     where each mutation is a PUT or DELETE as above
  * </pre>
  * An empty (zero-length) command represents a no-op, committed for leader
- * election. The codec treats this as a special case — see {@link #decode}.
+ * election. The codec treats this as a special case - see {@link #decode}.
  * <p>
  * This is a stateless utility class. All methods are static. Instances cannot
  * be created.
@@ -38,7 +38,7 @@ public final class CommandCodec {
     static final byte TYPE_BATCH = 0x03;
 
     private CommandCodec() {
-        // utility class — no instances
+        // utility class - no instances
     }
 
     // -----------------------------------------------------------------------
@@ -196,7 +196,7 @@ public final class CommandCodec {
 
         /**
          * A no-op command (empty payload). Committed for leader election.
-         * Singleton — use {@link Noop#INSTANCE}.
+         * Singleton - use {@link Noop#INSTANCE}.
          */
         record Noop() implements DecodedCommand {
             static final Noop INSTANCE = new Noop();

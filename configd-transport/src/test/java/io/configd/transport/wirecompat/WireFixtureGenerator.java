@@ -13,7 +13,7 @@ import java.util.Map;
  * Deterministic generator for the golden-bytes wire fixtures consumed by
  * {@code WireCompatGoldenBytesTest} and the {@code wire-compat} CI job.
  *
- * <p>§8.10 hard rule: the wire format is part of the public contract.
+ * <p>Section 8.10 hard rule: the wire format is part of the public contract.
  * Any change that alters the encoded byte stream MUST be accompanied by
  * either (a) no fixture diff (purely additive at the application layer)
  * or (b) a {@link FrameCodec#WIRE_VERSION} bump and regenerated fixtures
@@ -26,7 +26,7 @@ import java.util.Map;
  */
 public final class WireFixtureGenerator {
 
-    /** Stable, deterministic inputs — do not change without a wire bump. */
+    /** Stable, deterministic inputs - do not change without a wire bump. */
     private static final int FIXTURE_GROUP_ID = 0x01020304;
     private static final long FIXTURE_TERM = 0x0A0B0C0D0E0F1011L;
     private static final byte[] FIXTURE_PAYLOAD = bytes(0xDE, 0xAD, 0xBE, 0xEF);
@@ -36,7 +36,7 @@ public final class WireFixtureGenerator {
 
     /**
      * Builds the canonical fixture map: one entry per {@link MessageType},
-     * keyed by the lowercase enum name. Encoding is deterministic — the
+     * keyed by the lowercase enum name. Encoding is deterministic - the
      * same map will be produced on every invocation.
      */
     public static Map<String, byte[]> build() {

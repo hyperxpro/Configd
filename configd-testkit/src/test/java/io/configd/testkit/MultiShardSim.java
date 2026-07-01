@@ -18,47 +18,47 @@ import java.util.random.RandomGenerator;
 import java.util.random.RandomGeneratorFactory;
 
 /**
- * Multi-Raft Phase 1 — the deterministic MULTI-SHARD simulator (charter §2, "verification machinery
- * FIRST"). Composes {@code S} independent single-group clusters — each a proven
- * {@link ConsistencyPropertyTests.ClusterHarness} of {@code R} nodes — under a {@link ShardMap} that
+ * The deterministic MULTI-SHARD simulator (charter section 2, "verification machinery
+ * FIRST"). Composes {@code S} independent single-group clusters - each a proven
+ * {@link ConsistencyPropertyTests.ClusterHarness} of {@code R} nodes - under a {@link ShardMap} that
  * routes a deterministic client workload to the shard that owns each key. Every tick it checks the new
- * cross-shard invariants AND each shard's existing S2–S4 safety surface ({@link SimInvariants}).
+ * cross-shard invariants AND each shard's existing S2 - S4 safety surface ({@link SimInvariants}).
  *
  * <p>The whole run is a pure function of the master {@code seed} (each shard is seeded from
  * {@code mix(seed, shardId)}, the workload from {@code mix(seed, WORKLOAD_TAG)}), so a failing seed is
- * replayable — the FoundationDB / RR-010 discipline, lifted to the multi-shard surface.
+ * replayable - the FoundationDB determinism discipline, lifted to the multi-shard surface.
  *
- * <h2>The six Phase-1 invariants (charter §2.2), and how each is checked here</h2>
+ * <h2>The six multi-shard invariants (charter section 2.2), and how each is checked here</h2>
  * <ol>
- *   <li><b>Routing correctness</b> — every write for key K is proposed ONLY to {@code shardFor(scope,K)};
- *       {@link #routedShardOf} records the (key→shard) decision and {@link #checkRoutingStability} fails
+ *   <li><b>Routing correctness</b> - every write for key K is proposed ONLY to {@code shardFor(scope,K)};
+ *       {@link #routedShardOf} records the (key->shard) decision and {@link #checkRoutingStability} fails
  *       the seed if a key's shard ever changes. {@link #checkDisjointOwnership} additionally proves K's
  *       value is physically present on exactly that one shard.</li>
- *   <li><b>Disjoint ownership</b> — {@link #checkDisjointOwnership}: across every shard's committed store,
+ *   <li><b>Disjoint ownership</b> - {@link #checkDisjointOwnership}: across every shard's committed store,
  *       no key is owned by two shards, and the owning shard equals {@code shardFor(key)}.</li>
- *   <li><b>Per-shard linearizability</b> — each shard runs its own {@link SimInvariants#checkAll()} every
+ *   <li><b>Per-shard linearizability</b> - each shard runs its own {@link SimInvariants#checkAll()} every
  *       tick (version monotonicity, log matching, state-machine safety, single-leader-per-term) plus the
- *       throwing in-node checker (9 in-node invariants). The S2–S4 surface, instantiated per shard.</li>
- *   <li><b>Cross-shard isolation</b> — {@link #faultShardLeader} isolates one shard's leader; the other
+ *       throwing in-node checker (9 in-node invariants). The S2 - S4 surface, instantiated per shard.</li>
+ *   <li><b>Cross-shard isolation</b> - {@link #faultShardLeader} isolates one shard's leader; the other
  *       shards must keep their safety invariants green AND keep committing ({@link #commitsOn}). Because
- *       shards are independent harnesses, a fault cannot leak — the check proves the machinery did not
+ *       shards are independent harnesses, a fault cannot leak - the check proves the machinery did not
  *       wrongly couple them (e.g. via a routing leak, which {@link #checkDisjointOwnership} catches).</li>
- *   <li><b>Stale-map redirect correctness</b> — the client caches a leader per shard; when it goes stale
+ *   <li><b>Stale-map redirect correctness</b> - the client caches a leader per shard; when it goes stale
  *       (failover), {@link #write} redirects to the shard's current leader (intra-shard, never crossing
  *       shards) and retries. {@link #checkNoWritesLost} proves every committed-intent write landed (no
  *       loss); disjoint ownership proves redirect never scattered a key across shards (no duplicate).</li>
- *   <li><b>N=1 equivalence</b> — at {@code shardCount==1} the router resolves every key to the one group,
+ *   <li><b>N=1 equivalence</b> - at {@code shardCount==1} the router resolves every key to the one group,
  *       so the sim drives a single {@link ConsistencyPropertyTests.ClusterHarness} exactly as the
  *       single-group path does; {@link MultiShardSimTest} asserts byte-identical committed state versus a
  *       bare control harness on the same per-shard seed + op stream.</li>
  * </ol>
  *
- * <p><b>Non-vacuity.</b> The machinery is proven to CATCH the bugs Phase 1 could introduce: the
+ * <p><b>Non-vacuity.</b> The machinery is proven to CATCH the bugs multi-shard routing could introduce: the
  * {@code injectBug(...)} flags (and the deliberately-broken routers in {@link ShardRouters}) drive a
  * deliberate mis-route / cross-shard-redirect / dropped-redirect / N=1-divergence, and
  * {@link MultiShardSimTest} asserts the corresponding check goes RED. A correct router stays green.
  *
- * <p>Not thread-safe; single sim thread (R-01), like every harness here.
+ * <p>Not thread-safe; single sim thread, like every harness here.
  */
 final class MultiShardSim {
 
@@ -79,11 +79,11 @@ final class MultiShardSim {
 
     /** Deliberate bugs the test can inject to PROVE a check is non-vacuous (each must drive a RED). */
     enum Bug {
-        /** Redirect crosses to a DIFFERENT shard instead of a new node in the same shard → scatter. */
+        /** Redirect crosses to a DIFFERENT shard instead of a new node in the same shard -> scatter. */
         CROSS_SHARD_REDIRECT,
-        /** Never update the cached leader on reject → a stale-leader write is lost (no-redirect). */
+        /** Never update the cached leader on reject -> a stale-leader write is lost (no-redirect). */
         NO_REDIRECT,
-        /** At N=1, silently drop every Kth op → the committed history diverges from the control. */
+        /** At N=1, silently drop every Kth op -> the committed history diverges from the control. */
         DROP_OP_AT_N1
     }
 
@@ -96,17 +96,17 @@ final class MultiShardSim {
     private final List<ConsistencyPropertyTests.ClusterHarness> shards = new ArrayList<>();
     private final List<SimInvariants> shardInvariants = new ArrayList<>();
 
-    /** The client's cached leader index per shard (the stale-map surface). -1 = unknown → discover. */
+    /** The client's cached leader index per shard (the stale-map surface). -1 = unknown -> discover. */
     private final int[] cachedLeader;
 
-    /** Routing audit: key → the shard it has been routed to. A change is a routing-correctness RED. */
+    /** Routing audit: key -> the shard it has been routed to. A change is a routing-correctness RED. */
     private final Map<String, Integer> routedShardOf = new HashMap<>();
 
-    /** Every write the client COMMITTED TO (kept retrying until accepted): key → last accepted token. */
+    /** Every write the client COMMITTED TO (kept retrying until accepted): key -> last accepted token. */
     private final Map<String, String> intendedWrites = new HashMap<>();
 
     /**
-     * Per-shard commit-progress witness — the MAX applied store version across the shard's replicas
+     * Per-shard commit-progress witness - the MAX applied store version across the shard's replicas
      * (genuine new-commit signal). NOT the sum: a sum rises when a lagging replica merely catches up to an
      * existing committed version, so it would falsely report "progress" during a total stall (red-team find,
      * invariant 4). The max only rises when a NEW entry commits and applies on the most-advanced replica.
@@ -162,19 +162,19 @@ final class MultiShardSim {
     }
 
     /**
-     * One multi-shard tick: advance every shard and check each shard's S2–S4 safety surface (the
+     * One multi-shard tick: advance every shard and check each shard's S2 - S4 safety surface (the
      * per-shard linearizability invariant). A violation throws {@link SimInvariants.SafetyViolation},
      * failing the seed with replay context.
      *
      * <p>Disjoint ownership / routing-to-owner is a GLOBAL store property that only changes when writes
      * commit, so it is checked periodically and at end of run ({@link #runWorkload}, {@link #checkAll})
-     * rather than on this hot per-tick path — much cheaper, equally sound (a violation, once created by a
+     * rather than on this hot per-tick path - much cheaper, equally sound (a violation, once created by a
      * mis-route, persists in the store until the next scan).
      */
     void tick() {
         for (int s = 0; s < shardCount; s++) {
             shards.get(s).tick();
-            shardInvariants.get(s).checkAll(); // per-shard linearizability (S2–S4), every tick
+            shardInvariants.get(s).checkAll(); // per-shard linearizability (S2 - S4), every tick
         }
     }
 
@@ -224,7 +224,7 @@ final class MultiShardSim {
      *
      * <p>The sharding-layer contract under test: the key resolves to exactly one shard via
      * {@link ShardMap#shardFor}, and a stale cached leader is recovered by an INTRA-shard redirect (the
-     * single-group {@code X-Leader-Hint} generalized per shard) — never by crossing to another shard. The
+     * single-group {@code X-Leader-Hint} generalized per shard) - never by crossing to another shard. The
      * value token is positional ({@code clientId:opIndex}) so a single-group control replaying the same op
      * stream writes byte-identical values (the N=1-equivalence check).
      */
@@ -247,7 +247,7 @@ final class MultiShardSim {
         // The shard the redirect targets. Correct behavior: stay on shard s, only change the NODE.
         int redirectShard = s;
         if (bugs.contains(Bug.CROSS_SHARD_REDIRECT)) {
-            // Non-vacuity: a redirect that lands on the WRONG shard scatters the key → disjoint RED.
+            // Non-vacuity: a redirect that lands on the WRONG shard scatters the key -> disjoint RED.
             redirectShard = (s + 1) % shardCount;
         }
 
@@ -255,7 +255,7 @@ final class MultiShardSim {
         int target = cachedLeader[s] >= 0 ? cachedLeader[s] : 0;
         boolean accepted = shard.proposePut(target, key, token);
         if (!accepted) {
-            // Stale cached leader → REDIRECT to the shard's current leader (the hint), update cache, retry.
+            // Stale cached leader -> REDIRECT to the shard's current leader (the hint), update cache, retry.
             if (!bugs.contains(Bug.NO_REDIRECT)) {
                 ConsistencyPropertyTests.ClusterHarness rShard = shards.get(redirectShard);
                 int real = rShard.findLeader();
@@ -268,7 +268,7 @@ final class MultiShardSim {
             }
         }
         if (accepted) {
-            // Accepted by a leader → after heal+drain it MUST commit; record so checkNoWritesLost proves
+            // Accepted by a leader -> after heal+drain it MUST commit; record so checkNoWritesLost proves
             // a redirect never dropped an accepted write (no loss).
             intendedWrites.put(key, token);
         }
@@ -289,7 +289,7 @@ final class MultiShardSim {
         }
     }
 
-    /** The union committed view across all shards: key → last committed value (read from each leader). */
+    /** The union committed view across all shards: key -> last committed value (read from each leader). */
     Map<String, String> committedView() {
         Map<String, String> view = new HashMap<>();
         for (int s = 0; s < shardCount; s++) {
@@ -312,13 +312,13 @@ final class MultiShardSim {
         int leader = shards.get(s).findLeader();
         if (leader >= 0) {
             shards.get(s).sim().isolateNode(NodeId.of(leader));
-            cachedLeader[s] = -1; // the client's cache for s is now stale → exercises redirect
+            cachedLeader[s] = -1; // the client's cache for s is now stale -> exercises redirect
         }
         return leader;
     }
 
     /**
-     * Isolate a MAJORITY of shard {@code s}'s nodes so it loses quorum and STALLS entirely (no commits) —
+     * Isolate a MAJORITY of shard {@code s}'s nodes so it loses quorum and STALLS entirely (no commits) - 
      * the strong cross-shard-isolation stimulus: every other shard must keep committing while this one is
      * dead. Isolates {@code ceil((R+1)/2)} nodes, each from all others.
      */
@@ -355,7 +355,7 @@ final class MultiShardSim {
      * redirect (the key physically lands on a shard that does not own it).
      *
      * <p><b>Requires a PURE {@link ShardMap}</b> (the production {@link io.configd.replication.StaticShardMap}
-     * is): this calls {@code shardFor} mid-scan, which would perturb a stateful router — exactly the
+     * is): this calls {@code shardFor} mid-scan, which would perturb a stateful router - exactly the
      * failure mode {@link ShardRouters#rotating} models, which is therefore only used in the
      * routing-stability test (it throws before any disjoint scan), never here.
      */
@@ -384,12 +384,12 @@ final class MultiShardSim {
 
     /**
      * No write lost on redirect: every key whose write was ACCEPTED by a leader must be present, with its
-     * last token, on its owning shard. A dropped/scattered redirect leaves it missing or stale → RED.
+     * last token, on its owning shard. A dropped/scattered redirect leaves it missing or stale -> RED.
      *
      * <p><b>Soundness precondition:</b> call only after heal + drain in a run with no post-acceptance
-     * leadership loss — i.e. a fault-free run, or one fully recovered to a stable leader that retains the
+     * leadership loss - i.e. a fault-free run, or one fully recovered to a stable leader that retains the
      * accepted entries. A write accepted by a leader that is then isolated before replicating legitimately
-     * never commits (RR-004: accepted ≠ committed) and is NOT a redirect bug, so the faulting sweeps assert
+     * never commits (accepted != committed) and is NOT a redirect bug, so the faulting sweeps assert
      * only {@link #checkDisjointOwnership} (always sound), never this.
      */
     void checkNoWritesLost() {
@@ -417,7 +417,7 @@ final class MultiShardSim {
 
     /**
      * Cross-shard isolation liveness witness: shard {@code s} made GENUINE new-commit progress since the
-     * last call. Uses the strictly-increasing MAX applied version across replicas — a new entry committed
+     * last call. Uses the strictly-increasing MAX applied version across replicas - a new entry committed
      * and applied on the most-advanced replica. A dead shard (lost quorum) cannot raise its max even as
      * lagging replicas catch up, so this correctly reports {@code false} for a stalled shard (red-team
      * find: the prior sum-of-versions witness rose on catch-up and falsely reported progress).
@@ -478,7 +478,7 @@ final class MultiShardSim {
 
     /**
      * SplitMix64 finalizer over (seed, tag): decorrelates each shard's stream and the workload stream
-     * while staying a pure deterministic function of the master seed (the RR-010 mix pattern).
+     * while staying a pure deterministic function of the master seed (the deterministic mix pattern).
      */
     static long mix(long seed, long tag) {
         long z = seed + 0x9E3779B97F4A7C15L * (tag + 1L);

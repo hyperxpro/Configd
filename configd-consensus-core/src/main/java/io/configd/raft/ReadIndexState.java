@@ -16,7 +16,7 @@ import java.util.Map;
  * </ol>
  * <p>
  * This class is designed for single-threaded access from the Raft I/O
- * thread (ADR-0009). No synchronization is used.
+ * thread. No synchronization is used.
  *
  * @see RaftNode#readIndex()
  */
@@ -43,7 +43,7 @@ public final class ReadIndexState {
      * Starts a new read request. Records the current commit index as the
      * threshold that must be applied before the read can be served, and the
      * leader's term at request time (so a served read can be checked against
-     * the node's current term — the ReadIndexSpec NoStaleLeaderServe twin).
+     * the node's current term  -  the ReadIndexSpec NoStaleLeaderServe twin).
      *
      * @param commitIndex the current commit index at the time of the read request
      * @param term        the leader's current term at the time of the read request

@@ -12,11 +12,11 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * S6/WS-C — backup/restore round-trip with a STATE-EQUALITY assertion (charter §6 / gate-6 / DoD).
- * Not "we have backups": actually capture a snapshot (the backup), restore it into a FRESH,
- * empty state machine (a fresh cluster's bootstrap), and prove the restored state equals the
- * original key-for-key — including an overwrite and a delete — and that the restored applied
- * version matches. The snapshot bytes are {@link ConfigStateMachine#snapshot()}; restore is
+ * Backup/restore round-trip test with a state-equality assertion. Captures a snapshot (the
+ * backup), restores it into a fresh, empty state machine (a fresh cluster's bootstrap), and
+ * proves the restored state equals the original key-for-key - including an overwrite and a
+ * delete - and that the restored applied version matches. The snapshot bytes are
+ * {@link ConfigStateMachine#snapshot()}; restore is
  * {@link ConfigStateMachine#restoreSnapshot(byte[])} (the InstallSnapshot / disaster-recovery path).
  */
 class BackupRestoreRoundTripTest {

@@ -24,7 +24,7 @@ import java.util.stream.Collectors;
  *       integration tests to fail fast on invariant violations.</li>
  *   <li><b>Production mode</b> ({@code testMode=false}): violations
  *       increment a named counter in the {@link MetricsRegistry} AND emit a
- *       SEVERE log (fail-open — never silent). The system keeps running;
+ *       SEVERE log (fail-open - never silent). The system keeps running;
  *       operators alert on the violation counter (visible in the Prometheus
  *       exposition).</li>
  * </ul>
@@ -85,9 +85,9 @@ public final class InvariantMonitor {
             return;
         }
 
-        // R-02: a violation must be OBSERVABLE — never silent. Always increment the
+        // A violation must be OBSERVABLE - never silent. Always increment the
         // named metric AND emit a SEVERE log (fail-open in production). Test mode
-        // additionally fails fast. "A net that fires into an unwatched log is the NOOP."
+        // additionally fails fast.
         recordViolation(invariantName);
         LOG.log(Level.SEVERE,
                 "Invariant violated [" + invariantName + "]: " + messageOnViolation);
@@ -98,13 +98,12 @@ public final class InvariantMonitor {
     }
 
     // -----------------------------------------------------------------------
-    // Data-plane invariant helpers (INV-M1, INV-S1) — F-0073
+    // Data-plane invariant helpers (INV-M1, INV-S1)
     //
     // These bridge the two data-plane invariants from consistency-contract.md
-    // §8 into InvariantMonitor. Until F-0073, the edge read path and
-    // StalenessTracker enforced the invariants structurally but never
-    // incremented `configd.invariant.violation.*` counters, so alerting
-    // would silently miss data-plane correctness drift.
+    // section 8 into InvariantMonitor so that a structural violation in the
+    // edge read path or StalenessTracker increments
+    // configd.invariant.violation.* and triggers alerting.
     // -----------------------------------------------------------------------
 
     /**
@@ -128,7 +127,7 @@ public final class InvariantMonitor {
      * <p>
      * Called from the edge read path ({@code LocalConfigStore.get(...)}) when
      * a cursor is present. A violation indicates either an out-of-order
-     * delta apply or a client-server version mismatch — both fatal for
+     * delta apply or a client-server version mismatch - both fatal for
      * read-your-writes semantics.
      *
      * @param key          the config key (for diagnostic messages, may be null)
@@ -150,7 +149,7 @@ public final class InvariantMonitor {
      * Asserts the INV-S1 staleness-bound invariant: the observed staleness
      * between this edge cache and the leader must not exceed the configured
      * upper bound (defaulting to {@code STALE_THRESHOLD_MS} from
-     * {@code StalenessTracker}, 500ms per ADR-0007).
+     * {@code StalenessTracker}, currently 500ms).
      * <p>
      * Called from {@code StalenessTracker.isStale(...)} / the delta apply
      * path when a fresh leader version is observed. The {@code localVersion}

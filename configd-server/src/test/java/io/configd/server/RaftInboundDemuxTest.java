@@ -27,15 +27,15 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 
 /**
- * Multi-Raft Phase 1 (DL-P1-06) — the inbound DEMUX correctness test: a frame stamped {@code gid=k} must
+ * The inbound DEMUX correctness test: a frame stamped {@code gid=k} must
  * reach group {@code k}, NOT the captured constant 0. This is the latent N&gt;1 correctness the
  * {@link ConfigdServer#raftDemuxInboundHandler} fixes; the pre-fix registration collapsed every inbound
  * frame onto group 0, so at N&gt;1-over-TCP all groups would have shared group 0's node.
  *
  * <p>Drives the REAL production demux helper. Each group is an independent single-node cluster that
- * self-elects to LEADER on its own owner thread (peers = {@code Set.of()} ⇒ no election sends); a stale
+ * self-elects to LEADER on its own owner thread (peers = {@code Set.of()} => no election sends); a stale
  * {@code AppendEntries(term=0)} injected at the demux makes the receiving group's leader emit exactly one
- * reject-reply send, captured by that group's recording transport — so the send tells us which group
+ * reject-reply send, captured by that group's recording transport - so the send tells us which group
  * handled the frame.
  */
 class RaftInboundDemuxTest {
@@ -67,7 +67,7 @@ class RaftInboundDemuxTest {
 
         RaftTransportAdapter.InboundHandler demux = ConfigdServer.raftDemuxInboundHandler(driver, null);
 
-        // Route a frame stamped gid=1 → ONLY group 1 must handle it (reply send on t1, none on t0).
+        // Route a frame stamped gid=1 -> ONLY group 1 must handle it (reply send on t1, none on t0).
         t1.arm();
         demux.accept(NodeId.of(2), 1, staleAppendEntries());
         assertTrue(t1.awaitSend(), "the gid=1 frame must be handled by group 1 (its leader replies)");
@@ -77,7 +77,7 @@ class RaftInboundDemuxTest {
         assertEquals(0, t0.sends.get(),
                 "group 0 must NOT have handled the gid=1 frame (pre-fix bug: everything routed to group 0)");
 
-        // Route a frame stamped gid=0 → ONLY group 0 must handle it.
+        // Route a frame stamped gid=0 -> ONLY group 0 must handle it.
         t0.arm();
         demux.accept(NodeId.of(2), 0, staleAppendEntries());
         assertTrue(t0.awaitSend(), "the gid=0 frame must be handled by group 0");
@@ -99,15 +99,15 @@ class RaftInboundDemuxTest {
         RaftTransportAdapter.InboundHandler demux = ConfigdServer.raftDemuxInboundHandler(driver, null);
         // gid 5 is not registered. routeMessage drops absent groups (no-op). Must not throw, must not send.
         demux.accept(NodeId.of(2), 5, staleAppendEntries());
-        fence(driver.ownerExecutor(5)); // floorMod(5,1)=0 → drains the only owner
+        fence(driver.ownerExecutor(5)); // floorMod(5,1)=0 -> drains the only owner
         assertEquals(0, t0.sends.get(), "a frame for an unregistered group must be dropped (no send, no crash)");
     }
 
     @Test
     void hostileGroupIdsAreDroppedSafely() throws Exception {
-        // Red-team PoC, codified (Seam C): groupId is attacker-influenceable (CRC32C is a checksum, not a
+        // Red-team PoC, codified: groupId is attacker-influenceable (CRC32C is a checksum, not a
         // MAC). Drive the real demux with Integer.MIN_VALUE / MAX_VALUE / negative / large-unregistered
-        // gids — each must be dropped with NO throw and NO send (no AIOOBE on floorMod, no NPE, no routing
+        // gids - each must be dropped with NO throw and NO send (no AIOOBE on floorMod, no NPE, no routing
         // to group 0), and the legit gid=0 path must still work afterward (the owner thread is not wedged).
         pool = new OwnerExecutorPool(1);
         MultiRaftDriver driver = new MultiRaftDriver(NodeId.of(1), Clock.system());
@@ -150,7 +150,7 @@ class RaftInboundDemuxTest {
         return node;
     }
 
-    /** A stale-term AppendEntries — any node (term >= 0) rejects it and replies, producing a send. */
+    /** A stale-term AppendEntries - any node (term >= 0) rejects it and replies, producing a send. */
     private static AppendEntriesRequest staleAppendEntries() {
         return new AppendEntriesRequest(0L, NodeId.of(2), 0L, 0L, List.of(), 0L);
     }

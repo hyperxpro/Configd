@@ -9,33 +9,30 @@ import java.util.ArrayList;
 import java.util.List;
 
 /**
- * Serializes a {@link ConfigSnapshot} to the <b>ADR-0028 snapshot byte format</b> and
+ * Serializes a {@link ConfigSnapshot} to the <b>durable snapshot byte format</b> and
  * splits it into wire chunks for the {@code SNAPSHOT_BEGIN / SNAPSHOT_CHUNK* /
- * SNAPSHOT_END} flow (C1 design §3; ADR-0028 reuse — open decision 3, draft-confirmed:
- * reuse the existing serialization, do not invent a second snapshot format).
+ * SNAPSHOT_END} flow.
  *
  * <h2>Why this and not {@code ConfigStateMachine.snapshot()}</h2>
- * The ADR-0028 producer is {@code ConfigStateMachine.snapshot()}, which reads from a
- * live state machine's store and appends a TLV trailer carrying {@code signingEpoch}.
- * C1's {@code ReplaySource} hands the session a plain {@link ConfigSnapshot} (the HAMT +
- * version), not a state machine, and the edge has no use for the leader's signing epoch
- * (it verifies per-delta signatures, not the snapshot). So we emit exactly the ADR-0028
- * <b>body</b> — {@code [8B seq][4B entryCount][ (4B keyLen, key, 4B valLen, val)* ]} in
- * {@code HamtMap.forEach} order — which is a valid ADR-0028 snapshot with no trailer
- * (the "legacy / no-trailer" form {@code ConfigStateMachine.restoreSnapshot} explicitly
- * accepts). This is byte-format reuse, not a new format: the same layout the durable
- * snapshot store and the InstallSnapshot RPC already use, round-trip-verified against
- * {@code ConfigStateMachine.restoreSnapshot} in {@code EdgeSnapshotCodecTest}.
+ * {@code ConfigStateMachine.snapshot()} reads from a live state machine's store and
+ * appends a TLV trailer carrying {@code signingEpoch}. The {@code ReplaySource} here
+ * hands the session a plain {@link ConfigSnapshot} (the HAMT + version), not a state
+ * machine, and the edge has no use for the leader's signing epoch (it verifies per-delta
+ * signatures, not the snapshot). So we emit exactly the snapshot <b>body</b> -
+ * {@code [8B seq][4B entryCount][ (4B keyLen, key, 4B valLen, val)* ]} in
+ * {@code HamtMap.forEach} order - which is a valid no-trailer snapshot that
+ * {@code ConfigStateMachine.restoreSnapshot} explicitly accepts. This reuses the same
+ * layout as the durable snapshot store and the InstallSnapshot RPC, round-trip-verified
+ * against {@code ConfigStateMachine.restoreSnapshot} in {@code EdgeSnapshotCodecTest}.
  *
  * <h2>Bounds</h2>
- * Serialization mirrors the ADR-0028 envelope bounds: per-entry key and value are each
- * capped at {@link #MAX_ENTRY_FIELD_BYTES} (1 MiB, matching
- * {@code CommandCodec.MAX_VALUE_SIZE} and the state machine's snapshot caps), so a
- * pathological snapshot cannot produce an entry the receiver would reject.
+ * Per-entry key and value are each capped at {@link #MAX_ENTRY_FIELD_BYTES} (1 MiB,
+ * matching {@code CommandCodec.MAX_VALUE_SIZE} and the state machine's snapshot caps),
+ * so a pathological snapshot cannot produce an entry the receiver would reject.
  */
 public final class EdgeSnapshotCodec {
 
-    /** Per-entry key/value byte cap (ADR-0028 §Bounds: 1 MiB). */
+    /** Per-entry key/value byte cap (1 MiB, matching CommandCodec.MAX_VALUE_SIZE). */
     public static final int MAX_ENTRY_FIELD_BYTES = 1_048_576;
 
     private EdgeSnapshotCodec() {
@@ -43,13 +40,12 @@ public final class EdgeSnapshotCodec {
     }
 
     /**
-     * Serializes a snapshot to ADR-0028 body bytes (no trailer). Entries are emitted in
-     * {@code HamtMap.forEach} order — the same order {@code ConfigStateMachine.snapshot()}
-     * uses, so the bytes are interchangeable with the durable form for a trailer-less
-     * snapshot.
+     * Serializes a snapshot to body bytes (no trailer). Entries are emitted in
+     * {@code HamtMap.forEach} order - the same order {@code ConfigStateMachine.snapshot()}
+     * uses, so the bytes are interchangeable with the durable form for a trailer-less snapshot.
      *
      * @param snapshot the snapshot to serialize
-     * @return the ADR-0028 body bytes
+     * @return the snapshot body bytes
      * @throws IllegalArgumentException if any key/value exceeds {@link #MAX_ENTRY_FIELD_BYTES}
      */
     public static byte[] serialize(ConfigSnapshot snapshot) {
@@ -96,15 +92,15 @@ public final class EdgeSnapshotCodec {
     }
 
     /**
-     * Splits ADR-0028 snapshot body bytes into {@link EdgeFrame.SnapshotChunk} payloads
-     * of at most {@code chunkBytes} each, producing the chunk sequence the
-     * {@code SNAPSHOT_BEGIN / chunks / SNAPSHOT_END} flow carries. An empty snapshot
-     * body still yields chunks (the 8+4-byte header is one small chunk); zero-length
-     * input is never produced by {@link #serialize}.
+     * Splits snapshot body bytes into {@link EdgeFrame.SnapshotChunk} payloads of at most
+     * {@code chunkBytes} each, producing the chunk sequence the
+     * {@code SNAPSHOT_BEGIN / chunks / SNAPSHOT_END} flow carries. An empty snapshot body
+     * still yields chunks (the 8+4-byte header is one small chunk); zero-length input is
+     * never produced by {@link #serialize}.
      *
      * @param body       the serialized snapshot bytes
-     * @param chunkBytes the maximum chunk payload size (must be ≥ 1 and
-     *                   ≤ {@link EdgeFrameCodec#MAX_SNAPSHOT_CHUNK_BYTES})
+     * @param chunkBytes the maximum chunk payload size (must be >= 1 and
+     *                   <= {@link EdgeFrameCodec#MAX_SNAPSHOT_CHUNK_BYTES})
      * @return the ordered list of snapshot chunks
      */
     public static List<EdgeFrame.SnapshotChunk> chunk(byte[] body, int chunkBytes) {
@@ -133,9 +129,9 @@ public final class EdgeSnapshotCodec {
     }
 
     /**
-     * Reassembles ADR-0028 snapshot body bytes from an ordered chunk list (the
-     * driver-side / edge-side counterpart to {@link #chunk}). Chunk indices must be the
-     * contiguous run {@code 0..n-1} in order.
+     * Reassembles snapshot body bytes from an ordered chunk list (the driver-side /
+     * edge-side counterpart to {@link #chunk}). Chunk indices must be the contiguous run
+     * {@code 0..n-1} in order.
      *
      * @param chunks the ordered snapshot chunks
      * @return the reassembled snapshot body bytes
@@ -168,13 +164,13 @@ public final class EdgeSnapshotCodec {
     }
 
     /**
-     * Decodes ADR-0028 snapshot body bytes back into a {@link ConfigSnapshot}. This is
-     * the inverse of {@link #serialize} (used by the simulator's driver-side sink after
-     * reassembly, and available to the edge). Each value is stamped with the snapshot's
-     * version (consistent with {@code ConfigStateMachine.restoreSnapshot}, which stamps
-     * all restored values with the restored sequence).
+     * Decodes snapshot body bytes back into a {@link ConfigSnapshot} - the inverse of
+     * {@link #serialize} (used by the simulator's driver-side sink after reassembly, and
+     * available to the edge). Each value is stamped with the snapshot's version (consistent
+     * with {@code ConfigStateMachine.restoreSnapshot}, which stamps all restored values with
+     * the restored sequence).
      *
-     * @param body the ADR-0028 body bytes
+     * @param body the snapshot body bytes
      * @return the decoded snapshot
      * @throws IllegalArgumentException on a truncated or out-of-bounds body
      */

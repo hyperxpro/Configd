@@ -14,7 +14,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * Codec-level tests for {@link IntegrityEnvelope} (ADR-0042 Layer A + B).
+ * Codec-level tests for {@link IntegrityEnvelope}.
  */
 class IntegrityEnvelopeTest {
 
@@ -31,7 +31,7 @@ class IntegrityEnvelopeTest {
         return "hello-raft-payload".getBytes();
     }
 
-    // ---- round-trip ----
+    // round-trip
 
     @Test
     void keyedRoundTrip() {
@@ -63,13 +63,13 @@ class IntegrityEnvelopeTest {
         assertArrayEquals(new byte[0], env.unwrap(MAGIC, env.wrap(MAGIC, new byte[0])));
     }
 
-    // ---- tamper / forgery detection (keyed) ----
+    // tamper / forgery detection (keyed)
 
     @Test
     void tamperedPayloadByteThrows() {
         IntegrityEnvelope env = new IntegrityEnvelope(key());
         byte[] wrapped = env.wrap(MAGIC, payload());
-        // Flip a payload byte AND recompute the CRC32C so only the MAC catches it —
+        // Flip a payload byte AND recompute the CRC32C so only the MAC catches it -
         // proves the MAC, not the CRC, is the tamper control.
         int payloadStart = IntegrityEnvelope.HEADER_SIZE;
         wrapped[payloadStart] ^= 0x01;
@@ -131,7 +131,7 @@ class IntegrityEnvelopeTest {
         assertThrows(IntegrityException.class, () -> wrongKey.unwrap(MAGIC, wrapped));
     }
 
-    // ---- truncation / absence rules ----
+    // truncation / absence rules
 
     @Test
     void structurallyShortReturnsNullNotThrow() {
@@ -146,17 +146,17 @@ class IntegrityEnvelopeTest {
         IntegrityEnvelope env = new IntegrityEnvelope(key());
         byte[] wrapped = env.wrap(MAGIC, payload());
         // Long enough to be a structural envelope, magic intact, but chopped in the
-        // middle of the payload/MAC — must fail loud (corruption), not null.
+        // middle of the payload/MAC - must fail loud (corruption), not null.
         byte[] truncated = Arrays.copyOf(wrapped, wrapped.length - 5);
         assertThrows(IntegrityException.class, () -> env.unwrapOrNull(MAGIC, truncated));
     }
 
-    // ---- keyless back-compat ----
+    // keyless back-compat
 
     @Test
     void keylessAcceptsLegacyNonEnvelopedBytesAsNull() {
         // A keyless reader returns null for bytes whose leading 4 bytes are not the
-        // magic — that is the legacy raw-bytes migration path (caller parses raw).
+        // magic - that is the legacy raw-bytes migration path (caller parses raw).
         IntegrityEnvelope env = IntegrityEnvelope.keyless();
         byte[] legacy = "legacy-raw-snapshot-bytes-no-envelope".getBytes();
         assertNull(env.unwrapOrNull(MAGIC, legacy));
@@ -179,13 +179,13 @@ class IntegrityEnvelopeTest {
                 () -> new IntegrityEnvelope(key()).unwrapOrNull(MAGIC, legacy));
     }
 
-    // ---- hardening regressions (A-verify findings 3.1, 4.1) ----
+    // hardening regressions
 
     @Test
     void reservedByteTamperUnderKeyedThrows() {
-        // Finding 3.1: the reserved byte (offset 7) is folded into the MAC input, so
-        // mutating it — even with the CRC32C recomputed — is caught by the HMAC. A
-        // keyless attacker cannot forge the MAC.
+        // The reserved byte (offset 7) is folded into the MAC input, so mutating it -
+        // even with the CRC32C recomputed - is caught by the HMAC. A keyless attacker
+        // cannot forge the MAC.
         IntegrityEnvelope env = new IntegrityEnvelope(key());
         byte[] wrapped = env.wrap(MAGIC, payload());
         wrapped[7] ^= 0x01;          // flip a bit in the reserved byte
@@ -198,9 +198,9 @@ class IntegrityEnvelopeTest {
 
     @Test
     void magicMatchingSubFloorBufferUnderKeyedThrows() {
-        // Finding 4.1: a buffer that CLAIMS our magic but is below the envelope floor
-        // is a deliberate IntegrityException under a key (not an incidental downstream
-        // underflow). Keyless keeps the structurally-absent (null) semantics.
+        // A buffer that carries our magic but is below the envelope floor is a deliberate
+        // IntegrityException under a key (not an incidental downstream underflow).
+        // Keyless keeps the structurally-absent (null) semantics.
         byte[] subFloor = new byte[10]; // >= 4 (magic readable), < HEADER_SIZE + CRC_SIZE (12)
         ByteBuffer.wrap(subFloor).putInt(MAGIC);
         assertThrows(IntegrityException.class,
@@ -208,7 +208,7 @@ class IntegrityEnvelopeTest {
         assertNull(IntegrityEnvelope.keyless().unwrapOrNull(MAGIC, subFloor));
     }
 
-    // ---- helper ----
+    // helper
 
     /** Recomputes the CRC32C trailer over [0, len-4) so only the MAC/version check fails. */
     private static void recomputeCrc(byte[] enveloped) {

@@ -12,10 +12,10 @@ import java.util.Set;
 
 /**
  * Deterministic in-process routing cluster of real {@link RaftNode}s for
- * consensus liveness / recovery tests (Session 4 / Workstream A). A seeded,
- * single-thread message bus with a per-node DROP partition: every frame to or
- * from a partitioned node is dropped (a clean network DROP — no RST). One
- * {@link #step()} ticks all nodes then delivers one round (≈1 tick of latency).
+ * consensus liveness / recovery tests. A seeded, single-thread message bus
+ * with a per-node DROP partition: every frame to or from a partitioned node is
+ * dropped (a clean network DROP - no RST). One
+ * {@link #step()} ticks all nodes then delivers one round (~1 tick of latency).
  * <p>
  * Election is driven by a delivery shuttle so exactly one node times out first
  * (no split vote), matching the established {@code RaftNodeReplicationUnitTest}
@@ -36,7 +36,7 @@ final class RoutingCluster {
 
     /**
      * @param n        cluster size
-     * @param checkers per-node {@link RaftNode.InvariantChecker} (absent ⇒ NOOP)
+     * @param checkers per-node {@link RaftNode.InvariantChecker} (absent => NOOP)
      */
     RoutingCluster(int n, Map<NodeId, RaftNode.InvariantChecker> checkers) {
         for (int i = 1; i <= n; i++) {
@@ -101,7 +101,7 @@ final class RoutingCluster {
     /**
      * Drives the first node to leadership with its term no-op committed and
      * replicated, via a delivery shuttle (only the first node ticks, so it alone
-     * times out → candidate; no follower ticks → no split vote). Returns the
+     * times out -> candidate; no follower ticks -> no split vote). Returns the
      * leader's node id.
      */
     NodeId electFirst() {
@@ -110,7 +110,7 @@ final class RoutingCluster {
             leader.tick();
         }
         for (int r = 0; r < 60; r++) {
-            deliverRound(); // PreVote → RequestVote → leader → no-op → commit
+            deliverRound(); // PreVote -> RequestVote -> leader -> no-op -> commit
         }
         if (leader.role() != RaftRole.LEADER) {
             throw new IllegalStateException("electFirst: node did not become leader (role="

@@ -49,41 +49,39 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.fail;
 
 /**
- * ADR-0043 M4 transport-equivalence contract for the inter-node consensus transport. The SAME
- * functional round-trip, mTLS hostname verification (F-0051), mTLS-attack rejection, slowloris /
- * admission-cap guard (F-S7-FUZZ-1), and non-blocking-send-under-blackhole behaviour (RR-002) is
- * proven against EVERY {@link RaftTransportEndpoint} implementation by varying ONLY transport
- * construction ({@link #newEndpoint}); the assertions, failure messages, deadlines, and keytool
- * fixtures are transcribed verbatim from the per-transport JDK tests this folds in:
+ * Transport-equivalence contract for the inter-node consensus transport. The same
+ * functional round-trip, mTLS hostname verification, mTLS-attack rejection, slowloris/admission-cap
+ * guard, and non-blocking-send-under-blackhole behaviour is proven against every
+ * {@link RaftTransportEndpoint} implementation by varying ONLY transport construction
+ * ({@link #newEndpoint}); the assertions, failure messages, deadlines, and keytool fixtures are
+ * transcribed verbatim from the per-transport JDK tests this folds in:
  *
  * <ul>
- *   <li>{@code TcpRaftTransportTest} — 9 functional legs (send/bidi/reconnect/concurrency/shutdown/
+ *   <li>{@code TcpRaftTransportTest} - 9 functional legs (send/bidi/reconnect/concurrency/shutdown/
  *       registerHandler/unknown-peer/empty-payload + the {@code find0051} hostname-verification
  *       regression);</li>
- *   <li>{@code RaftTransportMtlsAttackTest} — 3 mTLS negatives (plaintext, expired CA-signed
+ *   <li>{@code RaftTransportMtlsAttackTest} - 3 mTLS negatives (plaintext, expired CA-signed
  *       end-entity, TLSv1.2 downgrade);</li>
- *   <li>{@code TcpRaftTransportSlowlorisTest} — 2 admission/idle-deadline negatives;</li>
- *   <li>{@code TcpRaftTransportBlackholeTest} — 2 RR-002 caller-release regressions.</li>
+ *   <li>{@code TcpRaftTransportSlowlorisTest} - 2 admission/idle-deadline negatives;</li>
+ *   <li>{@code TcpRaftTransportBlackholeTest} - 2 caller-release regressions.</li>
  * </ul>
  *
- * <p>It also adds TWO mutual-auth negatives the per-transport tests left implicit (charter §2.4
- * completeness): a client whose end-entity is signed by an untrusted CA, and a client presenting no
- * certificate at all against the {@code setNeedClientAuth(true)} server.
+ * <p>It also adds two mutual-auth negatives: a client whose end-entity is signed by an untrusted CA,
+ * and a client presenting no certificate at all against the {@code setNeedClientAuth(true)} server.
  *
  * <h2>Observation discipline (TLS 1.3 timing)</h2>
  * On the consensus plane the only secure, attack-agnostic observation is "did a decoded peer frame
  * reach the inbound handler?". In TLS 1.3 the client {@code startHandshake()} can return before the
  * server's rejection lands, so each negative test drives a bounded send/observation window and
- * asserts the inbound handler count stays at zero — the mirror of {@code find0051}'s "no message
- * reached peer B". Only construction differs across transports; the attacker is always a bare socket.
+ * asserts the inbound handler count stays at zero. Only construction differs across transports; the
+ * attacker is always a bare socket.
  *
- * <h2>RR-094 fixture discipline</h2>
+ * <h2>Fixture discipline</h2>
  * Every keytool subprocess is hoisted into one {@code @BeforeAll static} fixture (cached temp dir,
  * {@code @AfterAll} cleanup), which JUnit runs once per concrete subclass and does NOT subject to the
  * class {@link Timeout}. The TLS/keytool tests carry a generous method-level {@code @Timeout(120)} for
- * pure hang detection on the throttled 2-vCPU box, never a perf assertion; synchronization uses
- * latches / bounded polling, never {@code sleep} (except where a folded JDK test body uses it
- * verbatim).
+ * pure hang detection, never a perf assertion; synchronization uses latches / bounded polling, never
+ * {@code sleep} (except where a folded JDK test body uses it verbatim).
  */
 @Timeout(120)
 abstract class AbstractRaftTransportContract {
@@ -106,17 +104,15 @@ abstract class AbstractRaftTransportContract {
     /** Bare attacker sockets (slowloris / cap legs); closed in {@link #tearDown}. */
     private final List<Socket> attackers = new ArrayList<>();
 
-    // ---- merged TLS fixture (find0051 + mTLS-attack + the two new mutual-auth negatives) ----
     private static Path fixtureDir;
 
-    // find0051: a server cert whose SAN covers ONLY "localhost" (so a client targeting 127.0.0.2
+    // Server cert whose SAN covers ONLY "localhost" (so a client targeting 127.0.0.2
     // fails endpoint identification even though the cert is otherwise trusted).
     private static Path f0051KeyStore;
     private static Path f0051TrustStore;
     private static Path f0051Cert;
 
-    // mTLS-attack: server identity + trust store, a legit/trusted client, a CA, and a CA-signed
-    // expired end-entity.
+    // Server identity + trust store, a legit/trusted client, a CA, and a CA-signed expired end-entity.
     private static Path serverKeyStore;
     private static Path serverTrustStore;
     private static Path clientKeyStore;    // legit, trusted (the downgrade attack's credential)
@@ -129,7 +125,7 @@ abstract class AbstractRaftTransportContract {
     static void generateTlsFixture() throws Exception {
         fixtureDir = Files.createTempDirectory("configd-raft-transport-contract-");
 
-        // ---- find0051 fixture (TcpRaftTransportTest): SAN only matches "localhost", not 127.0.0.2.
+        // Hostname-verification fixture: SAN only matches "localhost", not 127.0.0.2.
         f0051KeyStore = fixtureDir.resolve("f0051-ks.p12");
         f0051TrustStore = fixtureDir.resolve("f0051-ts.p12");
         f0051Cert = fixtureDir.resolve("f0051.pem");
@@ -154,7 +150,7 @@ abstract class AbstractRaftTransportContract {
                 "-storepass", "changeit", "-storetype", "PKCS12",
                 "-noprompt");
 
-        // ---- mTLS-attack fixture (RaftTransportMtlsAttackTest), merged verbatim.
+        // mTLS-attack fixture.
         serverKeyStore = fixtureDir.resolve("server-ks.p12");
         serverTrustStore = fixtureDir.resolve("server-ts.p12");
         clientKeyStore = fixtureDir.resolve("client-ks.p12");
@@ -164,9 +160,9 @@ abstract class AbstractRaftTransportContract {
         Path clientCert = fixtureDir.resolve("client.pem");
         Path caCert = fixtureDir.resolve("ca.pem");
 
-        // SAN covers 127.0.0.1 so the CLIENT's HTTPS endpoint identification (F-0051) is satisfied
-        // for the legit/downgrade tests — the rejection under test must come from the attack, not
-        // from an incidental SAN mismatch.
+        // SAN covers 127.0.0.1 so the client's HTTPS endpoint identification is satisfied for the
+        // legit/downgrade tests - the rejection under test must come from the attack, not from an
+        // incidental SAN mismatch.
         genKeyPair(serverKeyStore, "server", "CN=localhost,O=configd-test", "-validity", "1");
         genKeyPair(clientKeyStore, "client", "CN=raft-peer-1,O=configd-test", "-validity", "1");
         exportCert(serverKeyStore, "server", serverCert);
@@ -174,7 +170,7 @@ abstract class AbstractRaftTransportContract {
 
         // A CA, and an expired END-ENTITY client signed by it. The truststore anchors at the CA, so
         // path validation reaches the leaf and enforces its dead validity window (notAfter ~1 day
-        // ago). A self-signed expired LEAF imported as an anchor would be accepted (RFC 5280 §6.1),
+        // ago). A self-signed expired LEAF imported as an anchor would be accepted (RFC 5280 section 6.1),
         // so the CA layer is what makes this a meaningful expiry test.
         genCa(caKeyStore, "CN=configd-test-ca,O=configd-test");
         exportCert(caKeyStore, "ca", caCert);
@@ -187,9 +183,9 @@ abstract class AbstractRaftTransportContract {
         importCert(serverTrustStore, "client", clientCert);
         importCert(serverTrustStore, "ca", caCert);
 
-        // ---- NEW mutual-auth negative: a client signed by a DIFFERENT CA the server does NOT trust.
-        // Built like the expired end-entity but valid-dated, and the signing CA is deliberately never
-        // imported into serverTrustStore, so the server's PKIX path build cannot reach an anchor.
+        // Mutual-auth negative: a client signed by a DIFFERENT CA the server does NOT trust.
+        // Built like the expired end-entity but valid-dated; the signing CA is never imported into
+        // serverTrustStore, so the server's PKIX path build cannot reach an anchor.
         untrustedClientKeyStore = fixtureDir.resolve("untrusted-client-ks.p12");
         Path untrustedCaKeyStore = fixtureDir.resolve("untrusted-ca-ks.p12");
         Path untrustedCaCert = fixtureDir.resolve("untrusted-ca.pem");
@@ -231,9 +227,7 @@ abstract class AbstractRaftTransportContract {
         transports.clear();
     }
 
-    // -----------------------------------------------------------------------
-    // construction helpers — the single point that parametrizes over transports
-    // -----------------------------------------------------------------------
+    // Construction helpers - the single point that parametrizes over transports.
 
     /** Calls {@link #newEndpoint} and tracks the result for {@link #tearDown} cleanup. */
     private RaftTransportEndpoint createEndpoint(NodeId self, InetSocketAddress bind,
@@ -251,9 +245,7 @@ abstract class AbstractRaftTransportContract {
         return createEndpoint(self, bindAddress, peers, null, handler);
     }
 
-    // =======================================================================
-    // Functional (folded from TcpRaftTransportTest)
-    // =======================================================================
+    // Functional tests (folded from TcpRaftTransportTest).
 
     @Test
     void sendMessageBetweenTwoNodes() throws Exception {
@@ -606,26 +598,16 @@ abstract class AbstractRaftTransportContract {
         assertEquals(0, receivedMessages.getFirst().frame().payload().length);
     }
 
-    // ========================================================================
-    // F-0051 regression: hostname verification must be enforced on the client
-    // side. If the server certificate's SAN does not cover the hostname that
-    // the client supplied, the TLS handshake must FAIL — even when the cert
-    // is otherwise signed by a CA in the trust store. Without
-    // SSLParameters.setEndpointIdentificationAlgorithm("HTTPS"), any cert
-    // signed by the trust store is accepted, defeating peer pinning.
-    // ========================================================================
-
-    // RR-094: a generous hang-detection budget (120s), not a performance
-    // assertion. The expensive keytool keystore generation is hoisted to
-    // @BeforeAll, so the timed body here is only socket setup plus a few
-    // bounded send attempts and a fixed negative-observation window.
+    // Hostname verification regression: if the server cert's SAN does not cover the client's
+    // target hostname, the TLS handshake must FAIL - even when the cert is otherwise signed by a
+    // CA in the trust store. Without SSLParameters.setEndpointIdentificationAlgorithm("HTTPS"),
+    // any cert signed by the trust store is accepted, defeating peer pinning.
     @Test
     @Timeout(120)
     void find0051_clientHandshakeRejectsCertWithWrongHostname() throws Exception {
-        // The cached fixture holds a self-signed cert whose SAN only covers
-        // "localhost", but the client will target "127.0.0.2". The cert is
-        // otherwise present in the client's trust store, so the *only* reason
-        // the handshake should fail is hostname verification.
+        // The cached fixture holds a self-signed cert whose SAN only covers "localhost", but the
+        // client will target "127.0.0.2". The cert is otherwise present in the client's trust
+        // store, so the only reason the handshake should fail is hostname verification.
         TlsConfig tlsConfig = new TlsConfig(f0051Cert, f0051KeyStore, f0051TrustStore,
                 true, java.util.List.of("TLS_AES_256_GCM_SHA384"),
                 java.util.List.of("TLSv1.3"), "changeit".toCharArray());
@@ -646,7 +628,7 @@ abstract class AbstractRaftTransportContract {
         transportB.start();
         int portB = transportB.localPort();
 
-        // Client targets 127.0.0.2 — the hostname must not be covered by
+        // Client targets 127.0.0.2 - the hostname must not be covered by
         // the SAN, so the handshake must fail.
         RaftTransportEndpoint transportA = createEndpoint(
                 nodeA,
@@ -659,12 +641,9 @@ abstract class AbstractRaftTransportContract {
         FrameCodec.Frame frame = new FrameCodec.Frame(
                 MessageType.HEARTBEAT, 0, 0L, new byte[0]);
 
-        // Without the F-0051 fix: send() succeeds, handshake passes because
-        // endpoint identification is disabled, SAN mismatch is ignored, and
-        // `received` latches to zero.
-        // With the fix: the handshake fails with an SSLHandshakeException
-        // wrapped in IOException; no frame ever arrives at B, so the latch
-        // remains at 1 and await() returns false after timeout.
+        // Without the fix: the handshake passes because endpoint identification is disabled,
+        // SAN mismatch is ignored, and `received` latches to zero.
+        // With the fix: the handshake fails (SSLHandshakeException); no frame arrives at B.
         for (int i = 0; i < 5; i++) {
             try { transportA.send(nodeB, frame); } catch (Exception ignored) {}
             Thread.sleep(100);
@@ -675,9 +654,7 @@ abstract class AbstractRaftTransportContract {
                         + "hostname; a message should NOT have reached peer B.");
     }
 
-    // =======================================================================
-    // mTLS NEGATIVE / attacks (folded from RaftTransportMtlsAttackTest)
-    // =======================================================================
+    // mTLS negative / attack tests (folded from RaftTransportMtlsAttackTest).
 
     @Test
     @Timeout(120)
@@ -686,8 +663,8 @@ abstract class AbstractRaftTransportContract {
         int port = startMtlsServer(serverKeyStore, inboundCount);
 
         // The attacker opens a PLAIN TCP socket (no TLS) and writes a syntactically-valid Raft wire
-        // frame: [4-byte sender NodeId][FrameCodec frame]. Against the TLS-only server this is just
-        // application bytes BEFORE any handshake; the SSLServerSocket treats them as a malformed TLS
+        // frame: [4-byte sender NodeId][FrameCodec frame]. Against the TLS-only server these are
+        // application bytes before any handshake; the SSLServerSocket treats them as a malformed TLS
         // record and tears the connection down. The frame must NEVER reach the inbound handler.
         byte[] wire = raftWire(NodeId.of(7),
                 new FrameCodec.Frame(MessageType.HEARTBEAT, 1, 1L, "plaintext".getBytes()));
@@ -698,10 +675,10 @@ abstract class AbstractRaftTransportContract {
             out.write(wire);
             out.flush();
             // The server, if it speaks plaintext, would decode and dispatch immediately. Read until
-            // EOF/timeout (the server drops the bad TLS record) — a bounded wait, never a hang.
+            // EOF/timeout (the server drops the bad TLS record) - a bounded wait, never a hang.
             drainBriefly(plain.getInputStream());
         } catch (IOException expected) {
-            // Connection reset by the TLS server rejecting the record — also a valid rejection.
+            // Connection reset by the TLS server rejecting the record - also a valid rejection.
         }
 
         // Give any (erroneous) async dispatch a bounded window to surface, then assert silence.
@@ -716,10 +693,9 @@ abstract class AbstractRaftTransportContract {
         AtomicInteger inboundCount = new AtomicInteger();
         int port = startMtlsServer(serverKeyStore, inboundCount);
 
-        // A client presenting an already-expired CA-signed END-ENTITY certificate. The CA is in the
-        // server trust store, so path validation succeeds up to the anchor and the ONLY failure is
-        // the leaf's dead validity window (notAfter in the past) — distinct from the untrusted-CA
-        // case already covered elsewhere.
+        // A client presenting an already-expired CA-signed end-entity certificate. The CA is in the
+        // server trust store, so path validation succeeds up to the anchor and the only failure is
+        // the leaf's dead validity window (notAfter in the past), distinct from the untrusted-CA case.
         SSLContext attacker = clientContext(expiredKeyStore, serverTrustStore);
         boolean rejected = attemptHandshakeAndSend(attacker, port);
 
@@ -735,7 +711,7 @@ abstract class AbstractRaftTransportContract {
 
         // The attacker presents a fully trusted client credential but offers ONLY TLSv1.2. The
         // server is TLSv1.3-only (TlsConfig.protocols()), so there is no common protocol and the
-        // handshake must fail — nothing downgrades below TLSv1.3 (charter §5 version policy).
+        // handshake must fail - nothing downgrades below TLSv1.3.
         SSLContext ctx = clientContext(clientKeyStore, serverTrustStore);
         SSLSocket sock = (SSLSocket) ctx.getSocketFactory().createSocket();
         sock.setEnabledProtocols(new String[]{"TLSv1.2"});
@@ -745,9 +721,7 @@ abstract class AbstractRaftTransportContract {
         assertEquals(0, inboundCount.get(), "no frame may be delivered over a downgraded connection");
     }
 
-    // =======================================================================
-    // NEW mutual-auth negatives (charter §2.4 completeness)
-    // =======================================================================
+    // Mutual-auth negatives.
 
     @Test
     @Timeout(120)
@@ -757,8 +731,8 @@ abstract class AbstractRaftTransportContract {
 
         // A client whose end-entity certificate is signed by a DIFFERENT CA that is NOT in the
         // server trust store. The server's PKIX path build cannot reach a trust anchor, so the
-        // handshake fails. (Distinct from the expired case: here the chain is well-formed and valid,
-        // the failure is purely "untrusted issuer".)
+        // handshake fails. Distinct from the expired case: here the chain is well-formed and valid,
+        // the failure is purely an untrusted issuer.
         SSLContext attacker = clientContext(untrustedClientKeyStore, serverTrustStore);
         boolean rejected = attemptHandshakeAndSend(attacker, port);
 
@@ -774,10 +748,9 @@ abstract class AbstractRaftTransportContract {
         int port = startMtlsServer(serverKeyStore, inboundCount);
 
         // A client that trusts the server but presents NO client certificate (null KeyManagers)
-        // against the setNeedClientAuth(true) server -> mTLS must reject. As with find0051 / the
-        // FanOutServer no-cert case, in TLS 1.3 the client's startHandshake() may return before the
-        // server's need-client-auth rejection lands, so the authoritative check is the zero inbound
-        // count: no decoded peer frame is ever served.
+        // against the setNeedClientAuth(true) server -> must reject. In TLS 1.3 the client's
+        // startHandshake() may return before the server's rejection lands, so the authoritative
+        // check is the zero inbound count: no decoded peer frame is ever served.
         SSLContext noCert = clientContext(null, serverTrustStore);
         boolean rejected = attemptHandshakeAndSend(noCert, port);
 
@@ -786,9 +759,7 @@ abstract class AbstractRaftTransportContract {
                 "no frame may be delivered without a client certificate");
     }
 
-    // =======================================================================
-    // Slowloris / admission cap (folded from TcpRaftTransportSlowlorisTest)
-    // =======================================================================
+    // Slowloris / admission cap (folded from TcpRaftTransportSlowlorisTest).
 
     @Test
     @Timeout(value = 30, unit = TimeUnit.SECONDS)
@@ -801,7 +772,7 @@ abstract class AbstractRaftTransportContract {
 
             Socket attacker = connectAttacker(port);
             // Slow drip: send NOTHING. The server's first readInt() (sender id) blocks, then trips the
-            // 500 ms read-idle deadline and closes the connection — which the attacker observes as EOF.
+            // 500 ms read-idle deadline and closes the connection - which the attacker observes as EOF.
             long t0 = System.nanoTime();
             attacker.setSoTimeout(5_000); // bound the attacker's own read so the test can never hang
             InputStream in = attacker.getInputStream();
@@ -856,15 +827,12 @@ abstract class AbstractRaftTransportContract {
         }
     }
 
-    // =======================================================================
-    // RR-002 blackhole: send must NEVER park the caller (folded from
-    // TcpRaftTransportBlackholeTest)
-    // =======================================================================
+    // Blackhole tests: send must NEVER park the caller (folded from TcpRaftTransportBlackholeTest).
 
     /**
-     * A non-routable destination on 10.255.255.0/24. SYNs sent here are dropped
-     * (no RST), so {@code connect()} parks for the full OS SYN timeout — the same
-     * behaviour an iptables {@code -j DROP} produces against a real peer.
+     * A non-routable destination on 10.255.255.0/24. SYNs sent here are dropped (no RST), so
+     * {@code connect()} parks for the full OS SYN timeout - the same behaviour an iptables
+     * {@code -j DROP} produces against a real peer.
      */
     private static final String BLACKHOLE_HOST = "10.255.255.1";
     private static final int BLACKHOLE_PORT = 9999;
@@ -880,8 +848,8 @@ abstract class AbstractRaftTransportContract {
     private static final long OBSERVE_MS = 10_000;
 
     /**
-     * DISCRIMINATING TEST (RR-002): a {@code send} to a black-holed peer must
-     * release the calling thread within {@link #CALLER_RELEASE_BUDGET_MS}.
+     * A {@code send} to a black-holed peer must release the calling thread within
+     * {@link #CALLER_RELEASE_BUDGET_MS}.
      */
     @Test
     void callingThreadReleasedWhenPeerBlackholed() throws Exception {
@@ -918,7 +886,7 @@ abstract class AbstractRaftTransportContract {
             // timeout. (Post-fix this branch is never taken.)
             String stack = stackSnippet(worker);
             // Give it the rest of the observation window only to enrich the
-            // diagnostic — the assertion has already conceptually failed.
+            // diagnostic - the assertion has already conceptually failed.
             returned.await(OBSERVE_MS - CALLER_RELEASE_BUDGET_MS, TimeUnit.MILLISECONDS);
             fail("RR-002: send() to a black-holed peer did NOT release the calling "
                     + "thread within " + CALLER_RELEASE_BUDGET_MS + "ms — the tick "
@@ -971,9 +939,7 @@ abstract class AbstractRaftTransportContract {
         assertTrue(finished);
     }
 
-    // -----------------------------------------------------------------------
-    // transport starters (route construction through newEndpoint)
-    // -----------------------------------------------------------------------
+    // Transport starters (route construction through newEndpoint).
 
     private int startMtlsServer(Path keyStore, AtomicInteger inboundCount) throws Exception {
         TlsConfig serverTls = new TlsConfig(
@@ -999,7 +965,7 @@ abstract class AbstractRaftTransportContract {
         return t;
     }
 
-    /** Plaintext transport toward a (black-holed) peer (the RR-002 legs). */
+    /** Plaintext transport toward a (black-holed) peer (for the blackhole tests). */
     private RaftTransportEndpoint newTransport(NodeId self, Map<NodeId, InetSocketAddress> peers) {
         return createEndpoint(self, new InetSocketAddress("127.0.0.1", 0), peers, null, msg -> {});
     }
@@ -1017,9 +983,7 @@ abstract class AbstractRaftTransportContract {
         }
     }
 
-    // -----------------------------------------------------------------------
-    // attack helpers (verbatim from RaftTransportMtlsAttackTest)
-    // -----------------------------------------------------------------------
+    // Attack helpers (verbatim from RaftTransportMtlsAttackTest).
 
     /**
      * Builds an {@link SSLSocket} from {@code clientCtx} and runs {@link #attemptHandshakeAndSend}.
@@ -1109,7 +1073,7 @@ abstract class AbstractRaftTransportContract {
         return sb.toString();
     }
 
-    // ---- SSLContext + keystore loading (the FanOutServerMtlsTest pattern) ----
+    // SSLContext + keystore loading.
 
     private static SSLContext clientContext(Path clientKs, Path trustStore) throws Exception {
         KeyManagerFactory kmf = null;
@@ -1121,7 +1085,7 @@ abstract class AbstractRaftTransportContract {
         KeyStore ts = loadStore(trustStore);
         TrustManagerFactory tmf = TrustManagerFactory.getInstance(TrustManagerFactory.getDefaultAlgorithm());
         tmf.init(ts);
-        // TLS context allows 1.2+1.3 by default so the downgrade test can DELIBERATELY restrict the
+        // TLS context allows 1.2+1.3 by default so the downgrade test can deliberately restrict the
         // socket to 1.2; the server's TLSv1.3-only policy is what must reject it.
         SSLContext ctx = SSLContext.getInstance("TLS");
         ctx.init(kmf == null ? null : kmf.getKeyManagers(), tmf.getTrustManagers(), null);
@@ -1136,9 +1100,7 @@ abstract class AbstractRaftTransportContract {
         return ks;
     }
 
-    // -----------------------------------------------------------------------
-    // keytool fixture builders (merged from find0051 + the mTLS-attack tests)
-    // -----------------------------------------------------------------------
+    // Keytool fixture builders.
 
     private static void genKeyPair(Path keyStore, String alias, String dname, String... validity)
             throws Exception {
@@ -1170,9 +1132,9 @@ abstract class AbstractRaftTransportContract {
 
     /**
      * Builds a keystore (alias {@code expired}) holding a CA-signed end-entity cert whose validity
-     * window is already PAST ({@code -startdate -2d -validity 1} → notAfter ~1 day ago), plus the
+     * window is already PAST ({@code -startdate -2d -validity 1}, notAfter ~1 day ago), plus the
      * CA in its chain. The CA's {@code -gencert} stamps the dead window; importing the signed reply
-     * forms the leaf→CA chain the client presents.
+     * forms the leaf-to-CA chain the client presents.
      */
     private static void genCaSignedExpiredEndEntity(Path keyStore, Path caKeyStore, Path caCert,
                                                     String dname) throws Exception {

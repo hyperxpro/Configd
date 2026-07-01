@@ -13,9 +13,8 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import static org.junit.jupiter.api.Assertions.*;
 
 /**
- * RR-066 race fix: a concurrent producer/reader stress test pinning the
- * non-atomic head/tail hazard that {@link FanOutBuffer#deltasSince} had and that
- * {@link FanOutBuffer#readSince} closes.
+ * Concurrent producer/reader stress test pinning the non-atomic head/tail hazard that
+ * {@link FanOutBuffer#deltasSince} had and that {@link FanOutBuffer#readSince} closes.
  *
  * <p>The hazard: a writer laps a reader mid-scan, yielding duplicated or skipped
  * notifications. The cursor-based {@code readSince} contract is that every
@@ -161,12 +160,10 @@ class FanOutBufferRaceTest {
      * {@code ring.set -> head++ -> tail=}), which {@code readSince} conservatively
      * reports as GAP. Because the reader is paced, the data it needs is still
      * retained, so it simply retries and the next {@code readSince(cursor)}
-     * succeeds contiguously — no skip, no duplicate, no permanent loss. This pins
-     * the "happy path stays exactly-once" half of the RR-066 contract.
+     * succeeds contiguously - no skip, no duplicate, no permanent loss.
      *
-     * <p>Pacing is a bounded handoff (a volatile high-water cursor the reader
-     * publishes and the writer spins on) — not a sleep — per the no-sleeps-as-sync
-     * rule.
+     * <p>Pacing is a bounded handoff (a volatile high-water cursor the reader publishes
+     * and the writer spins on) - not a sleep - per the no-sleeps-as-sync rule.
      */
     @Test
     void readerPacedSeesContiguousStreamExactlyOnce() throws InterruptedException {
@@ -209,7 +206,7 @@ class FanOutBufferRaceTest {
                     boolean done = writeDone.await(0, TimeUnit.MILLISECONDS);
                     CommitNotificationSource.Result res = buf.readSince(cursor);
                     if (res.isGap()) {
-                        // Transient eviction window — paced, so our cursor is still
+                        // Transient eviction window - paced, so our cursor is still
                         // retained. Retry; the next read is contiguous. A GAP here
                         // must NEVER cause us to skip or duplicate (verified by the
                         // strict expected-seq check below across retries).

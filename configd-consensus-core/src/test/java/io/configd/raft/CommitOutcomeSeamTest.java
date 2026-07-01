@@ -14,12 +14,11 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * RR-004 / ADR-0033: focused unit tests for the {@code whenCommitOutcome} seam
- * predicates. These directly kill the mutants in the changed region that the
- * end-to-end {@code AckEqualsCommitTest} cannot reach — in particular the
- * term-match predicate that distinguishes COMMITTED from LOST on a surviving
- * registrant whose slot was overwritten by a different term, and the per-index
- * seq threading.
+ * Focused unit tests for the {@code whenCommitOutcome} seam predicates. These
+ * directly kill mutants in the changed region that the end-to-end
+ * {@code AckEqualsCommitTest} cannot reach - in particular the term-match
+ * predicate that distinguishes COMMITTED from LOST on a surviving registrant whose
+ * slot was overwritten by a different term, and the per-index seq threading.
  */
 class CommitOutcomeSeamTest {
 
@@ -103,7 +102,7 @@ class CommitOutcomeSeamTest {
 
         // Register for the SAME index but a higher term than the one that applied.
         // The entry that applied at `index` carries realTerm, so this proposal can
-        // never commit AS this proposal → LOST.
+        // never commit AS this proposal - LOST.
         AtomicReference<CommitOutcome> lost = new AtomicReference<>();
         node.whenCommitOutcome(index, realTerm + 5, lost::set);
 
@@ -112,7 +111,7 @@ class CommitOutcomeSeamTest {
                 "a different term applied at the index must be LOST, not COMMITTED");
         assertEquals(CommitOutcome.NO_SEQ, lost.get().seq(), "LOST carries no commit seq");
 
-        // And the real (index, realTerm) must still be COMMITTED — the predicate is
+        // And the real (index, realTerm) must still be COMMITTED - the predicate is
         // a discriminator, not a blanket LOST.
         AtomicReference<CommitOutcome> committed = new AtomicReference<>();
         node.whenCommitOutcome(index, realTerm, committed::set);
@@ -152,13 +151,13 @@ class CommitOutcomeSeamTest {
     }
 
     /**
-     * The per-index seq must be threaded from {@code apply} — when MULTIPLE
+     * The per-index seq must be threaded from {@code apply} - when MULTIPLE
      * mutations apply in a SINGLE applyCommitted pass, each index's COMMITTED
      * outcome must carry ITS OWN applied-mutation seq, not the seq of the last
      * entry applied in the batch. This kills the mutant that records the current
-     * (latest) sequence for every index instead of the per-entry value (review
-     * finding e.2: "the callback for index reads sequenceCounter() after the
-     * sweep — it gets the seq of the LAST applied mutation").
+     * (latest) sequence for every index instead of the per-entry value: if the wrong
+     * mutant is alive the callback for each index reads sequenceCounter() after the
+     * sweep and gets the seq of the LAST applied mutation, not that index's own seq.
      */
     @Test
     void multipleEntriesAppliedInOnePassEachCarryTheirOwnSeq() {
@@ -190,7 +189,7 @@ class CommitOutcomeSeamTest {
         assertEquals(CommitOutcome.Kind.COMMITTED, oa.get().kind());
         assertEquals(CommitOutcome.Kind.COMMITTED, ob.get().kind());
         assertEquals(CommitOutcome.Kind.COMMITTED, oc.get().kind());
-        // The three seqs must be DISTINCT and strictly increasing by index — proving
+        // The three seqs must be DISTINCT and strictly increasing by index - proving
         // each index reported its own seq, not the batch's last seq.
         long sa = oa.get().seq(), sb = ob.get().seq(), sc = oc.get().seq();
         assertTrue(sa < sb && sb < sc,

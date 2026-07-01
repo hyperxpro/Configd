@@ -9,7 +9,7 @@ import java.util.Objects;
  * reads. A snapshot can be shared across threads without synchronization.
  *
  * @param data      the immutable HAMT containing all config key-value pairs
- * @param version   monotonic sequence number (ADR-0004)
+ * @param version   monotonic sequence number
  * @param timestamp HLC timestamp in milliseconds
  */
 public record ConfigSnapshot(

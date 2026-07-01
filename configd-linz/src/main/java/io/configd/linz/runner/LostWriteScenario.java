@@ -13,7 +13,7 @@ import java.nio.file.Path;
 import java.util.Map;
 
 /**
- * GATE (ii.1) — LOST ACKED WRITE discrimination (design §11.1).
+ * LOST ACKED WRITE discrimination scenario.
  *
  * <p>Schedule: PUT k=T_new -> ack -> a linearizable read-back <b>confirms</b> T_new ->
  * {@code kill -9} the WHOLE cluster -> restart from the same data-dirs -> linearizable
@@ -22,7 +22,7 @@ import java.util.Map;
  *
  * <p>Why a full-cluster crash and why the no-op mutation must be a <i>non-write</i>
  * (not merely a no-op {@code force}): on a real box {@code kill -9} does not drop the
- * OS page cache, so an unfsynced-but-written byte survives a process kill — only true
+ * OS page cache, so an unfsynced-but-written byte survives a process kill - only true
  * power loss drops it. The durability mutation therefore makes the WAL append a
  * genuine no-op (the bytes are never written), so a full-cluster restart loses the
  * committed entry from every node's persisted log; the confirming read pins that it
@@ -59,13 +59,13 @@ public final class LostWriteScenario {
             }
             System.out.println("[lostwrite/" + label + "] leader=node" + leader);
 
-            // 1. PUT T_new (retry until COMMITTED — ADR-0033: a 200 is now quorum-commit;
-            //    a fresh leader can transiently 503 before its term no-op commits) and
-            //    confirm it. A committed write is itself a real linearization point, so if
-            //    the flaky linearizable read-back (the 150ms ReadIndex confirm timeout,
-            //    ADR-0032 [VERIFIED-FAIL]) won't return OK, we record the backbone from the
-            //    committed PUT and additionally require the value is durably applied via the
-            //    reliable default-GET — so the post-restart absence still pins a real loss.
+            // 1. PUT T_new (retry until COMMITTED - a 200 is returned only after quorum-commit;
+            //    a fresh leader can transiently 503 before its term no-op commits) and confirm
+            //    it. A committed write is itself a real linearization point, so if the flaky
+            //    linearizable read-back (150ms ReadIndex confirm timeout) won't return OK, we
+            //    record the backbone from the committed PUT and additionally require the value is
+            //    durably applied via the reliable default-GET - so the post-restart absence
+            //    still pins a real loss.
             ConfigClient.OpResult put = putCommitted(client, cluster, leader, key, token, 8);
             recorder.recordPut(0, key, token, put.status(), put.callNs(), put.retNs());
             if (put.status() != Op.Status.OK) {
@@ -101,7 +101,7 @@ public final class LostWriteScenario {
                 exit(2, "no leader after restart");
             }
 
-            // 3. read k again — does the confirmed value survive? A correct build still
+            // 3. read k again - does the confirmed value survive? A correct build still
             //    has T_new (OK of token); a build whose WAL append is a no-op lost it on
             //    restart (OK of "" / absent). Prefer a linearizable read; if it stays flaky
             //    we fall back to a reliable default-GET poll on the leader so that a genuine
@@ -127,10 +127,10 @@ public final class LostWriteScenario {
     }
 
     /**
-     * Writes {@code value} and retries until the write COMMITS (OK, per ADR-0033 a 200
-     * means quorum-committed). A fresh leader can transiently 503 before its term no-op
-     * commits — expected during stabilization, not the bug under test — so we re-probe the
-     * leader and retry. Returns the committing attempt's result, or the last attempt.
+     * Writes {@code value} and retries until the write COMMITS (OK - a 200 means
+     * quorum-committed). A fresh leader can transiently 503 before its term no-op commits -
+     * expected during stabilization, not the bug under test - so we re-probe the leader
+     * and retry. Returns the committing attempt's result, or the last attempt.
      */
     private static ConfigClient.OpResult putCommitted(ConfigClient client, Cluster cluster,
             int leaderHint, String key, String value, int attempts) throws InterruptedException {

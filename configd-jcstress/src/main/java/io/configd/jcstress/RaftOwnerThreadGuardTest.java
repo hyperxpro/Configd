@@ -10,34 +10,33 @@ import org.openjdk.jcstress.infra.results.II_Result;
 import org.openjdk.jcstress.infra.results.I_Result;
 
 /**
- * Phase 0 — the JMM micro-race complement to {@code RaftNodeConcurrencyStressTest}.
+ * JMM micro-race complement to {@code RaftNodeConcurrencyStressTest}.
  *
  * <p>The macro stress harness ({@code configd-consensus-core}) drives a real {@code RaftNode}
  * through the guarded entry points and proves the {@code assertOwnerThread()} tripwire FIRES on an
- * off-owner call. What it cannot prove — a
- * plain multi-threaded JUnit test runs on a normally-scheduled JVM — is the underlying <em>memory
- * model</em> property the whole net rests on: that the guard has no <b>false negative</b> under
- * aggressive reordering. That is exactly what jcstress is for. This file pins down two JMM facts:
+ * off-owner call. What it cannot prove - a plain multi-threaded JUnit test runs on a
+ * normally-scheduled JVM - is the underlying <em>memory model</em> property the whole net rests on:
+ * that the guard has no <b>false negative</b> under aggressive reordering. That is exactly what
+ * jcstress is for. This file pins down two JMM facts:
  *
  * <ol>
- *   <li><b>No false negative once in service</b> ({@link OwnerGuardNoFalseNegativeInService},
- *       gated/clean) — after a node's owner is bound and the node is published into service, an
+ *   <li><b>No false negative once in service</b> ({@link OwnerGuardNoFalseNegativeInService}) - after a node's owner is bound and the node is published into service, an
  *       off-owner caller is <em>always</em> intercepted by the tripwire. The {@code volatile}
  *       publication of {@code ownerThread} (plus the in-service release/acquire that models a node
- *       being wired before it serves) makes a "saw {@code null}/saw-self" read — which would let an
- *       off-owner mutation slip through undetected — unreachable.</li>
+ *       being wired before it serves) makes a "saw {@code null}/saw-self" read - which would let an
+ *       off-owner mutation slip through undetected - unreachable.</li>
  *   <li><b>The race is real, and binding is mandatory</b> ({@link UnboundGuardIsInertAndRaces},
- *       intentionally FORBIDDEN-hitting, NOT in the gate batch) — an <em>unbound</em> node's guard
- *       is inert (production's state today), so two off-owner threads racing its non-volatile
- *       consensus state reach a lost update. This is the corruption the bound guard catches, and the
- *       proof that {@code bindOwnerThread()} must be wired in Workstream B for the net to bite. It is
- *       the consensus-framed twin of {@link HarnessSelfTest.KnownRacyCounter}: a detector you have
- *       never seen fire is not a detector.</li>
+ *       intentionally FORBIDDEN-hitting) - an <em>unbound</em> node's guard
+ *       is inert, so two off-owner threads racing its non-volatile consensus state reach a lost
+ *       update. This is the corruption the bound guard catches, and the proof that
+ *       {@code bindOwnerThread()} must be wired for the net to bite. It is the consensus-framed
+ *       twin of {@link HarnessSelfTest.KnownRacyCounter}: a detector you have never seen fire is
+ *       not a detector.</li>
  * </ol>
  *
- * <p>Both {@code @State} classes mirror the R-01' tripwire <b>verbatim</b> from {@code
- * RaftNode.java} — the {@code private volatile Thread ownerThread} field and the
- * {@code assertOwnerThread()} comparison shape — because the property under test is a property of
+ * <p>Both {@code @State} classes mirror the owner-thread tripwire <b>verbatim</b> from
+ * {@code RaftNode.java} - the {@code private volatile Thread ownerThread} field and the
+ * {@code assertOwnerThread()} comparison shape - because the property under test is a property of
  * those exact field declarations, not of the surrounding protocol logic. The real {@code RaftNode}
  * integration (binding, every guarded entry point, the marshalling discipline) is covered by the
  * macro harness; here we isolate the concurrency primitive so jcstress can hammer it.
@@ -54,24 +53,23 @@ public final class RaftOwnerThreadGuardTest {
     private static final int FALSE_NEGATIVE = 2;
 
     /**
-     * GATED / CLEAN. The load-bearing net property: <b>no false negative in service.</b>
+     * The load-bearing net property: <b>no false negative in service.</b>
      *
-     * <p>{@code owner} binds itself as the node's owner (the R-01' rule: bind is the first task on
-     * the owner executor) and then publishes {@code inService = true} — modelling the node being
-     * wired into the routing/serving path only after it is bound. {@code foreign} is a mis-marshalled
+     * <p>{@code owner} binds itself as the node's owner (bind is the first task on the owner
+     * executor) and then publishes {@code inService = true} - modelling the node being wired into
+     * the routing/serving path only after it is bound. {@code foreign} is a mis-marshalled
      * off-owner caller:
      *
      * <ul>
      *   <li>if it arrives <em>before</em> the in-service publish it sees the inert pre-bind window
-     *       (acceptable — production binds before serving, so this window is closed in prod; it is
-     *       the H-6 bind-timing hazard made observable);</li>
+     *       (acceptable - production binds before serving, so this window is closed in prod);</li>
      *   <li>if it arrives <em>after</em>, the {@code volatile} write of {@code ownerThread}
      *       (program-order before the {@code inService} release) is visible across the matching
      *       acquire, so the guard observes a non-null owner that is not this thread and FIRES.</li>
      * </ul>
      *
-     * The {@link #FALSE_NEGATIVE} outcome — in service, yet the guard read {@code null}/self and an
-     * off-owner mutation would proceed — is forbidden by the JMM and must never be observed. If
+     * The {@link #FALSE_NEGATIVE} outcome - in service, yet the guard read {@code null}/self and an
+     * off-owner mutation would proceed - is forbidden by the JMM and must never be observed. If
      * jcstress ever reports it, the tripwire has a visibility hole and every "off-owner access is
      * caught" claim downstream is worthless.
      */
@@ -83,9 +81,9 @@ public final class RaftOwnerThreadGuardTest {
     @Outcome(id = "2", expect = Expect.FORBIDDEN, desc = "FALSE NEGATIVE — in service but guard saw null/self → an off-owner mutation would escape undetected")
     public static class OwnerGuardNoFalseNegativeInService {
 
-        // Verbatim mirror of the R-01' tripwire state (RaftNode.java: `private volatile Thread
-        // ownerThread`). `inService` is the release/acquire that models the node being published
-        // into the serving path AFTER bindOwnerThread() — bind is the first task on the owner.
+        // Verbatim mirror of the owner-thread tripwire state (RaftNode.java: private volatile Thread
+        // ownerThread). inService is the release/acquire that models the node being published
+        // into the serving path AFTER bindOwnerThread() - bind is the first task on the owner.
         volatile Thread ownerThread;
         volatile boolean inService;
 
@@ -98,7 +96,7 @@ public final class RaftOwnerThreadGuardTest {
         @Actor
         public void foreign(I_Result r) {
             if (!inService) {                       // volatile acquire
-                r.r1 = PRE_SERVICE_INERT;           // arrived before the node served — inert window
+                r.r1 = PRE_SERVICE_INERT;           // arrived before the node served - inert window
                 return;
             }
             // In service: assertOwnerThread() must see a non-null owner that is NOT this thread and
@@ -111,12 +109,12 @@ public final class RaftOwnerThreadGuardTest {
     }
 
     /**
-     * NOT GATED — intentionally FORBIDDEN-hitting ("test the tester"). Proves the hazard is real:
+     * Intentionally FORBIDDEN-hitting ("test the tester"). Proves the hazard is real:
      * an <b>unbound</b> node's guard is inert, so the non-volatile consensus state it is supposed to
      * protect genuinely suffers a lost update when two threads touch it off-owner. This is the exact
-     * corruption {@code bindOwnerThread()} + the tripwire prevent — and the reason production (which
-     * does not yet bind) is unsafe to re-thread until Workstream B wires the bind. Run standalone,
-     * never in the curated/gate batch (a green run here would be a harness failure, like
+     * corruption {@code bindOwnerThread()} + the tripwire prevent - and the reason production
+     * without binding is unsafe to re-thread. Run standalone, never in the curated/gate batch
+     * (a green run here would be a harness failure, like
      * {@link HarnessSelfTest.KnownRacyCounter}).
      */
     @JCStressTest
@@ -128,17 +126,17 @@ public final class RaftOwnerThreadGuardTest {
     @Outcome(id = "1, 1", expect = Expect.FORBIDDEN, desc = "LOST UPDATE through the inert (unbound) guard — off-owner consensus-state corruption")
     public static class UnboundGuardIsInertAndRaces {
 
-        // Verbatim field; DELIBERATELY never bound (production today). `consensusState` mirrors a
+        // Verbatim field; DELIBERATELY never bound. `consensusState` mirrors a
         // RaftNode non-volatile O-class field (e.g. currentTerm) whose safety rests on single-owner
         // access, not on atomics.
         volatile Thread ownerThread;
         int consensusState;
 
-        /** Mirror of assertOwnerThread() + a guarded RMW, with NO bind → the guard is inert. */
+        /** Mirror of assertOwnerThread() + a guarded RMW, with NO bind (the guard is inert). */
         private int guardedIncrement() {
             Thread owner = ownerThread;
             if (owner != null && owner != Thread.currentThread()) {
-                return -1;                  // would fire if bound — never taken here (unbound)
+                return -1;                  // would fire if bound - never taken here (unbound)
             }
             return ++consensusState;        // non-atomic RMW reached through the inert guard
         }

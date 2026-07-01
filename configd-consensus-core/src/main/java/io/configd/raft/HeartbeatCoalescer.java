@@ -13,24 +13,16 @@ import java.util.Set;
  * multiple groups sharing one owner thread, so that one network message per peer carries every
  * group's liveness instead of one message per group per peer.
  * <p>
- * This is the CockroachDB/TiKV technique (ADR-0010) for removing heartbeat amplification with many
+ * This is the CockroachDB/TiKV technique for removing heartbeat amplification with many
  * Raft groups. Without coalescing, N groups each send a heartbeat to every peer independently,
- * O(N&nbsp;*&nbsp;peers) messages per heartbeat interval; with coalescing the owner records each group's
- * heartbeat intent during its tick and drains them into one batched message per peer — O(peers),
- * flat in the group count. See {@code docs/phase0-B-stage2-m3/design.md}.
+ * O(N * peers) messages per heartbeat interval; with coalescing the owner records each group's
+ * heartbeat intent during its tick and drains them into one batched message per peer - O(peers),
+ * flat in the group count.
  * <p>
- * <b>Phase 0 — Workstream B — M3.</b> Relocated here from {@code io.configd.replication} and repurposed
- * from an intent-only tracker to a <em>payload-carrying</em> buffer: it stores the actual
- * {@link AppendEntriesRequest} per (peer, group) so the drain can send it. The earlier time-window
- * ({@code shouldFlush}/{@code coalescingWindowNanos}) was deliberately DROPPED — a window that holds a
- * heartbeat past a tick slips the election timeout (RR-113's failure mode). Coalescing is scoped to a
- * single tick by an explicit collecting window ({@link #beginTick()} … {@link #drainAndEndTick()}); the
- * owner drains unconditionally at the end of every tick, so the added latency is ~zero.
- * <p>
- * <b>Threading.</b> Single-threaded, no synchronization — exactly ONE coalescer per owner thread, and
+ * <b>Threading.</b> Single-threaded, no synchronization - exactly ONE coalescer per owner thread, and
  * every method runs on that owner thread (records happen inside {@code node.tick()}; the window
  * open/drain happen in the owner's {@code tickOwner} task). It is never shared across owner threads
- * (that would race the {@link HashMap} and break the threading-contract §2 per-owner isolation).
+ * (that would race the {@link HashMap} and break the threading-contract section 2 per-owner isolation).
  */
 public final class HeartbeatCoalescer {
 
@@ -40,16 +32,16 @@ public final class HeartbeatCoalescer {
      * {@link LinkedHashMap} so the drain replays heartbeats in record order (= the leader's {@code peersOf}
      * broadcast order). This preserves the per-tick send payloads and the heartbeat send order; note it is
      * NOT byte-identical to the un-coalesced path on a tick that mixes a buffered heartbeat with an
-     * immediately-sent entry-carrying AppendEntries (the heartbeat now drains after it), so the M3 sim
-     * seed-sweep is a re-established baseline — green on the new trajectory (D-020 review, finding 1).
+     * immediately-sent entry-carrying AppendEntries (the heartbeat now drains after it), so the sim
+     * seed-sweep is a re-established baseline - green on the new trajectory.
      */
     private final Map<NodeId, Map<Integer, AppendEntriesRequest>> pending = new LinkedHashMap<>();
 
     /**
      * True while the owner is inside a tick window (between {@link #beginTick()} and
      * {@link #drainAndEndTick()}). Heartbeats are coalesced ONLY while collecting; a heartbeat emitted
-     * outside the window (e.g. from an inbound or propose task) is not buffered — the caller sends it
-     * immediately, so it is never delayed to the next tick (red-team finding H-1).
+     * outside the window (e.g. from an inbound or propose task) is not buffered  -  the caller sends it
+     * immediately, so it is never delayed to the next tick.
      */
     private boolean collecting;
 

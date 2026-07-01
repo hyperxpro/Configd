@@ -23,13 +23,13 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * Multi-Raft Phase 1 — the verification-machinery-FIRST test (charter §2). Proves the multi-shard
+ * The verification-machinery-FIRST test (charter section 2). Proves the multi-shard
  * simulator + the six new invariants are both <b>sound</b> (GREEN under a correct router) and
  * <b>NON-VACUOUS</b> (a deliberately-broken router / injected bug drives a RED for each new invariant).
- * This test is the backlog made executable; nothing in C1–C5 starts until it is green and proven
+ * This test is the backlog made executable; nothing starts until it is green and proven
  * non-vacuous (an injected mis-route / wrong-shard-write goes RED).
  *
- * <p>Invariant → test map:
+ * <p>Invariant - test map:
  * <ul>
  *   <li>Routing correctness ............ {@link #routingCorrectness_keyAlwaysResolvesToOneShard} (green) /
  *       {@link #nonVacuity_nonFunctionalRouter_failsRouting} (RED)</li>
@@ -40,7 +40,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  *   <li>Cross-shard isolation .......... {@link #crossShardIsolation_oneShardStallDoesNotStopOthers} (green) /
  *       the leak that would break it is caught RED by {@link #nonVacuity_crossShardRedirect_failsDisjointOwnership}</li>
  *   <li>Stale-map redirect (exactly-once) {@link #staleLeaderRedirect_recoversTheWrite} (green) /
- *       {@link #nonVacuity_noRedirect_losesTheWrite} (RED — write lost without redirect)</li>
+ *       {@link #nonVacuity_noRedirect_losesTheWrite} (RED - write lost without redirect)</li>
  *   <li>N=1 equivalence ................ {@link #nEqualsOne_byteIdenticalToSingleGroup} (green) /
  *       {@link #nonVacuity_droppedOpAtN1_divergesFromSingleGroup} (RED)</li>
  * </ul>
@@ -77,7 +77,7 @@ class MultiShardSimTest {
     void nonVacuity_nonFunctionalRouter_failsRouting() {
         MultiShardSim sim = new MultiShardSim(1L, 4, R, ShardRouters.rotating(4), Set.of());
         // Routing stability is checked BEFORE proposing, so no leaders are needed: the 2nd write of the
-        // same key resolves to a different shard than the 1st → SafetyViolation.
+        // same key resolves to a different shard than the 1st -> SafetyViolation.
         sim.write("client", "svc/cfg/key-0", 0);
         SimInvariants.SafetyViolation ex = assertThrows(SimInvariants.SafetyViolation.class,
                 () -> sim.write("client", "svc/cfg/key-0", 1),
@@ -100,7 +100,7 @@ class MultiShardSimTest {
 
     /**
      * NON-VACUITY: a redirect that crosses to the WRONG shard writes a key onto a shard that does not own
-     * it → checkDisjointOwnership RED. This is also the leak that would break cross-shard isolation, so it
+     * it -> checkDisjointOwnership RED. This is also the leak that would break cross-shard isolation, so it
      * doubles as the isolation non-vacuity proof.
      */
     @Test
@@ -136,7 +136,7 @@ class MultiShardSimTest {
         sim.applyOps(sim.generateOps(20), 5);
         sim.drain(80);
         // Reset the progress witnesses (baseline = settled version), then KILL shard 0 (majority isolated
-        // → no quorum → full stall).
+        // -> no quorum -> full stall).
         for (int s = 0; s < 3; s++) sim.commitsAdvancedOn(s);
         sim.faultShardMajority(0);
 
@@ -154,7 +154,7 @@ class MultiShardSimTest {
                 "cross-shard isolation: a dead shard 0 must NOT stop the other shards committing");
         // Shard 0 recovers once healed (no permanent damage from the isolation). Disjoint ownership is
         // always sound; no-loss is NOT asserted here (writes accepted by shard 0's isolated old leader
-        // legitimately never committed — RR-004 — which is not a redirect bug).
+        // legitimately never committed (ack != commit), which is not a redirect bug).
         sim.healAllShards();
         sim.drain(2500);
         sim.checkDisjointOwnership();
@@ -174,7 +174,7 @@ class MultiShardSimTest {
         sim.drain(80);
         for (int s = 0; s < 3; s++) sim.commitsAdvancedOn(s); // baseline the witnesses
         for (int s = 0; s < 3; s++) sim.faultShardMajority(s); // kill EVERY shard (no quorum anywhere)
-        sim.drain(300); // lagging replicas catch up here — the OLD sum witness would falsely rise
+        sim.drain(300); // lagging replicas catch up here - the OLD sum witness would falsely rise
         for (int s = 0; s < 3; s++) {
             assertFalse(sim.commitsAdvancedOn(s),
                     "a dead shard (lost quorum) must report NO new-commit progress — replica catch-up is "
@@ -194,14 +194,14 @@ class MultiShardSimTest {
         int s = sim.shardMap().shardFor(MultiShardSim.SCOPE, key);
         int leader = sim.shard(s).findLeader();
         sim.setCachedLeader(s, (leader + 1) % R); // stale: a non-leader
-        sim.write("client", key, 0);             // rejected by the non-leader → redirect → retry on leader
+        sim.write("client", key, 0);             // rejected by the non-leader -> redirect -> retry on leader
         sim.drain(200);
         assertEquals("client:0", sim.committedValueOf(key),
                 "a correct intra-shard redirect must recover the write (no loss)");
         sim.checkAll(); // and never scattered the key across shards
     }
 
-    /** NON-VACUITY: with redirect DISABLED, the stale-leader write is never accepted → lost. */
+    /** NON-VACUITY: with redirect DISABLED, the stale-leader write is never accepted -> lost. */
     @Test
     void nonVacuity_noRedirect_losesTheWrite() {
         MultiShardSim sim = new MultiShardSim(2L, 2, R, new StaticShardMap(2),
@@ -211,7 +211,7 @@ class MultiShardSimTest {
         int s = sim.shardMap().shardFor(MultiShardSim.SCOPE, key);
         int leader = sim.shard(s).findLeader();
         sim.setCachedLeader(s, (leader + 1) % R);
-        sim.write("client", key, 0); // rejected by the non-leader; no redirect → never reaches a leader
+        sim.write("client", key, 0); // rejected by the non-leader; no redirect -> never reaches a leader
         sim.drain(200);
         assertNull(sim.committedValueOf(key),
                 "without redirect, the stale-leader write MUST be lost (the non-vacuity proof)");
@@ -225,7 +225,7 @@ class MultiShardSimTest {
     @MethodSource("smallSweep")
     void nEqualsOne_byteIdenticalToSingleGroup(long seed) {
         // Generate one op stream, drive it through BOTH the N=1 multi-shard sim and a bare single-group
-        // control on the identical per-shard seed; the committed key→value views must be identical.
+        // control on the identical per-shard seed; the committed key->value views must be identical.
         MultiShardSim sim = new MultiShardSim(seed, 1, R, new StaticShardMap(1), Set.of());
         List<MultiShardSim.Op> ops = sim.generateOps(60);
         sim.electAllLeaders(ELECT_TICKS);
@@ -238,7 +238,7 @@ class MultiShardSimTest {
         assertTrue(multi.size() >= 5,
                 "N=1 equivalence would be vacuous if nothing committed (seed=" + seed + ", committed="
                         + multi.size() + ") — the cluster must elect + commit for the comparison to mean anything");
-        // FULL-MAP comparison is load-bearing: a size-only check is vacuous (red-team Exp 3b — a dropped
+        // FULL-MAP comparison is load-bearing: a size-only check is vacuous (red-team Exp 3b - a dropped
         // write re-written by a later op keeps the key count identical while the value diverges).
         assertEquals(control, multi,
                 "N=1 multi-shard committed state must be byte-identical to the single-group control");
@@ -247,9 +247,9 @@ class MultiShardSimTest {
     /** NON-VACUITY: at N=1, dropping ops makes the multi-shard committed state diverge from the control. */
     @Test
     void nonVacuity_droppedOpAtN1_divergesFromSingleGroup() {
-        // Deterministic: DROP_OP_AT_N1 skips every 7th op (indices 0,7,14,…); divergence requires at
+        // Deterministic: DROP_OP_AT_N1 skips every 7th op (indices 0,7,14,...); divergence requires at
         // least one skipped op to be the LAST writer of its key. With 60 ops over a 40-key space, seed 3
-        // deterministically satisfies that — the sim is a pure function of the seed, so this is stable.
+        // deterministically satisfies that - the sim is a pure function of the seed, so this is stable.
         long seed = 3L;
         MultiShardSim sim = new MultiShardSim(seed, 1, R, new StaticShardMap(1),
                 Set.of(MultiShardSim.Bug.DROP_OP_AT_N1));
@@ -282,7 +282,7 @@ class MultiShardSimTest {
         sim.healAllShards();
         sim.drain(400);
         // Disjoint ownership is always sound; no-loss is not asserted here (a mid-run leader fault can
-        // leave an accepted-but-uncommitted write that legitimately never commits — RR-004).
+        // leave an accepted-but-uncommitted write that legitimately never commits (ack != commit).
         sim.checkDisjointOwnership();
     }
 
@@ -313,7 +313,7 @@ class MultiShardSimTest {
     }
 
     static LongStream fullSweep() {
-        // Default small for fast PR CI; C5 cranks this to >=10k via the system property (gate nightly).
+        // Default small for fast CI; cranked to >=10k via the system property for nightly gate runs.
         return LongStream.range(0, Integer.getInteger("configd.multiShard.seedSweep.count", 40));
     }
 
@@ -321,7 +321,7 @@ class MultiShardSimTest {
      * A bare single-group control: replays the SAME op stream (positional tokens, intra-shard redirect)
      * against one {@link ConsistencyPropertyTests.ClusterHarness} seeded EXACTLY as the N=1 multi-shard
      * sim seeds its one shard ({@code mix(seed,0)}). With the same seed + ops, the committed view must
-     * match the N=1 multi-shard view — proving the routing layer is transparent at N=1.
+     * match the N=1 multi-shard view - proving the routing layer is transparent at N=1.
      */
     private static Map<String, String> singleGroupControl(long seed, List<MultiShardSim.Op> ops, int ticksPerOp) {
         ConsistencyPropertyTests.ClusterHarness h = new ConsistencyPropertyTests.ClusterHarness(

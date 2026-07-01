@@ -6,8 +6,8 @@ import java.util.Objects;
 import java.util.Set;
 
 /**
- * An immutable snapshot of the <b>config-sourced</b> authorization policy (O-6 Seam 2a): the role
- * definitions and principal→role bindings loaded from the reserved {@code _acl/} key subtree.
+ * An immutable snapshot of the config-sourced authorization policy: the role definitions and
+ * principal-to-role bindings loaded from the reserved {@code _acl/} key subtree.
  * <p>
  * This is a SEPARATE, additive layer on top of {@link AclService}'s static imperative grant layer (the
  * per-prefix {@code acls} grants plus the imperative {@code defineRole}/{@code assignRole} maps). It is
@@ -18,8 +18,8 @@ import java.util.Set;
  * always safe.
  * <p>
  * <b>Empty by default ({@link #EMPTY}).</b> Production deploys define no {@code _acl/} keys, so the
- * config-policy snapshot is empty and contributes nothing to any authorization decision — every decision is
- * byte-identical to the pre-Seam-2a own-grants(+static-roles) evaluation.
+ * config-policy snapshot is empty and contributes nothing to any authorization decision - every decision is
+ * byte-identical to the pre-policy-layer own-grants(+static-roles) evaluation.
  * <p>
  * <b>Roles + bindings only (Vault-shaped).</b> Config authority flows through {@link Role}s (which bundle
  * {@link Policy policies} of literal-prefix {@link PolicyRule}s) and per-principal role bindings; the
@@ -28,11 +28,11 @@ import java.util.Set;
  * principal to the set of role names it holds via config.
  *
  * @param roles    role definitions, keyed by role name (non-null; deeply copied)
- * @param bindings principal → set of config-bound role names (non-null; deeply copied)
+ * @param bindings principal to set of config-bound role names (non-null; deeply copied)
  */
 public record ConfigPolicy(Map<String, Role> roles, Map<String, Set<String>> bindings) {
 
-    /** The empty config-policy: no roles, no bindings — the production default; contributes nothing. */
+    /** The empty config-policy: no roles, no bindings - the production default; contributes nothing. */
     public static final ConfigPolicy EMPTY = new ConfigPolicy(Map.of(), Map.of());
 
     public ConfigPolicy {

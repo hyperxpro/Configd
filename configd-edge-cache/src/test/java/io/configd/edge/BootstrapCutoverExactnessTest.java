@@ -26,22 +26,21 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * C5 (CT-24) cutover-cursor exactness at the edge core, with CRAFTED frames — the test
- * that would catch a cutover-cursor off-by-one in either direction (design draft §1 /
- * screen NOTE C5-1: the exact cutover cursor is the MECHANISM; idempotent apply is
- * defense-in-depth, and this matrix proves the defense actually holds when the mechanism
- * is violated by a buggy/duplicating/skipping delivery):
+ * Cutover-cursor exactness at the edge core, with CRAFTED frames - the test that would
+ * catch a cutover-cursor off-by-one in either direction (the exact cutover cursor is the
+ * MECHANISM; idempotent apply is defense-in-depth, and this matrix proves the defense
+ * actually holds when the mechanism is violated by a buggy/duplicating/skipping delivery):
  * <ul>
- *   <li><b>Exact:</b> snapshot at S → first tail delta S+1 applies; cursor S+1.</li>
- *   <li><b>Off-by-one low (duplicate, S):</b> a redelivery of seq S — whose effect the
- *       snapshot already carries — with DIFFERENT (poisoned) bytes must be refused as
+ *   <li><b>Exact:</b> snapshot at S; first tail delta S+1 applies; cursor S+1.</li>
+ *   <li><b>Off-by-one low (duplicate, S):</b> a redelivery of seq S - whose effect the
+ *       snapshot already carries - with DIFFERENT (poisoned) bytes must be refused as
  *       stale, never double-applied: the snapshot's value survives byte-identically.</li>
  *   <li><b>Off-by-one high (skip, S+2):</b> a first tail delta of S+2 must be refused as
- *       a GAP (never applied, never skipped-over) and must queue the C3 heal directive;
+ *       a GAP (never applied, never skipped-over) and must queue the heal directive;
  *       the subsequent in-order S+1, S+2 then apply each exactly once.</li>
  *   <li><b>Duplicate transfer (same S):</b> a redelivered whole snapshot at the same seq
- *       (the CT-31 self-healing re-send / a dup-channel delivery) is idempotent over
- *       effect: same bytes, same cursor, cutover still exact afterwards.</li>
+ *       (a dup-channel delivery) is idempotent over effect: same bytes, same cursor,
+ *       cutover still exact afterwards.</li>
  * </ul>
  * The INV-M1 monitor is wired in test mode, so any monotonicity regression on the read
  * store fails these tests with an {@link AssertionError} from inside the seam.
@@ -56,7 +55,7 @@ class BootstrapCutoverExactnessTest {
         @Override public long nanoTime() { return timeMs * 1_000_000L; }
     }
 
-    /** Records edge→server frames; offers always succeed. */
+    /** Records edge->server frames; offers always succeed. */
     static final class RecordingSink implements EdgeClientCore.FrameSink {
         final List<EdgeFrame> sent = new ArrayList<>();
         @Override public boolean offer(EdgeFrame frame) {
@@ -83,7 +82,7 @@ class BootstrapCutoverExactnessTest {
         clock = new TestClock();
         sink = new RecordingSink();
         MetricsRegistry metrics = new MetricsRegistry();
-        // testMode=true → an INV-M1 monotonic_read violation throws (fails the test).
+        // testMode=true -> an INV-M1 monotonic_read violation throws (fails the test).
         core = new EdgeClientCore(clock, new InvariantMonitor(metrics, true),
                 metrics.counter(StalenessTracker.IMPLAUSIBLE_METRIC),
                 StrongReadKeyClass.DEFAULT, sink,
@@ -141,8 +140,8 @@ class BootstrapCutoverExactnessTest {
     @Test
     void redeliveredSeqSWithPoisonedBytesIsRefusedNeverDoubleApplied() {
         bootstrap();
-        // The cutover-cursor off-by-one LOW: the wire redelivers seq S — whose effect the
-        // snapshot already carries — but with DIFFERENT bytes (the worst case: a
+        // The cutover-cursor off-by-one LOW: the wire redelivers seq S - whose effect the
+        // snapshot already carries - but with DIFFERENT bytes (the worst case: a
         // double-apply would not be idempotent). It must be discarded as stale.
         core.onFrame(new EdgeFrame.Notify(List.of(notif(S, "k5", "POISONED"))));
         assertEquals(S, core.cursor(), "cursor unchanged by the duplicate");
@@ -174,7 +173,7 @@ class BootstrapCutoverExactnessTest {
                 .resumeCursor(), "the heal carries the REAL cursor S — the server's "
                 + "decideMode then resolves replay vs re-bootstrap");
 
-        // The healed redelivery: S+1 then S+2 in order — each applies exactly once.
+        // The healed redelivery: S+1 then S+2 in order - each applies exactly once.
         core.onFrame(new EdgeFrame.Notify(List.of(
                 notif(S + 1, "k6", "v6"), notif(S + 2, "k7", "v7"))));
         assertEquals(S + 2, core.cursor());
@@ -186,9 +185,9 @@ class BootstrapCutoverExactnessTest {
     @Test
     void duplicatedSnapshotTransferAtTheSameSeqIsIdempotentOverEffect() {
         bootstrap();
-        // The CT-31 self-healing re-send (or a dup channel) delivers the SAME transfer
-        // again. Equal-seq is not backward: it re-applies, and must be a no-op over
-        // effect — same bytes, same cursor, monitor silent.
+        // A dup-channel delivery of the SAME transfer again. Equal-seq is not backward:
+        // it re-applies, and must be a no-op over effect - same bytes, same cursor,
+        // monitor silent.
         deliverSnapshot(bootstrapStateAtS(), S);
         assertEquals(S, core.cursor());
         assertEquals(2, core.snapshotsApplied());
@@ -206,8 +205,8 @@ class BootstrapCutoverExactnessTest {
     @Test
     void backwardSnapshotAfterTailProgressIsRefusedTheCutoverNeverRegresses() {
         bootstrap();
-        // Tail past S, then a STALE transfer (S again) arrives late — e.g. a dup-channel
-        // redelivery landing after tail progress. seq S < cursor S+2 → refused, re-ack.
+        // Tail past S, then a STALE transfer (S again) arrives late - e.g. a dup-channel
+        // redelivery landing after tail progress. seq S < cursor S+2 -> refused, re-ack.
         core.onFrame(new EdgeFrame.Notify(List.of(
                 notif(S + 1, "k6", "v6"), notif(S + 2, "k6", "v6b"))));
         assertEquals(S + 2, core.cursor());

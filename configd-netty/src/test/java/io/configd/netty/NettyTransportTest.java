@@ -16,11 +16,10 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * The three-tier transport selector (M1.2, ADR-0043 / netty42-api.md §1). Pins: a coherent
- * (factory, channel-class) triple per tier; the {@code nio} floor is always available; an
- * unknown forced tier and a forced-but-unavailable tier both fail loud (no silent downgrade — the
- * property that keeps an "we ran on io_uring/epoll" claim honest). The CI gate additionally forces
- * the {@code nio} (and, where available, {@code epoll}) fallback through the whole edge test suite.
+ * Transport selector tests. Pins: a coherent (factory, channel-class) triple per tier; the
+ * {@code nio} floor is always available; an unknown forced tier and a forced-but-unavailable tier
+ * both fail loud (no silent downgrade - the property that keeps an "we ran on io_uring/epoll"
+ * claim honest).
  */
 class NettyTransportTest {
 
@@ -53,8 +52,8 @@ class NettyTransportTest {
 
     @Test
     void autoSelectPrefersEpollAndNeverIoUring() {
-        // Phase V (ADR-0043): io_uring is NOT auto-selected (measured no throughput benefit + a ~2×
-        // fan-out regression; epoll proven faster). Auto picks epoll → nio; io_uring is opt-in only.
+        // io_uring is NOT auto-selected: measured no throughput benefit and a ~2x fan-out
+        // regression vs Epoll; auto-selects epoll -> nio. io_uring is opt-in only.
         String expected = Epoll.isAvailable() ? "epoll" : "nio";
         assertEquals(expected, NettyTransport.select().tier());
         assertNotEquals("io_uring", NettyTransport.select().tier(),

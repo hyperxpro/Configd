@@ -17,13 +17,12 @@ import java.util.EnumSet;
 import java.util.UUID;
 
 /**
- * Persistent Ed25519 signing key store (F-0052).
+ * Persistent Ed25519 signing key store.
  * <p>
- * Previously, {@code ConfigdServer} generated a fresh Ed25519 keypair on every
- * boot, which meant the "signing chain" claim was falsified the moment the
- * leader restarted: edges had no way to associate signatures across restarts,
- * and there was no key rotation mechanism. This class provides a persistent,
- * stable keypair loadable from a file supplied by the operator.
+ * Previously, {@code ConfigdServer} generated a fresh Ed25519 keypair on every boot, which meant
+ * the "signing chain" claim was falsified the moment the leader restarted: edges had no way to
+ * associate signatures across restarts, and there was no key rotation mechanism. This class
+ * provides a persistent, stable keypair loadable from a file supplied by the operator.
  * <p>
  * <b>File format</b> (v1):
  * <pre>
@@ -137,7 +136,7 @@ public final class SigningKeyStore {
                 StandardOpenOption.WRITE);
 
         // Best-effort POSIX 0600. On non-POSIX platforms this will throw
-        // UnsupportedOperationException, which we silently ignore — caller
+        // UnsupportedOperationException, which we silently ignore - caller
         // can audit permissions out-of-band.
         try {
             Files.setPosixFilePermissions(path,
@@ -149,7 +148,7 @@ public final class SigningKeyStore {
         return new SigningKeyStore(keyPair, keyId);
     }
 
-    /** Writes an arbitrary keypair and id — test-only helper. */
+    /** Writes an arbitrary keypair and id - test-only helper. */
     static void writeForTest(Path path, KeyPair keyPair, UUID keyId) throws IOException {
         byte[] privBytes = keyPair.getPrivate().getEncoded();
         byte[] pubBytes = keyPair.getPublic().getEncoded();
@@ -170,7 +169,7 @@ public final class SigningKeyStore {
         PosixFilePermissions.fromString("rw-------");
     }
 
-    /** Utility: format a UUID without dashes — unused currently but handy. */
+    /** Utility: format a UUID without dashes - unused currently but handy. */
     public static String format(UUID id) {
         return id.toString().replace("-", "");
     }

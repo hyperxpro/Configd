@@ -83,8 +83,8 @@ class HistoryWriterUnitTest {
 
     @Test
     void committedOkPutIsKeptAndConfirmBound() throws Exception {
-        // ADR-0033: a 200 is now an OK (committed) PUT. It is a kept write, encoded
-        // exactly like an INFO write — confirm-bound to an observing read, else float.
+        // A 200 is now an OK (committed) PUT. It is a kept write, encoded
+        // exactly like an INFO write - confirm-bound to an observing read, else float.
         List<Op> ops = List.of(
                 new Op(0, "k", Op.Type.PUT, "committed", Op.Status.OK, 10, 10), // 200 Committed
                 new Op(0, "k", Op.Type.READ, "committed", Op.Status.OK, 20, 30) // observes it -> pin to 30

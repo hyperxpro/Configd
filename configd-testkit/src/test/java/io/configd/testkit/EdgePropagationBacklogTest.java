@@ -6,14 +6,14 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * The Phase V1 backlog (RR-001) — NOW GREEN under component C1. With
+ * The propagation backlog - NOW GREEN under the stream driver. With
  * {@link StreamDriver#NONE} this test was the executable backlog (no fan-out service
  * existed, so nothing was ever delivered and it FAILED). It is re-enabled <em>verbatim</em>
- * with the real {@link C1StreamDriver} (= ADR-0034's consumer loop driving the production
+ * with the real {@link C1StreamDriver} (the handoff spec's consumer loop driving the production
  * {@link io.configd.distribution.fanout.FanOutSessionCore}): over a no-edge-fault schedule a
  * healthy edge data plane now (1) delivers every published commit notification within the
- * bound (contract §2 INV-S2) and (2) converges every live edge to the CP leader's
- * authoritative store (contract §1 INV-L1 / §4). The captured pre-implementation failure is
+ * bound (the delivery invariant) and (2) converges every live edge to the CP leader's
+ * authoritative store (contract section 1 / section 4). The captured pre-implementation failure is
  * in {@code docs/session-3/captures/phase-v-backlog-failures.txt}; the now-green capture is
  * {@code docs/session-3/captures/c1-backlog-green.txt}.
  *
@@ -30,7 +30,7 @@ class EdgePropagationBacklogTest {
     /**
      * Over a no-edge-fault schedule, a healthy edge data plane must (1) deliver every
      * published commit notification within the bound and (2) converge every live
-     * edge to the CP leader's authoritative store. With the C1 driver both now hold.
+     * edge to the CP leader's authoritative store. With the stream driver both now hold.
      */
     @Test
     void noFaultScheduleDeliversAndConverges() {

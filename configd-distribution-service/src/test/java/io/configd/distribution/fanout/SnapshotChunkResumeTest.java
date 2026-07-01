@@ -22,24 +22,17 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * Snapshot-transfer failure recovery (CT-31's "resume on failure" clause — RENEGOTIATED;
- * c1-contract-qa-audit REQUIRED gap 2, resolved here by the C3 design).
+ * Snapshot-transfer failure recovery: recovery at the TRANSFER level, not chunk level.
  *
- * <p>Architecture §7 (:272-273) words recovery as chunk-level "resume on failure". The
- * implemented protocol deliberately recovers at the TRANSFER level instead: a snapshot
- * transfer is unacknowledged on the wire ({@code performSnapshotTransfer} never advances
- * {@code lastAckedSeq} — the C1(a) bug-fix 1), so a transfer lost in transit rebuilds
- * ack-lag, the session re-demotes, and the WHOLE snapshot is re-sent until the edge's
- * CURSOR_ACK confirms application. Rationale (C3 design / C1 design-note bug fix 1): a
- * chunk-level resume protocol needs per-chunk acks and transfer-resume session state —
- * new wire surface and new failure modes — while transfers are snapshot-equivalent state
- * whose re-send is idempotent; the lossy-network sim measured the re-send loop healing
- * 100% of dropped transfers (vs ~75% of seeds stranded under the pre-fix optimistic ack).
- * §7's intent (a lost transfer must not strand the edge) is preserved; its mechanism
- * wording is superseded — recorded for the consolidated doc pass.
+ * <p>A snapshot transfer is unacknowledged on the wire ({@code performSnapshotTransfer}
+ * never advances {@code lastAckedSeq}), so a transfer lost in transit rebuilds ack-lag,
+ * the session re-demotes, and the WHOLE snapshot is re-sent until the edge's CURSOR_ACK
+ * confirms application. A chunk-level resume protocol would need per-chunk acks and
+ * transfer-resume session state - new wire surface and new failure modes - while transfers
+ * are snapshot-equivalent state whose re-send is idempotent.
  *
- * <p>This test pins the renegotiated behavior end to end: transfer lost → ack-lag →
- * re-demote → full re-send → edge applies the re-sent transfer → contiguous resume.
+ * <p>This test pins the behavior end to end: transfer lost -> ack-lag -> re-demote ->
+ * full re-send -> edge applies the re-sent transfer -> contiguous resume.
  */
 class SnapshotChunkResumeTest {
 
@@ -68,7 +61,7 @@ class SnapshotChunkResumeTest {
         FanOutSessionCore s = new FanOutSessionCore(buffer, replay, sink, cfg,
                 FanOutSessionMetrics.NOOP, clock);
 
-        // The edge resubscribes far behind the horizon → SNAPSHOT_FIRST.
+        // The edge resubscribes far behind the horizon -> SNAPSHOT_FIRST.
         s.onSubscribe(new EdgeFrame.Subscribe(true, List.of(), 3L, -1L, "edge-r"));
         assertEquals(EdgeFrame.Mode.SNAPSHOT_FIRST,
                 sink.sentOfType(EdgeFrame.SubscribeOk.class).get(0).mode());
@@ -83,7 +76,7 @@ class SnapshotChunkResumeTest {
                         + "this is exactly what makes the lost transfer recoverable");
 
         // While unacked, the ack-lag (20 - 3 > 2) keeps re-demoting and re-sending the
-        // WHOLE transfer — the self-healing re-send loop (idempotent by construction).
+        // WHOLE transfer - the self-healing re-send loop (idempotent by construction).
         sink.clear();
         clock.advance(10);
         s.tick(clock.now());

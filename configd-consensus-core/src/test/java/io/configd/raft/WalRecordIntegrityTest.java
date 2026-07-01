@@ -21,16 +21,16 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * PA-2021 GREEN — at-rest integrity of the WAL records (ADR-0042), and the
+ * Verifies at-rest integrity of the WAL records, and the
  * critical TORN-vs-TAMPER disambiguation (D-1 condition 3).
  * <ul>
  *   <li><b>Tamper:</b> a COMPLETE, FileStorage-CRC32-valid WAL frame whose inner
- *       integrity envelope HMAC fails → replay REFUSES (throws). A write-access
+ *       integrity envelope HMAC fails - replay REFUSES (throws). A write-access
  *       attacker recomputes the per-frame CRC32 trivially (CRC32 is corruption-only,
  *       not authentication), so the HMAC is the control that catches them.</li>
  *   <li><b>Torn:</b> a genuinely truncated trailing record (a partial frame from a
  *       crash mid-append) is dropped by FileStorage's torn-tail rule BEFORE the
- *       envelope is ever checked → recovery succeeds with the prior entries.</li>
+ *       envelope is ever checked - recovery succeeds with the prior entries.</li>
  * </ul>
  */
 class WalRecordIntegrityTest {
@@ -68,7 +68,7 @@ class WalRecordIntegrityTest {
         assertEquals("AAAA", sm.snapshotState().get("k"));
 
         // Flip a value byte inside the WAL record's envelope payload and recompute
-        // the OUTER FileStorage frame CRC32 so readLog accepts the frame — only the
+        // the OUTER FileStorage frame CRC32 so readLog accepts the frame - only the
         // INNER envelope HMAC can detect the tamper.
         Path wal = tempDir.resolve("raft-log.wal");
         byte[] raw = Files.readAllBytes(wal);
@@ -95,7 +95,7 @@ class WalRecordIntegrityTest {
         Map<String, String> committedBeforeTear = sm.snapshotState();
         assertEquals(Map.of("a", "1", "b", "2"), committedBeforeTear);
 
-        // Append a partial frame — a length header claiming more bytes than follow,
+        // Append a partial frame - a length header claiming more bytes than follow,
         // exactly what a crash mid-appendToLog leaves behind. FileStorage.readLog
         // drops this BEFORE the integrity envelope is consulted.
         Path wal = tempDir.resolve("raft-log.wal");
@@ -115,13 +115,13 @@ class WalRecordIntegrityTest {
         assertEquals("2", recovered.get("b"));
     }
 
-    // ---- helpers ----
+    // helpers
 
     /**
      * Walks the {@code [len][data][crc32]} FileStorage frames, flips the first
      * {@code from} byte inside a frame's integrity-envelope PAYLOAD (skipping the
      * envelope header so we tamper the protected bytes, not the magic), and rewrites
-     * that frame's trailing CRC32 so FileStorage.readLog accepts it — leaving only
+     * that frame's trailing CRC32 so FileStorage.readLog accepts it - leaving only
      * the inner envelope HMAC able to detect the tamper.
      */
     private static void tamperWalRecomputingFrameCrc(byte[] wal, byte from, byte to) {

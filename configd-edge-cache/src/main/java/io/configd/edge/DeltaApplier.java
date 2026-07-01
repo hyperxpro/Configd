@@ -26,13 +26,13 @@ import java.util.zip.CRC32C;
  * with invalid signatures are rejected (skipped with a warning log).
  * <p>
  * <b>Threading model:</b> this class is designed to be run on a single
- * dedicated thread (or virtual thread). It is NOT thread-safe — all
+ * dedicated thread (or virtual thread). It is NOT thread-safe - all
  * method calls must be serialized by the caller. This is by design:
  * the single-writer model avoids synchronization on the write path.
  * <p>
  * <b>Gap handling flow:</b>
  * <ol>
- *   <li>Delta arrives with {@code fromVersion} != {@code currentVersion} → gap detected</li>
+ *   <li>Delta arrives with {@code fromVersion} != {@code currentVersion} -> gap detected</li>
  *   <li>{@link #pendingGap()} returns {@code true}, signaling the caller to request a full snapshot</li>
  *   <li>Caller loads the full snapshot via {@link EdgeConfigClient#loadSnapshot}</li>
  *   <li>Caller calls {@link #resetGap()} to clear the gap flag</li>
@@ -46,11 +46,10 @@ public final class DeltaApplier {
     private static final Logger LOG = Logger.getLogger(DeltaApplier.class.getName());
 
     /**
-     * SEC-017 (iter-2): filename of the epoch sidecar inside the snapshot
-     * directory. Layout is fixed at {@code [8B big-endian epoch][4B
-     * big-endian CRC32C(epoch)]} so the file is exactly {@value
-     * #EPOCH_LOCK_BYTES} bytes; any other size is treated as corruption
-     * and silently demoted to {@code epoch = 0}.
+     * Filename of the epoch sidecar inside the snapshot directory. Layout is
+     * fixed at {@code [8B big-endian epoch][4B big-endian CRC32C(epoch)]} so
+     * the file is exactly {@value #EPOCH_LOCK_BYTES} bytes; any other size is
+     * treated as corruption and silently demoted to {@code epoch = 0}.
      */
     static final String EPOCH_LOCK_FILENAME = "epoch.lock";
     private static final int EPOCH_LOCK_BYTES = 12;
@@ -61,9 +60,9 @@ public final class DeltaApplier {
     public enum ApplyResult {
         /** Delta was successfully applied. */
         APPLIED,
-        /** Delta's fromVersion does not match the current version — gap detected. */
+        /** Delta's fromVersion does not match the current version - gap detected. */
         GAP_DETECTED,
-        /** Delta's toVersion is at or behind the current version — stale, ignored. */
+        /** Delta's toVersion is at or behind the current version - stale, ignored. */
         STALE_DELTA,
         /** Delta was rejected because it has no signature and verification is required. */
         UNSIGNED_REJECTED,
@@ -71,7 +70,7 @@ public final class DeltaApplier {
         SIGNATURE_INVALID,
         /**
          * Delta was rejected because its epoch is at or below the highest
-         * previously seen epoch (replay protection, F-0052).
+         * previously seen epoch (replay protection).
          */
         REPLAY_REJECTED
     }
@@ -82,9 +81,9 @@ public final class DeltaApplier {
      * Optional verifier for Ed25519 signature checking. When non-null,
      * every delta must carry a valid signature or it will be rejected.
      * <p>
-     * F-0052: when {@code null}, signed deltas ({@code signature != null})
-     * are rejected fail-closed — operators who forgot to configure a key
-     * do not accidentally accept attacker-signed payloads.
+     * When {@code null}, signed deltas ({@code signature != null}) are
+     * rejected fail-closed -- operators who forgot to configure a key do
+     * not accidentally accept attacker-signed payloads.
      */
     private final ConfigSigner verifier;
 
@@ -95,20 +94,19 @@ public final class DeltaApplier {
     private long lastAppliedVersion;
 
     /**
-     * F-0052: the highest epoch seen in a successfully verified delta.
-     * Any subsequent delta with {@code epoch > 0 && epoch <= highestSeenEpoch}
-     * is rejected as a replay. Legacy deltas with {@code epoch == 0} skip
-     * this check (there is no monotonic ordering to enforce for them).
+     * The highest epoch seen in a successfully verified delta. Any subsequent
+     * delta with {@code epoch > 0 && epoch <= highestSeenEpoch} is rejected
+     * as a replay. Legacy deltas with {@code epoch == 0} skip this check
+     * (there is no monotonic ordering to enforce for them).
      */
     private long highestSeenEpoch;
 
     /**
-     * SEC-017 (iter-2): path to the epoch sidecar file
-     * ({@value #EPOCH_LOCK_FILENAME}) inside the local snapshot directory.
-     * When non-null, every successful epoch advance is persisted (atomic
-     * temp + rename) so a process restart cannot accept an older
-     * leader-signed delta as fresh. When null, persistence is disabled —
-     * legacy / in-memory test path.
+     * Path to the epoch sidecar file ({@value #EPOCH_LOCK_FILENAME}) inside
+     * the local snapshot directory. When non-null, every successful epoch
+     * advance is persisted (atomic temp + rename) so a process restart cannot
+     * accept an older leader-signed delta as fresh. When null, persistence is
+     * disabled - legacy or in-memory test path.
      */
     private final Path epochLockPath;
 
@@ -125,16 +123,16 @@ public final class DeltaApplier {
     }
 
     /**
-     * SEC-017 (iter-2) — full constructor: applier, verifier, and the
-     * directory under which the epoch sidecar ({@value #EPOCH_LOCK_FILENAME})
-     * is read on construction and rewritten on every successful epoch
-     * advance. The sidecar guarantees that a process restart preserves the
-     * highest-seen epoch — without it, a hostile principal could replay an
-     * older leader-signed delta past a restart boundary.
+     * Full constructor: applier, verifier, and the directory under which the
+     * epoch sidecar ({@value #EPOCH_LOCK_FILENAME}) is read on construction
+     * and rewritten on every successful epoch advance. The sidecar guarantees
+     * that a process restart preserves the highest-seen epoch -- without it,
+     * a hostile principal could replay an older leader-signed delta past a
+     * restart boundary.
      *
-     * <p>If {@code snapshotDir} is non-null but the sidecar is absent /
-     * corrupt / unreadable, the applier starts with {@code highestSeenEpoch
-     * = 0} (fail-open for first-boot legacy → migrated nodes). The next
+     * <p>If {@code snapshotDir} is non-null but the sidecar is absent,
+     * corrupt, or unreadable, the applier starts with {@code highestSeenEpoch
+     * = 0} (fail-open for first-boot or legacy migrated nodes). The next
      * successful delta will overwrite the sidecar with a valid record.
      *
      * @param client      the edge config client (non-null)
@@ -153,11 +151,9 @@ public final class DeltaApplier {
     }
 
     /**
-     * Creates a delta applier that applies deltas to the given client.
-     * <p>
-     * <b>F-0052:</b> with no verifier configured, this applier accepts only
+     * Creates a delta applier with no verifier configured. Accepts only
      * <em>unsigned legacy</em> deltas. Any delta carrying a signature is
-     * rejected — an operator who forgot to configure the verifier must not
+     * rejected -- an operator who forgot to configure the verifier must not
      * silently accept attacker-signed payloads. See the two-argument
      * constructor for production wiring.
      *
@@ -168,28 +164,27 @@ public final class DeltaApplier {
     }
 
     /**
-     * Offers a delta for application, threading the leader commit timestamp (ADR-0035 §2 /
-     * ADR-0039) into the staleness frontier on a successful apply. The delta is evaluated
-     * against the client's current version:
+     * Offers a delta for application, threading the leader commit timestamp into the
+     * staleness frontier on a successful apply. The delta is evaluated against the
+     * client's current version:
      * <ul>
      *   <li>If verifier is configured and delta is unsigned: rejected.</li>
      *   <li>If verifier is configured and signature is invalid: rejected.</li>
      *   <li>If {@code delta.toVersion() <= currentVersion}: stale delta, ignored.</li>
      *   <li>If {@code delta.fromVersion() != currentVersion}: gap detected.</li>
-     *   <li>Otherwise: delta is applied and the ADR-0039 frontier advances to
+     *   <li>Otherwise: delta is applied and the covered frontier advances to
      *       {@code commitTimestampMillis}.</li>
      * </ul>
      * <p>
-     * <b>Finding 5 disposition (C3, c2-signoff-review):</b> the one-arg
-     * {@code offer(ConfigDelta)} overload and its {@code NO_COMMIT_TIMESTAMP} local-clock
-     * fallback are DELETED — they re-created the ADR-0039 idle-proxy ("staleness ≡
-     * time-since-last-apply") for any caller that took the convenient path. The commit
-     * timestamp is mandatory and validated; a caller without a leader timestamp passes
-     * its own clock's now EXPLICITLY, stating the meaning at the call site.
+     * The one-arg {@code offer(ConfigDelta)} overload and its {@code NO_COMMIT_TIMESTAMP}
+     * local-clock fallback are DELETED -- they re-created the idle-time-proxy staleness
+     * ("staleness = time-since-last-apply") for any caller that took the convenient path.
+     * The commit timestamp is mandatory and validated; a caller without a leader timestamp
+     * passes its own clock's now EXPLICITLY, stating the meaning at the call site.
      *
      * @param delta                 the delta to apply (non-null)
-     * @param commitTimestampMillis the leader commit timestamp (the §2 staleness clock;
-     *                              must be {@code >= 0} — {@code CommitNotification}
+     * @param commitTimestampMillis the leader commit timestamp (the covered-frontier clock;
+     *                              must be {@code >= 0} - {@code CommitNotification}
      *                              guarantees this on the wire path)
      * @return the result of the apply attempt
      */
@@ -198,14 +193,15 @@ public final class DeltaApplier {
         if (commitTimestampMillis < 0) {
             throw new IllegalArgumentException(
                     "commitTimestampMillis must be >= 0 (the local-clock fallback sentinel "
-                            + "was deleted — Finding 5): " + commitTimestampMillis);
+                            + "was deleted — Finding 5): "
+                            + commitTimestampMillis);
         }
 
         byte[] signature = delta.signature();
 
-        // F-0052 fail-closed: with no verifier configured, signed deltas
-        // must not be trusted. Accepting them silently would reintroduce the
-        // "security claim overstated vs. actual wiring" class of bug.
+        // Fail-closed: with no verifier configured, signed deltas must not be
+        // trusted. Accepting them silently would reintroduce the "security
+        // claim overstated vs. actual wiring" class of bug.
         if (verifier == null && signature != null) {
             LOG.warning("Rejecting signed delta [" + delta.fromVersion()
                     + " -> " + delta.toVersion()
@@ -233,9 +229,9 @@ public final class DeltaApplier {
                 return ApplyResult.SIGNATURE_INVALID;
             }
 
-            // F-0052 replay protection: once we have seen an epoch, any
-            // future delta must advance it. Epoch 0 is "unversioned" and
-            // skipped for back-compat with legacy deltas.
+            // Replay protection: once we have seen an epoch, any future delta
+            // must advance it. Epoch 0 is "unversioned" and skipped for
+            // back-compat with legacy deltas.
             long deltaEpoch = delta.epoch();
             if (deltaEpoch > 0 && deltaEpoch <= highestSeenEpoch) {
                 LOG.warning("Rejecting replay of delta [" + delta.fromVersion()
@@ -247,28 +243,28 @@ public final class DeltaApplier {
 
         long currentVersion = client.currentVersion();
 
-        // Stale delta — already at or past this version
+        // Stale delta - already at or past this version
         if (delta.toVersion() <= currentVersion) {
             return ApplyResult.STALE_DELTA;
         }
 
-        // Gap detection — fromVersion must match current version
+        // Gap detection - fromVersion must match current version
         if (delta.fromVersion() != currentVersion) {
             gapDetected = true;
             return ApplyResult.GAP_DETECTED;
         }
 
-        // Apply the delta (ADR-0038 storage filter inside the client; ADR-0039 frontier
-        // from the leader commit timestamp — always explicit, Finding 5).
+        // Apply the delta (subscription filter inside the client; covered frontier from
+        // the leader commit timestamp -- always passed explicitly by the caller).
         client.applyDelta(delta, commitTimestampMillis);
         lastAppliedVersion = delta.toVersion();
         if (delta.epoch() > highestSeenEpoch) {
             highestSeenEpoch = delta.epoch();
-            // SEC-017 (iter-2): persist the epoch advance so a restart
-            // cannot replay an older leader-signed delta as fresh. Failure
-            // to persist is logged but does not fail the apply — the in-
-            // memory check still rejects replays for the lifetime of the
-            // process; a subsequent advance will retry.
+            // Persist the epoch advance so a restart cannot replay an older
+            // leader-signed delta as fresh. Failure to persist is logged but
+            // does not fail the apply -- the in-memory check still rejects
+            // replays for the lifetime of the process; a subsequent advance
+            // will retry.
             persistEpoch(highestSeenEpoch);
         }
         return ApplyResult.APPLIED;
@@ -276,7 +272,7 @@ public final class DeltaApplier {
 
     /**
      * Returns the highest epoch that has been accepted by this applier.
-     * Exposed for diagnostics and regression tests (F-0052).
+     * Exposed for diagnostics and regression tests.
      */
     public long highestSeenEpoch() {
         return highestSeenEpoch;
@@ -295,10 +291,10 @@ public final class DeltaApplier {
      * @return the canonical byte payload (batch-encoded)
      */
     private byte[] buildVerificationPayload(ConfigDelta delta) {
-        // F-0052: payload binds mutations with epoch and nonce so replayed
-        // deltas re-signed under a fresh epoch cannot be substituted.
-        // Legacy deltas (epoch=0, empty nonce) reduce to the historical
-        // batch-encoded form exactly — byte-identical.
+        // Payload binds mutations with epoch and nonce so replayed deltas
+        // re-signed under a fresh epoch cannot be substituted. Legacy deltas
+        // (epoch=0, empty nonce) reduce to the historical batch-encoded form
+        // exactly -- byte-identical.
         return delta.signingPayload();
     }
 
@@ -333,11 +329,10 @@ public final class DeltaApplier {
     }
 
     /**
-     * SEC-017 (iter-2): reads the persisted epoch from
-     * {@value #EPOCH_LOCK_FILENAME}. Returns 0 if no path is configured,
-     * the file is missing, the wrong size, or the CRC32C check fails.
-     * Any read failure is treated as "no record" — the next successful
-     * delta will rewrite a valid sidecar.
+     * Reads the persisted epoch from {@value #EPOCH_LOCK_FILENAME}. Returns 0
+     * if no path is configured, the file is missing, the wrong size, or the
+     * CRC32C check fails. Any read failure is treated as "no record" -- the
+     * next successful delta will rewrite a valid sidecar.
      */
     private long readPersistedEpoch() {
         if (epochLockPath == null || !Files.exists(epochLockPath)) {
@@ -373,11 +368,11 @@ public final class DeltaApplier {
     }
 
     /**
-     * SEC-017 (iter-2): atomically rewrites {@value #EPOCH_LOCK_FILENAME}
-     * with the given epoch + CRC32C. Uses temp + {@code ATOMIC_MOVE}; falls
-     * back to non-atomic replace on filesystems that don't support it.
-     * I/O failures are logged but not propagated — losing one persistence
-     * round is preferable to crashing the edge cache mid-replay-rejection.
+     * Atomically rewrites {@value #EPOCH_LOCK_FILENAME} with the given epoch
+     * and CRC32C. Uses temp + {@code ATOMIC_MOVE}; falls back to non-atomic
+     * replace on filesystems that do not support it. I/O failures are logged
+     * but not propagated -- losing one persistence round is preferable to
+     * crashing the edge cache mid-replay-rejection.
      */
     private void persistEpoch(long epoch) {
         if (epochLockPath == null) {

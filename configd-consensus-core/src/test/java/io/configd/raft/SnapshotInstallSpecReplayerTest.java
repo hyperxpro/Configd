@@ -21,29 +21,29 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * Replays the safety invariants of {@code spec/SnapshotInstallSpec.tla}
  * against an executable Java model of the InstallSnapshot RPC.
  *
- * <p>Closes the spec→code link for SPEC-GAP-6 / PA-5027. The TLA+ model
+ * <p>Closes the spec-to-code link for snapshot-install invariants. The TLA+ model
  * proves the invariants over abstract committedLog/snapshot/inflight
  * state; this replayer mirrors that state machine in Java, drives it
  * through randomised action traces, and asserts the same five
  * invariants step-by-step.
  *
  * <p>This is a model replayer, not an integration test against the
- * production InstallSnapshotRequest path — that is exercised by
+ * production InstallSnapshotRequest path - that is exercised by
  * {@code InstallSnapshotTest}. The purpose here is to detect any drift
  * between the spec's protocol and the abstract state-machine semantics
  * the production code is meant to honour.
  *
  * <p>Invariants checked (mirroring the TLA spec):
  * <ul>
- *   <li><b>SnapshotBoundedByCommitted</b> — no node has installed a
+ *   <li><b>SnapshotBoundedByCommitted</b> - no node has installed a
  *       snapshot whose index exceeds the global committed log tip.</li>
- *   <li><b>SnapshotMatching</b> — two snapshots at the same index agree
+ *   <li><b>SnapshotMatching</b> - two snapshots at the same index agree
  *       on term, AND that term equals the global committed log entry.</li>
- *   <li><b>NoCommitRevert</b> — install_snapshot never decreases a
+ *   <li><b>NoCommitRevert</b> - install_snapshot never decreases a
  *       follower's installed snapshot index.</li>
- *   <li><b>InflightTermMonotonic</b> — every in-flight InstallSnapshot
+ *   <li><b>InflightTermMonotonic</b> - every in-flight InstallSnapshot
  *       references an index/term pair present in the committed log.</li>
- *   <li><b>TypeOK</b> — basic structural invariants on all state.</li>
+ *   <li><b>TypeOK</b> - basic structural invariants on all state.</li>
  * </ul>
  */
 class SnapshotInstallSpecReplayerTest {
@@ -92,7 +92,7 @@ class SnapshotInstallSpecReplayerTest {
     }
 
     /**
-     * NoCommitRevert dedicated check — exhaustively replay the install path
+     * NoCommitRevert dedicated check - exhaustively replay the install path
      * and assert installed index never decreases.
      */
     @Property(tries = 200)
@@ -113,7 +113,7 @@ class SnapshotInstallSpecReplayerTest {
     }
 
     /**
-     * SnapshotMatching dedicated check — for every pair of nodes with
+     * SnapshotMatching dedicated check - for every pair of nodes with
      * snapshots at the same positive index, terms must agree.
      */
     @Property(tries = 200)
@@ -135,7 +135,7 @@ class SnapshotInstallSpecReplayerTest {
         }
     }
 
-    // ---- State machine (mirrors the TLA spec) ----
+    // State machine (mirrors the TLA spec)
 
     private void applyIfEnabled(World w, Action a) {
         switch (a) {
@@ -174,12 +174,12 @@ class SnapshotInstallSpecReplayerTest {
                     w.snapshot.put(msg.to(),
                             new SnapshotState(msg.lastIncludedIndex(), msg.lastIncludedTerm()));
                 }
-                // else: discard the older message — no state change.
+                // else: discard the older message - no state change.
             }
         }
     }
 
-    // ---- Invariant assertions ----
+    // Invariant assertions
 
     private void assertAllInvariants(World w) {
         // TypeOK
@@ -216,7 +216,7 @@ class SnapshotInstallSpecReplayerTest {
 
         // NoCommitRevert (state-level corollary): every inflight message,
         // if accepted, installs at index >= or < follower's current.
-        // Always true by the dispatch in applyIfEnabled — assert the
+        // Always true by the dispatch in applyIfEnabled - assert the
         // tautology to keep this in sync with the spec.
         for (InflightMsg m : w.inflight) {
             int cur = w.snapshot.get(m.to()).index();
@@ -236,7 +236,7 @@ class SnapshotInstallSpecReplayerTest {
         }
     }
 
-    // ---- Action arbitraries ----
+    // Action arbitraries
 
     @Provide
     Arbitrary<List<Action>> traces() {

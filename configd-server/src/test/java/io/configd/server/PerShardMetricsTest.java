@@ -37,9 +37,9 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 /**
- * Multi-Raft Phase 1 — Seam E: the per-shard observability proof. Drives the real
+ * The per-shard observability proof. Drives the real
  * {@link ConfigdServer#registerPerShardMetrics} over N bring-up groups and asserts the registry exposes
- * each shard's health (leader/term/commit-index/apply-lag) plus the per-node leader count — no longer
+ * each shard's health (leader/term/commit-index/apply-lag) plus the per-node leader count - no longer
  * group-0-only. N=1 registers exactly the group-0 series (purely additive).
  */
 class PerShardMetricsTest {
@@ -69,7 +69,7 @@ class PerShardMetricsTest {
             assertNotNull(snap.metrics().get("raft.shard.last_applied." + gid));
             assertNotNull(snap.metrics().get("raft.shard.apply_lag." + gid));
             assertNotNull(snap.metrics().get("raft.shard.current_term." + gid));
-            // Each group is its own single-node LEADER ⇒ leader gauge == 1, term > 0.
+            // Each group is its own single-node LEADER => leader gauge == 1, term > 0.
             assertEquals(1L, snap.metrics().get("raft.shard.leader." + gid).value(),
                     "shard " + gid + " must report itself LEADER");
             assertTrue(snap.metrics().get("raft.shard.current_term." + gid).value() > 0,
@@ -94,7 +94,7 @@ class PerShardMetricsTest {
                         CommandCodec.encodePut(key, "v".getBytes(StandardCharsets.UTF_8))),
                 "the write must commit on shard 0");
 
-        // Gauges are pull-based — a fresh snapshot reflects the post-commit state.
+        // Gauges are pull-based - a fresh snapshot reflects the post-commit state.
         long commitIdx = registry.snapshot().metrics().get("raft.shard.commit_index.0").value();
         assertTrue(commitIdx >= 1, "shard 0 commit_index must advance after a commit; got " + commitIdx);
         assertTrue(registry.snapshot().metrics().get("raft.shard.apply_lag.0").value() >= 0,

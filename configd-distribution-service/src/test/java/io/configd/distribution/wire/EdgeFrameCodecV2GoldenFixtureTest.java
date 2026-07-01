@@ -17,16 +17,16 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.fail;
 
 /**
- * Edge wire-compat golden fixture for the RFC §2 watch frames at
+ * Edge wire-compat golden fixture for the watch frames at
  * {@link EdgeFrameCodec#EDGE_WIRE_VERSION_V2} (0x02). The v2 analogue of
  * {@link EdgeFrameCodecGoldenFixtureTest}: encodes one frame of every {@code WATCH_*} type
  * (plus a reused NOTIFY and the NOT_AUTHORIZED ERROR_CLOSE) at 0x02 and asserts byte-equality
  * against the pinned hex in {@link EdgeFrameGoldenBytes#forVersion(int)} for version 2.
  *
  * <p><b>This does NOT rebaseline the 0x01 fixtures.</b> The built {@code 0x01} golden image is
- * frozen and proven byte-identical by {@link EdgeFrameCodecGoldenFixtureTest}; §2 is purely
+ * frozen and proven byte-identical by {@link EdgeFrameCodecGoldenFixtureTest}; 0x02 is purely
  * additive (W1-3 / W5-11). The <b>rebaseline rule</b> for v2 is the same: a drift here is a
- * 0x02 wire-format change — revert, or regenerate via {@code EdgeFrameGoldenBytesGenerator}.
+ * 0x02 wire-format change - revert, or regenerate via {@code EdgeFrameGoldenBytesGenerator}.
  */
 class EdgeFrameCodecV2GoldenFixtureTest {
 
@@ -138,7 +138,7 @@ class EdgeFrameCodecV2GoldenFixtureTest {
                 "the reused NOTIFY's 0x01 encoding must equal the frozen v1 golden image");
     }
 
-    /** A WATCH_* frame cannot be encoded on a 0x01 connection (W5-11) — caller error. */
+    /** A WATCH_* frame cannot be encoded on a 0x01 connection (W5-11) - caller error. */
     @Test
     void watchFrameRefusedUnderV1Encode() {
         EdgeFrame watchCreate = EdgeFrameFixtures.buildV2().get("watch_create.bin");

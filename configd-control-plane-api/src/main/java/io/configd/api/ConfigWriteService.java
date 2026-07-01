@@ -19,13 +19,13 @@ import java.util.Objects;
  *       expires</b>, then return the typed outcome</li>
  * </ol>
  * <p>
- * RR-004 / ADR-0033: acknowledgement is <b>commit-confirmed</b>. A write returns
+ * Acknowledgement is <b>commit-confirmed</b>. A write returns
  * {@link WriteResult.Committed} only after the entry is quorum-committed AND
- * applied — carrying the applied-mutation sequence {@code seq} (the client's read
- * cursor; contract §6 read-your-writes). The failure taxonomy is explicit:
+ * applied, carrying the applied-mutation sequence {@code seq} (the client's read
+ * cursor; see section 6 for read-your-writes). The failure taxonomy is explicit:
  * {@link WriteResult.NotLeader} (pre-append, definite), {@link WriteResult.Lost}
- * (post-append, definite — leadership lost before commit, safe to retry),
- * {@link WriteResult.Indeterminate} (deadline expired with the outcome unknown —
+ * (post-append, definite - leadership lost before commit, safe to retry),
+ * {@link WriteResult.Indeterminate} (deadline expired with the outcome unknown -
  * the write MAY still commit later; safe to retry or re-read on an idempotent
  * last-writer-wins payload).
  * <p>
@@ -33,25 +33,23 @@ import java.util.Objects;
  * threads. The underlying Raft node is single-threaded by design; safety relies
  * on the supplied {@link RaftProposer} marshalling the proposal AND the
  * commit-outcome registration onto the single Raft tick thread (see
- * {@code ConfigdServer.raftProposer}; R-01).
+ * {@code ConfigdServer.raftProposer}).
  */
 public final class ConfigWriteService {
 
-    /**
-     * Result of a write operation. RR-004 / ADR-0033 taxonomy.
-     */
+    /** Result of a write operation. */
     public sealed interface WriteResult {
         /**
          * The write was quorum-committed and applied. {@code seq} is the
-         * applied-mutation sequence assigned to this write — the client's read
-         * cursor for read-your-writes (contract §6).
+         * applied-mutation sequence assigned to this write, the client's read
+         * cursor for read-your-writes.
          */
         record Committed(long seq) implements WriteResult {}
         /** This node is not the leader for the target group (pre-append, definite). */
         record NotLeader(NodeId leaderId) implements WriteResult {}
         /**
          * The entry was appended but leadership was lost before commit, and the
-         * slot is now permanently occupied by a different proposal — the write
+         * slot is now permanently occupied by a different proposal - the write
          * definitely did not commit. Safe to retry. {@code leaderHint} may be null.
          */
         record Lost(NodeId leaderHint) implements WriteResult {}
@@ -63,17 +61,17 @@ public final class ConfigWriteService {
         record Indeterminate() implements WriteResult {}
         /** Validation failed (permanent). */
         record ValidationFailed(String reason) implements WriteResult {}
-        /** The system is overloaded — the client should retry later. */
+        /** The system is overloaded - the client should retry later. */
         record Overloaded() implements WriteResult {}
     }
 
     /**
      * The terminal commit outcome of a proposed command, as surfaced by the
-     * {@link RaftProposer}. RR-004 / ADR-0033: the proposer performs propose +
-     * commit-outcome registration on the tick thread and blocks the calling
-     * (HTTP write) thread until the outcome is known or the write deadline
-     * expires; it then returns one of these. The {@link ConfigWriteService} maps
-     * these to {@link WriteResult}, attaching the leader hint where appropriate.
+     * {@link RaftProposer}. The proposer performs propose + commit-outcome
+     * registration on the tick thread and blocks the calling (HTTP write) thread
+     * until the outcome is known or the write deadline expires; it then returns one
+     * of these. The {@link ConfigWriteService} maps these to {@link WriteResult},
+     * attaching the leader hint where appropriate.
      */
     public sealed interface ProposeCommitResult {
         /** Quorum-committed and applied; carries the applied-mutation seq. */
@@ -87,11 +85,10 @@ public final class ConfigWriteService {
         /** Rejected pre-append: backpressure (too many uncommitted entries). */
         record Overloaded() implements ProposeCommitResult {}
         /**
-         * Multi-Raft Phase 1 (Seam D, DISCLAIM): rejected pre-append because the write's keys span more
-         * than one shard. Configd does not offer cross-shard atomicity (ADR adr-multiraft-cross-shard,
-         * D-C); the cross-shard write guard catches it before any Raft work. {@code reason} names the
-         * offending keys. Mapped to {@link WriteResult.ValidationFailed} (permanent — retrying the same
-         * spanning write cannot succeed).
+         * Rejected pre-append because the write's keys span more than one shard. Configd does not offer
+         * cross-shard atomicity; the cross-shard write guard catches it before any Raft work.
+         * {@code reason} names the offending keys. Mapped to {@link WriteResult.ValidationFailed}
+         * (permanent - retrying the same spanning write cannot succeed).
          */
         record CrossShardRejected(String reason) implements ProposeCommitResult {}
     }
@@ -106,12 +103,11 @@ public final class ConfigWriteService {
          * Proposes a command to the Raft group that owns the write, blocking the calling thread until the
          * commit outcome is known or the write deadline expires.
          *
-         * <p>Multi-Raft Phase 1 (Seam D): the {@code keys} of the write select the shard via the
-         * implementation's {@code ShardMap} ({@code shardFor(scope, key)}). For a single-key
-         * {@code put}/{@code delete} this is one key ⇒ one shard. For a multi-key write the implementation
-         * runs the cross-shard guard: all keys must co-locate on ONE shard, else
-         * {@link ProposeCommitResult.CrossShardRejected} (DISCLAIM). At {@code N=1} every key resolves to
-         * group 0 (byte-identical to the prior single-group path).
+         * <p>The {@code keys} of the write select the shard via the implementation's {@code ShardMap}
+         * ({@code shardFor(scope, key)}). For a single-key {@code put}/{@code delete} this is one key ->
+         * one shard. For a multi-key write the implementation runs the cross-shard guard: all keys must
+         * co-locate on ONE shard, else {@link ProposeCommitResult.CrossShardRejected}. At {@code N=1}
+         * every key resolves to group 0 (byte-identical to the prior single-group path).
          *
          * @param scope   the write's configuration scope (folded into the shard hash)
          * @param keys    the key(s) of the write (non-empty); selects the owning shard + drives the guard
@@ -142,11 +138,11 @@ public final class ConfigWriteService {
     @FunctionalInterface
     public interface LeaderHintSupplier {
         /**
-         * The current leader of the Raft group that owns {@code (scope, key)} — the redirect target for a
-         * {@code NotLeader}/{@code Lost} write. Multi-Raft Phase 1 (Seam D): keyed so the hint points at
-         * the OWNING shard's leader (a keyless hint would loop forever at N&gt;1, redirecting every shard's
-         * write to one group's leader). At {@code N=1} every key resolves to group 0. May return
-         * {@code null} if the leader is unknown.
+         * The current leader of the Raft group that owns {@code (scope, key)} - the redirect target for a
+         * {@code NotLeader}/{@code Lost} write. Keyed so the hint points at the OWNING shard's leader
+         * (a keyless hint would loop forever at N&gt;1, redirecting every shard's write to one group's
+         * leader). At {@code N=1} every key resolves to group 0. May return {@code null} if the leader
+         * is unknown.
          *
          * @param scope the write's configuration scope
          * @param key   the write's key (selects the shard)
@@ -160,11 +156,10 @@ public final class ConfigWriteService {
     private final LeaderHintSupplier leaderHintSupplier;
 
     /**
-     * S7.5 per-principal rate limiting (Med residual): a factory for a fresh per-principal token
-     * bucket (null = the legacy single global limiter). Keyed by authenticated principal so one
-     * noisy/hostile tenant cannot consume the whole write budget and starve others. The gate stays
-     * BEFORE the Raft proposal (sheds at the edge, never enqueues onto the tick thread; RR-002-safe —
-     * a lock-free CAS on the HTTP request vthread).
+     * Per-principal rate-limiter factory (null = use the single global limiter). Keyed by
+     * authenticated principal so one noisy/hostile tenant cannot consume the whole write budget and
+     * starve others. The gate runs BEFORE the Raft proposal (sheds at the edge, never enqueues onto
+     * the tick thread; lock-free CAS on the HTTP request vthread).
      */
     private final java.util.function.Supplier<RateLimiter> perPrincipalLimiterFactory;
     private final java.util.concurrent.ConcurrentHashMap<String, RateLimiter> principalLimiters =
@@ -195,8 +190,8 @@ public final class ConfigWriteService {
     }
 
     /**
-     * Creates a write service with PER-PRINCIPAL rate limiting (S7.5). {@code rateLimiter} is the
-     * global ceiling / fallback (and the limiter used by the no-principal {@code put}/{@code delete}
+     * Creates a write service with per-principal rate limiting. {@code rateLimiter} is the
+     * global ceiling / fallback (also used by the no-principal {@code put}/{@code delete}
      * overloads and once the per-principal map hits {@link #MAX_PRINCIPAL_LIMITERS});
      * {@code perPrincipalLimiterFactory} mints a fresh bucket per authenticated principal so one
      * tenant's flood cannot starve the others.
@@ -225,10 +220,9 @@ public final class ConfigWriteService {
     }
 
     /**
-     * Per-principal-rate-limited put (S7.5). {@code principal} is the authenticated identity; its
-     * OWN token bucket is charged, so one tenant's flood cannot starve the others. A {@code null}/
-     * blank principal (or a service constructed without a per-principal factory) falls back to the
-     * global limiter — backward compatible.
+     * Per-principal-rate-limited put. {@code principal} is the authenticated identity; its OWN token
+     * bucket is charged, so one tenant's flood cannot starve the others. A {@code null}/blank principal
+     * (or a service constructed without a per-principal factory) falls back to the global limiter.
      *
      * @param principal the authenticated principal whose rate budget to charge (may be null)
      */
@@ -237,7 +231,7 @@ public final class ConfigWriteService {
         Objects.requireNonNull(value, "value must not be null");
         Objects.requireNonNull(scope, "scope must not be null");
 
-        // FIND-0025: Enforce size limits (use UTF-8 byte length for accurate wire-format check)
+        // Enforce size limits (use UTF-8 byte length for accurate wire-format check)
         if (key.getBytes(java.nio.charset.StandardCharsets.UTF_8).length > 1024) {
             return new WriteResult.ValidationFailed("key length exceeds maximum of 1024 bytes");
         }
@@ -261,8 +255,8 @@ public final class ConfigWriteService {
         }
 
         byte[] command = encodeCommand((byte) 0x01, key, value);
-        // Multi-Raft Phase 1 (Seam D): a single-key write — the proposer routes it to shardFor(scope,key)
-        // and the cross-shard guard is trivially satisfied (one key ⇒ one shard).
+        // Single-key write: the proposer routes it to shardFor(scope, key) and the cross-shard guard
+        // is trivially satisfied (one key -> one shard).
         return mapOutcome(proposer.propose(scope, List.of(key), command), scope, key);
     }
 
@@ -278,7 +272,7 @@ public final class ConfigWriteService {
         return delete(key, scope, null);
     }
 
-    /** Per-principal-rate-limited delete (S7.5); see {@link #put(String, byte[], ConfigScope, String)}. */
+    /** Per-principal-rate-limited delete; see {@link #put(String, byte[], ConfigScope, String)}. */
     public WriteResult delete(String key, ConfigScope scope, String principal) {
         Objects.requireNonNull(key, "key must not be null");
         Objects.requireNonNull(scope, "scope must not be null");
@@ -298,9 +292,9 @@ public final class ConfigWriteService {
     /**
      * Charges one permit against the caller's rate budget. With a per-principal factory configured and
      * a non-blank principal, charges that principal's OWN bucket (created lazily, memory-bounded by
-     * {@link #MAX_PRINCIPAL_LIMITERS} — beyond which principals share the global limiter). Otherwise
+     * {@link #MAX_PRINCIPAL_LIMITERS} - beyond which principals share the global limiter). Otherwise
      * charges the global limiter (legacy behavior). Lock-free CAS on the HTTP request thread, BEFORE
-     * the Raft proposal (RR-002-safe).
+     * the Raft proposal.
      *
      * @return true if a permit was granted (proceed), false if the bucket is empty (shed Overloaded)
      */
@@ -311,7 +305,7 @@ public final class ConfigWriteService {
         RateLimiter limiter = principalLimiters.get(principal);
         if (limiter == null) {
             // Memory bound: an attacker spraying distinct principals cannot grow the map without
-            // bound — beyond the cap, new principals fall back to the shared global limiter.
+            // bound - beyond the cap, new principals fall back to the shared global limiter.
             if (principalLimiters.size() >= MAX_PRINCIPAL_LIMITERS) {
                 return rateLimiter == null || rateLimiter.tryAcquire();
             }
@@ -322,9 +316,8 @@ public final class ConfigWriteService {
 
     /**
      * Maps a terminal {@link ProposeCommitResult} to a {@link WriteResult}, attaching the
-     * SHARD-AWARE leader hint (resolved for {@code (scope, key)}) to the redirect/loss cases
-     * (Multi-Raft Phase 1, Seam D) and mapping a cross-shard rejection to a permanent
-     * {@link WriteResult.ValidationFailed}.
+     * shard-aware leader hint (resolved for {@code (scope, key)}) to the redirect/loss cases,
+     * and mapping a cross-shard rejection to a permanent {@link WriteResult.ValidationFailed}.
      */
     private WriteResult mapOutcome(ProposeCommitResult outcome, ConfigScope scope, String key) {
         return switch (outcome) {

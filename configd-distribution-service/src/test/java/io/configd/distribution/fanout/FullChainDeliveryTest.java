@@ -20,12 +20,11 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * CT-25 (C1 half; ADR-0038). A prefix subscriber receives the <b>full</b> signed delta
- * chain — including deltas whose keys do NOT match its prefixes. Per ADR-0038 the prefix
- * set is an edge-side storage/serving filter (C2), never a transport filter: the server
- * streams every link of the chain to every subscriber so gap detection stays exact and a
- * relay cannot silently suppress a key. This test asserts the C1 session does no
- * prefix-based filtering on the wire.
+ * A prefix subscriber receives the <b>full</b> signed delta chain - including deltas whose
+ * keys do NOT match its prefixes. The prefix set is an edge-side storage/serving filter,
+ * never a transport filter: the server streams every link of the chain to every subscriber
+ * so gap detection stays exact and a relay cannot silently suppress a key. This test
+ * asserts the session does no prefix-based filtering on the wire.
  */
 class FullChainDeliveryTest {
 
@@ -48,7 +47,7 @@ class FullChainDeliveryTest {
         FanOutSessionCore s = new FanOutSessionCore(buffer, replay, sink,
                 FanOutConfig.defaults(), FanOutSessionMetrics.NOOP, CLOCK);
 
-        // Subscribe with prefixes ["svc/"] only — but the server must still stream ALL keys.
+        // Subscribe with prefixes ["svc/"] only - but the server must still stream ALL keys.
         s.onSubscribe(new EdgeFrame.Subscribe(false, List.of("svc/"), 0L, -1L, "edge-prefix"));
         sink.clear();
         s.tick(0L);
@@ -66,7 +65,7 @@ class FullChainDeliveryTest {
         // Every published seq (the full chain) is delivered, in order.
         assertEquals(List.of(1L, 2L, 3L, 4L, 5L, 6L), delivered,
                 "the full signed chain must reach a prefix subscriber (ADR-0038)");
-        // Non-matching keys ("db/...", "other/...") are present on the wire — NOT filtered.
+        // Non-matching keys ("db/...", "other/...") are present on the wire - NOT filtered.
         for (String k : keys) {
             assertTrue(deliveredKeys.contains(k),
                     "non-matching key '" + k + "' must still be streamed (no transport filter)");

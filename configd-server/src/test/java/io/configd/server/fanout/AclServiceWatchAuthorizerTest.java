@@ -19,8 +19,8 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * The watch-authorization matrix (RFC §2 W7; scoping matrix items 1-7, 15) for the production
- * {@link AclServiceWatchAuthorizer} — the security-critical adapter branch (KEY uses the single-key
+ * The watch-authorization matrix (RFC section 2 W7; scoping matrix items 1-7, 15) for the production
+ * {@link AclServiceWatchAuthorizer} - the security-critical adapter branch (KEY uses the single-key
  * floor; PREFIX/FULL/{@code full_chain_verify} use the whole-subtree cover; FULL/{@code
  * full_chain_verify} map to the root effective target {@code ""}). Drives a real {@link AclService}
  * with grants/denies/roles and asserts the {@code authorizeWatch} verdict.

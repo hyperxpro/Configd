@@ -12,19 +12,18 @@ import java.nio.file.Path;
 import java.util.Map;
 
 /**
- * GATE (ii.2) — STALE READ discrimination (the safety class of design §11.2, adapted
- * to be single-host injectable).
+ * STALE READ discrimination scenario, adapted to be single-host injectable.
  *
- * <p><b>Why adapted.</b> The design's form — isolate the deposed leader and read it —
+ * <p><b>Why adapted.</b> The standard form - isolate the deposed leader and read it -
  * is NOT injectable on single-host loopback: a partitioned leader fails CheckQuorum
  * and steps down (so it can't serve), and a mutation that kept it "leader" would leak
  * its outbound heartbeats to the majority (the transport's outbound sockets aren't
- * source-bound — verified), preventing the re-election needed to write the newer
+ * source-bound - verified), preventing the re-election needed to write the newer
  * value. So a deposed-leader-still-serving needs real per-pair partitions (network
- * namespaces) — recorded as a netns follow-up, not silently dropped.
+ * namespaces) - recorded as a netns follow-up, not silently dropped.
  *
  * <p><b>The same safety violation, single-host.</b> A <i>lagging isolated follower</i>
- * answering a linearizable read from its stale local state — exactly what the
+ * answering a linearizable read from its stale local state - exactly what the
  * leader/quorum gate (RaftNode.readIndex leader check + isReadReady recheck + the
  * quorum ReadIndex confirm) exists to forbid. Schedule: commit & confirm v1 everywhere
  * -> isolate a follower F (it stops receiving updates; PreVote keeps it from deposing
@@ -34,7 +33,7 @@ import java.util.Map;
  * after v2 was confirmed -> RED.
  *
  * <p>Because {@code ack != commit}, every PUT is followed by a settle + a retrying
- * read-back before the value is treated as established — otherwise a read can race
+ * read-back before the value is treated as established - otherwise a read can race
  * ahead of the commit and observe the prior value (a real, expected behaviour, not the
  * bug under test).
  *
@@ -77,8 +76,8 @@ public final class StaleReadScenario {
                     + " lagging-follower=node" + followerId);
 
             // 1. PUT v1, settle, confirm v1 (committed & applied on all nodes).
-            // ADR-0033: a 200 PUT is now OK (committed) — that is itself the write's
-            // definite real-time point, so we do not depend on the flaky linearizable
+            // A 200 PUT is returned only after quorum-commit, so that is itself the
+            // write's definite real-time point; we do not depend on the flaky linearizable
             // read to *establish* v1. We confirm propagation with the reliable
             // default-GET poll and record a confirming read for the backbone, falling
             // back to the committed PUT's interval when the linearizable read is flaky.
@@ -95,9 +94,9 @@ public final class StaleReadScenario {
             if (c1.status() == Op.Status.OK && "v1".equals(c1.value())) {
                 recorder.recordRead(0, key, c1.value(), c1.status(), c1.callNs(), c1.retNs());
             } else if (put1.status() == Op.Status.OK) {
-                // Linearizable read-back flaky (the 150ms ReadIndex confirm timeout,
-                // ADR-0032 [VERIFIED-FAIL]); but the PUT committed, so the write is a
-                // real linearization point. Backbone = the committed PUT's interval.
+                // Linearizable read-back flaky (the 150ms ReadIndex confirm timeout);
+                // but the PUT committed, so the write is a real linearization point.
+                // Backbone = the committed PUT's interval.
                 recorder.recordRead(0, key, "v1", Op.Status.OK, put1.callNs(), put1.retNs());
             } else {
                 exit(2, "could not establish v1 (PUT status=" + put1.status()
@@ -112,7 +111,7 @@ public final class StaleReadScenario {
                 exit(2, "not all nodes applied v1 (cluster not warm)");
             }
 
-            // 2. Isolate the follower — it stops receiving AppendEntries, so it lags.
+            // 2. Isolate the follower - it stops receiving AppendEntries, so it lags.
             faults.isolate(F);
             System.out.println("[staleread/" + label + "] isolated follower node" + followerId);
             Thread.sleep(1500);
@@ -135,7 +134,7 @@ public final class StaleReadScenario {
             }
             // Now capture an OK observation of v2 (the real-time backbone). Prefer a
             // linearizable read; fall back to the committed PUT's interval when the
-            // ReadIndex confirm is flaky (ADR-0033: the OK PUT already committed v2).
+            // ReadIndex confirm is flaky (an OK 200 PUT means quorum-committed).
             ConfigClient.OpResult c2 = confirmValue(client, v2Leader, key, "v2", 8000);
             if (c2.status() == Op.Status.OK && "v2".equals(c2.value())) {
                 recorder.recordRead(0, key, c2.value(), c2.status(), c2.callNs(), c2.retNs());
@@ -175,11 +174,11 @@ public final class StaleReadScenario {
     }
 
     /**
-     * Writes {@code value} and retries until the write COMMITS (OK, per ADR-0033 a 200
-     * means quorum-committed). During cluster stabilization a fresh leader can transiently
-     * 503 (Lost/NotLeader) before it has committed its term's no-op — that is expected, not
-     * the bug under test, so we re-probe the leader and retry. The returned interval is the
-     * committing attempt's. Falls back to the last result if no attempt commits.
+     * Writes {@code value} and retries until the write COMMITS (OK - a 200 means
+     * quorum-committed). During cluster stabilization a fresh leader can transiently
+     * 503 (Lost/NotLeader) before it has committed its term's no-op - that is expected,
+     * not the bug under test, so we re-probe the leader and retry. The returned interval
+     * is the committing attempt's. Falls back to the last result if no attempt commits.
      */
     private static ConfigClient.OpResult putCommitted(ConfigClient client, Cluster cluster,
             int leaderHint, String key, String value, int attempts) throws InterruptedException {

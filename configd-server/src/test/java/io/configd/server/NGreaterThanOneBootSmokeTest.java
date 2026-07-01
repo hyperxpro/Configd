@@ -23,7 +23,7 @@ import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.api.io.TempDir;
 
 /**
- * Multi-Raft Phase 1 — Seam G4: the SWITCH-FLIP smoke. Proves that, with the boot guard removed, the REAL
+ * The SWITCH-FLIP smoke. Proves that, with the boot guard removed, the REAL
  * {@link ConfigdServer#start} BOOTS at {@code N>1} and runs a sharded write end-to-end on the live server.
  * Before G4 this throw-on-boot was the project's deliberate safety scaffold; this test is the proof the
  * flip works at the server level (the per-shard write/read SEMANTICS are additionally proven on the real
@@ -69,7 +69,7 @@ class NGreaterThanOneBootSmokeTest {
         ServerConfig config = ServerConfig.parse(new String[]{
                 "--node-id", "0",
                 "--data-dir", dataDir.toString(),
-                "--peers", "",      // single-node cluster → each shard self-elects (no quorum needed)
+                "--peers", "",      // single-node cluster -> each shard self-elects (no quorum needed)
                 "--api-port", "0"
         });
 
@@ -94,7 +94,7 @@ class NGreaterThanOneBootSmokeTest {
             // A propose to shard 1 commits + applies on shard 1.
             commitTo(driver, 1, "beta", "v1");
 
-            // Per-shard observability (Seam E) is live at N>1: shard 1's series exist.
+            // Per-shard observability is live at N>1: shard 1's series exist.
             String metrics = server.scrapeMetrics();
             assertTrue(metrics.contains("raft_shard_leader_1") || metrics.contains("raft.shard.leader.1")
                             || metrics.contains("raft_shard_current_term_1"),
@@ -107,8 +107,8 @@ class NGreaterThanOneBootSmokeTest {
     @Test
     @Timeout(30)
     void edgeEndpointAtNGreaterThanOneIsRefusedWithoutOptIn(@TempDir Path dataDir) {
-        // Seam G1/G4 (red-team MEDIUM): N>1 + the edge endpoint would silently serve only the PRIMARY
-        // shard. The server must REFUSE this (fail-closed) unless the operator explicitly opts in — never
+        // (red-team MEDIUM): N>1 + the edge endpoint would silently serve only the PRIMARY
+        // shard. The server must REFUSE this (fail-closed) unless the operator explicitly opts in - never
         // a silent partial-view data plane. The refusal is fail-fast (before allocating), so no leak.
         System.setProperty(SHARD_PROP, "2");
         System.setProperty(POOL_PROP, "2");
@@ -117,7 +117,7 @@ class NGreaterThanOneBootSmokeTest {
                 "--data-dir", dataDir.toString(),
                 "--peers", "",
                 "--api-port", "0",
-                "--edge-port", "0"   // edge enabled + N>1 + no opt-in ⇒ refused
+                "--edge-port", "0"   // edge enabled + N>1 + no opt-in => refused
         });
         IllegalStateException e = assertThrows(IllegalStateException.class,
                 () -> ConfigdServer.start(config),
@@ -126,7 +126,7 @@ class NGreaterThanOneBootSmokeTest {
                 () -> "refusal should explain the partial-view reason: " + e.getMessage());
         assertTrue(e.getMessage().contains("allowPartialShardView"),
                 () -> "refusal should name the explicit opt-in escape: " + e.getMessage());
-        // DL-W-05 invariant: a REFUSED boot must NOT persist the fixed-at-deploy marker (else it would
+        // A REFUSED boot must NOT persist the fixed-at-deploy marker (else it would
         // poison a later boot at a different N). The edge guard runs BEFORE resolveShardCount persists.
         assertTrue(java.nio.file.Files.notExists(dataDir.resolve("raft-shard-count.meta")),
                 "a refused N>1+edge boot must not persist the fixed-at-deploy marker");

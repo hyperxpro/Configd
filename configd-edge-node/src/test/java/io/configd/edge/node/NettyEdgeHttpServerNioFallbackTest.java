@@ -8,17 +8,15 @@ import io.configd.observability.PrometheusExporter;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
 /**
- * CI-fallback proof (M1.6, charter §3.2/§7): re-runs the <b>entire</b>
- * {@link AbstractEdgeReadServerContract} on the Netty server with the transport <b>forced to the
- * pure-Java NIO tier</b> — the always-available floor a CI runner (or any sandbox) that lacks
- * io_uring/epoll falls back to. io_uring is a performance tier, never a correctness dependency; this
- * proves every read-governance + S7 control holds on the fallback transport, not just on the tier
- * this dev box happens to pick. (Forcing the tier in-process avoids depending on surefire forwarding
- * a {@code -D} to the test fork.)
+ * Re-runs the entire {@link AbstractEdgeReadServerContract} on the Netty server with the transport
+ * <b>forced to the pure-Java NIO tier</b> — the always-available floor that CI runners or sandboxes
+ * without io_uring/epoll fall back to. io_uring is a performance tier, never a correctness
+ * dependency; this proves every read-governance and security control holds on the fallback transport,
+ * not just on whatever tier this box happens to select. (The tier is forced in-process to avoid
+ * depending on surefire forwarding a {@code -D} to the test fork.)
  *
- * <p>An epoll-forced equivalent isn't a separate class: the configd-netty {@code NettyTransportTest}
- * proves epoll resolves where available, and the auto-selected suite ({@link NettyEdgeHttpServerTest}) already
- * exercises the best available tier (epoll or io_uring) on this box.
+ * <p>An epoll-forced equivalent is not a separate class: {@code NettyTransportTest} proves epoll
+ * resolves where available, and {@link NettyEdgeHttpServerTest} exercises the auto-selected best tier.
  */
 class NettyEdgeHttpServerNioFallbackTest extends AbstractEdgeReadServerContract {
 

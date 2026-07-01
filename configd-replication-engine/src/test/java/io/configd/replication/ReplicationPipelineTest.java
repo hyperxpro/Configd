@@ -9,7 +9,7 @@ import java.util.List;
 import static org.junit.jupiter.api.Assertions.*;
 
 /**
- * Tests for {@link ReplicationPipeline} — batching by size, bytes, time,
+ * Tests for {@link ReplicationPipeline} - batching by size, bytes, time,
  * and explicit flush.
  */
 class ReplicationPipelineTest {
@@ -230,7 +230,7 @@ class ReplicationPipelineTest {
 
             pipeline.flush();
 
-            // Add new entry — timer should restart
+            // Add new entry - timer should restart
             pipeline.offer(new byte[]{2});
             assertFalse(pipeline.shouldFlush(MAX_BATCH_DELAY_NANOS - 1));
             // Initialize new timer

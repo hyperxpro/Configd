@@ -20,14 +20,14 @@ import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReferenceArray;
 
 /**
- * Multi-Raft <b>shard-aware</b> open-loop write driver — the N×knee load generator.
+ * Multi-Raft <b>shard-aware</b> open-loop write driver - the Nxknee load generator.
  *
  * <p>{@link OpenLoopWriteDriver} keeps a single leader pointer, which thrashes against an
  * N-group cluster whose N shard leaders are scattered across the nodes (each PUT to the wrong
  * shard leader gets a 503 + hint). This driver instead replicates the server's routing
  * ({@link io.configd.replication.StaticShardMap}: {@code shardFor = floorMod(SplitMix64(FNV1a(scope,
  * key)), N)}) and keeps a <b>per-shard leader pointer</b>, learned from the {@code X-Leader-Hint}
- * on a 503. So every write is sent to the node that currently leads that key's shard — the
+ * on a 503. So every write is sent to the node that currently leads that key's shard - the
  * production-faithful sharded-client pattern. The open-loop, coordinated-omission-corrected
  * scheduling and the ATRATE-RESULT/STATUS/HISTOGRAM output are identical to {@link OpenLoopWriteDriver}
  * so the existing harness parsing is unchanged.
@@ -44,7 +44,7 @@ public final class ShardAwareWriteDriver {
 
     private static final long FNV_OFFSET_BASIS = 1469598103934665603L;
     private static final long FNV_PRIME = 1099511628211L;
-    private static final int SCOPE_ORDINAL = 0; // ConfigScope.GLOBAL — the default write scope
+    private static final int SCOPE_ORDINAL = 0; // ConfigScope.GLOBAL - the default write scope
 
     private ShardAwareWriteDriver() {}
 

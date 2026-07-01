@@ -31,46 +31,40 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * Session-7 NEGATIVE mTLS tests for the CONTROL-plane Raft transport ({@link TcpRaftTransport}).
- * Each test performs an attack and asserts the server REJECTS it (charter §2.1: a control is
- * verified only by a passing test that performs the attack, never by reading config). These close
- * the gaps left open by {@link TcpRaftTransportTest#find0051_clientHandshakeRejectsCertWithWrongHostname}
- * (which already covers the wrong-SAN/identity case on this plane):
+ * Negative mTLS tests for the control-plane Raft transport ({@link TcpRaftTransport}). Each test
+ * performs an attack and asserts the server rejects it - a control is verified only by a test that
+ * performs the attack, never by reading config. These close the gaps left open by
+ * {@link TcpRaftTransportTest#find0051_clientHandshakeRejectsCertWithWrongHostname} (which already
+ * covers the wrong-SAN/identity case on this plane):
  *
  * <ul>
- *   <li><b>plaintext</b> — a plain {@link Socket} writing a syntactically-valid Raft wire frame to
+ *   <li><b>plaintext</b> - a plain {@link Socket} writing a syntactically-valid Raft wire frame to
  *       the TLS-only port is never decoded as a peer message (the inbound handler never fires);</li>
- *   <li><b>expired client cert</b> — a client whose certificate is already past {@code notAfter}
+ *   <li><b>expired client cert</b> - a client whose certificate is already past {@code notAfter}
  *       (a CA-signed end-entity, {@code -gencert -startdate -2d -validity 1}) fails PKIX path
  *       validation at the server ("validity check failed"); no frame is delivered;</li>
- *   <li><b>version downgrade</b> — a client offering ONLY TLSv1.2 against the TLSv1.3-only server
- *       fails the handshake; nothing downgrades below TLSv1.3 (charter §5 cipher/version policy).</li>
+ *   <li><b>version downgrade</b> - a client offering ONLY TLSv1.2 against the TLSv1.3-only server
+ *       fails the handshake; nothing downgrades below TLSv1.3.</li>
  * </ul>
  *
- * <h2>Observation discipline (TLS-1.3 timing)</h2>
+ * <h2>Observation discipline (TLS 1.3 timing)</h2>
  * On the Raft plane the only secure, attack-agnostic observation is "did a decoded peer frame reach
  * the inbound handler?". In TLS 1.3 the client {@code startHandshake()} can return before the
- * server's rejection lands, and the server side rejects asynchronously on its accept thread; so each
- * test drives a bounded send/observation window and asserts the handler count stays at zero — the
- * mirror of {@code find0051}'s "no message reached peer B" and the FanOutServerMtlsTest
- * unusable-connection discipline.
+ * server's rejection lands; so each test drives a bounded send/observation window and asserts the
+ * handler count stays at zero.
  *
- * <h2>Why the expired-cert case needs a CA (S7 finding)</h2>
- * Configd's production trust model ({@code deploy/compose/setup-secrets.sh}) and the existing test
- * fixtures import each peer's <em>self-signed leaf</em> directly as a trust anchor. Under RFC 5280
- * §6.1 a trust anchor's own validity period is NOT part of path validation, so an expired
- * self-signed leaf is accepted (verified empirically — the leaf-as-anchor variant of this test was
- * admitted). To prove our stack does not <em>disable</em> expiry checking, the expired client here
- * is a CA-signed <em>end-entity</em> validated against a CA-only anchor — the configuration in which
- * JSSE enforces {@code notAfter}. The leaf-as-anchor blind spot (and its compensating control,
- * {@code -validity 30} short-lived certs + rotation) is recorded in
- * {@code docs/session-7/transport-security.md} for the S7.5 manifest.
+ * <h2>Why the expired-cert case needs a CA</h2>
+ * Configd's production trust model and the existing test fixtures import each peer's self-signed
+ * leaf directly as a trust anchor. Under RFC 5280 section 6.1, a trust anchor's own validity
+ * period is NOT part of path validation, so an expired self-signed leaf is accepted. To prove our
+ * stack does not disable expiry checking, the expired client here is a CA-signed end-entity
+ * validated against a CA-only anchor - the configuration in which JSSE enforces notAfter.
  *
- * <h2>RR-094 fixture discipline</h2>
+ * <h2>Fixture discipline</h2>
  * All keytool subprocesses are hoisted into a once-per-class {@code @BeforeAll static} fixture
- * (cached temp dir, {@code @AfterAll} cleanup), not subject to the class {@link Timeout}. Each test
- * carries a generous method {@code @Timeout(120)} for pure hang detection on the throttled 2-vCPU
- * box, never a performance assertion.
+ * (cached temp dir, {@code @AfterAll} cleanup), not subject to the class {@link Timeout}. Each
+ * test carries a generous method {@code @Timeout(120)} for pure hang detection, never a
+ * performance assertion.
  */
 class RaftTransportMtlsAttackTest {
 
@@ -78,7 +72,7 @@ class RaftTransportMtlsAttackTest {
     // Server identity + trust store (trusts the legit client and itself).
     private static Path serverKeyStore;
     private static Path serverTrustStore;
-    // Legit client identity (trusted) — used by the downgrade test, where the ATTACK is the
+    // Legit client identity (trusted) - used by the downgrade test, where the attack is the
     // version offer, not the credential, so the cert must otherwise be valid and trusted.
     private static Path clientKeyStore;
     // CA-signed client whose END-ENTITY certificate is already expired (chain anchors at the trusted
@@ -100,18 +94,17 @@ class RaftTransportMtlsAttackTest {
         Path clientCert = fixtureDir.resolve("client.pem");
         Path caCert = fixtureDir.resolve("ca.pem");
 
-        // SAN covers 127.0.0.1 so the CLIENT's HTTPS endpoint identification (F-0051) is satisfied
-        // for the legit/downgrade tests — the rejection under test must come from the attack, not
-        // from an incidental SAN mismatch.
+        // SAN covers 127.0.0.1 so HTTPS endpoint identification is satisfied for the legit/downgrade
+        // tests - the rejection under test must come from the attack, not an incidental SAN mismatch.
         genKeyPair(serverKeyStore, "server", "CN=localhost,O=configd-test", "-validity", "1");
         genKeyPair(clientKeyStore, "client", "CN=raft-peer-1,O=configd-test", "-validity", "1");
         exportCert(serverKeyStore, "server", serverCert);
         exportCert(clientKeyStore, "client", clientCert);
 
-        // A CA, and an expired END-ENTITY client signed by it. The truststore anchors at the CA, so
-        // path validation reaches the leaf and enforces its dead validity window (notAfter ~1 day
-        // ago). See the class javadoc: a self-signed expired LEAF imported as an anchor would be
-        // accepted (RFC 5280 §6.1), so the CA layer is what makes this a meaningful expiry test.
+        // A CA, and an expired end-entity client signed by it. The truststore anchors at the CA, so
+        // path validation reaches the leaf and enforces its dead validity window (notAfter ~1 day ago).
+        // An expired self-signed leaf imported as an anchor would be accepted (RFC 5280 section 6.1),
+        // so the CA layer is what makes this a meaningful expiry test.
         genCa(caKeyStore, "CN=configd-test-ca,O=configd-test");
         exportCert(caKeyStore, "ca", caCert);
         genCaSignedExpiredEndEntity(expiredKeyStore, caKeyStore, caCert,
@@ -148,19 +141,15 @@ class RaftTransportMtlsAttackTest {
         transports.clear();
     }
 
-    // -----------------------------------------------------------------------
-    // GAP #1 — plaintext connection rejected (control plane)
-    // -----------------------------------------------------------------------
-
     @Test
     @Timeout(120)
     void plaintextFrameIsNeverDecodedAsAPeerMessage() throws Exception {
         AtomicInteger inboundCount = new AtomicInteger();
         int port = startMtlsServer(serverKeyStore, inboundCount);
 
-        // The attacker opens a PLAIN TCP socket (no TLS) and writes a syntactically-valid Raft wire
-        // frame: [4-byte sender NodeId][FrameCodec frame]. Against the TLS-only server this is just
-        // application bytes BEFORE any handshake; the SSLServerSocket treats them as a malformed TLS
+        // The attacker opens a plain TCP socket (no TLS) and writes a syntactically-valid Raft wire
+        // frame: [4-byte sender NodeId][FrameCodec frame]. Against the TLS-only server these are
+        // application bytes before any handshake; the SSLServerSocket treats them as a malformed TLS
         // record and tears the connection down. The frame must NEVER reach the inbound handler.
         byte[] wire = raftWire(NodeId.of(7),
                 new FrameCodec.Frame(MessageType.HEARTBEAT, 1, 1L, "plaintext".getBytes()));
@@ -171,10 +160,10 @@ class RaftTransportMtlsAttackTest {
             out.write(wire);
             out.flush();
             // The server, if it speaks plaintext, would decode and dispatch immediately. Read until
-            // EOF/timeout (the server drops the bad TLS record) — a bounded wait, never a hang.
+            // EOF/timeout (the server drops the bad TLS record) - a bounded wait, never a hang.
             drainBriefly(plain.getInputStream());
         } catch (IOException expected) {
-            // Connection reset by the TLS server rejecting the record — also a valid rejection.
+            // Connection reset by the TLS server rejecting the record - also a valid rejection.
         }
 
         // Give any (erroneous) async dispatch a bounded window to surface, then assert silence.
@@ -184,7 +173,7 @@ class RaftTransportMtlsAttackTest {
     }
 
     // -----------------------------------------------------------------------
-    // GAP #2 — expired client certificate rejected (control plane)
+    // Expired client certificate rejected.
     // -----------------------------------------------------------------------
 
     @Test
@@ -193,20 +182,15 @@ class RaftTransportMtlsAttackTest {
         AtomicInteger inboundCount = new AtomicInteger();
         int port = startMtlsServer(serverKeyStore, inboundCount);
 
-        // A client presenting an already-expired CA-signed END-ENTITY certificate. The CA is in the
-        // server trust store, so path validation succeeds up to the anchor and the ONLY failure is
-        // the leaf's dead validity window (notAfter in the past) — distinct from the untrusted-CA
-        // case already covered elsewhere.
+        // A client presenting an already-expired CA-signed end-entity certificate. The CA is in the
+        // server trust store, so path validation succeeds up to the anchor and the only failure is
+        // the leaf's dead validity window (notAfter in the past), distinct from the untrusted-CA case.
         SSLContext attacker = clientContext(expiredKeyStore, serverTrustStore);
         boolean rejected = attemptHandshakeAndSend(attacker, port);
 
         assertTrue(rejected, "an expired client certificate must be rejected by the Raft server");
         assertEquals(0, inboundCount.get(), "no frame may be delivered behind an expired client cert");
     }
-
-    // -----------------------------------------------------------------------
-    // GAP #4 — TLS version downgrade rejected (control plane)
-    // -----------------------------------------------------------------------
 
     @Test
     @Timeout(120)
@@ -216,7 +200,7 @@ class RaftTransportMtlsAttackTest {
 
         // The attacker presents a fully trusted client credential but offers ONLY TLSv1.2. The
         // server is TLSv1.3-only (TlsConfig.protocols()), so there is no common protocol and the
-        // handshake must fail — nothing downgrades below TLSv1.3 (charter §5 version policy).
+        // handshake must fail - nothing downgrades below TLSv1.3.
         SSLContext ctx = clientContext(clientKeyStore, serverTrustStore);
         SSLSocket sock = (SSLSocket) ctx.getSocketFactory().createSocket();
         sock.setEnabledProtocols(new String[]{"TLSv1.2"});
@@ -226,9 +210,7 @@ class RaftTransportMtlsAttackTest {
         assertEquals(0, inboundCount.get(), "no frame may be delivered over a downgraded connection");
     }
 
-    // -----------------------------------------------------------------------
-    // Server + attack helpers
-    // -----------------------------------------------------------------------
+    // Server + attack helpers.
 
     private int startMtlsServer(Path keyStore, AtomicInteger inboundCount) throws Exception {
         TlsConfig serverTls = new TlsConfig(
@@ -321,7 +303,7 @@ class RaftTransportMtlsAttackTest {
         return wire;
     }
 
-    // ---- SSLContext + keytool fixture builders (the FanOutServerMtlsTest pattern) ----
+    // SSLContext + keytool fixture builders.
 
     private static SSLContext clientContext(Path clientKs, Path trustStore) throws Exception {
         KeyManagerFactory kmf = null;
@@ -333,8 +315,8 @@ class RaftTransportMtlsAttackTest {
         KeyStore ts = loadStore(trustStore);
         TrustManagerFactory tmf = TrustManagerFactory.getInstance(TrustManagerFactory.getDefaultAlgorithm());
         tmf.init(ts);
-        // TLS context allows 1.2+1.3 by default so the downgrade test can DELIBERATELY restrict the
-        // socket to 1.2; the server's TLSv1.3-only policy is what must reject it.
+        // TLS context allows 1.2+1.3 by default so the downgrade test can deliberately restrict
+        // the socket to 1.2; the server's TLSv1.3-only policy is what must reject it.
         SSLContext ctx = SSLContext.getInstance("TLS");
         ctx.init(kmf == null ? null : kmf.getKeyManagers(), tmf.getTrustManagers(), null);
         return ctx;
@@ -378,9 +360,9 @@ class RaftTransportMtlsAttackTest {
 
     /**
      * Builds a keystore (alias {@code expired}) holding a CA-signed end-entity cert whose validity
-     * window is already PAST ({@code -startdate -2d -validity 1} → notAfter ~1 day ago), plus the
+     * window is already PAST ({@code -startdate -2d -validity 1}, notAfter ~1 day ago), plus the
      * CA in its chain. The CA's {@code -gencert} stamps the dead window; importing the signed reply
-     * forms the leaf→CA chain the client presents.
+     * forms the leaf-to-CA chain the client presents.
      */
     private static void genCaSignedExpiredEndEntity(Path keyStore, Path caKeyStore, Path caCert,
                                                     String dname) throws Exception {

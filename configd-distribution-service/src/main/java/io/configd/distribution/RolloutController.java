@@ -8,11 +8,11 @@ import java.util.Map;
 import java.util.Objects;
 
 /**
- * Progressive rollout stage management (ADR-0008).
+ * Progressive rollout stage management.
  * <p>
  * Config changes are rolled out in stages, with health gates between each:
  * <pre>
- *   CANARY ──► ONE_PERCENT ──► TEN_PERCENT ──► FIFTY_PERCENT ──► FULL
+ *   CANARY --&gt; ONE_PERCENT --&gt; TEN_PERCENT --&gt; FIFTY_PERCENT --&gt; FULL
  * </pre>
  * Each stage has a minimum soak time. Advancement requires:
  * <ol>
@@ -57,7 +57,7 @@ public final class RolloutController {
     public enum RolloutPolicy {
         /** Normal progressive rollout through all stages. */
         PROGRESSIVE,
-        /** Skip all gates — deploy immediately to 100%. Requires elevated ACL. */
+        /** Skip all gates - deploy immediately to 100%. Requires elevated ACL. */
         IMMEDIATE
     }
 

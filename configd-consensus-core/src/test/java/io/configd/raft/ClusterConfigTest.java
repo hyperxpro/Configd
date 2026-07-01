@@ -9,7 +9,7 @@ import java.util.Set;
 import static org.junit.jupiter.api.Assertions.*;
 
 /**
- * Tests for {@link ClusterConfig} — simple and joint consensus configurations.
+ * Tests for {@link ClusterConfig} - simple and joint consensus configurations.
  */
 class ClusterConfigTest {
 

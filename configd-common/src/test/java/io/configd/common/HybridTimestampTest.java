@@ -7,7 +7,7 @@ import static org.junit.jupiter.api.Assertions.*;
 
 class HybridTimestampTest {
 
-    // ── compareTo ────────────────────────────────────────────────────────
+    // compareTo
 
     @Nested
     class CompareTo {
@@ -52,7 +52,7 @@ class HybridTimestampTest {
         }
     }
 
-    // ── packed / fromPacked round-trip ───────────────────────────────────
+    // packed / fromPacked round-trip
 
     @Nested
     class PackedRoundTrip {
@@ -108,7 +108,7 @@ class HybridTimestampTest {
         }
     }
 
-    // ── equals and hashCode ─────────────────────────────────────────────
+    // equals and hashCode
 
     @Nested
     class EqualsAndHashCode {
@@ -161,7 +161,7 @@ class HybridTimestampTest {
         }
     }
 
-    // ── ZERO constant ───────────────────────────────────────────────────
+    // ZERO constant
 
     @Nested
     class ZeroConstant {
@@ -182,7 +182,7 @@ class HybridTimestampTest {
         }
     }
 
-    // ── toString ────────────────────────────────────────────────────────
+    // toString
 
     @Nested
     class ToStringFormat {

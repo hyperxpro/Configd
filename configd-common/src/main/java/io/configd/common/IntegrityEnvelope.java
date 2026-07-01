@@ -9,9 +9,9 @@ import java.util.Arrays;
 import java.util.zip.CRC32C;
 
 /**
- * At-rest integrity codec for the Raft durability artifacts (ADR-0042, PA-2021).
+ * At-rest integrity codec for the Raft durability artifacts.
  * <p>
- * A self-describing envelope, mirroring the {@code FrameCodec} (ADR-0029) and
+ * A self-describing envelope, mirroring the {@code FrameCodec} and
  * {@code SigningKeyStore} magic/version precedents, applied as a pure
  * encode/decode transform over each artifact's existing payload:
  *
@@ -20,10 +20,10 @@ import java.util.zip.CRC32C;
  * </pre>
  *
  * <ul>
- *   <li><b>Layer A (keyless):</b> versioned format + CRC32C — corruption /
- *       downgrade / format-evolution hardening. Not the security control.</li>
+ *   <li><b>Layer A (keyless):</b> versioned format + CRC32C - corruption,
+ *       downgrade, and format-evolution hardening. Not the security control.</li>
  *   <li><b>Layer B (keyed):</b> HMAC-SHA-256 over
- *       {@code MAGIC || formatVersion || algId || reserved || payload} — the
+ *       {@code MAGIC || formatVersion || algId || reserved || payload} - the
  *       tamper/forgery control. Every header field is inside the MAC input so an
  *       attacker cannot downgrade {@code algId} to NONE, roll {@code formatVersion}
  *       back, or mutate {@code reserved} without invalidating the MAC.</li>
@@ -32,7 +32,7 @@ import java.util.zip.CRC32C;
  * <p><b>Posture.</b> An instance carries an optional {@link SecretKey}:
  * <ul>
  *   <li><b>keyed</b> (key != null): writes {@code algId=HMAC_SHA256} with a MAC,
- *       and runs <em>fail-closed</em> on read — it REFUSES an envelope with
+ *       and runs <em>fail-closed</em> on read - it REFUSES an envelope with
  *       {@code algId=NONE}/absent MAC (downgrade) as well as any CRC32C or MAC
  *       mismatch.</li>
  *   <li><b>keyless</b> (key == null): writes {@code algId=NONE} (Layer A only),
@@ -60,7 +60,7 @@ public final class IntegrityEnvelope {
     /** HMAC-SHA-256 output size. */
     public static final int MAC_SIZE = 32;
 
-    /** algId: no authentication — Layer A only (keyless). */
+    /** algId: no authentication - Layer A only (keyless). */
     public static final byte ALG_NONE = 0;
     /** algId: HMAC-SHA-256 authentication (Layer B, keyed). */
     public static final byte ALG_HMAC_SHA256 = 1;
@@ -114,10 +114,10 @@ public final class IntegrityEnvelope {
         buf.put(payload);
 
         if (isKeyed()) {
-            // MAC over [magic][formatVersion][algId][reserved][payload] — every
+            // MAC over [magic][formatVersion][algId][reserved][payload] - every
             // header field plus the payload. The reserved byte is authenticated
             // (not merely CRC-covered) so it carries no malleability if a future
-            // version assigns it meaning (A-verify Finding 3.1).
+            // version assigns it meaning.
             byte[] mac = computeMac(magic, algId, (byte) 0, payload);
             buf.put(mac);
         }
@@ -142,8 +142,8 @@ public final class IntegrityEnvelope {
      * @param enveloped     the bytes produced by {@link #wrap}
      * @return the original payload
      * @throws IntegrityException on too-short input, wrong magic, unknown/rolled
-     *                            formatVersion, CRC32C mismatch, MAC mismatch, or —
-     *                            when keyed — algId=NONE/missing MAC (downgrade)
+     *                            formatVersion, CRC32C mismatch, MAC mismatch, or
+     *                            (when keyed) algId=NONE/missing MAC (downgrade)
      */
     public byte[] unwrap(int expectedMagic, byte[] enveloped) {
         byte[] payload = unwrapOrNull(expectedMagic, enveloped);
@@ -157,16 +157,15 @@ public final class IntegrityEnvelope {
 
     /**
      * Unwraps an envelope, returning the payload, or {@code null} ONLY when the
-     * bytes are structurally absent — too short to carry the header+trailer, or
+     * bytes are structurally absent - too short to carry the header+trailer, or
      * (in keyless mode) lacking the expected magic entirely (legacy non-enveloped
      * bytes / first boot / a torn-short artifact).
      * <p>
      * Once the bytes ARE structurally an envelope for {@code expectedMagic} but
-     * fail verification (CRC32C mismatch, MAC mismatch, rolled formatVersion, or —
-     * when keyed — a downgrade to algId=NONE), this THROWS {@link IntegrityException}.
-     * It never silently returns {@code null} for a tampered-but-present envelope —
-     * that asymmetry is the PA-2021 fix (ADR-0042 D-1 condition 4): a torn/absent
-     * artifact is tolerated, a tampered one fails loud.
+     * fail verification (CRC32C mismatch, MAC mismatch, rolled formatVersion, or,
+     * when keyed, a downgrade to algId=NONE), this THROWS {@link IntegrityException}.
+     * It never silently returns {@code null} for a tampered-but-present envelope.
+     * A torn/absent artifact is tolerated; a tampered one fails loud.
      *
      * @param expectedMagic the artifact magic the caller expects
      * @param enveloped     the candidate bytes (may be null)
@@ -175,8 +174,8 @@ public final class IntegrityEnvelope {
      */
     public byte[] unwrapOrNull(int expectedMagic, byte[] enveloped) {
         // Need at least the 4-byte magic to decide whether these bytes even claim to
-        // be our envelope. Below that they are structurally absent (legit torn /
-        // first boot / a legacy short artifact) for every posture.
+        // be our envelope. Below that they are structurally absent (torn, first boot,
+        // or a short legacy artifact) for every posture.
         if (enveloped == null || enveloped.length < Integer.BYTES) {
             return null;
         }
@@ -184,10 +183,10 @@ public final class IntegrityEnvelope {
         ByteBuffer buf = ByteBuffer.wrap(enveloped);
         int magic = buf.getInt();
         if (magic != expectedMagic) {
-            // A FULL-LENGTH buffer that does not carry our magic is unauthenticated
-            // input — a keyed reader refuses it (fail-closed). A buffer below the
-            // envelope floor is treated as structurally absent (legit torn / first
-            // boot / a short legacy artifact) for every posture, exactly as before.
+            // A full-length buffer that does not carry our magic is unauthenticated
+            // input - a keyed reader refuses it (fail-closed). A buffer below the
+            // envelope floor is treated as structurally absent (torn, first boot,
+            // or a short legacy artifact) for every posture.
             if (isKeyed() && enveloped.length >= HEADER_SIZE + CRC_SIZE) {
                 throw new IntegrityException(
                         "expected integrity envelope magic 0x" + Integer.toHexString(expectedMagic)
@@ -202,8 +201,8 @@ public final class IntegrityEnvelope {
         // The magic matches: these bytes ARE meant to be our envelope, so any further
         // structural/verification failure FAILS LOUD (never null). A buffer that
         // claims our magic but is too short to be a valid envelope is a truncation/
-        // tamper under a key — a DELIBERATE refusal here, not an incidental
-        // downstream underflow (A-verify Finding 4.1). Keyless keeps absent semantics.
+        // tamper under a key - a deliberate refusal, not an incidental downstream
+        // underflow. Keyless keeps absent semantics.
         if (enveloped.length < HEADER_SIZE + CRC_SIZE) {
             if (isKeyed()) {
                 throw new IntegrityException("integrity envelope truncated (magic present, length "
@@ -220,14 +219,14 @@ public final class IntegrityEnvelope {
                             + Integer.toHexString(expectedMagic));
         }
         byte algId = buf.get();
-        byte reserved = buf.get(); // authenticated below (folded into the MAC input)
+        byte reserved = buf.get(); // folded into the MAC input below
 
         int macLen;
         if (algId == ALG_NONE) {
             macLen = 0;
             if (isKeyed()) {
-                // Downgrade attempt: an authenticating reader refuses an
-                // unauthenticated artifact. Posture, not bytes, defeats strip-the-MAC.
+                // Downgrade attempt: a keyed reader refuses an unauthenticated
+                // artifact. Posture, not just bytes, defeats strip-the-MAC.
                 throw new IntegrityException(
                         "integrity downgrade refused: algId=NONE under a configured key for magic 0x"
                                 + Integer.toHexString(expectedMagic));
@@ -266,8 +265,8 @@ public final class IntegrityEnvelope {
             byte[] storedMac = Arrays.copyOfRange(
                     enveloped, HEADER_SIZE + payloadLen, HEADER_SIZE + payloadLen + MAC_SIZE);
             if (!isKeyed()) {
-                // A keyless reader cannot authenticate a keyed artifact. Rather than
-                // silently trusting an unverifiable MAC, refuse loudly.
+                // A keyless reader cannot verify a keyed artifact - refuse loudly
+                // rather than silently trusting an unverifiable MAC.
                 throw new IntegrityException(
                         "keyed integrity envelope encountered by a keyless reader for magic 0x"
                                 + Integer.toHexString(expectedMagic));
@@ -283,12 +282,12 @@ public final class IntegrityEnvelope {
         return payload;
     }
 
-    /** HMAC-SHA-256 over the MAC input {@code magic || formatVersion || algId || reserved || payload}. */
+    /** HMAC-SHA-256 over: magic, formatVersion, algId, reserved, payload (in that order). */
     private byte[] computeMac(int magic, byte algId, byte reserved, byte[] payload) {
         try {
             Mac mac = Mac.getInstance(HMAC);
             mac.init(key);
-            ByteBuffer hdr = ByteBuffer.allocate(HEADER_SIZE); // magic(4)+version(2)+algId(1)+reserved(1)
+            ByteBuffer hdr = ByteBuffer.allocate(HEADER_SIZE); // magic(4) + version(2) + algId(1) + reserved(1)
             hdr.putInt(magic);
             hdr.putShort(FORMAT_VERSION);
             hdr.put(algId);

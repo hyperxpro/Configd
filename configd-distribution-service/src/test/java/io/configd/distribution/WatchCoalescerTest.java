@@ -108,7 +108,7 @@ class WatchCoalescerTest {
             WatchCoalescer coalescer = new WatchCoalescer(clock, 10_000_000L, 64);
             coalescer.add(List.of(new ConfigMutation.Put("key", VALUE)), 1);
 
-            // Advance 9ms — not enough
+            // Advance 9ms - not enough
             clock.advanceNanos(9_000_000L);
             assertFalse(coalescer.shouldFlush());
         }
@@ -118,7 +118,7 @@ class WatchCoalescerTest {
             WatchCoalescer coalescer = new WatchCoalescer(clock, 10_000_000L, 64);
             coalescer.add(List.of(new ConfigMutation.Put("key", VALUE)), 1);
 
-            // Advance 10ms — exactly at window
+            // Advance 10ms - exactly at window
             clock.advanceNanos(10_000_000L);
             assertTrue(coalescer.shouldFlush());
         }
@@ -166,7 +166,7 @@ class WatchCoalescerTest {
             clock.advanceNanos(10_000_000L);
             coalescer.flush();
 
-            // Add new entry — timer starts fresh
+            // Add new entry - timer starts fresh
             coalescer.add(List.of(new ConfigMutation.Put("b", VALUE)), 2);
             assertFalse(coalescer.shouldFlush()); // Not enough time elapsed
 

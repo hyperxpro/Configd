@@ -35,15 +35,15 @@ import static org.junit.jupiter.api.Assertions.*;
  * <p>
  * Each test uses a temporary data directory that is cleaned up automatically.
  * All server tests are guarded by a 60-second timeout to prevent hangs (raised from 10s for the
- * credit-throttling 2-vCPU box — see the note on the {@code @Timeout} annotation below).
+ * credit-throttling 2-vCPU box - see the note on the {@code @Timeout} annotation below).
  * The API port is set to 0 (ephemeral) so tests can run in parallel without
  * port conflicts.
  */
-// Hang ceiling raised 10s → 60s (2026-06-27, pre-EC2 cleanup). This 2-vCPU box credit-throttles, and a
+// Hang ceiling raised 10s -> 60s (2026-06-27, pre-EC2 cleanup). This 2-vCPU box credit-throttles, and a
 // cold-JVM server boot does real CPU work (class-load, Netty/TLS init, Raft groups, HTTP, snapshot replay).
-// Measured robust at 16-burner oversubscription (serverStartsAndStopsCleanly 3/3 PASS, boot method ≪ 10s),
+// Measured robust at 16-burner oversubscription (serverStartsAndStopsCleanly 3/3 PASS, boot method << 10s),
 // but true credit-exhaustion is more severe than burner-oversubscription (it cuts total CPU, not just
-// shares it), which is the documented "gate-4 boot timeout" risk. 60s is generous headroom that prevents a
+// shares it), which is the documented boot-timeout risk. 60s is generous headroom that prevents a
 // boot false-fail without masking a real hang; fast wiring tests are unaffected and keytool-heavy tests
 // (e.g. find0050) keep their own larger method-level @Timeout overrides.
 @Timeout(60)
@@ -52,7 +52,7 @@ class ConfigdServerTest {
     @TempDir
     Path tempDir;
 
-    // RR-094: keytool subprocess spawning (3 per TLS test) dominates the
+    // Keytool subprocess spawning (3 per TLS test) dominates the
     // find0050 runtime and starves under CPU-credit throttling, blowing the
     // class-level @Timeout(10). Generate the keystore/truststore/cert exactly
     // ONCE for the whole class in @BeforeAll and reuse the cached paths from
@@ -260,7 +260,7 @@ class ConfigdServerTest {
         assertNotNull(server.hyParViewOverlay(), "HyParViewOverlay must be wired");
         assertNotNull(server.subscriptionManager(), "SubscriptionManager must be wired");
         // C4: SlowConsumerPolicy (the pre-session orphan this assert used to "cover") is
-        // DELETED — superseded by SlowConsumerGovernor, which is wired inside the
+        // DELETED - superseded by SlowConsumerGovernor, which is wired inside the
         // --edge-port FanOutServer branch and exercised by the FanOutServer policy tests.
         assertNotNull(server.rolloutController(), "RolloutController must be wired");
 
@@ -350,30 +350,30 @@ class ConfigdServerTest {
     // ========================================================================
 
     /**
-     * Regression test for FIND-0005 (RR-091 F-C4): the tick loop must continue
+     * Regression test for FIND-0005: the tick loop must continue
      * running after a routed-message task throws. The OLD body of this test only
-     * slept twice and asserted {@code assertNotNull(server.driver())} — it never
+     * slept twice and asserted {@code assertNotNull(server.driver())} - it never
      * injected an exception, so it could not see the zombie-tick regression and
-     * gave RR-008's swallow path zero observation.
+     * gave the swallow path zero observation.
      * <p>
      * This rewrite injects a throwable through the REAL inbound seam
-     * ({@link ConfigdServer#raftInboundHandler}) — a routed message whose
-     * {@code routeMessage -> node.handleMessage -> transport.send} throws — on the
+     * ({@link ConfigdServer#raftInboundHandler}) - a routed message whose
+     * {@code routeMessage -> node.handleMessage -> transport.send} throws - on the
      * SAME single-thread Raft/tick executor that also runs a fixed-rate tick task,
      * and asserts:
      * <ol>
-     *   <li><b>RR-008 (first observation of the swallow):</b> the throwable does
-     *       NOT propagate to the caller — the inbound handler has no try/catch, so
+     *   <li><b>First observation of the swallow:</b> the throwable does
+     *       NOT propagate to the caller - the inbound handler has no try/catch, so
      *       the {@code routeMessage} exception is captured into the
      *       {@code ScheduledThreadPoolExecutor}'s discarded Future (the disk-failing
      *       follower goes mute, no ack/log/metric). We assert the inbound
      *       {@code accept} returns normally.</li>
      *   <li><b>FIND-0005 (the named property):</b> the separately-scheduled
-     *       fixed-rate tick task KEEPS RUNNING after the routed task threw — its
+     *       fixed-rate tick task KEEPS RUNNING after the routed task threw - its
      *       counter advances past where it stood at injection time. (An STPE
      *       cancels a task that throws in ITS OWN run; a one-shot {@code execute}
      *       throwing must not cancel the independent {@code scheduleAtFixedRate}
-     *       tick task — the zombie-tick property.)</li>
+     *       tick task - the zombie-tick property.)</li>
      * </ol>
      */
     @Test
@@ -406,7 +406,7 @@ class ConfigdServerTest {
             // The REAL production inbound seam (no try/catch around routeMessage).
             var inbound = ConfigdServer.raftInboundHandler(driver, GROUP, raftExecutor);
 
-            // A fixed-rate tick task on the SAME executor — the thing FIND-0005 is
+            // A fixed-rate tick task on the SAME executor - the thing FIND-0005 is
             // about. Use a latch-based liveness signal so the assertions are
             // DETERMINISTIC (await with a generous timeout) rather than racing a
             // wall-clock sleep, which is flaky under load / JaCoCo instrumentation.
@@ -426,16 +426,16 @@ class ConfigdServerTest {
                 // Arm a fresh latch so we can await a tick AFTER the injection.
                 tickLatch.set(new java.util.concurrent.CountDownLatch(1));
 
-                // RR-008: inject through routeMessage. A stale-term (0) AppendEntries
+                // Inject through routeMessage. A stale-term (0) AppendEntries
                 // to a leader triggers a reply via the throwing transport, so
-                // routeMessage throws — the inbound handler must NOT propagate it.
+                // routeMessage throws - the inbound handler must NOT propagate it.
                 var poison = new io.configd.raft.AppendEntriesRequest(0L, NodeId.of(2), 0L, 0L, List.of(), 0L);
                 assertDoesNotThrow(() -> inbound.accept(NodeId.of(2), poison),
                         "RR-008: the inbound handler swallows the routeMessage throwable (no propagation "
                                 + "to the caller) — the bug is exactly this silent swallow; here we OBSERVE it");
 
                 // FIND-0005: the tick task must keep advancing AFTER the routed task
-                // threw — a dead tick loop is the zombie-tick regression. Await a
+                // threw - a dead tick loop is the zombie-tick regression. Await a
                 // post-injection tick deterministically.
                 assertTrue(tickLatch.get().await(10, java.util.concurrent.TimeUnit.SECONDS),
                         "FIND-0005: the fixed-rate tick task must keep running after a routed-message task "
@@ -459,7 +459,7 @@ class ConfigdServerTest {
      * wait for leadership confirmation before serving reads.
      * <p>
      * Before the fix, the LeadershipConfirmer was wired as
-     * {@code () -> raftNode.readIndex() >= 0} — this starts the ReadIndex
+     * {@code () -> raftNode.readIndex() >= 0} - this starts the ReadIndex
      * protocol but never waits for heartbeat confirmation or state machine
      * catch-up, making it a stale read.
      * <p>
@@ -469,7 +469,7 @@ class ConfigdServerTest {
      * This test reproduces the issue at the component level: it creates a
      * RaftNode that is NOT an elected leader (3-node cluster, no transport),
      * puts data directly into the config store, then constructs a
-     * ConfigReadService with a confirmer that uses readIndex() — the same
+     * ConfigReadService with a confirmer that uses readIndex() - the same
      * code path the server uses. The linearizable read must return null
      * (= not leader) rather than serving stale data.
      */
@@ -660,7 +660,7 @@ class ConfigdServerTest {
         });
 
         try {
-            // Drive many reads (non-leader → timeouts), proving the counter
+            // Drive many reads (non-leader -> timeouts), proving the counter
             // equals the read count, NOT read-count * poll-iterations.
             int reads = 10;
             for (int i = 0; i < reads; i++) {
@@ -741,10 +741,10 @@ class ConfigdServerTest {
      * retain the TlsManager passed in, and expose it via tlsManager(). This
      * is the primitive on which the ConfigdServer fail-closed check depends:
      * {@code config.tlsEnabled() && tcpTransport.tlsManager() == null}
-     * → refuse to start. If the getter ever stops reflecting the constructor
+     * -> refuse to start. If the getter ever stops reflecting the constructor
      * argument, the fail-closed guard silently becomes a no-op.
      */
-    // RR-094: a generous hang-detection budget (120s), not a performance
+    // Generous hang-detection budget (120s), not a performance
     // assertion. The expensive keytool keystore generation is hoisted to
     // @BeforeAll (cached in keyStorePath/trustStorePath/certFile), so the
     // timed body here only constructs a TlsManager/TcpRaftTransport and reads
@@ -809,14 +809,14 @@ class ConfigdServerTest {
     }
 
     // ========================================================================
-    // RR-005 regression: the tick loop must trigger Raft-LOG compaction, else
+    // The tick loop must trigger Raft-LOG compaction, else
     // compaction is unreachable in the wired server and the WAL grows forever.
     // Source-level guard (the find0050 pattern): a future refactor that drops the
     // driver.maybeCompactOwner(...) call is caught at CI time without a multi-hour soak.
     //
-    // Phase 0 B Stage 2 (M1): the call is now the PER-OWNER form driver.maybeCompactOwner(owner, ...)
-    // scheduled on each owner thread (Stage 1B already replaced the legacy driver.maybeCompact() with
-    // maybeCompactOwner(0, ...)). This anchor is re-pointed at the REAL call signature — the previous
+    // The call is now the PER-OWNER form driver.maybeCompactOwner(owner, ...)
+    // scheduled on each owner thread (the per-owner form already replaced the legacy driver.maybeCompact() with
+    // maybeCompactOwner(0, ...)). This anchor is re-pointed at the REAL call signature - the previous
     // "driver.maybeCompact(" anchor was being satisfied by an incidental comment, not the wiring, so
     // it was partly vacuous; matching "driver.maybeCompactOwner(owner," asserts the actual code call.
     // ========================================================================
@@ -921,7 +921,7 @@ class ConfigdServerTest {
             assertEquals(200, authed.statusCode(),
                     "F-0055: /metrics must return 200 with a valid bearer token");
 
-            // Health endpoints must remain public (no auth) — probes must work.
+            // Health endpoints must remain public (no auth) - probes must work.
             java.net.http.HttpResponse<String> live = client.send(
                     java.net.http.HttpRequest.newBuilder()
                             .uri(java.net.URI.create("http://127.0.0.1:" + port + "/health/live"))

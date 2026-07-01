@@ -20,20 +20,20 @@ import java.util.concurrent.atomic.AtomicReference;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * Discriminating test for RR-004 (P0): <b>ack must equal commit</b>.
+ * Discriminating safety test: <b>ack must equal commit</b>.
  * <p>
  * The defect: an HTTP-200 "acknowledged" write was produced the instant the
  * leader appended the entry to its <em>local</em> log, pre-quorum
- * ({@code RaftNode.propose} returning ACCEPTED → {@code WriteResult.Accepted} →
+ * ({@code RaftNode.propose} returning ACCEPTED -> {@code WriteResult.Accepted} ->
  * 200). If the leader was then killed / isolated / starved in the window
  * <em>between local append and quorum commit</em>, a new leader could win with a
  * log that never contained the un-replicated entry, overwrite the slot, and the
- * acknowledged write vanished — a contract §6 violation (ack-with-commit-
- * sequence), observed live in {@code docs/audit-session-1/smoke-test.md §3}.
+ * acknowledged write vanished - a contract section 6 violation (ack-with-commit-
+ * sequence), observed live in {@code docs/audit-session-1/smoke-test.md section 3}.
  * <p>
- * This test drives the deterministic post-RR-010 simulator (see
+ * This test drives the deterministic simulator (see
  * {@link RaftSimulation#electionRandom} and {@link SimulationDeterminismTest})
- * with randomized leader-kill points placed precisely in the append→commit
+ * with randomized leader-kill points placed precisely in the append->commit
  * window, across many seeds and all three fault shapes (leader crash, leader
  * network isolation, slow-follower quorum delay).
  * <p>
@@ -41,7 +41,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * moves acknowledgement from local-append to commit-confirmation, so this test
  * observes acknowledgement at the boundary that is live <em>in this tree</em>:
  * <ul>
- *   <li><b>Post-fix:</b> the {@code RaftNode.whenCommitOutcome} seam — the exact
+ *   <li><b>Post-fix:</b> the {@code RaftNode.whenCommitOutcome} seam - the exact
  *       seam {@code ConfigWriteService} blocks on. A write is "acknowledged"
  *       (i.e. the client would receive a 200) <em>only</em> when the seam
  *       reports {@code COMMITTED}. {@code LOST} / {@code INDETERMINATE_LOCALLY}
@@ -53,18 +53,18 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * The invariant asserted is exactly the contract promise: <b>every write
  * acknowledged as successful is present in the post-failover committed log</b>.
  * <p>
- * Pre-fix (ack-at-local-append) this MUST fail: a kill in the append→commit
+ * Pre-fix (ack-at-local-append) this MUST fail: a kill in the append->commit
  * window acknowledges writes the surviving quorum never saw. Post-fix
  * (ack-after-quorum-commit) it MUST pass: a write killed in that window resolves
  * as LOST/INDETERMINATE (correctly NOT acknowledged), and a write reported
- * COMMITTED is — by construction — already durable, so it always survives. A
+ * COMMITTED is - by construction - already durable, so it always survives. A
  * non-vacuity guard additionally requires that the sweep genuinely commits and
  * survives writes (so "no acked write lost" is not passing because nothing was
  * ever acked).
  */
 class AckEqualsCommitTest {
 
-    /** Cluster size — 5 nodes tolerates a single leader failure with a 3-node quorum. */
+    /** Cluster size - 5 nodes tolerates a single leader failure with a 3-node quorum. */
     private static final int NODES = 5;
 
     /** Seeds swept per fault shape. Each seed is a fully reproducible scenario. */
@@ -152,7 +152,7 @@ class AckEqualsCommitTest {
             return new ScenarioResult(Outcome.INCONCLUSIVE, 0); // could not warm up under this seed
         }
 
-        // Randomized kill point inside the append→commit window (1..4 ticks after
+        // Randomized kill point inside the append->commit window (1..4 ticks after
         // local append), derived from the seed so it is randomized but replayable.
         int killAfterTicks = 1 + (int) Math.floorMod(mix(seed), 4);
 
@@ -175,7 +175,7 @@ class AckEqualsCommitTest {
             return new ScenarioResult(Outcome.INCONCLUSIVE, 0); // leader stepped down at propose
         }
 
-        // Advance the append→commit window, then remove the leader.
+        // Advance the append->commit window, then remove the leader.
         for (int t = 0; t < killAfterTicks; t++) {
             h.tick();
         }
@@ -190,12 +190,12 @@ class AckEqualsCommitTest {
         if (newLeader < 0) {
             return new ScenarioResult(Outcome.INCONCLUSIVE, 0); // surviving quorum could not elect
         }
-        // Commit a fresh current-term entry on the new leader (Raft §5.4.2) so it
+        // Commit a fresh current-term entry on the new leader (Raft section 5.4.2) so it
         // applies everything it will ever apply at the old indices, and settle.
         h.proposeAndAwaitAck(newLeader, "rr004.postfailover", "pf", 600, h.ackObserver());
         h.runTicks(400);
 
-        // The target write's ack outcome is now resolved (or still pending — in
+        // The target write's ack outcome is now resolved (or still pending - in
         // which case it was never acknowledged, by definition).
         boolean acknowledged = obs.committed();
 
@@ -227,12 +227,12 @@ class AckEqualsCommitTest {
             }
             return new ScenarioResult(Outcome.ACKED_AND_PRESENT, survivors + 1);
         }
-        // Not acknowledged (LOST / INDETERMINATE / still-pending) — no durability
+        // Not acknowledged (LOST / INDETERMINATE / still-pending) - no durability
         // promise was made; the client correctly received a non-200.
         return new ScenarioResult(Outcome.NOT_ACKED, survivors);
     }
 
-    /** SplitMix64 finalizer — derives a replayable, well-mixed value from the seed. */
+    /** SplitMix64 finalizer - derives a replayable, well-mixed value from the seed. */
     private static long mix(long seed) {
         long z = seed + 0x9E3779B97F4A7C15L;
         z = (z ^ (z >>> 30)) * 0xBF58476D1CE4E5B9L;
@@ -241,7 +241,7 @@ class AckEqualsCommitTest {
     }
 
     // =======================================================================
-    // Ack observer — abstracts the ack boundary so the SAME test runs against
+    // Ack observer - abstracts the ack boundary so the SAME test runs against
     // both states of the tree (pre-fix: propose-accept; post-fix: commit seam).
     // =======================================================================
 

@@ -21,18 +21,14 @@ import java.util.Map;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
 /**
- * Red-team finding (red/green regression): the Netty consensus transport must apply the SHARED bounded
- * TLS handshake timeout {@link RaftWireProtocol#HANDSHAKE_TIMEOUT_MS} the JDK {@code TcpRaftTransport}
- * enforces (via {@code setSoTimeout(...)} around {@code startHandshake()}) — DR-N16's "both transports
- * apply the same numbers". Before the fix, {@code new SslHandler(engine)} used Netty's default
- * (10000 ms), so a peer that completed the TCP connect but stalled mid-handshake held the slot ~10 s
- * instead of ~2 s. This test pins the value on BOTH the server-mode and client-mode handlers:
- * <ul>
- *   <li><b>RED</b> (pre-fix): {@code getHandshakeTimeoutMillis() == 10000} (Netty default).</li>
- *   <li><b>GREEN</b> (post-fix): {@code == RaftWireProtocol.HANDSHAKE_TIMEOUT_MS == 2000}.</li>
- * </ul>
+ * The Netty consensus transport must apply the shared bounded TLS handshake timeout
+ * {@link RaftWireProtocol#HANDSHAKE_TIMEOUT_MS}, matching the JDK transport's
+ * {@code setSoTimeout(...)} around {@code startHandshake()}. Without this, the Netty
+ * default (10000 ms) applies, so a peer that completes TCP connect but stalls mid-handshake
+ * holds the slot ~10 s instead of ~2 s. This test pins the value on both the server-mode
+ * and client-mode handlers.
  */
-@Timeout(120) // RR-094: generous hang budget for the once-per-class keytool fixture on the 2-vCPU box
+@Timeout(120) // generous hang budget for the once-per-class keytool fixture
 class NettyRaftTransportHandshakeTimeoutTest {
 
     private static Path dir;
@@ -83,7 +79,7 @@ class NettyRaftTransportHandshakeTimeoutTest {
         NettyRaftTransport transport = new NettyRaftTransport(
                 NodeId.of(1), new InetSocketAddress("127.0.0.1", 0), Map.of(), tls, null);
         try {
-            // Not started — the SslHandler factories only need the TlsManager, not a bound socket.
+            // Not started - the SslHandler factories only need the TlsManager, not a bound socket.
             SslHandler server = transport.newServerSslHandler();
             SslHandler client = transport.newClientSslHandler(new InetSocketAddress("127.0.0.1", 9999));
 

@@ -18,9 +18,7 @@ import java.util.List;
 import java.util.Objects;
 
 /**
- * Tamper-evident, append-only audit log of security-relevant control-plane
- * events (S7/D-2; ties to PA-2021's at-rest integrity theme — see
- * {@code io.configd.common.IntegrityEnvelope}).
+ * Tamper-evident, append-only audit log of security-relevant control-plane events.
  * <p>
  * Every record is one of: a mutating attempt (PUT/DELETE) or an authentication/
  * authorization failure (401/403). Each record carries the fields
@@ -40,18 +38,18 @@ import java.util.Objects;
  *   <li><b>Keyed</b> ({@link #AuditLog(Storage, Clock, SecretKey)}): the chain is an
  *       <em>HMAC-SHA256</em> under {@code K_audit}:
  *       <pre>recordHash = HMAC-SHA256(K_audit, prevHash || canonicalBytes(record))</pre>
- *       This is the production-grade, tamper-EVIDENT mode (charter §7). An attacker
- *       who can rewrite the persisted file (threat A2/T3) cannot forge a consistent
+ *       This is the production-grade, tamper-EVIDENT mode. An attacker
+ *       who can rewrite the persisted file cannot forge a consistent
  *       chain without {@code K_audit}: editing a record and re-chaining the whole
  *       log with plain SHA-256 / a wrong key yields MACs that {@link #verify()}
- *       under the real key rejects. Like PA-2021 ({@code IntegrityEnvelope}),
- *       {@code K_audit} is HKDF-derived from the cluster signing key, DOMAIN-SEPARATED
- *       by a distinct {@code info} string so it is independent of the Raft at-rest key.</li>
+ *       under the real key rejects. {@code K_audit} is HKDF-derived from the cluster
+ *       signing key, DOMAIN-SEPARATED by a distinct {@code info} string so it is
+ *       independent of the Raft at-rest key.</li>
  *   <li><b>Keyless</b> ({@link #AuditLog(Storage, Clock)}): a plain <em>SHA-256</em>
- *       chain. This is evidence against CARELESS / accidental edits ONLY — a
+ *       chain. This is evidence against CARELESS / accidental edits ONLY - a
  *       deliberate attacker with file-write access can recompute the whole keyless
  *       chain (SHA-256 needs no secret) and defeat it. Retained for unit tests and
- *       in-memory / back-compat deployments; NOT for the threat-model attacker A2.</li>
+ *       in-memory / back-compat deployments; NOT suitable for production security.</li>
  * </ul>
  * The on-disk frame additionally carries a CRC32 (via {@link Storage#appendToLog})
  * so accidental corruption is caught at read time. The canonical form is
@@ -59,10 +57,10 @@ import java.util.Objects;
  * ambiguity can be exploited to forge a colliding record.
  * <p>
  * <b>Residual (honest):</b> even keyed, an attacker who holds {@code K_audit}
- * (full-host / T0 compromise, since the key is derived from the co-located cluster
- * signing key) can forge the chain — the same fence as PA-2021 §5.1.
+ * (full-host compromise, since the key is derived from the co-located cluster
+ * signing key) can forge the chain.
  *
- * <h2>Bounding (anti-DoS — charter §10.3)</h2>
+ * <h2>Bounding (anti-DoS)</h2>
  * The in-memory chain is bounded to {@code maxRecords} (default
  * {@link #DEFAULT_MAX_RECORDS}); when the cap is reached the on-disk log is
  * rotated (truncated and re-seeded from the most recent record's hash) so the
@@ -70,11 +68,11 @@ import java.util.Objects;
  * lever. Rotation preserves the chain's forward integrity: the new segment's
  * genesis {@code prevHash} is the last retained {@code recordHash}, so
  * {@link #verify()} over the retained segment still holds. (Cross-segment
- * continuity across a rotation is out of scope for S7 — documented as an S7.5
- * item; within a segment the chain is fully verifiable.)
+ * continuity across a rotation is out of scope; within a segment the chain is
+ * fully verifiable.)
  *
  * <h2>Secrets</h2>
- * NEVER logs a credential/token — only the resolved principal. Callers must pass
+ * NEVER logs a credential/token - only the resolved principal. Callers must pass
  * the principal, never the bearer token.
  *
  * <h2>Thread safety</h2>
@@ -122,7 +120,7 @@ public final class AuditLog {
 
     /**
      * Creates a KEYLESS audit log (plain SHA-256 chain) with the default record
-     * cap. Evidence against careless edits only — see the class javadoc; use the
+     * cap. Evidence against careless edits only - see the class javadoc; use the
      * {@link #AuditLog(Storage, Clock, SecretKey)} keyed ctor for the threat-model
      * (A2) tamper-evidence bar.
      *
@@ -148,8 +146,7 @@ public final class AuditLog {
      * Creates a KEYED audit log (HMAC-SHA256 chain under {@code key}) with the
      * default record cap. This is the production, tamper-EVIDENT mode: an attacker
      * who can rewrite the persisted file cannot forge a consistent chain without
-     * {@code key}. Mirrors how {@code RaftLog} took an {@code IntegrityEnvelope}
-     * (PA-2021); {@code key} must be derived DOMAIN-SEPARATED from the Raft at-rest
+     * {@code key}. {@code key} must be derived DOMAIN-SEPARATED from the Raft at-rest
      * key (a distinct HKDF {@code info} string).
      *
      * @param storage durable, append+CRC storage (non-null)
@@ -218,7 +215,7 @@ public final class AuditLog {
     /**
      * Rotates the on-disk log when the in-memory cap is exceeded: keep the most
      * recent {@code maxRecords} records, truncate the persisted log, and re-write
-     * the retained tail (whose chain is intact — the retained head's
+     * the retained tail (whose chain is intact - the retained head's
      * {@code prevHash} links to a record we just dropped, so verification of the
      * retained segment is anchored at that head, not at the all-zero genesis).
      */
@@ -260,8 +257,8 @@ public final class AuditLog {
     /**
      * Verifies the persisted log under an ARBITRARY key (or keyless when null),
      * independent of this instance's key. Test seam for the keyed-vs-keyless
-     * distinction (S7/D-2): re-walk the attacker-rewritten bytes under the REAL
-     * key (must be broken) versus the keyless function (would have passed).
+     * distinction: re-walk the attacker-rewritten bytes under the REAL key
+     * (must be broken) versus the keyless function (would have passed).
      *
      * @param verifyKey the key to verify under, or null for keyless SHA-256
      * @return the verification result over the persisted records
@@ -322,9 +319,7 @@ public final class AuditLog {
         }
     }
 
-    // ------------------------------------------------------------------
     // Canonical encoding + hashing
-    // ------------------------------------------------------------------
 
     /**
      * Canonical, unambiguous record bytes: a fixed field order, each

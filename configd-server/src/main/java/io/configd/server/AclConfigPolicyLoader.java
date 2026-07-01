@@ -20,17 +20,17 @@ import java.util.logging.Logger;
 
 /**
  * Loads the config-sourced authorization policy from the reserved {@code _acl/} key subtree into
- * {@link AclService} and keeps it converged as the store changes (O-6 Seam 2a).
+ * {@link AclService} and keeps it converged as the store changes.
  *
  * <h2>Idempotent whole-subtree rebuild</h2>
  * Every (re)load is the SAME operation: re-read the entire {@code _acl/} subtree <b>together with the store
  * version it was scanned at</b> ({@code getPrefixVersioned}), {@link PolicySerializer parse} it, validate
  * reserved names, and {@link AclService#publishConfigPolicy(long, ConfigPolicy) publish} the result tagged
  * with that version. It is NOT a delta apply. Re-reading the same keys yields the same policy, so this
- * converges correctly regardless of how the underlying writes arrived — multi-key policy spread across
+ * converges correctly regardless of how the underlying writes arrived - multi-key policy spread across
  * separate writes, the boot snapshot / WAL-suffix split, follower catch-up via InstallSnapshot, and any
  * overlap between the boot seed and replay. A binding that names a not-yet-loaded role is simply inert
- * until that role's key appears (well-formed-but-incomplete is not an error — see {@link PolicySerializer}).
+ * until that role's key appears (well-formed-but-incomplete is not an error - see {@link PolicySerializer}).
  *
  * <h2>Fail-closed-to-last-good</h2>
  * If the {@code _acl/} bytes do not parse to a valid policy (or collide with a reserved name), the load is
@@ -38,27 +38,25 @@ import java.util.logging.Logger;
  * never deny-alls (lockout) and never allow-alls (open). This mirrors the consistency-preserving abort in
  * {@code ConfigStateMachine.signCommand}, adapted for a policy SOURCE (keep last-good rather than throw).
  *
- * <h2>Threading — non-blocking on the apply/owner thread</h2>
+ * <h2>Threading - non-blocking on the apply/owner thread</h2>
  * {@link #onConfigChange} runs on the Raft apply/owner thread. It first does a cheap O(delta) scan of the
  * mutation list and returns immediately unless an {@code _acl/} key was touched; only then does it run the
- * rebuild. The rebuild scan is <b>O(total store keys)</b> (a full snapshot scan — the HAMT has no ordered
+ * rebuild. The rebuild scan is <b>O(total store keys)</b> (a full snapshot scan - the HAMT has no ordered
  * prefix iteration), <b>not</b> O(policy size); it runs on the owner thread, so on a very large store an
  * {@code _acl/}-touching apply (or a snapshot install) is a bounded but non-trivial owner-thread cost. In
  * production no {@code _acl/} key is ever written, so the gate always short-circuits and the apply loop
  * carries <b>zero</b> added cost; {@code _acl/} writes are rare admin ops. ({@link #onSnapshotInstalled}
- * rebuilds unconditionally — snapshot installs are rare and carry no per-key signal.) The loader holds no
+ * rebuilds unconditionally - snapshot installs are rare and carry no per-key signal.) The loader holds no
  * mutable state beyond thread-safe counters; concurrent boot-seed / apply-thread rebuilds are safe AND
- * recency-correct because the publish is <b>version-ordered</b> — a rebuild that scanned an older store
+ * recency-correct because the publish is <b>version-ordered</b> - a rebuild that scanned an older store
  * version cannot clobber a newer one (see {@link AclService#publishConfigPolicy(long, ConfigPolicy)}).
- * (A secondary {@code _acl/} index / off-owner-thread rebuild for large stores is a 2b item.)
  *
  * <h2>"admin" footgun neutralization (reserved names)</h2>
  * The break-glass root principal's authority is its static {@code acls} grant; a config role could only
  * carve it if root were a SUBJECT of that role. {@code ConfigdServer} now asserts {@code Set.of()} roles
  * for root (so no config role attaches via assertion), and this loader REJECTS a load that binds any role
  * to a reserved principal ({@code root}) or defines a reserved role name ({@code admin}). So no
- * config-loaded role can carve root. (The {@code admin} reservation is forward-compat for 2b's reserved
- * ADMIN role; it is not load-bearing for the proof, since root no longer asserts it.)
+ * config-loaded role can carve root.
  */
 final class AclConfigPolicyLoader {
 
@@ -72,9 +70,9 @@ final class AclConfigPolicyLoader {
     /**
      * The reserved role name a config policy may NOT define (forward-compat for a built-in admin role) and
      * the reserved principal a config policy may NOT bind config roles to (the break-glass {@code root}).
-     * These are the SINGLE SOURCE OF TRUTH for the reserved sets: {@code ConfigdServer} constructs this
-     * loader with them, AND the O-6 Seam 2b write-time gate ({@code AdminApiHandler} → {@link
-     * #validateAclWrite}) validates against them — so write-time and reload-time reject the IDENTICAL set of
+     * These are the single source of truth for the reserved sets: {@code ConfigdServer} constructs this
+     * loader with them, AND the write-time gate ({@code AdminApiHandler} -> {@link
+     * #validateAclWrite}) validates against them - so write-time and reload-time reject the IDENTICAL set of
      * reserved names (never two validators that could drift). See {@link #validateReserved}.
      */
     static final String RESERVED_ROLE_ADMIN = "admin";
@@ -162,8 +160,8 @@ final class AclConfigPolicyLoader {
     /**
      * Validates that {@code policy} defines no reserved role name and binds no reserved principal, throwing
      * {@link PolicyParseException} on a violation. {@code static} and shared so the reload path (above) and
-     * the O-6 Seam 2b write-time gate ({@link #validateAclWrite}) run the IDENTICAL check against the
-     * IDENTICAL reserved sets — a single validator, never two that could drift.
+     * the write-time gate ({@link #validateAclWrite}) run the IDENTICAL check against the
+     * IDENTICAL reserved sets - a single validator, never two that could drift.
      */
     static void validateReserved(ConfigPolicy policy, Set<String> reservedRoles, Set<String> reservedPrincipals) {
         for (String roleName : policy.roles().keySet()) {
@@ -181,7 +179,7 @@ final class AclConfigPolicyLoader {
     }
 
     /**
-     * Write-time validation of a SINGLE reserved {@code _acl/} write (O-6 Seam 2b): parses the
+     * Write-time validation of a SINGLE reserved {@code _acl/} write: parses the
      * {@code {key: value}} singleton with the EXACT same {@link PolicySerializer#parse} the reload path
      * runs, then applies {@link #validateReserved} against the shared {@link #RESERVED_ROLES} /
      * {@link #RESERVED_PRINCIPALS}. Returns normally iff the write is acceptable policy; throws
@@ -189,12 +187,12 @@ final class AclConfigPolicyLoader {
      * ({@code _acl/roles/admin}, {@code _acl/bindings/root}). Because it shares the loader's exact code and
      * sets, a key that passes here can never freeze a later whole-subtree reload. A well-formed-but-
      * incomplete policy (a binding to a not-yet-defined role) parses successfully and is intentionally NOT
-     * rejected (DL-O6-06) — single-key validation is exactly the right granularity.
+     * rejected - single-key validation is exactly the right granularity.
      * <p>
-     * The reserved sets are the {@code static} {@link #RESERVED_ROLES} / {@link #RESERVED_PRINCIPALS} —
-     * the canonical pair {@code ConfigdServer} also constructs this loader with — so in the production
+     * The reserved sets are the {@code static} {@link #RESERVED_ROLES} / {@link #RESERVED_PRINCIPALS} -
+     * the canonical pair {@code ConfigdServer} also constructs this loader with - so in the production
      * wiring the write-time gate and the instance reload path validate against the IDENTICAL names. (A
-     * loader instance built with different sets — only tests do that, with value-equal sets — would not
+     * loader instance built with different sets - only tests do that, with value-equal sets - would not
      * change the write-time validator, which is anchored to the canonical constants.)
      *
      * @param key   the reserved {@code _acl/}-prefixed config key (verbatim, post-strip)

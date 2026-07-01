@@ -12,7 +12,7 @@ import java.util.concurrent.ConcurrentHashMap;
 import static org.junit.jupiter.api.Assertions.*;
 
 /**
- * Tests for {@link HamtMap} — the persistent HAMT with structural sharing.
+ * Tests for {@link HamtMap} - the persistent HAMT with structural sharing.
  */
 class HamtMapTest {
 

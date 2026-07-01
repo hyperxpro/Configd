@@ -10,7 +10,7 @@ import java.util.Set;
 
 /**
  * Represents a Raft cluster configuration, supporting both simple and
- * joint consensus configurations (Raft §6).
+ * joint consensus configurations (Raft section 6).
  * <p>
  * A <em>simple</em> configuration contains a single set of voting members.
  * A <em>joint</em> configuration (C_old,new) contains two sets: the old
@@ -20,7 +20,7 @@ import java.util.Set;
  * Lifecycle of a membership change:
  * <ol>
  *   <li>Leader has simple config C_old</li>
- *   <li>Leader proposes joint config C_old,new — appends to log, begins replication</li>
+ *   <li>Leader proposes joint config C_old,new  -  appends to log, begins replication</li>
  *   <li>Once C_old,new is committed (requires majority of BOTH C_old AND C_new),
  *       leader proposes simple config C_new</li>
  *   <li>Once C_new is committed, transition is complete</li>
@@ -140,7 +140,7 @@ public final class ClusterConfig {
 
     /**
      * Returns the peers of the given node (all voters except the node itself).
-     * The result is cached — repeated calls with the same node return the same set.
+     * The result is cached  -  repeated calls with the same node return the same set.
      */
     public Set<NodeId> peersOf(NodeId self) {
         return peersCache.computeIfAbsent(self, id -> {

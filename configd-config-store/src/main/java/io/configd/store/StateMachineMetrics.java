@@ -1,25 +1,21 @@
 package io.configd.store;
 
 /**
- * Functional metrics hook for {@link ConfigStateMachine}.
- *
- * <p>F5 (Tier-1-METRIC-DRIFT, closes H-001 / DOC-014) — wires
+ * Functional metrics hook for {@link ConfigStateMachine}. Wires
  * {@code configd_write_commit_*}, {@code configd_apply_seconds},
  * {@code configd_snapshot_install_failed_total}, and
  * {@code configd_snapshot_rebuild_total} from the state-machine apply /
  * restore paths into {@code MetricsRegistry} without forcing
  * {@code configd-config-store} to depend on {@code configd-observability}.
  *
- * <p>The interface is mirror-image of the existing
- * {@link ConfigStateMachine.InvariantChecker} pattern: a tiny SAM with
- * a {@link #NOOP} sentinel for unit tests and pre-wire-up bootstraps.
+ * <p>Mirrors the {@link ConfigStateMachine.InvariantChecker} pattern: a SAM
+ * with a {@link #NOOP} sentinel for unit tests and pre-wire-up bootstraps.
  *
  * <p>All callbacks must be:
  * <ul>
  *   <li>thread-safe (state-machine apply is single-threaded today, but
  *       restoreSnapshot may be called from a different Raft thread);</li>
- *   <li>allocation-free on the steady-state hot path so the
- *       {@code apply()} loop continues to satisfy §8 hard rules.</li>
+ *   <li>allocation-free on the steady-state hot path.</li>
  * </ul>
  */
 public interface StateMachineMetrics {
@@ -50,15 +46,15 @@ public interface StateMachineMetrics {
     void onSnapshotInstallFailed();
 
     /**
-     * RR-029 / W-1: records a single-writer apply-owner-thread violation — an
-     * {@link ConfigStateMachine#apply} call observed on a thread other than the
-     * one bound on first apply. In production this is the metric counterpart of
-     * the test/sim assertion (which throws). Default no-op so existing sinks need
-     * not change; the production registry overrides it.
+     * Records a single-writer apply-owner-thread violation - an
+     * {@link ConfigStateMachine#apply} call observed on a thread other than the one bound on
+     * first apply. In production this is the metric counterpart of the test/sim assertion (which
+     * throws). Default no-op so existing sinks need not change; the production registry
+     * overrides it.
      */
     default void onApplyOwnerThreadViolation() {}
 
-    /** No-op metrics sink — used by tests / bootstraps with no registry. */
+    /** No-op metrics sink - used by tests and bootstraps with no registry. */
     StateMachineMetrics NOOP = new StateMachineMetrics() {
         @Override public void onWriteCommitSuccess(long applyDurationNanos) {}
         @Override public void onWriteCommitFailure() {}

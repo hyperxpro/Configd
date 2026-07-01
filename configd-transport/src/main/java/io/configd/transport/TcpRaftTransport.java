@@ -39,47 +39,30 @@ import java.util.function.Consumer;
  * established <em>asynchronously</em> on a dedicated connector thread and
  * cached for reuse.
  *
- * <h2>RR-002: connect/handshake never blocks the caller (the tick thread)</h2>
+ * <h2>Non-blocking send contract</h2>
  * Per the {@link RaftTransport} contract, {@link #send} is <strong>non-blocking</strong>.
- * Historically it was not: {@code send} reached a timeout-less
- * {@code new Socket(addr, port)} / {@code startHandshake()} on the caller's
- * thread. In this server the caller is the single {@code configd-tick} thread
- * that owns all RaftNode state (R-01); a black-holed peer (SYNs dropped) parked
- * that thread for the full OS SYN timeout (~127 s), freezing tick, inbound,
- * propose and reads — a node-wide freeze under a routine network fault.
- * <p>
- * The fix decouples establishment from sending:
- * <ul>
- *   <li><b>Connect/handshake run only on {@link #connectExecutor}</b> (a single
- *       dedicated thread), never on the caller. Connect uses a bounded
- *       {@link Socket#connect(java.net.SocketAddress, int) connect(addr, timeout)}
- *       ({@value #CONNECT_TIMEOUT_MS} ms); the TLS handshake is bounded with
- *       {@code setSoTimeout(}{@value #HANDSHAKE_TIMEOUT_MS}{@code )} for its
- *       duration (then cleared so steady-state reads block normally).</li>
- *   <li><b>{@link #send} only enqueues.</b> Each peer has a bounded outbound
- *       queue drained by a dedicated <em>writer</em> task; the caller does a
- *       non-blocking {@code offer}. A send to a peer with no established
- *       connection enqueues the frame (bounded) and schedules an async connect
- *       (gated by {@link ConnectionManager} backoff); the writer delivers the
- *       queued frames once connected. Frames are <b>dropped</b> only when the
- *       per-peer queue is full or the connection is closing, incrementing
- *       {@link #framesDropped()}. Raft tolerates message loss: the leader
- *       re-sends AppendEntries on the next heartbeat, so a bounded queue with
- *       drop-on-overflow is correct and far cheaper than unbounded buffering.
- *       (Turning the drop counter into real metrics/alerting is RR-054, owned by
- *       a later session; this change adds the counter without regressing it.)</li>
- * </ul>
+ * Connect/handshake run only on {@link #connectExecutor} (a single dedicated thread),
+ * never on the caller. Connect uses a bounded
+ * {@link Socket#connect(java.net.SocketAddress, int) connect(addr, timeout)}
+ * ({@value #CONNECT_TIMEOUT_MS} ms); the TLS handshake is bounded with
+ * {@code setSoTimeout(}{@value #HANDSHAKE_TIMEOUT_MS}{@code )} for its duration
+ * (then cleared so steady-state reads block normally). {@link #send} only enqueues:
+ * each peer has a bounded outbound queue drained by a dedicated <em>writer</em> task;
+ * the caller does a non-blocking {@code offer}. Frames are <b>dropped</b> only when
+ * the per-peer queue is full or the connection is closing, incrementing
+ * {@link #framesDropped()}. Raft tolerates message loss: the leader re-sends
+ * AppendEntries on the next heartbeat, so a bounded queue with drop-on-overflow is
+ * correct and far cheaper than unbounded buffering.
  *
- * <h2>Threading / R-01</h2>
+ * <h2>Threading</h2>
  * The caller (tick) thread only ever touches transport-internal state:
  * {@link #outbound} (a {@link ConcurrentHashMap}), the per-peer bounded queue
  * (a {@link BlockingQueue}, thread-safe), the per-peer {@code connectInFlight}
  * flag (an {@link AtomicBoolean}), and {@link #connectionManager} (under its own
  * monitor). It never touches a {@link Socket}, a stream, or any RaftNode state.
- * Established sockets are handed to the writer/reader tasks; the only state
- * shared between the tick thread and those tasks is the queue (thread-safe by
- * construction) and the volatile {@code socket}/{@code out} fields, whose
- * publication/visibility is documented on {@link PeerConnection}.
+ * Established sockets are handed to the writer/reader tasks; the only state shared
+ * between the tick thread and those tasks is the queue (thread-safe by construction)
+ * and the volatile {@code socket}/{@code out} fields, documented on {@link PeerConnection}.
  *
  * <h2>Wire format</h2>
  * <pre>
@@ -94,12 +77,9 @@ import java.util.function.Consumer;
 public final class TcpRaftTransport implements RaftTransportEndpoint {
 
     /**
-     * Bounded TCP connect timeout (ms). Replaces the timeout-less
-     * {@code new Socket(addr, port)} whose only bound was the ~127 s OS SYN
-     * timeout. Kept short because consensus traffic is intra-cluster (low RTT)
-     * and a stuck connect simply causes a re-attempt on the next tick.
-     * <p>M4 (DR-N16): the value is owned by {@link RaftWireProtocol} so the JDK and
-     * Netty transports apply the identical bound.
+     * Bounded TCP connect timeout (ms). Short because consensus traffic is intra-cluster
+     * (low RTT) and a stuck connect simply causes a re-attempt on the next tick. Owned by
+     * {@link RaftWireProtocol} so the JDK and Netty transports apply the identical bound.
      */
     static final int CONNECT_TIMEOUT_MS = RaftWireProtocol.CONNECT_TIMEOUT_MS;
 
@@ -143,28 +123,25 @@ public final class TcpRaftTransport implements RaftTransportEndpoint {
      */
     private final ScheduledExecutorService connectExecutor;
 
-    /** Frames dropped because no connection was established (RR-002/RR-054 metric seam). */
+    /** Frames dropped because no connection was established or the per-peer queue was full. */
     private final AtomicLong framesDropped = new AtomicLong();
 
-    /**
-     * F-S7-FUZZ-1 (slowloris / FD-exhaustion): inbound connections refused because the accepted
-     * live-set had already reached {@link #maxInboundConnections}. Metric seam for the negative test.
-     */
+    /** Inbound connections refused because the accepted live-set hit {@link #maxInboundConnections}. */
     private final AtomicLong inboundConnectionsRefused = new AtomicLong();
 
     /**
-     * F-S7-FUZZ-1: idle/slow-read deadline (ms) on accepted inbound sockets. A stalled/slow-drip peer
-     * then fails its {@code readInt()}/{@code readFully()} with {@link java.net.SocketTimeoutException}
-     * instead of parking a reader vthread and holding the FD forever. Default 15 s ≫ the ≤50 ms
+     * Idle/slow-read deadline (ms) on accepted inbound sockets. A stalled/slow-drip peer then fails
+     * its {@code readInt()}/{@code readFully()} with {@link java.net.SocketTimeoutException} instead
+     * of parking a reader vthread and holding the FD forever. Default 15 s is well above the
      * steady-state heartbeat interval, so a healthy peer never trips it; tunable via
-     * {@code -Dconfigd.raft.inboundReadTimeoutMs} (the test sets a short value).
+     * {@code -Dconfigd.raft.inboundReadTimeoutMs} (the slowloris test sets a short value).
      */
     private final int inboundReadTimeoutMs = RaftWireProtocol.inboundReadTimeoutMs();
 
     /**
-     * F-S7-FUZZ-1: max concurrent accepted inbound connections before the accept loop refuses (closes
-     * + counts) a new socket — bounds FD/vthread blast radius. Mirrors {@code FanOutServer}'s
-     * admission cap; tunable via {@code -Dconfigd.raft.maxInboundConnections} (default 1024).
+     * Max concurrent accepted inbound connections before the accept loop refuses (closes and counts)
+     * a new socket - bounds FD/vthread blast radius. Tunable via
+     * {@code -Dconfigd.raft.maxInboundConnections} (default 1024).
      */
     private final int maxInboundConnections = RaftWireProtocol.maxInboundConnections();
 
@@ -241,7 +218,6 @@ public final class TcpRaftTransport implements RaftTransportEndpoint {
     /**
      * Returns the number of outbound frames dropped because no connection was
      * established (or the per-peer queue was full) at send time. Monotonic.
-     * Exposed for tests and as a metric seam (RR-054).
      *
      * @return total dropped frames since construction
      */
@@ -279,7 +255,7 @@ public final class TcpRaftTransport implements RaftTransportEndpoint {
                     "TcpRaftTransport expects FrameCodec.Frame messages, got: " + message.getClass().getName());
         }
 
-        // RR-002: this method runs on the caller (tick) thread and MUST NOT block.
+        // This method runs on the caller (tick) thread and MUST NOT block.
         // We encode here (cheap, CPU-bound) then hand off to the per-peer queue;
         // all socket I/O (connect, handshake, write) happens on other threads.
         byte[] wire = encodeWire(frame);
@@ -322,10 +298,7 @@ public final class TcpRaftTransport implements RaftTransportEndpoint {
         executor.shutdownNow();
     }
 
-    // ---- Server accept loop ----
-
-    /** Inbound connections refused because the accepted live-set hit {@link #maxInboundConnections}
-     *  (F-S7-FUZZ-1 metric / negative-test seam). Monotonic. */
+    /** Inbound connections refused because the accepted live-set hit {@link #maxInboundConnections}. Monotonic. */
     @Override
     public long inboundConnectionsRefused() {
         return inboundConnectionsRefused.get();
@@ -336,7 +309,7 @@ public final class TcpRaftTransport implements RaftTransportEndpoint {
         // s is null for a PeerConnection whose handshake never completed (e.g. a
         // rejected-cert connect, or a concurrent connect that lost the race): close()
         // and the disconnect path call this with a null socket field. Mirror the
-        // AutoCloseable overload's null-tolerance — "quietly" must include null.
+        // AutoCloseable overload's null-tolerance - "quietly" must include null.
         if (s != null) {
             try {
                 s.close();
@@ -350,19 +323,18 @@ public final class TcpRaftTransport implements RaftTransportEndpoint {
         while (running.get()) {
             try {
                 Socket clientSocket = serverSocket.accept();
-                // F-S7-FUZZ-1 (slowloris / FD-exhaustion): cap concurrent inbound connections BEFORE
-                // submitting a reader vthread, so a flood of half-open sockets cannot exhaust FDs /
-                // vthreads. The accept loop is single-threaded, so size()+add are race-free here
-                // (removes, on reader vthreads, only shrink the set → a stale-high size conservatively
-                // refuses, never over-admits). RR-002-safe: transport vthread, never configd-tick.
+                // Cap concurrent inbound connections BEFORE submitting a reader vthread, so a flood
+                // of half-open sockets cannot exhaust FDs/vthreads. The accept loop is single-threaded,
+                // so size()+add are race-free here (removes, on reader vthreads, only shrink the set -
+                // a stale-high size conservatively refuses, never over-admits).
                 if (acceptedSockets.size() >= maxInboundConnections) {
                     inboundConnectionsRefused.incrementAndGet();
                     closeQuietly(clientSocket);
                     continue;
                 }
-                // Bounded idle/slow-read deadline: a stalled peer's readInt/readFully then fails with
-                // SocketTimeoutException (handled below) instead of parking the reader + holding the
-                // FD forever. Read-idle (resets per read) so long-lived healthy connections are fine.
+                // Idle/slow-read deadline: a stalled peer's readInt/readFully then fails with
+                // SocketTimeoutException instead of parking the reader and holding the FD forever.
+                // Read-idle (resets per read) so long-lived healthy connections are fine.
                 try {
                     clientSocket.setSoTimeout(inboundReadTimeoutMs);
                 } catch (SocketException e) {
@@ -401,8 +373,8 @@ public final class TcpRaftTransport implements RaftTransportEndpoint {
 
                 // Read frame length (first 4 bytes of FrameCodec frame)
                 int frameLength = in.readInt();
-                // Shared bounds-before-allocation check (RaftWireProtocol / DR-N16): identical to
-                // the Netty decoder's predicate, so a lying length prefix is rejected the same way.
+                // Shared bounds-before-allocation check: identical to the Netty decoder's predicate,
+                // so a lying length prefix is rejected the same way by both transports.
                 if (!RaftWireProtocol.isValidFrameLength(frameLength)) {
                     throw new IOException("Invalid frame length: " + frameLength);
                 }
@@ -441,7 +413,7 @@ public final class TcpRaftTransport implements RaftTransportEndpoint {
                 }
 
                 // Dispatch to handler. A handler throw is logged but
-                // does NOT desync the stream — keep reading.
+                // does NOT desync the stream - keep reading.
                 try {
                     if (inboundHandler != null) {
                         inboundHandler.accept(new InboundMessage(from, frame));
@@ -463,9 +435,9 @@ public final class TcpRaftTransport implements RaftTransportEndpoint {
         } catch (EOFException e) {
             // Peer closed connection - normal during shutdown
         } catch (java.net.SocketTimeoutException e) {
-            // F-S7-FUZZ-1: the inbound read idle-deadline tripped — a slow-drip / stalled peer. Drop
-            // the connection (the try-with-resources closes the socket → releases the reader vthread +
-            // FD). NOT a desync: the peer simply failed to make read progress within inboundReadTimeoutMs.
+            // Inbound read idle-deadline tripped: a slow-drip/stalled peer. Drop the connection
+            // (try-with-resources closes the socket, releasing the reader vthread and FD).
+            // Not a desync: the peer simply failed to make read progress within inboundReadTimeoutMs.
             if (running.get()) {
                 System.err.println("Inbound read idle-timeout (" + inboundReadTimeoutMs
                         + "ms slowloris guard); dropping connection");
@@ -481,8 +453,6 @@ public final class TcpRaftTransport implements RaftTransportEndpoint {
         }
     }
 
-    // ---- Outbound connection management ----
-
     private PeerConnection createPeerConnection(NodeId target) {
         InetSocketAddress addr = peerAddresses.get(target);
         if (addr == null) {
@@ -493,8 +463,8 @@ public final class TcpRaftTransport implements RaftTransportEndpoint {
 
     /**
      * Pre-encodes a frame into its on-wire byte sequence (sender id + frame), delegating to the
-     * shared {@link RaftWireProtocol#encodeWire} so the JDK and Netty transports are byte-identical
-     * by construction (M4 / DR-N16).
+     * shared {@link RaftWireProtocol#encodeWire} so both transports are byte-identical by
+     * construction.
      */
     private byte[] encodeWire(FrameCodec.Frame frame) {
         return RaftWireProtocol.encodeWire(self.id(), frame);
@@ -502,19 +472,18 @@ public final class TcpRaftTransport implements RaftTransportEndpoint {
 
     /**
      * Establishes a client socket to {@code address} with bounded connect and
-     * (for TLS) bounded handshake. Runs ONLY on {@link #connectExecutor} — never
+     * (for TLS) bounded handshake. Runs ONLY on {@link #connectExecutor} - never
      * on the caller (tick) thread.
      */
     private Socket createClientSocket(InetSocketAddress address) throws IOException {
         if (tlsManager != null) {
             SSLContext ctx = tlsManager.currentContext();
             SSLSocketFactory factory = ctx.getSocketFactory();
-            // F-0051: use the hostname (not InetAddress) so the JDK keeps the SNI
-            // name and performs HTTPS endpoint identification against it.
+            // Use the hostname (not InetAddress) so the JDK keeps the SNI name and performs
+            // HTTPS endpoint identification against it (hostname verification).
             String host = address.getHostString();
-            // RR-002: create UNCONNECTED, then connect with a bounded timeout.
-            // factory.createSocket(host, port) would connect synchronously with
-            // no timeout, reintroducing the freeze.
+            // Create UNCONNECTED, then connect with a bounded timeout.
+            // factory.createSocket(host, port) would connect synchronously with no timeout.
             SSLSocket socket = (SSLSocket) factory.createSocket();
             boolean ok = false;
             try {
@@ -528,13 +497,14 @@ public final class TcpRaftTransport implements RaftTransportEndpoint {
                         socket.setEnabledCipherSuites(tlsConfig.ciphers().toArray(String[]::new));
                     }
                 }
-                // F-0051: enforce hostname verification on the client side.
+                // Enforce HTTPS endpoint identification: validates the peer's certificate against
+                // the hostname, not just the trust anchor.
                 SSLParameters params = socket.getSSLParameters();
                 params.setEndpointIdentificationAlgorithm("HTTPS");
                 socket.setSSLParameters(params);
-                // RR-002: bound the handshake so a peer that connects but stalls
-                // mid-handshake cannot park the connector thread forever. Cleared
-                // afterwards so steady-state reads use normal (blocking) semantics.
+                // Bound the handshake so a peer that connects but stalls mid-handshake cannot
+                // park the connector thread forever. Cleared afterwards so steady-state reads
+                // use normal (blocking) semantics.
                 socket.setSoTimeout(HANDSHAKE_TIMEOUT_MS);
                 socket.startHandshake();
                 socket.setSoTimeout(0);
@@ -546,7 +516,7 @@ public final class TcpRaftTransport implements RaftTransportEndpoint {
                 }
             }
         } else {
-            // RR-002: bounded plaintext connect (was: new Socket(addr, port)).
+            // Bounded plaintext connect via no-arg constructor then connect(addr, timeout).
             Socket socket = new Socket();
             boolean ok = false;
             try {
@@ -595,14 +565,12 @@ public final class TcpRaftTransport implements RaftTransportEndpoint {
         }
     }
 
-    // ---- Peer connection wrapper ----
-
     /**
      * Manages a single outbound TCP connection to a peer.
      *
      * <h3>Threading</h3>
      * <ul>
-     *   <li>The caller (tick) thread only calls {@link #enqueueOrDrop} — a
+     *   <li>The caller (tick) thread only calls {@link #enqueueOrDrop} - a
      *       non-blocking {@code offer} onto {@link #queue} plus, when no
      *       connection exists, scheduling an async connect. It never touches a
      *       socket or stream.</li>
@@ -665,7 +633,7 @@ public final class TcpRaftTransport implements RaftTransportEndpoint {
         /**
          * Schedules an asynchronous connect on {@link #connectExecutor} if one is
          * not already in flight, honouring {@link ConnectionManager} backoff by
-         * delaying the attempt rather than dropping it. Returns immediately — the
+         * delaying the attempt rather than dropping it. Returns immediately - the
          * (possibly long) connect runs only on the connector thread.
          */
         private void scheduleConnect() {

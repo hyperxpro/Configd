@@ -22,7 +22,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * Phase V2 (charter §3 V2) mechanism test for the synthetic propagation probe
+ * Mechanism test (charter section 3 V2) for the synthetic propagation probe
  * ({@link PropagationProbe}) and its OBSERVER-ONLY {@link EdgeFanOutSim} seam.
  *
  * <p>Three properties, all under <b>logical</b> time so assertions are EXACT (no
@@ -32,18 +32,18 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  *       leader commit timestamps are set so the logical staleness is exactly
  *       {@code +10/+50/+499/+501 ms}. The probe's per-edge and global percentiles,
  *       counts, min and max must equal a reference {@link Histogram} fed the same
- *       values — i.e. the probe reproduces the constructed distribution exactly.</li>
+ *       values - i.e. the probe reproduces the constructed distribution exactly.</li>
  *   <li><b>Unmatched counting.</b> A {@code recordVisible} for a seq that was never
  *       published is counted as unmatched (per observer and globally) and never folds
  *       into the latency distribution.</li>
  *   <li><b>Observer-only determinism.</b> Running the {@link EdgeSimDeterminismTest}
  *       scenario WITH a probe attached produces a byte-identical digest to running it
- *       WITHOUT one — proof that the probe seam perturbs nothing (charter "observer-only").</li>
+ *       WITHOUT one - proof that the probe seam perturbs nothing (charter "observer-only").</li>
  * </ol>
  *
- * <p>Staleness sample = {@code visibleTs − publishTs} where {@code publishTs} is the
- * leader-assigned commit timestamp (ADR-0035 §2) and {@code visibleTs} is the edge's
- * logical apply time — contract §2 INV-S1.
+ * <p>Staleness sample = {@code visibleTs - publishTs} where {@code publishTs} is the
+ * leader-assigned commit timestamp (commit-timestamp spec section 2) and {@code visibleTs} is the edge's
+ * logical apply time - contract section 2 staleness invariant.
  */
 class ProbeMechanismTest {
 
@@ -52,14 +52,14 @@ class ProbeMechanismTest {
     private static final int EDGES = 3;
     private static final int TICKS = 1_200;
 
-    // The constructed staleness distribution (ms) — the exact samples the probe must record.
+    // The constructed staleness distribution (ms) - the exact samples the probe must record.
     private static final long D_A1 = 10;
     private static final long D_A2 = 50;
     private static final long D_B1 = 499;
     private static final long D_B2 = 501;
 
     // -----------------------------------------------------------------------
-    // (1) constructed distribution — EXACT percentiles/counts across two edges
+    // (1) constructed distribution - EXACT percentiles/counts across two edges
     // -----------------------------------------------------------------------
 
     @Test
@@ -83,7 +83,7 @@ class ProbeMechanismTest {
         applyWithStaleness(probe, edgeB, /*seq*/ 3, /*from*/ 0, /*to*/ 1, "b/k1", "v1", D_B1);
         applyWithStaleness(probe, edgeB, /*seq*/ 4, /*from*/ 1, /*to*/ 2, "b/k2", "v2", D_B2);
 
-        // Reference histograms fed the identical values — the probe must match them exactly.
+        // Reference histograms fed the identical values - the probe must match them exactly.
         Histogram refGlobal = newHistogram();
         Histogram refA = newHistogram();
         Histogram refB = newHistogram();
@@ -118,7 +118,7 @@ class ProbeMechanismTest {
                                 + " max=501 unit=ms"),
                 "global summary line must report the exact constructed stats:\n" + summary);
 
-        // Evidence record: the sim-mode (logical-time) report (charter §3 V2 deliverable 5).
+        // Evidence record: the sim-mode (logical-time) report (charter section 3 V2 deliverable 5).
         System.out.println("=== Configd propagation probe — SIM MODE (logical time) ===");
         System.out.println("constructed staleness distribution: edge-100={+10ms,+50ms} "
                 + "edge-101={+499ms,+501ms}; logical time → exact, no tolerance bands.");
@@ -129,16 +129,16 @@ class ProbeMechanismTest {
     }
 
     // -----------------------------------------------------------------------
-    // (2) unmatched counting — visible-without-published
+    // (2) unmatched counting - visible-without-published
     // -----------------------------------------------------------------------
 
     @Test
     void unmatchedVisibleSeqIsCountedAndKeptOutOfTheDistribution() {
         PropagationProbe probe = new PropagationProbe();
-        // seq 7 published at t=1000; a matched visible at t=1100 → 100ms sample.
+        // seq 7 published at t=1000; a matched visible at t=1100 -> 100ms sample.
         probe.recordPublished(7, 1_000);
         probe.recordVisible(0, 7, 1_100);
-        // seq 999 NEVER published → unmatched, must not affect the distribution.
+        // seq 999 NEVER published -> unmatched, must not affect the distribution.
         probe.recordVisible(0, 999, 5_000);
         probe.recordVisible(1, 999, 5_000); // a different observer, also unmatched
 
@@ -153,11 +153,11 @@ class ProbeMechanismTest {
     }
 
     // -----------------------------------------------------------------------
-    // (2b) the PROBE-HISTOGRAM report-format contract (CT-38 checklist item
+    // (2b) the PROBE-HISTOGRAM report-format contract (checklist item
     //      "propagation probe histograms"). The staleness DISTRIBUTION is
     //      deliberately not a registry series; this line format IS the contract
-    //      gate-3 step (d) and CI grep for in both live modes. Asserted here —
-    //      not in EdgeMetricsContractTest (configd-edge-node) — because
+    //      charter step (d) and CI grep for in both live modes. Asserted here - 
+    //      not in EdgeMetricsContractTest (configd-edge-node) - because
     //      configd-testkit depends on configd-edge-node, so the probe cannot be
     //      referenced from that module without a dependency cycle.
     // -----------------------------------------------------------------------
@@ -177,7 +177,7 @@ class ProbeMechanismTest {
         assertTrue(report.contains(
                         "PROBE-HISTOGRAM: scope=observer-9 count=1 p50=250 p99=250 p999=250 max=250 unit=ms"),
                 "per-observer summary line malformed or missing:\n" + report);
-        // The global aggregate line — the exact form step (d)'s
+        // The global aggregate line - the exact form step (d)'s
         // `grep "PROBE-HISTOGRAM: scope=global"` keys on.
         assertTrue(report.contains("PROBE-HISTOGRAM: scope=global count=2 "),
                 "global summary line malformed or missing:\n" + report);
@@ -198,8 +198,8 @@ class ProbeMechanismTest {
                         + "(observer-only proof): " + withoutProbe + " vs " + withProbe);
 
         // Non-vacuity: the probe actually observed publishes while attached (the seam
-        // fired), so the equality above is meaningful — not "both ran a no-op probe".
-        // The CP workload commits mutations that fire the FanOutBuffer listener →
+        // fired), so the equality above is meaningful - not "both ran a no-op probe".
+        // The CP workload commits mutations that fire the FanOutBuffer listener ->
         // recordPublished, even though StreamDriver.NONE delivers nothing to the edges.
         PropagationProbe probe = new PropagationProbe();
         EdgeFanOutSim sim = new EdgeFanOutSim(seed, CP_NODES, EDGES, TICKS,
@@ -220,8 +220,8 @@ class ProbeMechanismTest {
 
     /**
      * Delivers a single contiguous {@link CommitNotification} directly to {@code edge}
-     * (bypassing the random edge network so the apply tick — and thus the logical
-     * visibility time — is exact) with its commit timestamp set so the recorded
+     * (bypassing the random edge network so the apply tick - and thus the logical
+     * visibility time - is exact) with its commit timestamp set so the recorded
      * staleness is exactly {@code stalenessMs}. Also feeds {@code recordPublished} with
      * the same publish time (the publish side {@code DirectInjectionDriver} cannot drive,
      * since it bypasses the FanOutBuffer). The edge's attached apply-observer drives
@@ -229,7 +229,7 @@ class ProbeMechanismTest {
      *
      * <p>Exactness: the sim was built with 1 tick and never run, so the edge's logical
      * clock sits at {@link #EPOCH_MS}; the apply-observer therefore stamps
-     * {@code visibleTs = EPOCH_MS}. Setting {@code publishTs = EPOCH_MS − stalenessMs}
+     * {@code visibleTs = EPOCH_MS}. Setting {@code publishTs = EPOCH_MS - stalenessMs}
      * makes the recorded staleness exactly {@code stalenessMs}.
      */
     private static void applyWithStaleness(PropagationProbe probe, EdgeActor edge,
@@ -239,7 +239,7 @@ class ProbeMechanismTest {
         probe.recordPublished(seq, publishTs);
         CommitNotification n = notification(seq, fromVersion, toVersion, publishTs, key, value);
         edge.deliver(new EdgeStream.Notify(n));
-        edge.tick(); // applies now → apply-observer fires recordVisible(edgeId, seq, visibleTs)
+        edge.tick(); // applies now -> apply-observer fires recordVisible(edgeId, seq, visibleTs)
         assertEquals(toVersion, edge.currentVersion(),
                 "delta " + fromVersion + "->" + toVersion + " must apply on edge " + edge.edgeId());
     }

@@ -11,28 +11,28 @@ import org.openjdk.jmh.infra.Blackhole;
 import java.util.concurrent.TimeUnit;
 
 /**
- * Session 5 / Workstream B — write-commit benchmark over a real 3- or 5-node in-memory
+ * Write-commit benchmark over a real 3- or 5-node in-memory
  * Raft cluster whose nodes run a <b>real {@code ConfigStateMachine}</b> (decode command +
  * HAMT {@code put} on every apply). Unlike {@link RaftCommitBenchmark} (no-op state
- * machine), this exercises the realistic ~2–5 KB/op allocation profile of the production
+ * machine), this exercises the realistic ~2-5 KB/op allocation profile of the production
  * write path, so:
  *
  * <ul>
  *   <li><b>{@code -prof gc}</b> reports the true allocation rate (B/op + MB/s) for the
- *       GC bake-off (Phase 1, ADR-0041).</li>
+ *       GC bake-off.</li>
  *   <li><b>{@code -Xlog:gc*}</b> alongside it carries a populated GC pause distribution
  *       (the methodology's "no ZGC-because-low-pause without the pause histogram").</li>
  *   <li><b>{@code Mode.SampleTime}</b> reports the local quorum-commit latency
- *       distribution (Phase 2 {@code local_commit_component}) as an HdrHistogram —
+ *       distribution ({@code local_commit_component}) as an HdrHistogram -
  *       in-memory transport + storage, so it is the in-process consensus CPU cost,
  *       no real network, no fsync.</li>
  * </ul>
  *
- * <p><b>CO note (methodology §3a):</b> Throughput/SampleTime here time per-invocation
+ * <p><b>CO note (methodology section 3a):</b> Throughput/SampleTime here time per-invocation
  * service time with no externally-imposed arrival schedule, so coordinated omission is
  * structurally absent (same argument as the read-path JMH benches). The cross-region total
- * is {@code local_commit_component + RTT} per methodology §2, computed in the result doc and
- * labelled ENV-BLOCKED (M-1). This benchmark proves ONLY the local component.
+ * is {@code local_commit_component + RTT} per methodology section 2, computed in the result
+ * doc. This benchmark proves ONLY the local component.
  *
  * <p>Default mode is {@link Mode#Throughput}; override per phase, e.g.
  * {@code -bm sample} for the latency distribution. Run under one collector at a time and
@@ -72,7 +72,7 @@ public class RealApplyCommitBenchmark {
     }
 
     /**
-     * Propose one real PUT command and drive it through quorum replicate → commit →
+     * Propose one real PUT command and drive it through quorum replicate -> commit ->
      * apply (HAMT put on every node). One commit per invocation.
      */
     @Benchmark

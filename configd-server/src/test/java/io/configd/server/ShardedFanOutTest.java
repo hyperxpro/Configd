@@ -28,20 +28,20 @@ import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.Test;
 
 /**
- * Multi-Raft Phase 1 — Seam G1: the N-way fan-out merge proof. Drives the REAL production helper
- * {@link ConfigdServer#registerShardedFanOut} — one {@link FanOutBuffer} + {@link Compactor} per shard,
- * each fed by ITS group's commit listener — and discriminates the four G1 obligations:
+ * The N-way fan-out merge proof. Drives the REAL production helper
+ * {@link ConfigdServer#registerShardedFanOut} - one {@link FanOutBuffer} + {@link Compactor} per shard,
+ * each fed by ITS group's commit listener - and discriminates the four G1 obligations:
  *
  * <ul>
- *   <li><b>N=1 byte-identity foundation</b> — a single shard builds exactly one buffer + compactor for
+ *   <li><b>N=1 byte-identity foundation</b> - a single shard builds exactly one buffer + compactor for
  *       the primary group, and the listener publishes the same per-commit notification as the prior
  *       single-buffer wiring.</li>
- *   <li><b>Per-shard isolation (S2/S4)</b> — a committed write to shard k lands in shard k's buffer
+ *   <li><b>Per-shard isolation (S2/S4)</b> - a committed write to shard k lands in shard k's buffer
  *       ONLY; a sibling shard's buffer never sees it.</li>
- *   <li><b>Per-shard monotonicity through the merge</b> — each shard's buffer yields a strictly
+ *   <li><b>Per-shard monotonicity through the merge</b> - each shard's buffer yields a strictly
  *       ascending, contiguous, per-shard seq run (no lost/dup/reordered-within-shard), and the seqs are
- *       INDEPENDENT per shard (no fabricated cross-shard global order — ADR-D-A/D-C).</li>
- *   <li><b>Thread-safety</b> — N threads (one per group, the owner-thread model) publishing concurrently
+ *       INDEPENDENT per shard (no fabricated cross-shard global order - ADR-D-A/D-C).</li>
+ *   <li><b>Thread-safety</b> - N threads (one per group, the owner-thread model) publishing concurrently
  *       to their own buffers cause no corruption (single-writer per buffer holds under real
  *       concurrency).</li>
  * </ul>
@@ -70,7 +70,7 @@ class ShardedFanOutTest {
         return new MetricsRegistry().counter("fanout.buffer.dropped");
     }
 
-    /** Reads every retained notification (cursor 0 ⇒ everything) as an OK run. */
+    /** Reads every retained notification (cursor 0 => everything) as an OK run. */
     private static List<CommitNotification> drain(FanOutBuffer buffer) {
         Result r = buffer.readSince(0);
         assertFalse(r.isGap(), "buffer should not GAP within capacity");
@@ -144,7 +144,7 @@ class ShardedFanOutTest {
         for (int gid = 0; gid < n; gid++) {
             List<CommitNotification> out = drain(fan.buffers().get(gid));
             assertEquals(writesPerShard, out.size(), "shard " + gid + " retained every commit");
-            // Strictly ascending, contiguous, starting at 1 — per-shard monotonicity, no dup/gap/reorder.
+            // Strictly ascending, contiguous, starting at 1 - per-shard monotonicity, no dup/gap/reorder.
             for (int i = 0; i < out.size(); i++) {
                 assertEquals(i + 1L, out.get(i).seq(),
                         "shard " + gid + " seq must be the contiguous per-shard sequence");
@@ -152,7 +152,7 @@ class ShardedFanOutTest {
         }
 
         // No fabricated cross-shard global order: every shard's sequence INDEPENDENTLY starts at 1 and
-        // runs 1..M — i.e. seq=1 exists in all N buffers simultaneously. A global merge sequence would
+        // runs 1..M - i.e. seq=1 exists in all N buffers simultaneously. A global merge sequence would
         // have made these disjoint. This pins the ADR-D-A/D-C "no cross-shard total order" decision.
         for (int gid = 0; gid < n; gid++) {
             assertEquals(1L, drain(fan.buffers().get(gid)).get(0).seq(),
@@ -168,7 +168,7 @@ class ShardedFanOutTest {
         List<ConfigdServer.RaftGroupRuntime> rts = runtimes(n);
         ConfigdServer.registerShardedFanOut(rts, Clock.system(), droppedCounter(), CAP);
 
-        // Different number of commits per shard → distinct per-shard replay floors.
+        // Different number of commits per shard -> distinct per-shard replay floors.
         for (int gid = 0; gid < n; gid++) {
             ConfigStateMachine sm = rts.get(gid).stateMachine();
             for (int i = 1; i <= gid + 1; i++) {
@@ -188,7 +188,7 @@ class ShardedFanOutTest {
     @Test
     void concurrentPerShardPublishHasNoCorruption() throws Exception {
         int n = 8;
-        int writesPerShard = 2_000; // well within CAP so nothing is evicted — every commit must survive
+        int writesPerShard = 2_000; // well within CAP so nothing is evicted - every commit must survive
         assertTrue(writesPerShard <= CAP, "test invariant: no eviction expected");
         List<ConfigdServer.RaftGroupRuntime> rts = runtimes(n);
         ConfigdServer.ShardedFanOut fan =
@@ -203,7 +203,7 @@ class ShardedFanOutTest {
             // ONE thread per group = the owner-thread model: each state machine (and thus its buffer) is
             // driven by exactly one thread, so the property under test is the genuine single-writer-PER-
             // BUFFER design under real cross-buffer concurrency. (The assertOwnerThread tripwire itself is
-            // inert here — these SMs use the NOOP invariant checker — so this proves no-corruption, not
+            // inert here - these SMs use the NOOP invariant checker - so this proves no-corruption, not
             // the tripwire; the tripwire's non-vacuity is proven at N>1 in the G2/G3 live sims.)
             Thread t = new Thread(() -> {
                 try {
@@ -228,7 +228,7 @@ class ShardedFanOutTest {
         }
         assertEquals(null, failure.get(), "no owner thread threw");
 
-        // Each buffer has exactly its shard's commits, contiguous 1..M — no loss/dup/corruption under
+        // Each buffer has exactly its shard's commits, contiguous 1..M - no loss/dup/corruption under
         // concurrent writes to the N distinct buffers.
         for (int gid = 0; gid < n; gid++) {
             List<CommitNotification> out = drain(fan.buffers().get(gid));

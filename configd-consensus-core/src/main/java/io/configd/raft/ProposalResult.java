@@ -12,6 +12,6 @@ public enum ProposalResult {
     NOT_LEADER,
     /** A leadership transfer is in progress. Retry after transfer completes. */
     TRANSFER_IN_PROGRESS,
-    /** Too many uncommitted entries. Apply backpressure — retry after backoff. */
+    /** Too many uncommitted entries. Apply backpressure - retry after backoff. */
     OVERLOADED
 }

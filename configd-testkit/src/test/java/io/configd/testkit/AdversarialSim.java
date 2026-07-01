@@ -13,21 +13,21 @@ import java.util.random.RandomGenerator;
 import java.util.random.RandomGeneratorFactory;
 
 /**
- * Adversarial deterministic simulation (adversarial-sim-design §2–§4): a real
+ * Adversarial deterministic simulation (adversarial-sim-design section 2 - section 4): a real
  * Raft cluster driven through an {@link AdversarialNetwork} under a seed-derived
  * {@link AdversarialSchedule} of faults (reorder, drop, duplication, delay spikes,
  * partitions, clock skew, crash-restart) interleaved with a randomized client
  * workload, with the continuous {@link SimInvariants} safety checker run after
  * every tick.
  * <p>
- * Everything derives from the master seed via the RR-010 {@code mixSeed} pattern,
- * so the whole run — faults, ops, election timeouts, network jitter — is replayable
+ * Everything derives from the master seed via the deterministic {@code mixSeed} pattern,
+ * so the whole run - faults, ops, election timeouts, network jitter - is replayable
  * by seed alone (verified by {@code AdversarialSimDeterminismTest}).
  * <p>
  * Safety violations throw {@link SimInvariants.SafetyViolation} (fail the seed);
  * liveness stalls are recorded in {@link #activity()} and never fail the run.
  * <p>
- * Not thread-safe; single sim thread (R-01).
+ * Not thread-safe; single sim thread.
  */
 final class AdversarialSim implements ClusterView {
 
@@ -45,7 +45,7 @@ final class AdversarialSim implements ClusterView {
     private final List<CrashStorageHandle> storages = new ArrayList<>();
     /**
      * Per-node skewed clock (C-1 review fix). Retained so a composing harness can read the
-     * PUBLISHING node's clock for its commit timestamp — matching production, where the
+     * PUBLISHING node's clock for its commit timestamp - matching production, where the
      * leader's (skewed) clock stamps the commit on the apply thread. Previously the clock
      * was a constructor local that was dropped after wiring the state machine, so the only
      * timestamp surface a composer could reach was the global unskewed {@link #currentTime()}.
@@ -60,7 +60,7 @@ final class AdversarialSim implements ClusterView {
     private int scheduleCursor;
     private int opCursor;
 
-    /** R-01' owner binding is done once, on the first tick (the drive thread). */
+    /** Owner binding is done once, on the first tick (the drive thread). */
     private boolean ownersBound;
 
     AdversarialSim(long seed, int nodeCount, int totalTicks) {
@@ -78,7 +78,7 @@ final class AdversarialSim implements ClusterView {
         RandomGenerator netCfg = RandomGeneratorFactory.of("L64X128MixRandom")
                 .create(AdversarialSchedule.mixSeed(seed, TAG_NETCFG));
         this.network = new AdversarialNetwork(seed, 1, 10);
-        this.network.setDupRate(0.02 + 0.03 * netCfg.nextDouble()); // 2–5% duplication
+        this.network.setDupRate(0.02 + 0.03 * netCfg.nextDouble()); // 2 - 5% duplication
 
         RandomGenerator skewRng = RandomGeneratorFactory.of("L64X128MixRandom")
                 .create(AdversarialSchedule.mixSeed(seed, TAG_SKEW));
@@ -92,7 +92,7 @@ final class AdversarialSim implements ClusterView {
             RaftConfig config = RaftConfig.of(nodeId, peers);
             RaftLog log = new RaftLog();
             VersionedConfigStore store = new VersionedConfigStore();
-            // Bounded per-node clock skew (±50ms) on the state-machine timestamp
+            // Bounded per-node clock skew (+/-50ms) on the state-machine timestamp
             // surface (RaftNode itself is tick-driven; see SkewedClock).
             long skewMs = skewRng.nextInt(101) - 50;
             SkewedClock clock = new SkewedClock(() -> currentTimeMs, skewMs);
@@ -132,10 +132,10 @@ final class AdversarialSim implements ClusterView {
     }
 
     // -----------------------------------------------------------------------
-    // Additive, read-only accessors for composition (EdgeFanOutSim, §V1).
+    // Additive, read-only accessors for composition (EdgeFanOutSim, section V1).
     // No behavior change: these expose existing per-node objects so the edge
     // harness can wire the production fan-out listener + read the CP clock.
-    // Existing tests (digests, gate sweep) are unaffected — nothing here is
+    // Existing tests (digests, gate sweep) are unaffected - nothing here is
     // called on the CP-only path.
     // -----------------------------------------------------------------------
 
@@ -147,15 +147,15 @@ final class AdversarialSim implements ClusterView {
     /**
      * The per-node {@link SkewedClock} for CP node {@code i} (additive accessor; C-1 review
      * fix). A composing harness reads this node's {@code currentTimeMillis()} as the commit
-     * timestamp when that node publishes — mirroring production's "leader's skewed clock on
-     * the apply thread", so the ±50 ms skew error term the contract names as the only
+     * timestamp when that node publishes - mirroring production's "leader's skewed clock on
+     * the apply thread", so the +/-50 ms skew error term the contract names as the only
      * residual error is actually present on the fan-out stream.
      */
     SkewedClock skewedClock(int i) {
         return skewedClocks.get(i);
     }
 
-    /** The CP {@link AdversarialNetwork} (additive accessor — same instance). */
+    /** The CP {@link AdversarialNetwork} (additive accessor - same instance). */
     AdversarialNetwork network() {
         return network;
     }
@@ -233,12 +233,12 @@ final class AdversarialSim implements ClusterView {
     }
 
     /**
-     * R-01' bind rule made executable in the adversarial sim: bind every node's owner to the single
+     * Owner-thread bind rule made executable in the adversarial sim: bind every node's owner to the single
      * drive thread as the first action on that thread (NOT during construction). The sim is
      * single-threaded, so this thread owns every node; the {@code assertOwnerThread()} tripwire is
-     * now ACTIVE and, via {@link #throwingChecker()} → {@link SimInvariants#throwingNodeChecker()},
+     * now ACTIVE and, via {@link #throwingChecker()} -> {@link SimInvariants#throwingNodeChecker()},
      * turns any off-drive-thread {@link RaftNode} access into a {@link SimInvariants.SafetyViolation}
-     * — failing the seed deterministically, so {@code raft_owner_thread} joins the in-node safety
+     * - failing the seed deterministically, so {@code raft_owner_thread} joins the in-node safety
      * invariants checked under every adversarial schedule. Crash faults arm but do not rebuild node
      * objects (see {@code applyDueFaults}), so a one-time bind is complete.
      */
@@ -327,7 +327,7 @@ final class AdversarialSim implements ClusterView {
                             "PUT", op.key(), token, accepted);
                 }
                 if (accepted) {
-                    activity.recordCommit(); // best-effort: accepted ≠ committed (RR-004)
+                    activity.recordCommit(); // best-effort: accepted != committed
                 }
             }
             case DELETE -> {

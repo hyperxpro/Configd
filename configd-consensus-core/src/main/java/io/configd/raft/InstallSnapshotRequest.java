@@ -6,7 +6,7 @@ import java.util.Arrays;
 import java.util.Objects;
 
 /**
- * Raft InstallSnapshot RPC request (Raft §7).
+ * Raft InstallSnapshot RPC request (Raft section 7).
  * <p>
  * Sent by the leader to followers that are too far behind to catch up
  * via AppendEntries (i.e., the leader has already compacted the log

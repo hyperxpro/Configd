@@ -18,20 +18,20 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.fail;
 
 /**
- * The charter §4 C4 / gate-3 walk ("slow-consumer state machine walk passes"): a
+ * The governor state machine walk ("slow-consumer state machine walk passes"): a
  * deliberately-lagging edge actor ({@code EdgeActor.lag()}) walks the FULL machine inside
- * {@link EdgeFanOutSim} — HEALTHY → SLOW (sustained queue warn) → CATCHUP (C1 overflow
- * demotion) → QUARANTINED (demoteLimit; on-wire ERROR_CLOSE code 8 through the REAL
- * {@code EdgeClientCore.onErrorClose} reaction) → refused reconnects through the cooldown
- * → readmitted with the snapshot-first re-bootstrap forced → CATCHUP → HEALTHY, with the
+ * {@link EdgeFanOutSim} - HEALTHY -> SLOW (sustained queue warn) -> CATCHUP (C1 overflow
+ * demotion) -> QUARANTINED (demoteLimit; on-wire ERROR_CLOSE code 8 through the REAL
+ * {@code EdgeClientCore.onErrorClose} reaction) -> refused reconnects through the cooldown
+ * -> readmitted with the snapshot-first re-bootstrap forced -> CATCHUP -> HEALTHY, with the
  * edge invariants checked every tick and the edge converging at the end.
  *
  * <p>Also the screen C4-3 scenario: a HEALTHY edge that flaps purely from injected network
- * loss (partition/heal cycles crossing the replay horizon — GAP recoveries, not slowness)
+ * loss (partition/heal cycles crossing the replay horizon - GAP recoveries, not slowness)
  * recovers every time and never escalates: zero refusals, zero quarantines, zero
  * governor transitions.
  *
- * <p>The governor wiring is OPT-IN on the {@link C1StreamDriver} — the 507-seed gate path
+ * <p>The governor wiring is OPT-IN on the {@link C1StreamDriver} - the 507-seed gate path
  * runs without it and is byte-identical ({@code EdgeSeedCompatTest}). Determinism of the
  * governor itself is proven by replaying the whole walk: the recorded structured
  * transition events (timestamps, cursors, window counts) must be identical run-to-run.
@@ -39,7 +39,7 @@ import static org.junit.jupiter.api.Assertions.fail;
 class SlowConsumerStateMachineWalkTest {
 
     private static final int CP_NODES = 3;
-    /** One edge: the walking actor. (Identity independence is the process test's leg —
+    /** One edge: the walking actor. (Identity independence is the process test's leg - 
      *  {@code FanOutServerQuarantineTest}; a bystander here would only add it own
      *  walk-threshold noise to the recorded evidence.) */
     private static final int EDGES = 1;
@@ -57,7 +57,7 @@ class SlowConsumerStateMachineWalkTest {
     /**
      * Sim-scaled policy thresholds (1 sim tick = 1 ms): warn window 20 ms, 3 distress
      * demotions within 60 s quarantine, 300 ms quarantine cooldown. GAP limit stays high
-     * (C4-2 weighting — the flap scenario relies on it).
+     * (C4-2 weighting - the flap scenario relies on it).
      */
     private static SlowConsumerPolicyConfig walkPolicyConfig() {
         return new SlowConsumerPolicyConfig(
@@ -77,19 +77,19 @@ class SlowConsumerStateMachineWalkTest {
         EdgeFanOutSim sim = new EdgeFanOutSim(SEED, CP_NODES, EDGES, 200,
                 false, driver, new AdversarialSchedule.Intensity(0, 0, 0.0),
                 EdgeInvariants.BOUND_MS);
-        sim.run(); // settle: election + initial subscribes (empty ring → TAIL), no faults
+        sim.run(); // settle: election + initial subscribes (empty ring -> TAIL), no faults
         EdgeActor victim = sim.edges().get(0);
         String victimIdentity = "edge-" + victim.edgeId();
         sim.enableEdgeRecovery(0);
         assertEquals(ConsumerState.HEALTHY, governor.state(victimIdentity), "walk start");
 
-        // --- HEALTHY → SLOW → CATCHUP → QUARANTINED: the victim lags and commits keep
+        // --- HEALTHY -> SLOW -> CATCHUP -> QUARANTINED: the victim lags and commits keep
         // flowing. Each commit lands ~1-2 seqs as unacked 1-seq frames: the queue crosses
-        // warn (6) and stays there past the 20 ms window (→ SLOW, fires mid-flow), then
-        // overflows at 8 (→ the C1 queue_overflow demotion, → CATCHUP); the 3rd distress
+        // warn (6) and stays there past the 20 ms window (-> SLOW, fires mid-flow), then
+        // overflows at 8 (-> the C1 queue_overflow demotion, -> CATCHUP); the 3rd distress
         // demotion inside the window trips the quarantine, the driver kicks the
         // connection and ERROR_CLOSE code 8 rides the wire to the edge. The ORDER of the
-        // legs is asserted from the recorded transition events below — polling for SLOW
+        // legs is asserted from the recorded transition events below - polling for SLOW
         // here would race past it (the walk is driven by the commits themselves).
         victim.lag();
         for (int i = 1; i <= 60 && governor.state(victimIdentity) != ConsumerState.QUARANTINED; i++) {
@@ -101,15 +101,15 @@ class SlowConsumerStateMachineWalkTest {
         assertEquals(1, metrics.quarantines);
 
         // --- Refused reconnects through the cooldown: the (now unlagged) edge processes
-        // the ERROR_CLOSE through the REAL core reaction → reconnect directive → the
-        // driver's resubscribe is REFUSED at admission and retried — observably.
+        // the ERROR_CLOSE through the REAL core reaction -> reconnect directive -> the
+        // driver's resubscribe is REFUSED at admission and retried - observably.
         victim.unlag();
         tickUntil(sim, () -> metrics.reconnectsRefused > 0,
                 "the edge's reconnect attempts are refused during the cooldown");
         assertEquals(ConsumerState.QUARANTINED, governor.state(victimIdentity),
                 "refusals must not mutate the state");
 
-        // --- Cooldown exit → forced snapshot-first re-bootstrap → CATCHUP → HEALTHY.
+        // --- Cooldown exit -> forced snapshot-first re-bootstrap -> CATCHUP -> HEALTHY.
         tickUntil(sim, () -> governor.state(victimIdentity) == ConsumerState.HEALTHY,
                 "post-cooldown readmission re-bootstraps and resolves to HEALTHY");
         assertEquals(1, metrics.readmissions);
@@ -127,7 +127,7 @@ class SlowConsumerStateMachineWalkTest {
     void laggingEdgeWalksTheFullStateMachineEndToEnd() {
         WalkEvidence evidence = runFullWalk();
 
-        // The exact walk, in order, with the design §2 reasons (charter §4 C4: every
+        // The exact walk, in order, with the design section 2 reasons (charter section 4 C4: every
         // transition observed; the structured events ARE the evidence).
         List<String> legs = evidence.transitions().stream()
                 .map(t -> t.from() + "->" + t.to() + ":" + t.reason())
@@ -141,7 +141,7 @@ class SlowConsumerStateMachineWalkTest {
                 legs, "the full machine must be walked in order: " + legs);
         assertTrue(evidence.refusals() > 0, "cooldown refusals must be observed (C4-3)");
 
-        // Cursor evidence rides the quarantine transition (CT-28).
+        // Cursor evidence rides the quarantine transition.
         SlowConsumerGovernor.TransitionEvent quarantine = evidence.transitions().get(2);
         assertTrue(quarantine.cursor() > 0 && quarantine.lastAckedSeq() >= 0,
                 "the quarantine event must carry the cursor evidence: " + quarantine);
@@ -151,7 +151,7 @@ class SlowConsumerStateMachineWalkTest {
     @Test
     void theWalkIsDeterministic_sameSeedReplaysIdentically() {
         // The governor folds into the sim's determinism story: the same seed must replay
-        // the SAME structured transition events — timestamps, cursors, window counts —
+        // the SAME structured transition events - timestamps, cursors, window counts - 
         // and the same refusal/quarantine/readmission counts. (The gate digest itself is
         // governor-free because the governor is opt-in and absent on the gate path.)
         WalkEvidence first = runFullWalk();
@@ -164,12 +164,12 @@ class SlowConsumerStateMachineWalkTest {
     }
 
     /**
-     * The CT-30 closing condition (C4 contract-qa audit): {@code quarantineLimit}
-     * lag/readmit cycles walk the machine to its LAST state — the 3rd quarantine within
+     * The governor quarantine closing condition: {@code quarantineLimit}
+     * lag/readmit cycles walk the machine to its LAST state - the 3rd quarantine within
      * {@code unhealthyWindowMs} escalates to UNHEALTHY (alert-grade metric, the
      * {@code repeat_quarantine} structured event with {@code quarantinesInWindow=3}),
      * reconnects are refused through the unhealthy cooldown, and the cooldown ALONE
-     * auto-readmits with the forced snapshot-first re-bootstrap (C4-3) — ending converged
+     * auto-readmits with the forced snapshot-first re-bootstrap (C4-3) - ending converged
      * and HEALTHY. This also exercises the driver-side UNHEALTHY kick arm (the verdict
      * branch shared with the wire test's {@code FanOutServer.onDemotionEvent}).
      */
@@ -192,7 +192,7 @@ class SlowConsumerStateMachineWalkTest {
         String victimIdentity = "edge-" + victim.edgeId();
         sim.enableEdgeRecovery(0);
 
-        // quarantineLimit (3) lag→quarantine→readmit cycles; the 3rd trip escalates.
+        // quarantineLimit (3) lag->quarantine->readmit cycles; the 3rd trip escalates.
         for (int cycle = 1; cycle <= 3; cycle++) {
             victim.lag();
             for (int i = 1; i <= 60
@@ -219,7 +219,7 @@ class SlowConsumerStateMachineWalkTest {
         assertEquals(SlowConsumerGovernor.REASON_REPEAT_QUARANTINE, escalation.reason());
         assertEquals(3, escalation.quarantinesInWindow());
 
-        // Refused — observably — through the unhealthy cooldown...
+        // Refused - observably - through the unhealthy cooldown...
         int refusalsAtEscalation = metrics.reconnectsRefused;
         tickUntil(sim, () -> metrics.reconnectsRefused > refusalsAtEscalation,
                 "reconnects are refused during the unhealthy cooldown");
@@ -242,8 +242,8 @@ class SlowConsumerStateMachineWalkTest {
 
     /**
      * Screen condition C4-3 (couples to C4-2's reason weighting): a HEALTHY edge that
-     * flaps purely from injected network loss — partition/heal cycles whose misses cross
-     * the replay horizon (ring cap 8), i.e. GAP recoveries, not slowness — recovers every
+     * flaps purely from injected network loss - partition/heal cycles whose misses cross
+     * the replay horizon (ring cap 8), i.e. GAP recoveries, not slowness - recovers every
      * cycle through the C3 resubscribe path and NEVER escalates: the governor records no
      * transitions, no refusals, no quarantines.
      */
@@ -254,7 +254,7 @@ class SlowConsumerStateMachineWalkTest {
         SlowConsumerGovernor governor =
                 new SlowConsumerGovernor(walkPolicyConfig(), metrics, transitions::add);
         // Roomy queue + disabled ack-lag: the only distress an honest network flap could
-        // produce is GAP — which is exactly what must not escalate.
+        // produce is GAP - which is exactly what must not escalate.
         FanOutConfig config = new FanOutConfig(64, 80, 64, 262_144, 1_000_000L, 250L, 5L, 1_048_576);
         C1StreamDriver driver = new C1StreamDriver(config, governor);
         EdgeFanOutSim sim = new EdgeFanOutSim(SEED + 1, CP_NODES, EDGES, 200,
@@ -287,7 +287,7 @@ class SlowConsumerStateMachineWalkTest {
     }
 
     // -----------------------------------------------------------------------
-    // helpers (the EdgeGapRecoveryTest commit/tick discipline — no sleeps)
+    // helpers (the EdgeGapRecoveryTest commit/tick discipline - no sleeps)
     // -----------------------------------------------------------------------
 
     private static void commit(EdgeFanOutSim sim, int observedCpNode, String key, String value) {
@@ -324,7 +324,7 @@ class SlowConsumerStateMachineWalkTest {
         return r.found() && expected.equals(new String(r.value(), StandardCharsets.UTF_8));
     }
 
-    /** Counts the policy series (single sim thread — plain ints). */
+    /** Counts the policy series (single sim thread - plain ints). */
     private static final class CountingPolicyMetrics implements FanOutSessionMetrics {
         int slowTransitions;
         int quarantines;

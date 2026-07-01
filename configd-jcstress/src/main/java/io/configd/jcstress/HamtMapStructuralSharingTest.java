@@ -11,10 +11,10 @@ import org.openjdk.jcstress.infra.results.II_Result;
 import org.openjdk.jcstress.infra.results.I_Result;
 
 /**
- * RR-029 — {@link HamtMap} structural sharing under concurrent get vs put.
+ * Verifies {@link HamtMap} structural sharing under concurrent get vs put.
  *
  * <p>{@code HamtMap} is a persistent (immutable, final-field) trie: {@code put}
- * copies only the path root→leaf and shares everything else, returning a NEW map;
+ * copies only the path root->leaf and shares everything else, returning a NEW map;
  * the original is never mutated. The publication seam in production is the
  * volatile {@code ConfigSnapshot} swap in {@code VersionedConfigStore}; here we
  * model the same shape directly with a {@code volatile HamtMap} the writer swaps.
@@ -25,7 +25,7 @@ import org.openjdk.jcstress.infra.results.I_Result;
  * is never observed half-inserted (null where the read map already contains it, or
  * a stale value spliced into a fresh node). Because the map is immutable and
  * published via a volatile write, the final-field + happens-before guarantees make
- * this safe by construction — this test is the evidence.
+ * this safe by construction - this test is the evidence.
  */
 public final class HamtMapStructuralSharingTest {
 
@@ -33,19 +33,17 @@ public final class HamtMapStructuralSharingTest {
     }
 
     // Keys chosen to land in DIFFERENT top-level hash fragments so put() copies a
-    // different path than the one the reader walks for the shared key — exercising
+    // different path than the one the reader walks for the shared key - exercising
     // structural sharing (the reader's key must remain reachable through the new
     // root that shares the untouched subtrie).
     private static final String SHARED = "shared-key";
     private static final String FRESH = "fresh-key";
 
-    // ------------------------------------------------------------------
     // Writer publishes map.put(FRESH,...) via a volatile swap; reader reads the
     // volatile map and looks up SHARED, which must ALWAYS be present and correct
     // regardless of which map version the reader observed (it is in both).
     // r1 = value seen for SHARED (must be 7); 0 means "absent" (a structural-
-    // sharing tear that lost the shared subtrie) → FORBIDDEN.
-    // ------------------------------------------------------------------
+    // sharing tear that lost the shared subtrie) -> FORBIDDEN.
     @JCStressTest
     @State
     @Description("HamtMap: shared key stays reachable through a put that copies a different path")
@@ -72,14 +70,12 @@ public final class HamtMapStructuralSharingTest {
         }
     }
 
-    // ------------------------------------------------------------------
     // Reader observes BOTH keys through whatever map version it read. The pair
     // must be internally consistent with one published map version:
-    //   (7, 0) — read the pre-put map: SHARED=7, FRESH absent.   ACCEPTABLE
-    //   (7, 99) — read the post-put map: both present.            ACCEPTABLE
+    //   (7, 0)  - read the pre-put map: SHARED=7, FRESH absent.    ACCEPTABLE
+    //   (7, 99) - read the post-put map: both present.              ACCEPTABLE
     // Anything else (SHARED missing, FRESH with a wrong value, a half-inserted
-    // node) is a torn structural read.                            FORBIDDEN
-    // ------------------------------------------------------------------
+    // node) is a torn structural read.                              FORBIDDEN
     @JCStressTest
     @State
     @Description("HamtMap: a read observes a self-consistent map version (no half-insert)")

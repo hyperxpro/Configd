@@ -11,26 +11,20 @@ import static org.junit.jupiter.api.Assertions.*;
  * {@code toString}/validation of the consensus message records that carry real
  * logic: {@link InstallSnapshotRequest}, {@link SnapshotState}, {@link LogEntry}.
  * <p>
- * S2/mutation-gap: these three records were 0–8% (all NO_COVERAGE) in the
- * module-wide PIT run — no same-module test ever called their members — which
- * alone dragged consensus-core module-wide below the §4.1 70% target. They are
+ * No same-module test previously exercised their members. They are
  * NOT pure boilerplate: each has a HAND-WRITTEN {@code equals}/{@code hashCode}
  * that uses {@code Arrays.equals}/{@code Arrays.hashCode} on its {@code byte[]}
  * fields (a default record equals would compare arrays by identity and be
- * wrong), plus compact-constructor validation. Per the charter's record-round
- * carve-out, this focused test kills that NO_COVERAGE cluster: it asserts
- * per-field {@code equals} discrimination (kills the RemoveConditional mutants),
- * hashCode distinctness across distinct instances (kills the Math/Primitive
- * mutants), non-empty {@code toString}, and the validation guards. Deterministic.
+ * wrong), plus compact-constructor validation. This focused test asserts
+ * per-field {@code equals} discrimination, hashCode distinctness across distinct
+ * instances, non-empty {@code toString}, and the validation guards. Deterministic.
  */
 class MessageRecordCodecTest {
 
     private static final NodeId L1 = NodeId.of(1);
     private static final NodeId L2 = NodeId.of(2);
 
-    // ====================================================================
     // InstallSnapshotRequest
-    // ====================================================================
 
     @Nested
     class InstallSnapshot {
@@ -103,9 +97,7 @@ class MessageRecordCodecTest {
         }
     }
 
-    // ====================================================================
     // SnapshotState
-    // ====================================================================
 
     @Nested
     class Snapshot {
@@ -157,9 +149,7 @@ class MessageRecordCodecTest {
         }
     }
 
-    // ====================================================================
     // LogEntry
-    // ====================================================================
 
     @Nested
     class Entry {

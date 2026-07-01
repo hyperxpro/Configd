@@ -19,7 +19,7 @@ import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * RR-087 — {@code RaftTransportAdapter} was 0/16 lines: the real network seam
+ * {@code RaftTransportAdapter} was 0/16 lines: the real network seam
  * (encode -&gt; TCP -&gt; decode -&gt; marshal -&gt; handle) was never traversed
  * end-to-end by any test. This drives ONE bounded loopback round-trip over real
  * localhost sockets: node A's adapter {@link RaftTransportAdapter#send} serializes
@@ -58,7 +58,7 @@ final class RaftTransportAdapterLoopbackTest {
         transportB = new TcpRaftTransport(nodeB, new InetSocketAddress("127.0.0.1", 0),
                 Map.of(), null, /* ctor inbound handler unused; adapter registers its own */ m -> {});
         RaftTransportAdapter adapterB = new RaftTransportAdapter(transportB, GROUP);
-        // Multi-Raft Phase 1 (DL-P1-06): the handler now receives the frame's groupId. Capture it to
+        // The handler now receives the frame's groupId. Capture it to
         // prove the groupId survives the encode -> TCP -> decode round-trip and is delivered (the basis
         // for the N-group inbound demux).
         adapterB.registerInboundHandler((from, groupId, message) -> {

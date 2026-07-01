@@ -17,7 +17,7 @@ class HkdfTest {
 
     private static final HexFormat HEX = HexFormat.of();
 
-    /** RFC 5869 Appendix A.1 — Test Case 1 (basic, SHA-256). */
+    /** RFC 5869 Appendix A.1 - Test Case 1 (basic, SHA-256). */
     @Test
     void rfc5869TestCase1() {
         byte[] ikm = HEX.parseHex("0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b");
@@ -43,7 +43,7 @@ class HkdfTest {
                 "deriveKey must equal expand(extract(...))");
     }
 
-    /** RFC 5869 Appendix A.3 — Test Case 3 (zero-length salt and info, SHA-256). */
+    /** RFC 5869 Appendix A.3 - Test Case 3 (zero-length salt and info, SHA-256). */
     @Test
     void rfc5869TestCase3_emptySaltAndInfo() {
         byte[] ikm = HEX.parseHex("0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b");

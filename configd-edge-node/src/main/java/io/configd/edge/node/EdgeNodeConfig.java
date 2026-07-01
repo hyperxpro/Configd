@@ -6,53 +6,52 @@ import java.util.ArrayList;
 import java.util.List;
 
 /**
- * Configuration for one edge node process (C2 design §4). Parsed from command-line
- * arguments; immutable after construction.
+ * Configuration for one edge node process. Parsed from command-line arguments; immutable
+ * after construction.
  *
- * <h2>Named policy configs (charter §6 rule 8 — every threshold is a named config + metric)</h2>
+ * <h2>Named policy configs (every threshold is a named config with a corresponding metric)</h2>
  * <ul>
  *   <li>{@code edge.reconnect.backoffMs} ({@code --reconnect-backoff-ms}, default
  *       {@value #DEFAULT_RECONNECT_BACKOFF_MS}): the BASE reconnect backoff. The realized
  *       delay is bounded and jittered by {@link EdgeStreamClient} (doubling per consecutive
- *       failure up to {@link EdgeStreamClient#MAX_BACKOFF_MS}, ±50% full jitter). Metric:
+ *       failure up to {@link EdgeStreamClient#MAX_BACKOFF_MS}, +/-50% full jitter). Metric:
  *       {@code edge_reconnects_total}.</li>
  *   <li>{@code edge.heartbeat.silenceFactor} ({@code --heartbeat-silence-factor}, default
  *       {@value #DEFAULT_HEARTBEAT_SILENCE_FACTOR}): reconnect after this many missed
- *       heartbeat intervals ({@code silenceFactor × heartbeatMs}, heartbeat cadence is the
- *       C1 server's {@code edge.fanout.heartbeatMs} = 250 ms). Metric:
+ *       heartbeat intervals (silenceFactor * heartbeatMs, heartbeat cadence is the
+ *       server's {@code edge.fanout.heartbeatMs} = 250 ms). Metric:
  *       {@code edge_reconnects_total} (reason visible in the structured log).</li>
  *   <li>{@code edge.poisonpill.maxRetries} ({@code --poison-max-retries}, default
- *       {@value #DEFAULT_POISON_MAX_RETRIES}): ADR-0040 bounded apply-failure retries per
- *       seq before quarantine → forced snapshot re-bootstrap → terminal fail-loud.
+ *       {@value #DEFAULT_POISON_MAX_RETRIES}): bounded apply-failure retries per seq before
+ *       quarantine, forced snapshot re-bootstrap, then terminal fail-loud.
  *       Metrics: {@code edge_poison_retries_total}, {@code configd_edge_poison_pill_total},
  *       {@code configd_edge_poison_pill_terminal_total}.</li>
  * </ul>
  *
  * @param edgeId             the edge identity carried in SUBSCRIBE. Over mTLS the server
  *                           binds the session to the client-cert Subject DN (the wire field
- *                           is advisory), so this MUST match the cert identity — operators
+ *                           is advisory), so this MUST match the cert identity - operators
  *                           pass the cert DN here so logs/metrics agree with the server's
  *                           authoritative view
  * @param fanOutEndpoints    ordered fan-out endpoints ({@code h:p[,h:p]}); the client
- *                           connects to the first and fails over round-robin (CT-11/CT-12)
+ *                           connects to the first and fails over round-robin
  * @param apiPort            the read-serving HTTP port ({@code 0} = ephemeral)
- * @param dataDir            directory for the SEC-017 {@code epoch.lock} sidecar — epoch
- *                           METADATA only, never values (RR-098: {@code secure/} values
- *                           stay in memory only)
+ * @param dataDir            directory for the {@code epoch.lock} sidecar - epoch METADATA
+ *                           only, never values ({@code secure/} values stay in memory only)
  * @param verifyKeyPath      optional Ed25519 public key (X.509/SPKI DER, the
  *                           {@code VerifyKeyExporter} output). When present every delta
- *                           must verify (F-0052 fail-closed); when absent, SIGNED deltas
- *                           are rejected fail-closed by {@code DeltaApplier}
+ *                           must verify (fail-closed); when absent, SIGNED deltas are
+ *                           rejected fail-closed by {@code DeltaApplier}
  * @param subscribePrefixes  repeatable {@code --subscribe-prefix}; empty = full store
- *                           (ADR-0038: this is the edge-side STORAGE filter — the server
- *                           always streams the full signed chain)
+ *                           (this is the edge-side STORAGE filter - the server always
+ *                           streams the full signed chain)
  * @param tlsCertPath        TLS certificate path (same triple as the server), or null
  * @param tlsKeyPath         TLS key store (PKCS12), or null
  * @param tlsTrustStorePath  TLS trust store (PKCS12), or null
  * @param reconnectBackoffMs base reconnect backoff in ms ({@code edge.reconnect.backoffMs})
  * @param heartbeatSilenceFactor missed-heartbeat reconnect factor
  *                           ({@code edge.heartbeat.silenceFactor})
- * @param poisonMaxRetries   ADR-0040 bounded apply-failure retries before quarantine
+ * @param poisonMaxRetries   bounded apply-failure retries before quarantine
  *                           ({@code edge.poisonpill.maxRetries})
  */
 public record EdgeNodeConfig(
@@ -79,7 +78,7 @@ public record EdgeNodeConfig(
     /** Default silence factor (named config {@code edge.heartbeat.silenceFactor}). */
     public static final int DEFAULT_HEARTBEAT_SILENCE_FACTOR = 8;
 
-    /** Default ADR-0040 poison-pill retry bound (named config {@code edge.poisonpill.maxRetries}). */
+    /** Default poison-pill retry bound (named config {@code edge.poisonpill.maxRetries}). */
     public static final int DEFAULT_POISON_MAX_RETRIES = 3;
 
     public EdgeNodeConfig {
@@ -102,8 +101,8 @@ public record EdgeNodeConfig(
                 throw new IllegalArgumentException("subscribe prefix must not be blank");
             }
         }
-        // Fail-closed on a PARTIAL TLS triple: silently downgrading to plaintext because
-        // one flag was missing is the F-0050 failure class. All three or none.
+        // Fail-closed on a partial TLS triple: silently downgrading to plaintext when
+        // one flag is missing is the failure this rejects. All three or none.
         int tlsFlags = (tlsCertPath != null ? 1 : 0) + (tlsKeyPath != null ? 1 : 0)
                 + (tlsTrustStorePath != null ? 1 : 0);
         if (tlsFlags != 0 && tlsFlags != 3) {
@@ -136,13 +135,13 @@ public record EdgeNodeConfig(
      *   --edge-id                  edge identity; must match the mTLS cert Subject DN (required)
      *   --fanout-endpoints         h:p[,h:p] ordered fan-out endpoints (required)
      *   --api-port                 read-serving HTTP port (default 8081; 0 = ephemeral)
-     *   --data-dir                 directory for epoch.lock metadata (required; SEC-017)
+     *   --data-dir                 directory for epoch.lock metadata (required)
      *   --verify-key               Ed25519 public key, X.509/SPKI DER (optional)
-     *   --subscribe-prefix         storage-filter prefix, repeatable (ADR-0038)
+     *   --subscribe-prefix         storage-filter prefix, repeatable
      *   --tls-cert/--tls-key/--tls-trust-store  the server's TLS triple (all or none)
      *   --reconnect-backoff-ms     edge.reconnect.backoffMs base (default 100)
      *   --heartbeat-silence-factor edge.heartbeat.silenceFactor (default 8)
-     *   --poison-max-retries       edge.poisonpill.maxRetries (default 3; ADR-0040)
+     *   --poison-max-retries       edge.poisonpill.maxRetries (default 3)
      * </pre>
      *
      * @throws IllegalArgumentException on missing/invalid arguments

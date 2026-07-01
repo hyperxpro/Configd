@@ -13,10 +13,10 @@ import java.util.Objects;
 import java.util.zip.CRC32C;
 
 /**
- * Encoder/decoder for the edge streaming protocol-v1 wire format (C1 design §3;
- * ADR-0037). A <b>separate</b> codec and version byte from the Raft {@code FrameCodec}
- * (ADR-0037: the Raft wire and the edge wire evolve on different cadences and must not
- * share a fixture gate), following the identical structural discipline:
+ * Encoder/decoder for the edge streaming protocol wire format. A <b>separate</b> codec and
+ * version byte from the Raft {@code FrameCodec} - the Raft wire and the edge wire evolve
+ * on different cadences and must not share a fixture gate. Both follow the same structural
+ * discipline:
  *
  * <pre>
  *   [Length: 4 bytes]      total frame size incl. length + trailer, big-endian
@@ -26,24 +26,23 @@ import java.util.zip.CRC32C;
  *   [CRC32C: 4 bytes]      Castagnoli checksum over length..end-of-payload
  * </pre>
  *
- * <h2>Discipline carried verbatim from {@code FrameCodec} (ADR-0037)</h2>
+ * <h2>Decoding discipline</h2>
  * <ul>
  *   <li><b>{@link #peekLength} bounds-checks the declared length BEFORE any
- *       allocation</b> — an adversary cannot induce a multi-MiB allocation by lying in
+ *       allocation</b> - an adversary cannot induce a multi-MiB allocation by lying in
  *       the first 4 bytes.</li>
- *   <li><b>CRC32C is validated BEFORE the version/type bytes are interpreted</b> — a
+ *   <li><b>CRC32C is validated BEFORE the version/type bytes are interpreted</b> - a
  *       bit-flip in the version or type byte surfaces as {@link ErrorCode#FRAME_CORRUPT}
  *       (a {@link CodecException} of code {@code FRAME_CORRUPT}), never as a misleading
  *       "bad version" or "unknown type".</li>
- *   <li><b>Explicit frame cap {@link #MAX_EDGE_FRAME_SIZE}</b> (2 MiB — large enough for
+ *   <li><b>Explicit frame cap {@link #MAX_EDGE_FRAME_SIZE}</b> (2 MiB - large enough for
  *       a 1 MiB snapshot chunk plus overhead), and a {@link #MAX_SNAPSHOT_CHUNK_BYTES}
  *       (1 MiB) cap on a chunk payload.</li>
  *   <li><b>NOTIFY batch caps enforced at encode</b> ({@link #MAX_NOTIFY_BATCH} = 64
- *       notifications / {@link #MAX_NOTIFY_BATCH_BYTES} = 256 KiB; CT-17 / ADR-0038
- *       frame-level batching).</li>
+ *       notifications / {@link #MAX_NOTIFY_BATCH_BYTES} = 256 KiB; frame-level batching).</li>
  * </ul>
  *
- * <h2>Delta byte fidelity (ADR-0038)</h2>
+ * <h2>Delta byte fidelity</h2>
  * Each NOTIFY notification carries its {@link ConfigDelta} so that
  * {@link ConfigDelta#signingPayload()} round-trips <b>byte-identical</b> (signature
  * verification at the edge depends on it): the mutation list is re-encoded with
@@ -55,17 +54,17 @@ import java.util.zip.CRC32C;
  * Structural decode failures throw {@link CodecException}, whose {@link CodecException#code()}
  * maps onto the {@link ErrorCode} taxonomy ({@code FRAME_TOO_LARGE}, {@code FRAME_CORRUPT},
  * {@code BAD_WIRE_VERSION}). The class is stateless (all methods static) and carries no
- * {@code java.net} / socket / TLS type — the only transport boundary is the session's
+ * {@code java.net} / socket / TLS type - the only transport boundary is the session's
  * {@code TransportSink}.
  */
 public final class EdgeFrameCodec {
 
     /**
-     * The edge protocol wire version (ADR-0037: separate from {@code FrameCodec.WIRE_VERSION}).
+     * The edge protocol wire version (separate from the Raft {@code FrameCodec.WIRE_VERSION}).
      * The decoder rejects any other value with {@link ErrorCode#BAD_WIRE_VERSION}.
      *
      * <p><b>Rebaseline rule (golden fixtures):</b> any change to the bytes any frame
-     * encodes to — a new field, a reordered field, a changed type/error code — MUST bump
+     * encodes to - a new field, a reordered field, a changed type/error code - MUST bump
      * this constant and re-generate {@code EdgeFrameCodecGoldenFixtureTest}'s hex
      * constants. The golden test fails on any drift without a version bump, exactly as
      * the Raft {@code WireCompatGoldenBytesTest} guards the consensus wire.
@@ -73,15 +72,14 @@ public final class EdgeFrameCodec {
     public static final byte EDGE_WIRE_VERSION = (byte) 0x01;
 
     /**
-     * The RFC §2 watch-capable edge wire version (W1-2). A {@code 0x02} connection stamps
-     * {@code 0x02} on <b>every</b> frame it carries — including a reused {@link FrameType#NOTIFY}
-     * (the {@code full_chain_verify} carrier, W5-2) — and is the <b>only</b> version under which
-     * the {@code WATCH_*} frame types may be encoded or decoded (W5-11). This is the
-     * per-connection "design-A" model (W1-3): the version byte is the <b>sole</b> wire difference
-     * between a {@code 0x01} and a {@code 0x02} connection for a shared (e.g. {@code NOTIFY})
-     * frame; the existing {@code 0x01} golden fixtures stay byte-identical and §2 adds separate
-     * {@code 0x02} fixtures rather than rebaselining them. The decoder accepts {@code 0x01} and
-     * {@code 0x02}; any other version is {@link ErrorCode#BAD_WIRE_VERSION}.
+     * The watch-capable edge wire version (W1-2). A {@code 0x02} connection stamps {@code 0x02}
+     * on <b>every</b> frame it carries - including a reused {@link FrameType#NOTIFY} (the
+     * {@code full_chain_verify} carrier, W5-2) - and is the <b>only</b> version under which the
+     * {@code WATCH_*} frame types may be encoded or decoded (W5-11). The version byte is the
+     * <b>sole</b> wire difference between a {@code 0x01} and a {@code 0x02} connection for a
+     * shared frame (W1-3): the {@code 0x01} golden fixtures stay byte-identical, and the watch
+     * protocol adds separate {@code 0x02} fixtures rather than rebaselining them. The decoder
+     * accepts {@code 0x01} and {@code 0x02}; any other version is {@link ErrorCode#BAD_WIRE_VERSION}.
      */
     public static final byte EDGE_WIRE_VERSION_V2 = (byte) 0x02;
 
@@ -100,10 +98,10 @@ public final class EdgeFrameCodec {
     /** Per-chunk snapshot payload cap (1 MiB). */
     public static final int MAX_SNAPSHOT_CHUNK_BYTES = 1024 * 1024;
 
-    /** Max notifications per NOTIFY frame (CT-17 / design §4 {@code batchMaxNotifications}). */
+    /** Max notifications per NOTIFY frame ({@code batchMaxNotifications}). */
     public static final int MAX_NOTIFY_BATCH = 64;
 
-    /** Max encoded NOTIFY payload bytes (256 KiB; design §4 {@code batchMaxBytes}). */
+    /** Max encoded NOTIFY payload bytes (256 KiB; {@code batchMaxBytes}). */
     public static final int MAX_NOTIFY_BATCH_BYTES = 256 * 1024;
 
     private EdgeFrameCodec() {
@@ -131,15 +129,14 @@ public final class EdgeFrameCodec {
     }
 
     // -----------------------------------------------------------------------
-    // Encode (single pass into a FrameSink — the head-to-head Surface-3 floor win)
+    // Encode (single pass into a FrameSink)
     // -----------------------------------------------------------------------
 
     /**
-     * One reused {@link CRC32C} per thread for the trailer. The status-quo {@code new CRC32C()}
-     * per encode is escape-analyzed to zero only when the buffer never escapes (the JDK
-     * reused-buffer case); a pooled {@code ByteBuf} escapes into {@code release()}, so a thread
-     * local guarantees the trailer adds no per-frame allocation on <b>either</b> backend — the
-     * same device the head-to-head's best-Netty encoder used to keep the comparison honest.
+     * One reused {@link CRC32C} per thread for the trailer. A {@code new CRC32C()} per encode
+     * is escape-analyzed to zero only when the buffer never escapes (the JDK reused-buffer
+     * case); a pooled {@code ByteBuf} escapes into {@code release()}, so a thread-local
+     * guarantees the trailer adds no per-frame allocation on either backend.
      */
     private static final ThreadLocal<CRC32C> TRAILER_CRC = ThreadLocal.withInitial(CRC32C::new);
 
@@ -147,11 +144,11 @@ public final class EdgeFrameCodec {
     private static final int ENCODE_INITIAL_CAPACITY = 256;
 
     /**
-     * Encodes a frame to a newly allocated byte array (convenience / cold path: golden + property
-     * tests, the JDK edge client, teardown {@code ERROR_CLOSE}). Delegates to {@link #encodeInto}
-     * so there is exactly ONE wire-format implementation — the golden fixtures therefore guard the
-     * single-pass encoder for free. The hot fan-out path uses {@link #encodeInto} with a
-     * reused/pooled {@link FrameSink} to reach the message-building floor.
+     * Encodes a frame to a newly allocated byte array (convenience / cold path: golden and
+     * property tests, the JDK edge client, teardown {@code ERROR_CLOSE}). Delegates to
+     * {@link #encodeInto} so there is exactly ONE wire-format implementation - the golden
+     * fixtures therefore guard the single-pass encoder for free. The hot fan-out path uses
+     * {@link #encodeInto} with a reused/pooled {@link FrameSink}.
      *
      * @param frame the frame to encode
      * @return the wire bytes (length includes header + payload + CRC trailer)
@@ -194,8 +191,7 @@ public final class EdgeFrameCodec {
      * <p>When {@code sink} is reused (the JDK writer's per-connection {@link HeapFrameSink}) or
      * pooled (the Netty in-pipeline {@code ByteBuf} sink), the only per-frame allocation that
      * remains is the codec-internal message-building floor ({@code CommandCodec.encodeBatch} +
-     * signature/nonce clones) — the 25,520 B/op (batch 64) the head-to-head measured as
-     * transport-independent.
+     * signature/nonce clones).
      *
      * @param frame the frame to encode
      * @param sink  the destination (its current {@link FrameSink#writerIndex()} is the frame start)
@@ -210,7 +206,7 @@ public final class EdgeFrameCodec {
     /**
      * Encodes one frame in a single pass into {@code sink}, stamping the given edge wire
      * {@code version} on the version byte (W1-3). Identical to
-     * {@link #encodeInto(EdgeFrame, FrameSink)} except the version byte — a legacy frame is
+     * {@link #encodeInto(EdgeFrame, FrameSink)} except the version byte - a legacy frame is
      * byte-identical under either version save that one byte (and the CRC over it), which is
      * the design-A "only the version byte differs" property (W5-11). A {@code WATCH_*} frame
      * is encodable <b>only</b> under {@link #EDGE_WIRE_VERSION_V2}.
@@ -219,7 +215,7 @@ public final class EdgeFrameCodec {
      * @param sink    the destination (its current {@link FrameSink#writerIndex()} is the start)
      * @param version {@link #EDGE_WIRE_VERSION} or {@link #EDGE_WIRE_VERSION_V2}
      * @throws IllegalArgumentException if {@code version} is unsupported, or a {@code WATCH_*}
-     *                                  frame is encoded under {@code 0x01} (W5-11) — a
+     *                                  frame is encoded under {@code 0x01} (W5-11) - a
      *                                  caller/programming error, kept distinct from the
      *                                  wire-decode {@link CodecException} taxonomy
      * @throws CodecException           if the frame exceeds {@link #MAX_EDGE_FRAME_SIZE} or a
@@ -323,11 +319,9 @@ public final class EdgeFrameCodec {
 
     private static void encodeNotificationInto(CommitNotification n, FrameSink sink) {
         ConfigDelta d = n.delta();
-        // Message-building floor (codec-internal; not removed by buffer reuse — head-to-head
-        // Surface 3): the mutation blob re-encoded with the SAME CommandCodec.encodeBatch bytes
-        // ConfigDelta.signingPayload() hashes (so signingPayload round-trips byte-identical), plus
-        // the signature/nonce defensive clones. encodeBatch throws on empty; a mutating-apply delta
-        // always has >= 1 mutation.
+        // Re-encode the mutation blob with the SAME CommandCodec.encodeBatch bytes that
+        // ConfigDelta.signingPayload() hashes, so signingPayload round-trips byte-identical.
+        // encodeBatch throws on empty; a mutating-apply delta always has >= 1 mutation.
         byte[] batch = CommandCodec.encodeBatch(d.mutations());
         byte[] sig = d.signature(); // defensive copy; null if unsigned
         byte[] nonce = d.nonce();   // never null (empty = legacy)
@@ -378,7 +372,7 @@ public final class EdgeFrameCodec {
     }
 
     // -----------------------------------------------------------------------
-    // Encode — RFC §2 watch frames (0x02 only). Layouts per RFC §5.2–5.8.
+    // Encode - watch frames (0x02 only). Layouts per sections 5.2-5.8 of the RFC.
     // -----------------------------------------------------------------------
 
     /** Bytes per encoded cursor component on the wire: gid(u32) + S(u64). */
@@ -512,8 +506,8 @@ public final class EdgeFrameCodec {
      * Decodes a single complete frame, accepting either negotiated version. The array must
      * contain exactly one frame.
      *
-     * <p>Validation order (deliberate, mirroring {@code FrameCodec}): length bounds →
-     * length==data.length → CRC32C → version → type → payload.
+     * <p>Validation order (deliberate, mirroring {@code FrameCodec}): length bounds ->
+     * length==data.length -> CRC32C -> version -> type -> payload.
      *
      * @param data the wire bytes
      * @return the decoded frame
@@ -528,7 +522,7 @@ public final class EdgeFrameCodec {
      * {@code negotiatedVersion} (W1-3 / W5-11). Identical to {@link #decode(byte[])} except
      * that, after the CRC and the {@code {0x01, 0x02}} acceptance check, a frame whose stamped
      * version differs from {@code negotiatedVersion} is rejected with
-     * {@link ErrorCode#BAD_WIRE_VERSION} — this is how a per-connection reader enforces "a
+     * {@link ErrorCode#BAD_WIRE_VERSION} - this is how a per-connection reader enforces "a
      * {@code 0x01} connection MUST fail closed on a {@code 0x02} frame" (and vice versa). Use
      * {@link #peekVersion(byte[])} to establish the negotiated version on the connection's
      * first frame.
@@ -574,7 +568,7 @@ public final class EdgeFrameCodec {
                     "frame length mismatch: header says " + length + " but data is " + data.length);
         }
 
-        // CRC BEFORE version/type — a flipped version/type byte reads as corruption.
+        // CRC BEFORE version/type - a flipped version/type byte reads as corruption.
         int crcOffset = length - TRAILER_SIZE;
         CRC32C crc = new CRC32C();
         crc.update(data, 0, crcOffset);
@@ -598,7 +592,7 @@ public final class EdgeFrameCodec {
                             + " or 0x" + Integer.toHexString(EDGE_WIRE_VERSION_V2 & 0xFF) + ")");
         }
         // Per-connection version pin (W5-11): on a connection that negotiated one version, a
-        // frame stamped with the OTHER accepted version fails closed as BAD_WIRE_VERSION — so a
+        // frame stamped with the OTHER accepted version fails closed as BAD_WIRE_VERSION - so a
         // 0x01 peer cannot be fed a 0x02 watch frame (and vice versa). A null pin accepts either.
         if (expectedVersion != null && version != expectedVersion.byteValue()) {
             throw new CodecException(ErrorCode.BAD_WIRE_VERSION,
@@ -783,16 +777,17 @@ public final class EdgeFrameCodec {
     }
 
     // -----------------------------------------------------------------------
-    // Decode — RFC §2 watch frames. Bounds-before-allocation discipline as above;
-    // the WatchCursor / WatchChange / ShardMode constructors enforce the value
-    // invariants, and their IllegalArgumentException is mapped to FRAME_CORRUPT.
+    // Decode - watch frames. Bounds-before-allocation discipline as above; the
+    // WatchCursor / WatchChange / ShardMode constructors enforce value invariants,
+    // and their IllegalArgumentException is mapped to FRAME_CORRUPT.
     //
-    // Cross-language contract: the sequence/timestamp u64 fields — cursor S, WATCH_EVENT
-    // S/commitTs, WATCH_CREATED latestSeq, WATCH_SNAPSHOT_* snapshotSeq/totalBytes, and the
-    // WATCH_CANCELED oldest-vector S — are validated >= 0 (their compact ctors reject a
-    // negative), so their effective range is [0, 2^63): a high-bit-set u64 decodes as
-    // FRAME_CORRUPT. A Rust/Go driver using a true u64 MUST keep these fields in [0, 2^63).
-    // watch_id and gid stay opaque full-range u64/u32 (no such constraint).
+    // Cross-language contract: the sequence/timestamp u64 fields - cursor S,
+    // WATCH_EVENT S/commitTs, WATCH_CREATED latestSeq, WATCH_SNAPSHOT_* snapshotSeq /
+    // totalBytes, and the WATCH_CANCELED oldest-vector S - are validated >= 0 (their
+    // compact ctors reject a negative), so their effective range is [0, 2^63): a
+    // high-bit-set u64 decodes as FRAME_CORRUPT. A Rust/Go driver using a true u64
+    // MUST keep these fields in [0, 2^63). watch_id and gid stay opaque full-range
+    // u64/u32 (no such constraint).
     // -----------------------------------------------------------------------
 
     /**
@@ -864,7 +859,7 @@ public final class EdgeFrameCodec {
         long commitTs = p.getLong();
         int count = p.getInt();
         // Each change is >= 9 bytes (keyLen 4 + kind 1 + valLen 4), so the minimum encoded size of
-        // `count` changes is 9*count — a tight pre-allocation bound (the (long) cast binds before the
+        // `count` changes is 9*count - a tight pre-allocation bound (the (long) cast binds before the
         // multiply, so no overflow). Tighter than the looser `count > remaining` legacy pattern.
         if (count < 0 || (long) count * MIN_CHANGE_BYTES > p.remaining()) {
             throw new CodecException(ErrorCode.FRAME_CORRUPT, "bad change count: " + count);
@@ -1007,14 +1002,14 @@ public final class EdgeFrameCodec {
     }
 
     // -----------------------------------------------------------------------
-    // peekLength / peekVersion — cheap pre-decode header reads (ADR-0037)
+    // peekLength / peekVersion - cheap pre-decode header reads
     // -----------------------------------------------------------------------
 
     /**
      * Reads and bounds-checks the declared frame length from the first 4 bytes, so a
      * streaming reader can size its buffer without trusting an unvalidated length. The
      * returned value is in {@code [HEADER_SIZE + TRAILER_SIZE, MAX_EDGE_FRAME_SIZE]} or
-     * the call throws — an adversary cannot induce a giant allocation by lying in the
+     * the call throws - an adversary cannot induce a giant allocation by lying in the
      * length prefix.
      *
      * @param data a buffer with at least 4 bytes
@@ -1043,7 +1038,7 @@ public final class EdgeFrameCodec {
      * per-connection reader can establish or pin the negotiated version on the connection's
      * first frame (W1-3 / W5-11) before committing to {@link #decode(byte[], byte)}.
      *
-     * <p><b>This does NOT validate the CRC</b> — it is a cheap pre-decode peek. The returned
+     * <p><b>This does NOT validate the CRC</b> - it is a cheap pre-decode peek. The returned
      * byte is the raw stamped version (it is NOT range-checked here either; {@link #decode}
      * still performs the full CRC-before-interpret validation and rejects an unsupported
      * version with {@link ErrorCode#BAD_WIRE_VERSION}).

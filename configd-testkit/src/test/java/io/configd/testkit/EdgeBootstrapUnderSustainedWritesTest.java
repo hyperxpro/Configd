@@ -15,35 +15,35 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.fail;
 
 /**
- * C5 / CT-24 — the contract-map-named adversarial proof: a ZERO-STATE edge joins a
+ * The adversarial proof: a ZERO-STATE edge joins a
  * running system under SUSTAINED CONCURRENT WRITES (writes flowing BEFORE, DURING and
  * AFTER its snapshot transfer) and must converge with no gap and no
  * duplicate-application divergence. The mechanism under proof is the production chain
- * C1+C2+C3 already runs on every fresh subscribe ({@code decideMode} cursor-0 ⇒
+ * already running on every fresh subscribe ({@code decideMode} cursor-0 =>
  * SNAPSHOT_FIRST; {@code performSnapshotTransfer} exact cutover at S; the edge core's
- * atomic cutover + tail from S+1) — this test builds no machinery, it joins a fresh
+ * atomic cutover + tail from S+1) - this test builds no machinery, it joins a fresh
  * {@link EdgeActor} mid-run via {@link EdgeFanOutSim#joinEdge} and lets the REAL code run,
- * with the C3 recovery loop live ({@link EdgeFanOutSim#enableEdgeRecovery}).
+ * with the reconnect recovery loop live ({@link EdgeFanOutSim#enableEdgeRecovery}).
  *
- * <h2>The judge (charter §4 C5)</h2>
- * The V1 snapshot–delta equivalence machinery, not a parallel judge:
+ * <h2>The judge</h2>
+ * The V1 snapshot - delta equivalence machinery, not a parallel judge:
  * <ul>
  *   <li>per-tick THROWING safety invariants ({@link EdgeInvariants}: per-edge version
  *       monotonicity, no stale overwrite) run inside every {@code sim.tick()};</li>
- *   <li>{@link EdgeFanOutSim#finalCheck()} — every edge's store byte-equals the CP
- *       leader's authoritative store (effect equality, ADR-0034 exactly-once-over-effect);
+ *   <li>{@link EdgeFanOutSim#finalCheck()} - every edge's store byte-equals the CP
+ *       leader's authoritative store (effect equality, handoff spec exactly-once-over-effect);
  *       a skipped seq (missing effect) or a duplicate application with different effect
  *       (a unique-valued older write resurrecting) both fail it;</li>
  *   <li>scenario 1 states the equivalence claim directly: the snapshot-bootstrapped
  *       joiner is judged against a PURE-STREAM control edge (subscribed before genesis;
- *       hard-asserted zero snapshots — possible there because the C1 ack-lag heal is
- *       disabled and the only recovery is C3's TAIL resubscribe) by the SAME
+ *       hard-asserted zero snapshots - possible there because the ack-lag heal is
+ *       disabled and the only recovery is the resubscribe path) by the SAME
  *       {@link EdgeInvariants#finalCheck} code.</li>
  * </ul>
  *
- * <h2>Non-vacuity (screen NOTE C5-2 — HARD asserts)</h2>
- * Every scenario hard-asserts its adversity actually happened: ≥1 write committed during
- * the transfer window (the cutover straddle — the window is widened deterministically by
+ * <h2>Non-vacuity (HARD asserts)</h2>
+ * Every scenario hard-asserts its adversity actually happened: at least 1 write committed during
+ * the transfer window (the cutover straddle - the window is widened deterministically by
  * lagging the joiner, the slow-consumer-during-its-own-bootstrap reality; the literal
  * big-store/small-chunks widening is the process test's lever), the joiner genuinely
  * bootstrapped via a snapshot, a faulted-channel transfer was genuinely lost mid-flight,
@@ -57,7 +57,7 @@ import static org.junit.jupiter.api.Assertions.fail;
  * mid-schedule lets ops fire during the settle and the judge race a mid-replication
  * leader), (2) fence writes convert any in-flight final-delta strand into an arriving
  * gap the live recovery loop heals, (3) the CP is settled level, and (4) a bounded
- * tick loop has driven every edge to its source's version. Tick-driven throughout — no
+ * tick loop has driven every edge to its source's version. Tick-driven throughout - no
  * sleeps.
  */
 class EdgeBootstrapUnderSustainedWritesTest {
@@ -66,11 +66,11 @@ class EdgeBootstrapUnderSustainedWritesTest {
     private static final int TICKS = 1_500;
 
     /** Clean-CP intensity: the only adversity is what each scenario injects (plus the
-     *  edge network's inherent 1–10 ms latency/reorder and seeded 2–5% dup rate). */
+     *  edge network's inherent 1 - 10 ms latency/reorder and seeded 2 - 5% dup rate). */
     private static final AdversarialSchedule.Intensity CLEAN_CP =
             new AdversarialSchedule.Intensity(0, 40, 0.0);
 
-    /** Ticks the joiner stays lagged after its subscribe — the widened transfer window. */
+    /** Ticks the joiner stays lagged after its subscribe - the widened transfer window. */
     private static final int TRANSFER_WINDOW_TICKS = 12;
 
     /** Monotonic write counter so every pumped value is unique (double-apply tripwire). */
@@ -79,14 +79,14 @@ class EdgeBootstrapUnderSustainedWritesTest {
     /**
      * C1 ack-lag heal disabled (the EdgeGapRecoveryTest control): the ONLY recovery is
      * C3's resubscribe, so a TAIL-replaying control edge provably never receives a
-     * snapshot — the pure-stream side of the equivalence claim.
+     * snapshot - the pure-stream side of the equivalence claim.
      */
     private static FanOutConfig noAckLagHealConfig() {
         return new FanOutConfig(64, 80, 64, 262_144, 1_000_000L, 250L, 5L, 1_048_576);
     }
 
     // -----------------------------------------------------------------------
-    // Scenario 1 — the primary equivalence proof, multiple seeds
+    // Scenario 1 - the primary equivalence proof, multiple seeds
     // -----------------------------------------------------------------------
 
     @ParameterizedTest
@@ -119,7 +119,7 @@ class EdgeBootstrapUnderSustainedWritesTest {
         sim.enableEdgeRecovery(joinIdx);
         assertEquals(0, joiner.currentVersion(), "the joiner is genuinely zero-state");
         joiner.lag(); // widen the transfer window deterministically (slow joiner)
-        pumpAndTick(sim, seed); // T0: SUBSCRIBE → SNAPSHOT_FIRST → transfer emitted
+        pumpAndTick(sim, seed); // T0: SUBSCRIBE -> SNAPSHOT_FIRST -> transfer emitted
         long s = sim.cpSim().store(cp).currentVersion(); // == the transfer's S
 
         // DURING: writes committing while the transfer is in flight / unapplied.
@@ -145,10 +145,10 @@ class EdgeBootstrapUnderSustainedWritesTest {
 
         settleAndJudge(sim, driver);
 
-        // The V1 snapshot–delta EQUIVALENCE, stated directly and judged by the SAME
-        // machinery: snapshot+tail-bootstrapped joiner ≡ streamed-everything control.
+        // The V1 snapshot - delta EQUIVALENCE, stated directly and judged by the SAME
+        // machinery: snapshot+tail-bootstrapped joiner == streamed-everything control.
         // With the ack-lag heal disabled, a TAIL-only control is structural: every
-        // veteran (re)subscribe is within the 10k ring horizon ⇒ TAIL, never a snapshot.
+        // veteran (re)subscribe is within the 10k ring horizon => TAIL, never a snapshot.
         assertEquals(0, veteran.snapshotsApplied(),
                 "control: the veteran is a PURE stream consumer (streamed from genesis)");
         assertTrue(joiner.snapshotsApplied() >= 1,
@@ -161,7 +161,7 @@ class EdgeBootstrapUnderSustainedWritesTest {
     }
 
     // -----------------------------------------------------------------------
-    // Scenario 2 — faults on the OTHER edges; the joiner's channel stays clean
+    // Scenario 2 - faults on the OTHER edges; the joiner's channel stays clean
     // -----------------------------------------------------------------------
 
     @Test
@@ -212,13 +212,13 @@ class EdgeBootstrapUnderSustainedWritesTest {
         sim.healEdge(0);
         sim.healEdge(1);
 
-        // Everyone — the clean joiner AND the healed victims — must converge byte-equal.
+        // Everyone - the clean joiner AND the healed victims - must converge byte-equal.
         settleAndJudge(sim, driver);
         assertTrue(joiner.snapshotsApplied() >= 1);
     }
 
     // -----------------------------------------------------------------------
-    // Scenario 3 — the JOINER's own channel faulted: the transfer is lost mid-flight
+    // Scenario 3 - the JOINER's own channel faulted: the transfer is lost mid-flight
     // -----------------------------------------------------------------------
 
     @Test
@@ -240,10 +240,10 @@ class EdgeBootstrapUnderSustainedWritesTest {
         int joinIdx = sim.joinEdge(0);
         EdgeActor joiner = sim.edges().get(joinIdx);
         sim.enableEdgeRecovery(joinIdx);
-        pumpAndTick(sim, seed); // T0: the transfer is emitted, in flight (latency ≥ 1ms)
+        pumpAndTick(sim, seed); // T0: the transfer is emitted, in flight (latency >= 1ms)
 
         // Cut the joiner's channel BEFORE the transfer can deliver (delivery re-checks
-        // the partition, so the in-flight snapshot is genuinely lost — the C1(a)
+        // the partition, so the in-flight snapshot is genuinely lost - the stream driver
         // self-healing case AT BOOTSTRAP, under continuing writes).
         sim.partitionEdge(joinIdx);
         for (int t = 0; t < 30; t++) {
@@ -254,7 +254,7 @@ class EdgeBootstrapUnderSustainedWritesTest {
         assertEquals(0, joiner.currentVersion(), "the joiner is still empty while cut off");
 
         // Heal: the unacked transfer has been rebuilding ack-lag server-side; the
-        // re-demote → re-send loop must complete the bootstrap, exactly.
+        // re-demote -> re-send loop must complete the bootstrap, exactly.
         sim.healEdge(joinIdx);
         long target = sim.cpSim().store(0).currentVersion();
         int guard = 0;
@@ -269,7 +269,7 @@ class EdgeBootstrapUnderSustainedWritesTest {
     }
 
     // -----------------------------------------------------------------------
-    // Scenario 4 — dup channel: every frame across the cutover is duplicated
+    // Scenario 4 - dup channel: every frame across the cutover is duplicated
     // -----------------------------------------------------------------------
 
     @Test
@@ -288,8 +288,8 @@ class EdgeBootstrapUnderSustainedWritesTest {
             pumpAndTick(sim, seed);
         }
 
-        // Every CP→edge frame from here on is duplicated — the snapshot transfer,
-        // NOTIFY batches, heartbeats — straddling the cutover in both directions.
+        // Every CP->edge frame from here on is duplicated - the snapshot transfer,
+        // NOTIFY batches, heartbeats - straddling the cutover in both directions.
         sim.setEdgeDupRateForTest(1.0);
         long dupsBefore = sim.edgeDupCount();
 
@@ -327,14 +327,14 @@ class EdgeBootstrapUnderSustainedWritesTest {
     }
 
     // -----------------------------------------------------------------------
-    // Helpers — deterministic, tick-driven, no sleeps
+    // Helpers - deterministic, tick-driven, no sleeps
     // -----------------------------------------------------------------------
 
     /**
-     * One tick of sustained writes: propose one PUT (unique value per write — the
+     * One tick of sustained writes: propose one PUT (unique value per write - the
      * double-apply tripwire) at the current leader if there is one, then tick. Commits
      * land on later ticks as the Raft pipeline drains, so a continuous pump keeps
-     * commits flowing on (nearly) every tick — the "sustained concurrent writes" shape.
+     * commits flowing on (nearly) every tick - the "sustained concurrent writes" shape.
      */
     private void pumpAndTick(EdgeFanOutSim sim, long seed) {
         int leader = sim.cpSim().findLeader();
@@ -352,8 +352,8 @@ class EdgeBootstrapUnderSustainedWritesTest {
      * fence, settle the CP level, drive every edge to its source's version (bounded),
      * then run the byte-equality judge. The fence writes matter: a final-delta reorder
      * can strand an edge one seq short with ack-lag 1 (below the demote threshold) and
-     * nothing left in flight to trigger the gap heal — production heals that via the
-     * ADR-0039 staleness ladder on wall-clock timescales the sim does not simulate, so
+     * nothing left in flight to trigger the gap heal - production heals that via the
+     * the staleness ladder on wall-clock timescales the sim does not simulate, so
      * the fence supplies the arriving frame that lets the C3 recovery fire instead.
      */
     private void settleAndJudge(EdgeFanOutSim sim, C1StreamDriver driver) {

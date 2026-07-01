@@ -16,11 +16,11 @@ import java.util.Objects;
  * The coalescer accumulates mutations and flushes them as a single event
  * when any of three thresholds is met:
  * <ol>
- *   <li><b>Time</b> — the coalescing window (default 10ms) has elapsed
+ *   <li><b>Time</b> - the coalescing window (default 10ms) has elapsed
  *       since the first mutation in the current batch.</li>
- *   <li><b>Count</b> — the batch has reached the maximum number of
+ *   <li><b>Count</b> - the batch has reached the maximum number of
  *       mutations (default 64).</li>
- *   <li><b>Explicit flush</b> — the caller forces a flush.</li>
+ *   <li><b>Explicit flush</b> - the caller forces a flush.</li>
  * </ol>
  * <p>
  * Thread safety: designed for single-threaded access from the distribution
@@ -31,7 +31,7 @@ import java.util.Objects;
  */
 public final class WatchCoalescer {
 
-    /** Default coalescing window: 10ms — low enough for interactive use,
+    /** Default coalescing window: 10ms - low enough for interactive use,
      *  high enough to batch burst writes. */
     private static final long DEFAULT_WINDOW_NANOS = 10_000_000L; // 10ms
 

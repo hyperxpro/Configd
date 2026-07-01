@@ -16,20 +16,20 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.atomic.AtomicLong;
 
 /**
- * Edge-read HTTP head-to-head (surface 2) — the <b>out-of-JVM load client</b>. Lives in a
+ * Edge-read HTTP head-to-head (surface 2) - the <b>out-of-JVM load client</b>. Lives in a
  * separate process from {@link EdgeReadAllocServerMain} so NONE of this client's allocation
  * (the JDK {@code HttpClient}, request/response objects) can contaminate the server-side
- * allocation measurement — the exact apples-to-apples fix Phase R's JVM-wide {@code -prof gc}
- * lacked.
+ * allocation measurement - the exact apples-to-apples fix the JVM-wide {@code -prof gc}
+ * approach lacked.
  *
  * <p>The client owns the <b>throughput + tail-latency</b> axis: it times every request with a
  * per-thread {@link Histogram} (HdrHistogram), then reports requests/sec and p50/p99/p999.
  * (Absolute latency on this 2-vCPU box is not production-grade; it is a RELATIVE JDK-vs-Netty
- * comparison on the same box, same workload — the delta is what matters.)
+ * comparison on the same box, same workload - the delta is what matters.)
  *
- * <p>Protocol: connect the control socket → warm up (establishes the keep-alive connection pool,
- * outside the window) → {@code START n} → drive <i>n</i> keep-alive requests across
- * {@code concurrency} threads → {@code STOP} → read the server's reported B/request. Every
+ * <p>Protocol: connect the control socket -> warm up (establishes the keep-alive connection pool,
+ * outside the window) -> {@code START n} -> drive <i>n</i> keep-alive requests across
+ * {@code concurrency} threads -> {@code STOP} -> read the server's reported B/request. Every
  * response is asserted 200 with the expected body length (charter hard-rule 5: a server that
  * doesn't actually serve the read is disqualified).
  *
@@ -60,7 +60,7 @@ public final class EdgeReadLoadClientMain {
                 .build();
         String base = "http://" + host + ":" + httpPort + "/v1/config/config/svc-";
 
-        // Pre-build request objects per key (their allocation is irrelevant — separate JVM).
+        // Pre-build request objects per key (their allocation is irrelevant - separate JVM).
         HttpRequest[] reqs = new HttpRequest[keyCount];
         for (int i = 0; i < keyCount; i++) {
             reqs[i] = HttpRequest.newBuilder(URI.create(base + i)).GET().build();

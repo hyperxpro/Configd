@@ -363,7 +363,7 @@ class ServerConfigTest {
     }
 
     // ========================================================================
-    // RR-087: ServerConfig.parsePeerAddresses was 0/15 lines. Exercise the
+    // ServerConfig.parsePeerAddresses was 0/15 lines. Exercise the
     // "id=host:port,..." parser through the public parse() entry point: valid
     // single/multi entries, surrounding whitespace, the empty case, and each
     // malformed-input rejection branch.
@@ -449,7 +449,7 @@ class ServerConfigTest {
     }
 
     // ========================================================================
-    // --edge-port (C1 fan-out endpoint, ADR-0037)
+    // --edge-port
     // ========================================================================
 
     @Nested

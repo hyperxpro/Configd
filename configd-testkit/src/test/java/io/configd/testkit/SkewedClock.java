@@ -3,12 +3,12 @@ package io.configd.testkit;
 import io.configd.common.Clock;
 
 /**
- * A {@link Clock} view offset by a fixed per-node skew (adversarial-sim-design §2,
+ * A {@link Clock} view offset by a fixed per-node skew (adversarial-sim-design section 2,
  * clock-skew fault). Wraps the shared simulated time source and adds a constant
  * {@code offsetMs}, modelling a node whose wall clock disagrees with its peers.
  * <p>
  * <b>Scope note (honest correction to the design).</b> {@code RaftNode} does NOT
- * read wall-clock time — its election/heartbeat timing is purely tick-driven — so
+ * read wall-clock time - its election/heartbeat timing is purely tick-driven - so
  * per-node skew does <em>not</em> perturb elections. The only consumer of this
  * clock in the simulated stack is {@code ConfigStateMachine}, which stamps each
  * applied entry with {@code clock.currentTimeMillis()}. Skew therefore affects

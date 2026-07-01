@@ -15,13 +15,13 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.locks.LockSupport;
 
 /**
- * Phase V consensus brief-confirm (surface 4) — the <b>sender</b>. Opens ONE peer link (synchronous
+ * Consensus brief-confirm (surface 4) - the <b>sender</b>. Opens ONE peer link (synchronous
  * connect) with the forced transport tier ({@link NettyTransport#select()} honouring
  * {@code -Dconfigd.netty.transport}) and sends Raft frames through the <b>production</b>
- * {@link NettyConsensusFrameEncoder} (the in-pipeline ~0-B/op event-loop encoder, DR-N17). The
+ * {@link NettyConsensusFrameEncoder} (the in-pipeline ~0-B/op event-loop encoder). The
  * receiver is the byte-draining {@link io.configd.jdkvsnetty.ConsensusDrainServerMain} (untraced and
  * identical across tiers), so straceing THIS sender is a clean io_uring-vs-epoll comparison at a
- * single connection — the consensus wire's actual connection scale (N−1 peers), where io_uring is
+ * single connection - the consensus wire's actual connection scale (N-1 peers), where io_uring is
  * expected to show little (the charter's confirm-don't-over-invest surface).
  *
  * <pre>
@@ -65,14 +65,14 @@ public final class ConsensusSendMain {
             for (int i = 0; i < payloadBytes; i++) {
                 payload[i] = (byte) i;
             }
-            // Immutable frame reused — the encoder reads it in-pipeline (DR-N17 byte-identity).
+            // Immutable frame reused - the encoder reads it in-pipeline (byte-identical encoding).
             FrameCodec.Frame frame = new FrameCodec.Frame(type, 1, 42L, payload);
 
             long intervalNanos = rate > 0 ? (1_000_000_000L / rate) : 0L;
             long t0 = System.nanoTime();
             for (long i = 0; i < count; i++) {
                 // writeAndFlush from this thread hands the encode+write+flush to the event loop;
-                // one flush per frame ≈ one socket write — the un-coalesced single-link send pattern.
+                // one flush per frame ~ one socket write - the un-coalesced single-link send pattern.
                 ch.writeAndFlush(frame, ch.voidPromise());
                 if (intervalNanos > 0) {
                     long wait = (t0 + (i + 1) * intervalNanos) - System.nanoTime();

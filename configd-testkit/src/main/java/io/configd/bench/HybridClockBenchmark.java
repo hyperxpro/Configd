@@ -19,9 +19,9 @@ import java.util.concurrent.TimeUnit;
  * <p>
  * Two clock implementations are tested:
  * <ul>
- *   <li><b>system</b> — uses {@link System#currentTimeMillis()}, which
+ *   <li><b>system</b> - uses {@link System#currentTimeMillis()}, which
  *       exercises the real OS clock call under synchronized.</li>
- *   <li><b>fixed</b> — uses a fixed-time clock to isolate the HLC
+ *   <li><b>fixed</b> - uses a fixed-time clock to isolate the HLC
  *       logic cost from the OS clock call overhead.</li>
  * </ul>
  */

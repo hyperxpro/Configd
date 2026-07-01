@@ -8,12 +8,12 @@ import java.util.List;
 import java.util.Objects;
 
 /**
- * The ADR-0038 edge-side prefix <b>storage</b> filter (CT-25 C2 half).
+ * Edge-side prefix <b>storage</b> filter.
  * <p>
- * ADR-0038 ratifies that the full signed delta chain is delivered to every edge
- * (transport filtering is forbidden — a relay must not be able to suppress keys
- * undetectably). Signature verification therefore happens over the <b>original</b> delta
- * (in {@link DeltaApplier}, byte-fidelity preserved). <em>After</em> verification, the
+ * The full signed delta chain is delivered to every edge (transport filtering is
+ * forbidden - a relay must not be able to suppress keys undetectably). Signature
+ * verification therefore happens over the <b>original</b> delta (in
+ * {@link DeltaApplier}, byte-fidelity preserved). <em>After</em> verification, the
  * subscription is applied as a storage filter: only mutations whose key matches the
  * subscription set are stored; non-matching mutations are dropped from the stored payload
  * but the <b>chain version still advances</b> (same {@code fromVersion}/{@code toVersion},
@@ -22,12 +22,12 @@ import java.util.Objects;
  * <h2>Filtering rule</h2>
  * A mutation is stored iff EITHER:
  * <ul>
- *   <li>the subscription set is empty (full-store subscription — store everything); OR</li>
+ *   <li>the subscription set is empty (full-store subscription - store everything); OR</li>
  *   <li>the mutation's key matches a subscribed prefix; OR</li>
- *   <li>the key is a {@link StrongReadKeyClass strong-read key} — ALWAYS stored regardless
- *       of subscription (store-and-fail-closed-serve, ADR-0038 / CT-37): the suppression
- *       detectability the signed chain provides requires the edge to hold these keys; the
- *       serving refusal is the edge process's job (C2 part b).</li>
+ *   <li>the key is a {@link StrongReadKeyClass strong-read key} - ALWAYS stored regardless
+ *       of subscription (store-and-fail-closed-serve): the suppression detectability the
+ *       signed chain provides requires the edge to hold these keys; the serving refusal is
+ *       the edge process's job.</li>
  * </ul>
  *
  * <h2>Why a separate stateless helper</h2>
@@ -44,7 +44,7 @@ final class PrefixStorageFilter {
     private final StrongReadKeyClass strongReadKeyClass;
 
     /**
-     * @param subscriptions      the edge's prefix subscription (empty prefixes ⇒ full store)
+     * @param subscriptions      the edge's prefix subscription (empty prefixes = full store)
      * @param strongReadKeyClass the strong-read key-class predicate (always-store keys)
      */
     PrefixStorageFilter(PrefixSubscription subscriptions, StrongReadKeyClass strongReadKeyClass) {
@@ -56,9 +56,9 @@ final class PrefixStorageFilter {
     /**
      * Returns a delta carrying only the mutations this edge should store, preserving
      * {@code fromVersion}/{@code toVersion} so the chain version advances even when every
-     * mutation is filtered out (an empty-mutation delta is valid — it just bumps the
+     * mutation is filtered out (an empty-mutation delta is valid - it just bumps the
      * version). The returned delta is unsigned/legacy form: it is never re-verified (the
-     * original already was) and never re-serialized over the wire — it exists only to
+     * original already was) and never re-serialized over the wire - it exists only to
      * drive {@link LocalConfigStore#applyDelta}.
      * <p>
      * If no mutation is filtered (full-store subscription, or every key matches), the
@@ -90,12 +90,12 @@ final class PrefixStorageFilter {
                     kept = new ArrayList<>(mutations.size());
                     kept.addAll(mutations.subList(0, i));
                 }
-                // skip m — non-matching, non-strong-read: not stored, version still advances
+                // skip m - non-matching, non-strong-read: not stored, version still advances
             }
         }
 
         if (kept == null) {
-            // Nothing dropped — keep the original (no allocation).
+            // Nothing dropped - keep the original (no allocation).
             return delta;
         }
         // Versions preserved so the chain advances; legacy unsigned form (never re-verified).

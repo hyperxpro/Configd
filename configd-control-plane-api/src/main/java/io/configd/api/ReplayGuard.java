@@ -7,23 +7,23 @@ import java.util.Map;
 import java.util.Objects;
 
 /**
- * Replay protection for mutating control-plane requests (S7/D-3). A client
+ * Replay protection for mutating control-plane requests. A client
  * stamps each request with {@code X-Configd-Timestamp} (epoch ms) and a unique
  * {@code X-Configd-Nonce}; the guard rejects a request whose timestamp is outside
  * a {@code ±window} of server time (a stale capture or a clock-skewed/forged
  * future stamp) and rejects a nonce it has already seen inside the window (a
  * verbatim capture-and-replay).
  *
- * <h2>Trust model (honesty requirement — charter §10.3)</h2>
+ * <h2>Trust model (honesty requirement)</h2>
  * This defends against a <b>passive</b> attacker who captures a legitimate
  * request and re-sends it verbatim. It does <b>NOT</b> stop a holder of the
  * bearer token from minting a <em>fresh</em> request (new nonce + current
  * timestamp): that is the bearer token's trust model, not the replay guard's.
  * For per-request integrity against an active token-holder, content signing
- * (SigV4-style HMAC over method+path+body+timestamp+nonce) is required — this is
- * RECOMMENDED for S8, not built here.
+ * (SigV4-style HMAC over method+path+body+timestamp+nonce) is required - that
+ * is out of scope here.
  *
- * <h2>Bounding (anti-DoS — charter §10.3)</h2>
+ * <h2>Bounding (anti-DoS)</h2>
  * The seen-nonce store is bounded two ways so it cannot be turned into a
  * memory-exhaustion lever by an attacker who floods unique nonces:
  * <ul>
@@ -36,7 +36,7 @@ import java.util.Objects;
  *       {@link #DEFAULT_MAX_NONCES}): an LRU eviction order bounds the map even
  *       under a same-instant flood. Evicting the oldest nonce can only ever
  *       <em>weaken</em> replay detection for that one already-accepted request
- *       within its window — it can never cause a false reject — so the cap is a
+ *       within its window - it can never cause a false reject - so the cap is a
  *       safe, bounded trade.</li>
  * </ul>
  *

@@ -15,8 +15,7 @@ import java.util.Map;
  * Commands are {@code PUT key=value} encoded as UTF-8 {@code "key\0value"}.
  * Empty commands (no-op election entries) are non-mutating. The applied-mutation
  * sequence increments on every mutating apply, mirroring the contract used by
- * {@code ConfigStateMachine} (RR-004 / ADR-0033) so the commit-outcome seam
- * behaves identically under test.
+ * {@code ConfigStateMachine} so the commit-outcome seam behaves identically under test.
  */
 final class KvStateMachine implements StateMachine {
 

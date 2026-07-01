@@ -20,10 +20,9 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * Boundary / decision-edge tests for {@link FanOutSessionCore} that pin the exact
- * thresholds the broader unit + property tests don't isolate (gate-3 mutation tightness):
- * the SNAPSHOT_FIRST backlog boundary, the byte-cap batch split, the ack-release boundary,
- * and the slow-consumer warn threshold.
+ * Boundary / decision-edge tests for {@link FanOutSessionCore} that pin the exact thresholds
+ * the broader unit + property tests don't isolate: the SNAPSHOT_FIRST backlog boundary, the
+ * byte-cap batch split, the ack-release boundary, and the slow-consumer warn threshold.
  */
 class FanOutSessionCoreBoundaryTest {
 
@@ -50,13 +49,12 @@ class FanOutSessionCoreBoundaryTest {
     }
 
     /**
-     * The C3 fresh-subscriber rule (supersedes C1's backlog-vs-queueFrames boundary): a
-     * cursor-0 subscriber gets SNAPSHOT_FIRST whenever ANY data exists, and TAIL only on
-     * a truly empty ring. Rationale (decideMode comment / CT-13): tail-replaying history
-     * to a cache-less subscriber is rejected as a replay by any restarted edge's SEC-017
-     * epoch floor (wedging recovery behind the prod ack-lag threshold), and a post-restart
-     * ring does not retain genesis. The old backlog boundary (TAIL at backlog ==
-     * queueFrames) is gone BY DESIGN — this pin is the regression tripwire for it.
+     * The fresh-subscriber rule: a cursor-0 subscriber gets SNAPSHOT_FIRST whenever ANY data
+     * exists, and TAIL only on a truly empty ring. Rationale: tail-replaying history to a
+     * cache-less subscriber is rejected as a replay by any restarted edge's epoch floor
+     * (wedging recovery behind the prod ack-lag threshold), and a post-restart ring does not
+     * retain genesis. The old backlog boundary (TAIL at backlog == queueFrames) is gone BY
+     * DESIGN - this pin is the regression tripwire for it.
      */
     @Test
     void freshBacklogBoundaryAtQueueFramesDecidesMode() {
@@ -95,7 +93,7 @@ class FanOutSessionCoreBoundaryTest {
         // batchMaxBytes chosen so ~2 notifications fit per frame.
         FanOutConfig cfg = new FanOutConfig(64, 80, 64, 2200, 8_192L, 250L, 5L, 1_048_576);
         FanOutSessionCore s = session(buf, replayAt(4), cfg);
-        s.onSubscribe(sub(0)); // on the empty buffer: TAIL (C3 decideMode)
+        s.onSubscribe(sub(0)); // on the empty buffer: TAIL
         for (long i = 1; i <= 4; i++) {
             buf.publish(put(i, 1000));
         }
@@ -126,7 +124,7 @@ class FanOutSessionCoreBoundaryTest {
         FanOutBuffer buf = new FanOutBuffer(64);
         FanOutConfig cfg = new FanOutConfig(16, 80, 1, 262_144, 8_192L, 250L, 5L, 1_048_576);
         FanOutSessionCore s = session(buf, replayAt(3), cfg);
-        s.onSubscribe(sub(0)); // on the empty buffer: TAIL (C3 decideMode)
+        s.onSubscribe(sub(0)); // on the empty buffer: TAIL
         for (long i = 1; i <= 3; i++) buf.publish(put(i, 1));
         s.tick(clock.now());
         assertEquals(3, s.inFlightFrames());
@@ -146,7 +144,7 @@ class FanOutSessionCoreBoundaryTest {
         FanOutConfig cfg = new FanOutConfig(5, 80, 1, 262_144, 8_192L, 250L, 5L, 1_048_576);
         CountingMetrics metrics = new CountingMetrics();
         FanOutSessionCore s = new FanOutSessionCore(buf, replayAt(4), sink, cfg, metrics, clock);
-        s.onSubscribe(sub(0)); // on the empty buffer: TAIL (C3 decideMode)
+        s.onSubscribe(sub(0)); // on the empty buffer: TAIL
         for (long i = 1; i <= 4; i++) buf.publish(put(i, 1));
         s.tick(clock.now()); // streams 4 frames -> hits threshold 4 -> one warning
         assertEquals(1, metrics.warnings, "warn fires once at the threshold");

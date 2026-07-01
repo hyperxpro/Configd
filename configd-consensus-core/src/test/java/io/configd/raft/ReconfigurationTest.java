@@ -16,7 +16,7 @@ import static io.configd.raft.ProposalResult.*;
 import static org.junit.jupiter.api.Assertions.*;
 
 /**
- * Tests for Raft joint consensus reconfiguration (Raft §6).
+ * Tests for Raft joint consensus reconfiguration (Raft section 6).
  * <p>
  * Covers:
  * <ul>
@@ -29,9 +29,7 @@ import static org.junit.jupiter.api.Assertions.*;
  */
 class ReconfigurationTest {
 
-    // ========================================================================
     // Test infrastructure
-    // ========================================================================
 
     static final class TestTransport implements RaftTransport {
         private final List<SentMessage> messages = new ArrayList<>();
@@ -78,7 +76,7 @@ class ReconfigurationTest {
         final Map<NodeId, TestTransport> transports = new HashMap<>();
         final Map<NodeId, TestStateMachine> stateMachines = new HashMap<>();
         final Map<NodeId, RaftLog> logs = new HashMap<>();
-        // RR-018: per-node durable storage retained so a node can be RESTARTED
+        // Per-node durable storage retained so a node can be RESTARTED
         // (reconstructed over the same bytes) to exercise recomputeConfigFromLog.
         final Map<NodeId, io.configd.common.Storage> storages = new HashMap<>();
         final Map<NodeId, Set<NodeId>> staticPeers = new HashMap<>();
@@ -113,7 +111,7 @@ class ReconfigurationTest {
         }
 
         /**
-         * RR-018: restarts a node by reconstructing its RaftNode + RaftLog over
+         * Restarts a node by reconstructing its RaftNode + RaftLog over
          * its retained durable {@link io.configd.common.Storage}. The fresh node
          * runs the constructor's {@code recomputeConfigFromLog()} against the
          * recovered WAL, so its cluster config must be rebuilt from the log's
@@ -204,7 +202,7 @@ class ReconfigurationTest {
         }
 
         /**
-         * RR-018: elects a leader among {@code members} (with everyone else
+         * Elects a leader among {@code members} (with everyone else
          * isolated), driving {@code candidate} through PreVote+election and
          * delivering only among the members. Loops because a single attempt can
          * split the vote under the deterministic election RNG; returns the leader
@@ -274,9 +272,7 @@ class ReconfigurationTest {
         }
     }
 
-    // ========================================================================
     // Precondition tests
-    // ========================================================================
 
     @Nested
     class Preconditions {
@@ -290,12 +286,12 @@ class ReconfigurationTest {
 
         @Test
         void rejectsConfigChangeBeforeNoopCommitted() {
-            // RR-018 / RR-091 F-C3: de-vacuated. The OLD body asserted the
-            // OPPOSITE of the test's name — it elected a leader, let the no-op
+            // De-vacuated: the OLD body asserted the
+            // OPPOSITE of the test's name - it elected a leader, let the no-op
             // commit, and then asserted proposeConfigChange SUCCEEDS. This now
             // actually pins the precondition: a leader whose current-term no-op
             // is NOT yet committed MUST reject a config change (Ongaro,
-            // raft-dev 2015 — the single-server reconfig bug guard).
+            // raft-dev 2015 - the single-server reconfig bug guard).
             TestCluster cluster = new TestCluster(3);
             NodeId leaderId = NodeId.of(1);
             RaftNode leader = cluster.nodes.get(leaderId);
@@ -327,7 +323,7 @@ class ReconfigurationTest {
                     "a rejected config change must NOT enter the joint state");
 
             // Now commit the no-op by delivering the AppendEntries round-trip,
-            // and the SAME config change must be accepted — proving the no-op
+            // and the SAME config change must be accepted - proving the no-op
             // commit is exactly the gate.
             cluster.deliverAllMessages(10);
             assertTrue(leader.log().commitIndex() >= 1, "no-op must now be committed");
@@ -365,9 +361,7 @@ class ReconfigurationTest {
         }
     }
 
-    // ========================================================================
     // Joint consensus transition tests
-    // ========================================================================
 
     @Nested
     class JointConsensusTransition {
@@ -407,18 +401,16 @@ class ReconfigurationTest {
         }
     }
 
-    // ========================================================================
     // Safety invariant tests
-    // ========================================================================
 
     @Nested
     class SafetyInvariants {
 
         @Test
         void configChangePreservedAcrossElections() {
-            // RR-018 / RR-091 F-C2: de-vacuated. The OLD body proposed a NORMAL
+            // De-vacuated: the OLD body proposed a NORMAL
             // command (new byte[]{42}) and never changed membership nor ran an
-            // election — it tested neither the "config change" nor the "across
+            // election - it tested neither the "config change" nor the "across
             // elections" its name promises. This now performs a REAL membership
             // change (3->4), drives the FULL joint->final transition to
             // commitment, then forces a leadership change and asserts the new
@@ -476,14 +468,12 @@ class ReconfigurationTest {
         }
     }
 
-    // ========================================================================
-    // RR-018: in-sim end-to-end joint-consensus verification
+    // In-sim end-to-end joint-consensus verification
     //
     // The register flagged a 46% mutation score on the reconfig path and that
-    // no test ever completed a joint->final transition (F-C2/F-C3). These drive
+    // no test ever completed a joint->final transition. These drive
     // the full membership change to commitment, with a leadership change DURING
     // the joint phase, and exercise recomputeConfigFromLog across a restart.
-    // ========================================================================
 
     @Nested
     class JointConsensusEndToEnd {
@@ -496,7 +486,7 @@ class ReconfigurationTest {
             RaftNode leader = cluster.nodes.get(n1);
             cluster.addNode(n4, Set.of(n1, n2, n3));
 
-            // A committed user entry BEFORE the reconfig — must survive it.
+            // A committed user entry BEFORE the reconfig - must survive it.
             assertEquals(ProposalResult.ACCEPTED, leader.propose("pre-reconfig".getBytes()).result());
             cluster.deliverAllMessages(20);
             long preReconfigCommit = leader.log().commitIndex();
@@ -549,8 +539,8 @@ class ReconfigurationTest {
             long committedBefore = leader.log().commitIndex();
 
             // Enter joint. Capture the joint entry's index so we can deliver
-            // EXACTLY until C_old,new commits — and isolate the leader while a
-            // SURVIVOR is still in the joint phase (a5-batch-review §RR-018: the
+            // EXACTLY until C_old,new commits - and isolate the leader while a
+            // SURVIVOR is still in the joint phase (the
             // old body delivered 30 rounds, by which point the transition had
             // already finalized, so the election never actually happened "during
             // the joint phase").
@@ -563,7 +553,7 @@ class ReconfigurationTest {
             // commits cluster-wide. When C_old,new applies, the leader transitions
             // its own in-memory config to C_new and appends the C_new entry, but
             // the FOLLOWERS keep the joint config in-memory until the C_new entry
-            // reaches their logs — so a survivor is genuinely mid-joint here.
+            // reaches their logs - so a survivor is genuinely mid-joint here.
             boolean jointCommitted = false;
             for (int r = 0; r < 30 && !jointCommitted; r++) {
                 cluster.deliverMessages();
@@ -598,27 +588,25 @@ class ReconfigurationTest {
                     "committed entries from before the election must be preserved");
         }
 
-        // ====================================================================
-        // Session 4 / Workstream D §2 — reconfiguration UNDER FAULT.
+        // Reconfiguration under fault:
         //
-        // The S2 RR-018 work proved the POSITIVE dual-majority path: a
+        // Tests prove the POSITIVE dual-majority path: a
         // dual-majority survivor set elects mid-joint and finalizes
         // (leaderElectionDuringJointPhaseStillCompletesTheChange). What no test
-        // pinned is the historically-deadly NEGATIVE property — that a single
-        // majority (old-only or new-only) CANNOT elect during the joint phase —
+        // pinned is the historically-deadly NEGATIVE property - that a single
+        // majority (old-only or new-only) CANNOT elect during the joint phase -
         // and the restart cell that recovers the JOINT (not just the final)
         // config. Both are added here with mutation-revert captures under
-        // docs/session-4/experiments/EXP-004.
-        // ====================================================================
+        // docs/session-4/experiments/joint-consensus-election-safety.md.
         @Test
         void oldMajorityAloneCannotElectDuringJointPhase_splitBrainPrevention() {
             // The split-brain test for joint consensus. Membership change
             // {1,2,3} -> {3,4,5}: nodes 1 and 2 are removed, 4 and 5 are added,
             // only 3 is shared. The ENTIRE old cluster {1,2,3} is a majority of
-            // C_old but NOT a majority of C_new (new∩{1,2,3} = {3} = 1 < 2).
+            // C_old but NOT a majority of C_new (new and {1,2,3} = {3} = 1 < 2).
             //
             // The historically-deadly bug (treating a joint config as a single
-            // majority — Ongaro's single-server-reconfig defect class) would let
+            // majority - Ongaro's single-server-reconfig defect class) would let
             // {1,2,3} elect a leader under old-only rules while {3,4,5} could
             // independently elect under new-only rules: two leaders committing in
             // overlapping terms == split brain == lost acked writes. The
@@ -626,7 +614,7 @@ class ReconfigurationTest {
             // REFUSE: with only {1,2,3} reachable, NO leader may emerge.
             //
             // Oracle: no leader among {1,2,3} during the joint phase; the cluster
-            // correctly makes no progress (a liveness non-event — safety holds);
+            // correctly makes no progress (a liveness non-event - safety holds);
             // single-leader-per-term throughout.
             TestCluster cluster = new TestCluster(3);
             NodeId n1 = NodeId.of(1), n2 = NodeId.of(2), n3 = NodeId.of(3),
@@ -637,7 +625,7 @@ class ReconfigurationTest {
             cluster.addNode(n4, Set.of(n1, n2, n3));
             cluster.addNode(n5, Set.of(n1, n2, n3));
 
-            // A committed user write before the reconfig — must never be lost.
+            // A committed user write before the reconfig - must never be lost.
             assertEquals(ProposalResult.ACCEPTED, leader.propose("durable".getBytes()).result());
             cluster.deliverAllMessages(20);
             long committedBefore = leader.log().commitIndex();
@@ -665,13 +653,13 @@ class ReconfigurationTest {
                     "C_old,new must NOT have committed (responses were dropped)");
 
             // THE PINNED SAFETY CLAIM. Drive n2 (a voter of C_old) into a clean
-            // PreVote and hand it a FULL OLD MAJORITY of grants — {1,2,3} — by
+            // PreVote and hand it a FULL OLD MAJORITY of grants - {1,2,3} - by
             // injecting the grant responses directly (the harness's electAmong
             // gates PreVotes on leader-recency, which would mask the property we
             // are pinning; we want the dual-majority gate to be the SOLE reason an
             // election cannot proceed). isQuorum must REFUSE: {1,2,3} is a majority
             // of C_old but holds only ONE member of C_new={3,4,5}, so no real
-            // election may start. A single-majority bug (EXP-004 M1) would start
+            // election may start. A single-majority bug would start
             // one here -> split brain.
             cluster.dropAllMessages();
             RaftNode n2node = cluster.nodes.get(n2);
@@ -698,7 +686,7 @@ class ReconfigurationTest {
                     "with a DUAL majority (old {1,2,3} + new voter 4) the PreVote must succeed "
                             + "and start a real election — confirming the gate is the C_new majority");
 
-            // Safety, not just liveness: the committed prefix is intact throughout —
+            // Safety, not just liveness: the committed prefix is intact throughout -
             // the cluster correctly refused to make progress without a dual majority.
             for (NodeId id : Set.of(n1, n2, n3)) {
                 assertTrue(cluster.nodes.get(id).log().commitIndex() >= committedBefore - 1,
@@ -712,7 +700,7 @@ class ReconfigurationTest {
         void restartRecoversJointStateFromDurableJointEntry() {
             // Kill-matrix reconfig cell "kill -9 with C_old,new committed, C_new
             // not". recomputeConfigFromLog must rebuild the JOINT state from the
-            // durable C_old,new entry — not the simple final config (the existing
+            // durable C_old,new entry - not the simple final config (the existing
             // recompute test) and not the static initial config. A node that comes
             // back from a crash mid-joint must keep using dual-majority rules until
             // C_new reaches its log, or election safety is lost.
@@ -764,7 +752,7 @@ class ReconfigurationTest {
             assertEquals(ProposalResult.ACCEPTED, leader.propose("pre".getBytes()).result());
             cluster.deliverAllMessages(20);
 
-            // n2 has only the no-op + user entry durable — NO config entry.
+            // n2 has only the no-op + user entry durable - NO config entry.
             RaftNode n2After = cluster.restartNode(n2);
             assertFalse(n2After.clusterConfig().isJoint(),
                     "a node with no durable config entry must recover a SIMPLE config");
@@ -781,7 +769,7 @@ class ReconfigurationTest {
         void recomputeConfigFromLogRestoresMembershipAcrossRestart() {
             // After a completed reconfiguration, restart a node and assert its
             // constructor's recomputeConfigFromLog() rebuilds the 4-voter config
-            // from the recovered WAL — NOT the static 3-node initial config.
+            // from the recovered WAL - NOT the static 3-node initial config.
             TestCluster cluster = new TestCluster(3);
             NodeId n1 = NodeId.of(1), n2 = NodeId.of(2), n3 = NodeId.of(3), n4 = NodeId.of(4);
             cluster.electLeader(n1);

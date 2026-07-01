@@ -3,7 +3,7 @@ package io.configd.edge;
 /**
  * A space-efficient probabilistic data structure for fast negative lookups.
  * Used by the edge cache to quickly reject queries for keys that are
- * definitely not in the store — avoiding the ~100ns HAMT traversal
+ * definitely not in the store - avoiding the ~100ns HAMT traversal
  * when a ~10ns Bloom filter check suffices.
  * <p>
  * This implementation uses double hashing (Kirsch & Mitzenmacker, 2006)

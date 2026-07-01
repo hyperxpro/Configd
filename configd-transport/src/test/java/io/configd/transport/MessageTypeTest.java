@@ -10,7 +10,7 @@ import static org.junit.jupiter.api.Assertions.*;
 
 class MessageTypeTest {
 
-    // ── Unique non-zero codes ───────────────────────────────────────────
+    // Unique non-zero codes
 
     @Nested
     class CodeUniqueness {
@@ -33,7 +33,7 @@ class MessageTypeTest {
         }
     }
 
-    // ── fromCode round-trip ─────────────────────────────────────────────
+    // fromCode round-trip
 
     @Nested
     class FromCodeRoundTrip {
@@ -56,7 +56,7 @@ class MessageTypeTest {
         }
     }
 
-    // ── fromCode with invalid codes ─────────────────────────────────────
+    // fromCode with invalid codes
 
     @Nested
     class FromCodeInvalid {
@@ -78,13 +78,13 @@ class MessageTypeTest {
 
         @Test
         void justAboveTableSizeThrows() {
-            // BY_CODE array is size 0x12 = 18 (v2 added RAFT_COALESCED_HEARTBEAT at 0x11), so the
-            // first out-of-bounds code is 0x12.
+            // BY_CODE array is size 0x12 = 18 (RAFT_COALESCED_HEARTBEAT is at 0x11),
+            // so the first out-of-bounds code is 0x12.
             assertThrows(IllegalArgumentException.class, () -> MessageType.fromCode(0x12));
         }
     }
 
-    // ── Specific code assignments (ADR-0010) ────────────────────────────
+    // Specific code assignments
 
     @Nested
     class SpecificCodeAssignments {

@@ -29,14 +29,13 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * The edge read-serving contract, run identically against <b>both</b> transports (ADR-0043 / DR-N2):
+ * The edge read-serving contract, run identically against <b>both</b> transports:
  * {@link EdgeHttpServerTest} starts the JDK {@link EdgeHttpServer}, {@link NettyEdgeHttpServerTest}
  * starts the Netty {@link NettyEdgeHttpServer}. Because both adapters delegate to the same
- * {@link EdgeReadHandler}, every clause here — cursor echo (charter C2), cursor-behind consistent
- * refusal (CT-12), CT-03 stale header on ALL reads, CT-05 readiness gating, CT-37 strong-read
- * fail-close, ADR-0040 not-subscribed refusal, F-S7-TLS-2 {@code /metrics} Bearer gate, method
- * validation, and the INV-M1 observability seam — must hold byte-for-byte on each. A control that
- * passes on JDK but not Netty is a migration regression (the worst outcome — charter §3 rule 1).
+ * {@link EdgeReadHandler}, every clause here — cursor echo, cursor-behind consistent refusal, stale
+ * header on ALL reads, readiness gating, strong-read fail-close, not-subscribed refusal,
+ * {@code /metrics} Bearer gate, and method validation — must hold byte-for-byte on each. A control
+ * that passes on JDK but not Netty is a migration regression.
  */
 @Timeout(60)
 abstract class AbstractEdgeReadServerContract {
@@ -109,9 +108,7 @@ abstract class AbstractEdgeReadServerContract {
         return http.send(b.build(), HttpResponse.BodyHandlers.ofString());
     }
 
-    // -----------------------------------------------------------------------
     // Serving + cursor echo
-    // -----------------------------------------------------------------------
 
     @Test
     void servedReadCarriesVersionAndCursor() throws Exception {
@@ -153,9 +150,7 @@ abstract class AbstractEdgeReadServerContract {
                 "a served read must record a configd_edge_read_seconds sample:\n" + scrape);
     }
 
-    // -----------------------------------------------------------------------
-    // F-S7-TLS-2: edge /metrics scrape-token auth (the AS-5 reconnaissance leak)
-    // -----------------------------------------------------------------------
+    // /metrics scrape-token auth (the staleness/version reconnaissance leak)
 
     @Test
     void metricsScrapeTokenGatesUnauthenticatedScrape() throws Exception {
@@ -167,7 +162,7 @@ abstract class AbstractEdgeReadServerContract {
             gated = start(0, core, StrongReadKeyClass.DEFAULT, new PrometheusExporter(registry), metrics);
             String g = "http://127.0.0.1:" + gated.port();
 
-            // No token → 401 (the staleness/reconnect/version reconnaissance leak is closed).
+            // No token: 401 (prevents staleness/version reconnaissance via the metrics endpoint).
             HttpResponse<String> noTok = http.send(HttpRequest.newBuilder()
                     .uri(URI.create(g + "/metrics")).GET().build(), HttpResponse.BodyHandlers.ofString());
             assertEquals(401, noTok.statusCode(), "edge /metrics must require the configured scrape token");
@@ -213,9 +208,7 @@ abstract class AbstractEdgeReadServerContract {
         assertEquals("v1", resp.body());
     }
 
-    // -----------------------------------------------------------------------
-    // Consistent refusal (contract §3; CT-12 semantics)
-    // -----------------------------------------------------------------------
+    // Consistent refusal
 
     @Test
     void cursorBehindIsRefusedNeverServedStale() throws Exception {
@@ -251,9 +244,7 @@ abstract class AbstractEdgeReadServerContract {
         assertEquals(400, get("/v1/config/svc/a", EdgeHttpServer.HDR_CURSOR, "-3").statusCode());
     }
 
-    // -----------------------------------------------------------------------
-    // CT-03 stale header / CT-05 readiness
-    // -----------------------------------------------------------------------
+    // Stale header / readiness gating
 
     @Test
     void staleHeaderSetOnAllReadsWhenStalePlus() throws Exception {
@@ -279,14 +270,12 @@ abstract class AbstractEdgeReadServerContract {
         clock.advance(600); // STALE: degraded threshold not reached → still ready
         assertEquals(200, get("/health/ready").statusCode(), "STALE alone keeps serving");
 
-        clock.advance(5_000); // past 5s → DEGRADED → unhealthy to the LB (CT-05)
+        clock.advance(5_000); // past 5s: DEGRADED, unhealthy to the LB
         assertEquals(503, get("/health/ready").statusCode());
         assertEquals(200, get("/health/live").statusCode(), "liveness is unconditional");
     }
 
-    // -----------------------------------------------------------------------
-    // CT-37 strong reads: store-and-never-serve
-    // -----------------------------------------------------------------------
+    // Strong reads: stored but never served
 
     @Test
     void strongReadKeyFailsClosedEvenThoughStored() throws Exception {
@@ -305,9 +294,7 @@ abstract class AbstractEdgeReadServerContract {
                 EdgeHttpServer.HDR_CURSOR, "1").statusCode());
     }
 
-    // -----------------------------------------------------------------------
     // Surface hygiene
-    // -----------------------------------------------------------------------
 
     @Test
     void nonGetIs405AndMissingKeyPathIs400() throws Exception {
@@ -322,11 +309,10 @@ abstract class AbstractEdgeReadServerContract {
 
     @Test
     void routingIsExactMatchForFixedEndpoints() throws Exception {
-        // ADR-0043 DR-N4: routing tightened from the JDK HttpServer's longest-PREFIX context match to
-        // EXACT match (a single dispatcher over EdgeReadHandler). Suffix variants of the fixed health/
-        // metrics endpoints — which the prefix match would have served — now 404. Intentional
-        // hardening: e.g. /metricsXYZ must NOT reach the Prometheus exposition. Pinned on both
-        // transports (the JDK adapter now routes through the same EdgeReadHandler, so they agree).
+        // Routing is exact-match (a single dispatcher over EdgeReadHandler), NOT longest-prefix.
+        // Suffix variants of the fixed health/metrics endpoints now 404. Intentional hardening:
+        // e.g. /metricsXYZ must NOT reach the Prometheus exposition. Pinned on both transports
+        // (both route through the same EdgeReadHandler, so they agree).
         apply(1, "svc/a", "v1");
         assertEquals(200, get("/health/live").statusCode(), "the canonical endpoint is served");
         assertEquals(200, get("/metrics").statusCode());

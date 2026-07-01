@@ -13,18 +13,18 @@ import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * S7/D-2 — tamper-evident, append-only {@link AuditLog}.
+ * Tamper-evident, append-only {@link AuditLog}.
  * <p>
- * Per the charter prime directive (§2.1) a control is verified ONLY by a passing
+ * Per the prime directive (section 2.1) a control is verified ONLY by a passing
  * negative test that performs the attack and asserts rejection. The
  * tamper-evidence tests below mutate / drop / reorder a persisted record and
- * assert that {@link AuditLog#verifyPersisted()} reports the break — and a
+ * assert that {@link AuditLog#verifyPersisted()} reports the break - and a
  * non-vacuity test asserts a clean chain verifies true.
  * <p>
  * The KEYED-vs-keyless distinction (the threat-model A2 bar) is covered by
  * {@code keyedChainDefeatsAttackerWhoRechainsTheWholeLogWithoutTheKey}: an
  * attacker who edits the file AND re-chains the whole log without {@code K_audit}
- * defeats a keyless SHA-256 chain but is rejected by the keyed HMAC chain — and
+ * defeats a keyless SHA-256 chain but is rejected by the keyed HMAC chain - and
  * the test proves the keyless function would have passed the same bytes.
  */
 final class AuditLogTest {
@@ -200,9 +200,9 @@ final class AuditLogTest {
     }
 
     // ------------------------------------------------------------------
-    // (d) THE keyed-vs-keyless distinction (S7/D-2 upgrade). The A2 attacker
+    // (d) THE keyed-vs-keyless distinction. The A2 attacker
     // can EDIT the file AND re-chain the WHOLE persisted log. A keyless SHA-256
-    // chain is defeated (they recompute every hash — no secret needed). A KEYED
+    // chain is defeated (they recompute every hash - no secret needed). A KEYED
     // HMAC chain is NOT: re-chaining without K_audit yields MACs the real key
     // rejects. This test performs the full re-chain attack and proves the gap.
     // ------------------------------------------------------------------
@@ -224,7 +224,7 @@ final class AuditLogTest {
 
         // 2) The A2 attacker rewrites history: they change the middle record's
         //    outcome (hiding that a secret delete happened) and RE-CHAIN the whole
-        //    log. They have no key, so they re-chain with plain SHA-256 (keyless) —
+        //    log. They have no key, so they re-chain with plain SHA-256 (keyless) -
         //    the strongest a keyless attacker can do. Model this by replaying the
         //    forged event sequence through a fresh KEYLESS AuditLog and copying its
         //    (fully self-consistent, keyless) frames over the victim's log.
@@ -247,7 +247,7 @@ final class AuditLogTest {
                 "the very first record's MAC fails under the real key (attacker used SHA-256)");
 
         // 4) PROVE THE GAP: the SAME attacker bytes verify TRUE under the keyless
-        //    function — i.e. a keyless AuditLog would have been fully defeated.
+        //    function - i.e. a keyless AuditLog would have been fully defeated.
         //    verifyPersistedWith(null) re-walks the persisted bytes keyless.
         assertTrue(keyed.verifyPersistedWith(null).valid(),
                 "the attacker's re-chained log is self-consistent under keyless SHA-256 — "

@@ -9,19 +9,19 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * RR-095 per-seed re-run and diagnosis (Session 4 / Workstream A2, EXP-002).
+ * Per-seed re-run and diagnosis for the inflight-window-leak stall class.
  * <p>
  * The S2 10k adversarial sweep recorded 7 liveness stalls (no leader ever elected):
- * seeds 452, 869, 4740, 5100, 5159, 5500, 8319 — characterized as expected
+ * seeds 452, 869, 4740, 5100, 5159, 5500, 8319 - characterized as expected
  * never-healed-schedule artifacts (a sustained drop window and/or partitions never healed
  * before end-of-run, so the cluster correctly makes no progress; 0 safety violations).
- * RR-103 (per-peer inflight-window leak) was a candidate root-cause component for this
- * family. This test re-runs all 7 seeds against the RR-103-FIXED kernel and gives each its
- * own diagnosis (charter A2: "no remaining-stalls blob").
+ * The per-peer inflight-window leak was a candidate root-cause component for this
+ * family. This test re-runs all 7 seeds against the inflight-window-leak-fixed kernel and gives each its
+ * own diagnosis ("no remaining-stalls blob").
  * <p>
  * The discriminating question for each seed: is the stall a never-healed-schedule artifact
- * (the network is still faulted at end-of-run — benign, no recovery was ever possible) or a
- * recoverable-but-stuck bug (the network healed but no leader emerged — a real liveness
+ * (the network is still faulted at end-of-run - benign, no recovery was ever possible) or a
+ * recoverable-but-stuck bug (the network healed but no leader emerged - a real liveness
  * defect)? This test reads the authoritative end-of-run network state to answer it per seed.
  */
 class Rr095StallSeedDiagnosisTest {
@@ -64,14 +64,14 @@ class Rr095StallSeedDiagnosisTest {
                     networkUnhealedAtEnd ? "NEVER-HEALED ARTIFACT (benign)"
                             : "HEALED-BUT-STUCK (would be a real liveness bug!)");
 
-            // (1) Still stalls post-RR-103-fix — confirms RR-103 was not its root cause.
+            // (1) Still stalls after the inflight-window-leak fix - confirms it was not the root cause.
             assertFalse(leaderElected,
                     "seed " + seed + " was a registered RR-095 stall; post-RR-103-fix it must"
                             + " still stall (RR-103 is a leader-side window leak, a different"
                             + " mechanism from no-leader-elected) — if it now elects, the causal"
                             + " link must be recorded, not silently absorbed");
 
-            // (2) The stall is explained by a never-healed network — NOT a recoverable stuck
+            // (2) The stall is explained by a never-healed network - NOT a recoverable stuck
             //     state. This is the load-bearing diagnosis: a healed network with no leader
             //     would be a genuine liveness defect owed its own row.
             assertTrue(networkUnhealedAtEnd,

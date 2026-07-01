@@ -18,14 +18,14 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * RED-TEAM (Seam F audit) — independent adversarial PoC battery for the v2 wire bump + coalesced
+ * RED-TEAM - independent adversarial PoC battery for the coalesced
  * heartbeat codec. Complements the author's {@code CoalescedHeartbeatCodecTest} /
  * {@code RaftTransportAdapterCoalescedInboundTest} / {@code FrameCodecEpochReservationTest} by closing
  * the gaps they did not cover:
  * <ul>
  *   <li>full <b>end-to-end wire</b> round-trip of the NEW coalesced type through {@link FrameCodec}
- *       (encode-to-bytes → CRC/epoch → decode), proving the 8-byte reserved epoch does not shift the
- *       coalesced payload boundary (hunting target #4 — desync);</li>
+ *       (encode-to-bytes -> CRC/epoch -> decode), proving the 8-byte reserved epoch does not shift the
+ *       coalesced payload boundary (hunting target #4 - desync);</li>
  *   <li><b>type confusion both directions</b> (#5): a coalesced frame must fail-closed in the generic
  *       {@link RaftMessageCodec#decode}, and a non-coalesced payload must fail-closed in
  *       {@link RaftMessageCodec#decodeCoalescedHeartbeat};</li>
@@ -103,7 +103,7 @@ class RedTeamCoalescedWirePoCTest {
                 () -> RaftMessageCodec.decodeCoalescedHeartbeat(requestVote));
     }
 
-    // ---- #1/#2: MAX_COALESCED_GROUPS boundary — exactly-max accepted, one byte short = clean IAE ----
+    // ---- #1/#2: MAX_COALESCED_GROUPS boundary - exactly-max accepted, one byte short = clean IAE ----
 
     @Test
     void exactlyMaxGroupsAccepted_oneByteShortRejectedCleanly() {
@@ -124,13 +124,13 @@ class RedTeamCoalescedWirePoCTest {
                 () -> RaftMessageCodec.decodeCoalescedHeartbeat(coalescedFrame(truncated)));
     }
 
-    // ---- #3: sign safety — negative groupId / leaderId decode without crashing ----
+    // ---- #3: sign safety - negative groupId / leaderId decode without crashing ----
 
     @Test
     void negativeGroupIdAndLeaderIdDecodeWithoutCrash() {
         ByteBuffer buf = ByteBuffer.allocate(4 + RECORD);
         buf.putInt(1);                       // count
-        buf.putInt(-1);                      // groupId (negative — unregistered downstream, dropped there)
+        buf.putInt(-1);                      // groupId (negative - unregistered downstream, dropped there)
         buf.putLong(0L);                     // term
         buf.putInt(Integer.MIN_VALUE);       // leaderId (extreme negative)
         buf.putLong(-5L);                    // prevLogIndex (negative; record does no validation)

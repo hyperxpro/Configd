@@ -85,7 +85,7 @@ public class PlumtreeFanOutBenchmark {
     public void receiveAndForward(Blackhole bh) {
         versionCounter++;
         MessageId id = new MessageId(versionCounter, System.nanoTime());
-        // Receive from peer 1 — should forward to all other eager peers
+        // Receive from peer 1 - should forward to all other eager peers
         boolean isNew = node.receiveEagerPush(NodeId.of(1), id, sharedPayload);
         bh.consume(isNew);
 

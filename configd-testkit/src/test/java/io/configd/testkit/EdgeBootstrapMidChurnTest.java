@@ -14,7 +14,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.fail;
 
 /**
- * C5 / CT-24, draft §2 {@code EdgeBootstrapMidChurnTest}: a zero-state edge bootstraps
+ * Draft section 2: a zero-state edge bootstraps
  * while the CP LEADER is killed MID-TRANSFER, writes continuing on the re-elected
  * cluster. Three legs:
  * <ul>
@@ -26,7 +26,7 @@ import static org.junit.jupiter.api.Assertions.fail;
  *   <li><b>The SOURCE is the killed leader:</b> the joiner subscribed to the leader
  *       itself. It bootstraps from the deposed node's frozen-but-COMMITTED state (applied
  *       = committed, so nothing uncommitted can ever be served) and converges byte-equal
- *       to its source — the fan-out session's per-source contract — while the per-tick
+ *       to its source - the fan-out session's per-source contract - while the per-tick
  *       monotonicity invariants run throughout. Full-cluster convergence for this edge is
  *       deliberately NOT asserted: the deposed node itself never reconverges, which is a
  *       CP-layer liveness wedge this test surfaced (see below), not an edge defect.</li>
@@ -39,20 +39,19 @@ import static org.junit.jupiter.api.Assertions.fail;
  * A deposed-then-healed leader NEVER catches up within any sim timescale (observed: 10k
  * quiet ticks, still at its isolation-time version): {@code RaftNode.inflightCount} is
  * incremented per send (sendAppendEntries/sendInstallSnapshot), decremented ONLY by
- * responses, and reset ONLY at {@code becomeLeader} — so {@code maxInflightAppends}
+ * responses, and reset ONLY at {@code becomeLeader} - so {@code maxInflightAppends}
  * messages dropped by a partition (or any loss) permanently gate
  * {@code sendAppendEntries} for that peer until the leadership term changes. The
- * consensus kernel is S2/CP-owner territory with its own verification regime; this test
- * quarantines the dependency instead of drive-by-patching it (register row in the C5
- * report).
+ * consensus kernel is CP-owner territory with its own verification regime; this test
+ * quarantines the dependency instead of drive-by-patching it.
  *
  * <h2>Deviation from the draft's sketch, named</h2>
- * The draft's "edge resubscribes to ANOTHER node" re-homing is multi-endpoint failover —
+ * The draft's "edge resubscribes to ANOTHER node" re-homing is multi-endpoint failover - 
  * the edge PROCESS shell's job, proven over real sockets by {@code EdgeFailoverTest}
  * (configd-edge-node); the sim pins the mid-churn bootstrap safety/convergence claims on
  * the fixed-subscription topology. "Kill" follows the {@link EdgeLeaderKillScenarioTest}
  * model: full CP isolation the surviving majority re-elects around (the edge channel is
- * a separate network, so the deposed node keeps serving its frozen committed state —
+ * a separate network, so the deposed node keeps serving its frozen committed state - 
  * the interesting case; the dead edge channel is leg 3). Tick-driven, seed-deterministic,
  * no sleeps.
  */
@@ -86,14 +85,14 @@ class EdgeBootstrapMidChurnTest {
         }
 
         // The joiner subscribes to a healthy FOLLOWER (never the about-to-die leader,
-        // never the veteran's source) — the production-shaped churn case.
+        // never the veteran's source) - the production-shaped churn case.
         int source = pickFollower(sim, oldLeader, 0);
         assertTrue(sim.cpSim().store(source).currentVersion() > 0,
                 "fixture: populated source store at join");
         int joinIdx = sim.joinEdge(source);
         EdgeActor joiner = sim.edges().get(joinIdx);
         sim.enableEdgeRecovery(joinIdx);
-        pumpAt(sim, oldLeader); // T0: transfer emitted, in flight (latency ≥ 1 tick)
+        pumpAt(sim, oldLeader); // T0: transfer emitted, in flight (latency >= 1 tick)
         assertEquals(0, joiner.snapshotsApplied(),
                 "HARD non-vacuity: the kill lands MID-TRANSFER (nothing applied yet)");
 
@@ -131,7 +130,7 @@ class EdgeBootstrapMidChurnTest {
             pumpAt(sim, oldLeader);
         }
 
-        // The joiner's snapshot SOURCE is the leader itself — killed mid-transfer.
+        // The joiner's snapshot SOURCE is the leader itself - killed mid-transfer.
         int joinIdx = sim.joinEdge(oldLeader);
         EdgeActor joiner = sim.edges().get(joinIdx);
         sim.enableEdgeRecovery(joinIdx);
@@ -149,7 +148,7 @@ class EdgeBootstrapMidChurnTest {
                 "HARD non-vacuity: the cluster moved on while the source is deposed");
 
         // The joiner must converge byte-equal to its source's frozen COMMITTED state
-        // (applied = committed — bootstrap from a deposed leader can never serve
+        // (applied = committed - bootstrap from a deposed leader can never serve
         // uncommitted state; any version regression would have thrown per tick).
         int guard = 0;
         while (joiner.currentVersion() < frozenSource) {
@@ -163,7 +162,7 @@ class EdgeBootstrapMidChurnTest {
                 sim.cpSim().store(oldLeader).snapshot());
         // Full-cluster convergence for the deposed source's subscriber is NOT asserted:
         // the deposed node never reconverges (the registered RaftNode inflightCount
-        // leak, class javadoc) — an edge cannot outrun its source. The veteran (healthy
+        // leak, class javadoc) - an edge cannot outrun its source. The veteran (healthy
         // source) still converges to the post-churn cluster:
         settleAndJudgeEdges(sim, driver, List.of(0), List.of(sim.edges().get(0)));
     }
@@ -192,7 +191,7 @@ class EdgeBootstrapMidChurnTest {
         pumpAt(sim, oldLeader); // T0: transfer in flight
 
         // The full chaos: the leader dies AND the joiner's channel dies before the
-        // transfer can deliver — the in-flight bootstrap is wholly lost in the churn.
+        // transfer can deliver - the in-flight bootstrap is wholly lost in the churn.
         isolateFromCpPeers(sim, oldLeader);
         sim.partitionEdge(joinIdx);
         int newLeader = awaitNewLeader(sim, oldLeader);
@@ -204,7 +203,7 @@ class EdgeBootstrapMidChurnTest {
         assertEquals(0, joiner.currentVersion(), "the joiner is still zero-state");
 
         // Heal the edge channel: the unacked transfer has been rebuilding ack-lag at
-        // the healthy follower — the re-send loop must bootstrap the joiner to the
+        // the healthy follower - the re-send loop must bootstrap the joiner to the
         // post-churn state, exactly.
         sim.healEdge(joinIdx);
         settleAndJudge(sim, driver, List.of(0, source));
@@ -268,10 +267,10 @@ class EdgeBootstrapMidChurnTest {
     }
 
     /**
-     * Heal CP → exhaust the seed schedule → fence writes (checked on the edge-subscribed
-     * source nodes — the deposed ex-leader is excluded: the registered CP inflight leak
-     * keeps it behind until a term change) → settle → drive {@code judgedEdges} level
-     * with the leader → byte-equality judge over those edges. Fence rationale as in
+     * Heal CP -> exhaust the seed schedule -> fence writes (checked on the edge-subscribed
+     * source nodes - the deposed ex-leader is excluded: the registered CP inflight leak
+     * keeps it behind until a term change) -> settle -> drive {@code judgedEdges} level
+     * with the leader -> byte-equality judge over those edges. Fence rationale as in
      * EdgeBootstrapUnderSustainedWritesTest#settleAndJudge.
      */
     private void settleAndJudgeEdges(EdgeFanOutSim sim, C1StreamDriver driver,

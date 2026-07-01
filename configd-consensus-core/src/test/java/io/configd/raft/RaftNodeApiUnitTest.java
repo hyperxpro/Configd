@@ -11,13 +11,13 @@ import static org.junit.jupiter.api.Assertions.*;
 
 /**
  * Discriminating tests for {@link RaftNode}'s public-API entry points
- * {@code propose} and {@code transferLeadership} — the validation and
+ * {@code propose} and {@code transferLeadership} - the validation and
  * precondition guards a single-node leader exercises synchronously.
  * <p>
- * S2/mutation-gap (RR-085): these guards (null/empty/oversized/RCFG-magic
+ * These guards (null/empty/oversized/RCFG-magic
  * command rejection, NOT_LEADER / TRANSFER_IN_PROGRESS / OVERLOADED outcomes,
- * and the transfer self/non-voter/pending-reconfig preconditions) carried
- * removed-conditional and boundary survivors. Each test pins one guard's
+ * and the transfer self/non-voter/pending-reconfig preconditions) had
+ * untested removed-conditional and boundary guards. Each test pins one guard's
  * observable outcome. Single-node and deterministic; no sleeps.
  */
 class RaftNodeApiUnitTest {
@@ -51,9 +51,7 @@ class RaftNodeApiUnitTest {
                 new CountingStateMachine(), new java.util.Random(1));
     }
 
-    // ====================================================================
-    // propose — input validation + outcome guards
-    // ====================================================================
+    // propose: input validation + outcome guards
 
     @Test
     void rejectsNullOrEmptyCommand() {
@@ -103,9 +101,7 @@ class RaftNodeApiUnitTest {
         assertEquals(node.log().lastIndex(), node.log().commitIndex());
     }
 
-    // ====================================================================
-    // transferLeadership — preconditions
-    // ====================================================================
+    // transferLeadership: preconditions
 
     @Test
     void transferRejectedWhenNotLeader() {

@@ -10,11 +10,11 @@ import java.util.function.LongSupplier;
  * Eagerly registers the SLO-cited metrics in {@link MetricsRegistry} and
  * publishes the matching {@link PrometheusExporter.BucketSchedule}s.
  *
- * <p>F5 (Tier-1-METRIC-DRIFT, closes H-001 / DOC-014) — without this
- * class, every metric referenced by {@code ops/alerts/configd-slo-alerts.yaml}
- * and {@code ops/runbooks/*.md} would be created lazily on first
- * emission. That made the SLO pipeline decorative: the alerts query
- * series that never exist (no time series == no alert).
+ * <p>Without this class, every metric referenced by
+ * {@code ops/alerts/configd-slo-alerts.yaml} and {@code ops/runbooks/*.md}
+ * would be created lazily on first emission. That makes the SLO pipeline
+ * decorative: the alerts query series that never exist (no time series = no
+ * alert).
  *
  * <p>The constructor:
  * <ol>
@@ -47,44 +47,44 @@ public final class ConfigdMetrics {
     public static final String NAME_SNAPSHOT_INSTALL_FAILED = "configd.snapshot.install.failed";
     public static final String NAME_SNAPSHOT_REBUILD = "configd.snapshot.rebuild";
     /**
-     * S6/D-1 (RR-110) — write-overload reject counter. Backs the `Retry-After: 1`
-     * 429 path ({@code HttpApiServer}) with an emitted, tested series so the
-     * "sustained 429 rate" alert (S5 handoff §1) queries something real. Incremented
-     * on the HTTP write thread inside the {@code raftProposer} when a propose is
-     * rejected with {@code OVERLOADED} (the bounded-queue 1024 shed).
+     * Write-overload reject counter. Backs the {@code Retry-After: 1} 429 path
+     * ({@code HttpApiServer}) with an emitted, tested series so the sustained-429-rate
+     * alert queries something real. Incremented on the HTTP write thread inside the
+     * {@code raftProposer} when a propose is rejected with {@code OVERLOADED}
+     * (the bounded-queue 1024 shed).
      */
     public static final String NAME_WRITE_REJECTED_OVERLOADED = "configd.write.rejected.overloaded";
     /**
-     * S6/D-4 — Raft election/term-churn counter (dashboard "leader churn" panel).
-     * Incremented on the tick thread by the positive delta of {@code currentTerm()}
-     * across ticks; a term bump corresponds to a real election / leadership change.
+     * Raft election/term-churn counter (dashboard "leader churn" panel). Incremented on
+     * the tick thread by the positive delta of {@code currentTerm()} across ticks; a term
+     * bump corresponds to a real election or leadership change.
      */
     public static final String NAME_RAFT_ELECTIONS = "configd.raft.elections";
     /**
-     * S6/D-4 — subscribed-prefix capacity gauge (dashboard "subscribed prefixes"
-     * panel). Late-bound via {@link #bindSubscriptionPrefixGauge} to
+     * Subscribed-prefix capacity gauge (dashboard "subscribed prefixes" panel).
+     * Late-bound via {@link #bindSubscriptionPrefixGauge} to
      * {@code SubscriptionManager.prefixCount()} (a sampled snapshot; benign-race
      * {@code size()} read, standard gauge semantics).
      */
     public static final String NAME_SUBSCRIPTION_PREFIX_COUNT = "configd.subscription.prefix.count";
     /**
-     * H-009 (iter-2) — base name for the tick-loop unhandled-throwable
-     * counter family. The actual Prometheus series carries a {@code class}
-     * label pseudo-encoded into the registry name ({@code base.<bucket>})
-     * because {@link MetricsRegistry} does not natively support labels;
-     * the per-class bucketing is bounded by
-     * {@link SafeLog#cardinalityGuard(String)} so the cardinality stays
-     * inside Prometheus' safe envelope.
+     * Base name for the tick-loop unhandled-throwable counter family. The actual
+     * Prometheus series carries a {@code class} label pseudo-encoded into the registry
+     * name ({@code base.bucket}) because {@link MetricsRegistry} does not natively
+     * support labels; the per-class bucketing is bounded by
+     * {@link SafeLog#cardinalityGuard(String)} so the cardinality stays inside
+     * Prometheus' safe envelope.
      */
     public static final String NAME_TICK_LOOP_THROWABLE_BASE = "configd.tick.loop.throwable";
     public static final String NAME_INBOUND_ROUTING_THROWABLE_BASE = "configd.inbound.routing.throwable";
     /**
-     * O-6 Seam 2a/2b — ACL config-policy loader counters. {@code load.failed} is incremented on a rejected
-     * (fail-closed-to-last-good) {@code _acl/} reload — the series the {@code ConfigdAclPolicyLoadFailed}
-     * alert queries; {@code reload} on each accepted (re)load. They are PRODUCED by {@code
-     * AclConfigPolicyLoader} (which increments them on this SAME server registry, idempotent), but are
-     * catalogued + eager-created here so the control-plane scrape lists them from the first scrape ({@code
-     * _total 0}, the anti-blind-dashboard property) even before the loader runs, and so the canonical name
+     * ACL config-policy loader counters. {@code load.failed} is incremented on a rejected
+     * (fail-closed-to-last-good) {@code _acl/} reload - the series the
+     * {@code ConfigdAclPolicyLoadFailed} alert queries; {@code reload} on each accepted
+     * (re)load. They are PRODUCED by {@code AclConfigPolicyLoader} (which increments them
+     * on this SAME server registry, idempotent), but are catalogued and eager-created here
+     * so the control-plane scrape lists them from the first scrape ({@code _total 0}, the
+     * anti-blind-dashboard property) even before the loader runs, and so the canonical name
      * has a single home the loader references. This class never increments them (no field).
      */
     public static final String NAME_ACL_POLICY_LOAD_FAILED = "configd.acl.policy.load.failed";
@@ -107,13 +107,13 @@ public final class ConfigdMetrics {
     /**
      * Eagerly registers all SLO metrics in {@code registry}. The optional
      * {@code raftPendingSupplier} backs the
-     * {@code configd_raft_pending_apply_entries} gauge — pass
+     * {@code configd_raft_pending_apply_entries} gauge - pass
      * {@code null} in pre-wire-up tests to skip the gauge registration.
      */
     public ConfigdMetrics(MetricsRegistry registry, LongSupplier raftPendingSupplier) {
         this.registry = Objects.requireNonNull(registry, "registry must not be null");
 
-        // Counters — eager creation so first scrape emits "_total 0".
+        // Counters - eager creation so first scrape emits "_total 0".
         this.writeCommitTotal = registry.counter(NAME_WRITE_COMMIT_TOTAL);
         this.writeCommitFailed = registry.counter(NAME_WRITE_COMMIT_FAILED);
         this.edgeReadTotal = registry.counter(NAME_EDGE_READ_TOTAL);
@@ -121,21 +121,21 @@ public final class ConfigdMetrics {
         this.snapshotRebuild = registry.counter(NAME_SNAPSHOT_REBUILD);
         this.writeRejectedOverloaded = registry.counter(NAME_WRITE_REJECTED_OVERLOADED);
         this.raftElections = registry.counter(NAME_RAFT_ELECTIONS);
-        // ACL config-policy loader counters (O-6) — PRODUCED + incremented by AclConfigPolicyLoader on this
-        // same registry (idempotent re-registration). Catalogued + eager-created here so they emit
+        // ACL config-policy loader counters -- PRODUCED and incremented by AclConfigPolicyLoader on this
+        // same registry (idempotent re-registration). Catalogued and eager-created here so they emit
         // "_total 0" from the first scrape even before the loader runs; no field (this class never
         // increments them).
         registry.counter(NAME_ACL_POLICY_LOAD_FAILED);
         registry.counter(NAME_ACL_POLICY_RELOAD);
 
-        // Histograms — eager creation so PrometheusExporter emits the
+        // Histograms - eager creation so PrometheusExporter emits the
         // # TYPE histogram banner with le=+Inf even before any sample.
         this.writeCommitSeconds = registry.histogram(NAME_WRITE_COMMIT_SECONDS);
         this.applySeconds = registry.histogram(NAME_APPLY_SECONDS);
         this.edgeReadSeconds = registry.histogram(NAME_EDGE_READ_SECONDS);
         this.propagationDelaySeconds = registry.histogram(NAME_PROPAGATION_DELAY_SECONDS);
 
-        // Gauge — only register when a supplier is provided. The supplier
+        // Gauge - only register when a supplier is provided. The supplier
         // must be allocation-free (called on every scrape).
         if (raftPendingSupplier != null) {
             registry.gauge(NAME_RAFT_PENDING_APPLY, raftPendingSupplier);
@@ -150,9 +150,9 @@ public final class ConfigdMetrics {
         registry.gauge(NAME_RAFT_PENDING_APPLY, supplier);
     }
 
-    /** Late-binds the subscribed-prefix capacity gauge (S6/D-4). The supplier is a
-     *  sampled snapshot (e.g. {@code SubscriptionManager.prefixCount()}); a benign
-     *  data race on a plain {@code size()} read is acceptable gauge semantics. */
+    /** Late-binds the subscribed-prefix capacity gauge. The supplier is a sampled snapshot
+     *  (e.g. {@code SubscriptionManager.prefixCount()}); a benign data race on a plain
+     *  {@code size()} read is acceptable gauge semantics. */
     public void bindSubscriptionPrefixGauge(LongSupplier supplier) {
         Objects.requireNonNull(supplier, "supplier must not be null");
         registry.gauge(NAME_SUBSCRIPTION_PREFIX_COUNT, supplier);
@@ -172,16 +172,15 @@ public final class ConfigdMetrics {
     public MetricsRegistry.Counter raftElections() { return raftElections; }
 
     /**
-     * H-009 (iter-2) — increments the tick-loop unhandled-throwable counter
-     * for the given throwable's simple class name. The class label is
-     * passed through {@link SafeLog#cardinalityGuard(String)} so that an
-     * adversary who can pick the exception class cannot blow up the
-     * Prometheus series count. Returns the bucketed label that was used,
-     * so callers can include it in the structured log line they emit
+     * Increments the tick-loop unhandled-throwable counter for the given throwable's
+     * simple class name. The class label is passed through
+     * {@link SafeLog#cardinalityGuard(String)} so that an adversary who can pick the
+     * exception class cannot blow up the Prometheus series count. Returns the bucketed
+     * label that was used, so callers can include it in the structured log line they emit
      * alongside this metric increment.
      *
-     * @param throwableClassName the simple class name of the unhandled
-     *                           throwable (may be null → "unknown")
+     * @param throwableClassName the simple class name of the unhandled throwable
+     *                           (may be null - treated as "unknown")
      * @return the bounded label value that was actually used
      */
     public String onTickLoopThrowable(String throwableClassName) {
@@ -191,16 +190,16 @@ public final class ConfigdMetrics {
     }
 
     /**
-     * RR-008 (S4) — increments the inbound-routing unhandled-throwable counter for the
-     * given throwable's simple class name. The inbound Raft routing task
+     * Increments the inbound-routing unhandled-throwable counter for the given
+     * throwable's simple class name. The inbound Raft routing task
      * ({@code driver.routeMessage}) runs on the single tick executor; a Throwable it
      * raises (e.g. a disk write failing during {@code applyCommitted -> apply}) was
-     * previously swallowed by the executor with no metric and no structured log — a
+     * previously swallowed by the executor with no metric and no structured log - a
      * disk-failing follower became a mute zombie. This counter (mirroring
      * {@link #onTickLoopThrowable}) makes that observable. Class label is
      * {@link SafeLog#cardinalityGuard cardinality-bounded}. Returns the bounded label.
      *
-     * @param throwableClassName the simple class name (may be null → "unknown")
+     * @param throwableClassName the simple class name (may be null - treated as "unknown")
      * @return the bounded label value that was actually used
      */
     public String onInboundRoutingThrowable(String throwableClassName) {
@@ -232,12 +231,14 @@ public final class ConfigdMetrics {
      * Latency schedule for write-commit / apply paths (covers le="0.150"
      * referenced by the WriteCommitFastBurn / SlowBurn alerts).
      */
+
     /**
-     * S6/WS-A — the histogram schedule(s) the EDGE process must publish so its served
-     * {@code configd_edge_read_seconds} histogram renders the same {@code le} buckets the edge-read
-     * burn-rate alert queries ({@code le="0.001"} / {@code le="0.005"}). The edge registers the
-     * histogram in its OWN registry (it is a separate process and does not load this control-plane
-     * instance); this exposes the canonical bucket schedule so both processes agree on the buckets.
+     * The histogram schedule(s) the edge process must publish so its served
+     * {@code configd_edge_read_seconds} histogram renders the same {@code le} buckets the
+     * edge-read burn-rate alert queries ({@code le="0.001"} / {@code le="0.005"}). The
+     * edge registers the histogram in its OWN registry (it is a separate process and does
+     * not load this control-plane instance); this exposes the canonical bucket schedule so
+     * both processes agree on the buckets.
      */
     public static Map<String, PrometheusExporter.BucketSchedule> edgeProcessHistogramSchedules() {
         Map<String, PrometheusExporter.BucketSchedule> map = new LinkedHashMap<>();

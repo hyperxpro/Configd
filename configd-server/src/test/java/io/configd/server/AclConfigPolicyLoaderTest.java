@@ -16,8 +16,8 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * Tests for the O-6 Seam 2a {@link AclConfigPolicyLoader}: the idempotent whole-subtree rebuild, the
- * apply-thread gate (no {@code _acl/} touch ⇒ no rebuild), the snapshot-install hook, fail-closed-to-
+ * Tests for {@link AclConfigPolicyLoader}: the idempotent whole-subtree rebuild, the
+ * apply-thread gate (no {@code _acl/} touch => no rebuild), the snapshot-install hook, fail-closed-to-
  * last-good on malformed/reserved policy (never deny-all/allow-all), and the load-bearing proof that no
  * config-loaded role can carve the break-glass root principal (reserved-name validation, N2/N3).
  */
@@ -75,7 +75,7 @@ class AclConfigPolicyLoaderTest {
         AclConfigPolicyLoader l = loader(acl, store, reg);
 
         // Publish a sentinel directly; a NON-_acl/ delta must NOT trigger a rebuild (which would overwrite
-        // the sentinel with the store-derived policy) — proving the gate short-circuits with no getPrefix.
+        // the sentinel with the store-derived policy) - proving the gate short-circuits with no getPrefix.
         ConfigPolicy sentinel = ConfigPolicy.EMPTY;
         acl.publishConfigPolicy(sentinel);
         l.onConfigChange(List.of(new ConfigMutation.Put("app.host", new byte[0]),
@@ -141,7 +141,7 @@ class AclConfigPolicyLoaderTest {
 
     /**
      * Characterization (INTENTIONAL behavior, not a bug): the whole-subtree parse is all-or-nothing, so one
-     * persisted malformed {@code _acl/} key freezes ALL subsequent policy updates until it is removed —
+     * persisted malformed {@code _acl/} key freezes ALL subsequent policy updates until it is removed -
      * every rebuild re-reads it and re-rejects the whole subtree (keeping last-good). This is the deliberate
      * "reject whole load, never silently partial" tradeoff (a partial/truncated policy is more dangerous);
      * the residual is loudly observable on {@code configd.acl.policy.load.failed} and is closed by 2b's
@@ -164,7 +164,7 @@ class AclConfigPolicyLoaderTest {
         l.onConfigChange(put("_acl/zzz"), 10L);
         assertEquals(1L, metric(reg, AclConfigPolicyLoader.NAME_POLICY_LOAD_FAILED));
 
-        // Even a subsequent VALID write (charlie → reader) does not apply while the poison key persists.
+        // Even a subsequent VALID write (charlie -> reader) does not apply while the poison key persists.
         put(store, "_acl/bindings/charlie", "reader");
         l.onConfigChange(put("_acl/bindings/charlie"), 11L);
         assertEquals(2L, metric(reg, AclConfigPolicyLoader.NAME_POLICY_LOAD_FAILED), "still frozen");
@@ -213,7 +213,7 @@ class AclConfigPolicyLoaderTest {
         acl.grant("", "root", java.util.EnumSet.allOf(AclService.Permission.class)); // static break-glass
         VersionedConfigStore store = new VersionedConfigStore();
         MetricsRegistry reg = new MetricsRegistry();
-        put(store, "_acl/roles/evil", "deny READ,LIST,WRITE,WATCH,ADMIN ");  // empty prefix ⇒ matches all
+        put(store, "_acl/roles/evil", "deny READ,LIST,WRITE,WATCH,ADMIN ");  // empty prefix => matches all
         put(store, "_acl/bindings/root", "evil");
         loader(acl, store, reg).rebuild();
 

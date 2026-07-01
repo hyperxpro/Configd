@@ -18,18 +18,18 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * Tests for the O-6 Seam 1 <b>role-aware</b> ACL layer of {@link AclService} (RFC §01 A5-3/A5-4).
+ * Tests for the <b>role-aware</b> ACL layer of {@link AclService}.
  * <p>
  * Authorization unions a principal's <b>own</b> per-prefix grants with its <b>role</b> grants into a
  * single {@code (allow, deny)} pair, then applies the SAME union / absolute-deny-precedence /
- * default-deny / effective-{@code WATCH} = {@code WATCH} ∧ {@code READ} rules across both. A role's
+ * default-deny / effective-{@code WATCH} = {@code WATCH} AND {@code READ} rules across both. A role's
  * effective membership is the union of the <b>authn-asserted</b> roles passed to
  * {@link AclService#isAllowed(String, Set, String, AclService.Permission)} and the <b>ACL-static</b>
  * bindings added via {@link AclService#assignRole}.
  * <p>
  * The load-bearing guarantee is <b>byte-identity in production</b>: with no role defined/assigned and an
  * empty {@code roles} argument the role-aware path reduces exactly to the historical own-grants-only
- * evaluation — {@link #emptyRolesByteIdentical()} and {@link #productionShapeThroughRoleAwarePath()} pin
+ * evaluation - {@link #emptyRolesByteIdentical()} and {@link #productionShapeThroughRoleAwarePath()} pin
  * this. The deny-through-roles tests prove the critical property that deny is subtracted <b>once</b> over
  * the combined own+role set, so a DENY (own or role) wins over an ALLOW (own or role) in either order.
  */
@@ -128,7 +128,7 @@ class AclServiceRoleTest {
     }
 
     // -----------------------------------------------------------------------
-    // Deny precedence THROUGH roles — the critical "single subtract over the combined set" property
+    // Deny precedence THROUGH roles - the critical "single subtract over the combined set" property
     // -----------------------------------------------------------------------
 
     @Test
@@ -179,7 +179,7 @@ class AclServiceRoleTest {
     }
 
     // -----------------------------------------------------------------------
-    // ACL-static role binding (assignRole) — additive to authn-asserted roles
+    // ACL-static role binding (assignRole) - additive to authn-asserted roles
     // -----------------------------------------------------------------------
 
     @Test
@@ -196,14 +196,14 @@ class AclServiceRoleTest {
         // A different principal without the binding is denied.
         assertFalse(acl.isAllowed("other", Set.of(), "a.x", READ));
 
-        // Additive to authn-asserted roles: static r (a.) ∪ authn-asserted r2 (b.) both contribute.
+        // Additive to authn-asserted roles: static r (a.) union authn-asserted r2 (b.) both contribute.
         acl.defineRole(role("r2", allowRule("b.", READ)));
         acl.assignRole("q", "r");
         assertTrue(acl.isAllowed("q", Set.of("r2"), "a.x", READ), "static r applies");
         assertTrue(acl.isAllowed("q", Set.of("r2"), "b.x", READ), "authn-asserted r2 also applies (union of sources)");
     }
 
-    /** Assigning the same role twice is stable — no duplication effect, still exactly authorized. */
+    /** Assigning the same role twice is stable - no duplication effect, still exactly authorized. */
     @Test
     void assignRoleIsIdempotent() {
         acl.defineRole(role("r", allowRule("a.", READ)));
@@ -284,11 +284,10 @@ class AclServiceRoleTest {
     // -----------------------------------------------------------------------
 
     /**
-     * Mirrors production exactly: {@code grant("", "root", allOf)} (ConfigdServer:726) plus the authn
-     * layer asserting the role {@code "admin"} (ConfigdServer:720) which is <b>never defined</b> as a
-     * {@link Role}. Root is authorized for all five caps on every key via its own global grant; the
-     * undefined {@code admin} role adds nothing. A non-root principal carrying the same undefined role is
-     * fully denied.
+     * Mirrors production exactly: {@code grant("", "root", allOf)} plus the authn layer asserting the
+     * role {@code "admin"} which is <b>never defined</b> as a {@link Role}. Root is authorized for all
+     * five caps on every key via its own global grant; the undefined {@code admin} role adds nothing. A
+     * non-root principal carrying the same undefined role is fully denied.
      */
     @Test
     void productionShapeThroughRoleAwarePath() {

@@ -5,33 +5,33 @@ import io.configd.distribution.wire.EdgeFrame;
 import java.nio.charset.StandardCharsets;
 
 /**
- * Validates a {@code WATCH_CREATE} target against the RFC §1 path grammar and the §2 range
- * rules (W2-4), producing the {@code BAD_SUBSCRIBE} (400-class) diagnostic the veneer emits
- * on a malformed target. Structural framing (CRC, frame size, the FULL⇒empty-path invariant)
- * is the codec's job; this is the <b>semantic</b> target validation the codec deliberately
- * leaves to the session layer (see {@link EdgeFrame.WatchCreate}).
+ * Validates a {@code WATCH_CREATE} target against the path grammar and range rules (W2-4),
+ * producing the {@code BAD_SUBSCRIBE} (400-class) diagnostic the veneer emits on a malformed
+ * target. Structural framing (CRC, frame size, the FULL=>empty-path invariant) is the codec's
+ * job; this is the <b>semantic</b> target validation the codec deliberately leaves to the
+ * session layer (see {@link EdgeFrame.WatchCreate}).
  *
  * <p><b>Self-contained on purpose.</b> The binary write-path validator lives in
  * {@code configd-control-plane-api} ({@code ConfigWriteService}), which the fan-out plane
- * cannot depend on (reactor order). This is a focused re-implementation of the same §1 A3
- * grammar — absolute, {@code seg-char}-only segments, no empty/{@code .}/{@code ..} segment,
- * ≤ 1024 UTF-8 bytes — with the §3.4 subtree allowance that a PREFIX target MAY carry a
- * single trailing {@code /} (the {@code /a/} ≡ {@code /a/**} subtree form). The literal match
- * model (subtree {@code startsWith}) means the trailing slash is significant and is preserved
- * on {@link WatchTarget#path()}.
+ * cannot depend on (reactor order). This is a focused re-implementation of the same absolute
+ * path grammar: {@code seg-char}-only segments, no empty/{@code .}/{@code ..} segment,
+ * {@code <=} 1024 UTF-8 bytes - with the section 3.4 subtree allowance that a PREFIX target
+ * MAY carry a single trailing {@code /} (the {@code /a/} == {@code /a/**} subtree form). The
+ * literal match model (subtree {@code startsWith}) means the trailing slash is significant
+ * and is preserved on {@link WatchTarget#path()}.
  */
 final class WatchTargetValidator {
 
-    /** §1 A3-5: a path MUST NOT exceed 1024 UTF-8 bytes (the deployed key-length limit). */
+    /** A path MUST NOT exceed 1024 UTF-8 bytes (the deployed key-length limit). */
     static final int MAX_PATH_BYTES = 1024;
 
-    /** §1 A2-1: the known scope ordinals (GLOBAL, REGIONAL, LOCAL). */
+    /** The known scope ordinals (GLOBAL=0, REGIONAL=1, LOCAL=2). */
     static final int MAX_SCOPE = 2;
 
     /**
      * The recognized {@code WATCH_CREATE} flag bits (W5-4a): {@code full_chain_verify} (bit0),
      * {@code prev_value} (bit1), {@code with_initial_snapshot} (bit2). A driver MUST NOT set a flag
-     * it has not negotiated, and the server fails closed on an unrecognized bit (W1-3) — so a flags
+     * it has not negotiated, and the server fails closed on an unrecognized bit (W1-3) - so a flags
      * byte with any bit outside this mask is rejected {@code BAD_SUBSCRIBE}.
      */
     static final int KNOWN_FLAGS_MASK = EdgeFrame.WATCH_FLAG_FULL_CHAIN_VERIFY
@@ -57,7 +57,7 @@ final class WatchTargetValidator {
         }
         switch (targetKind) {
             case EdgeFrame.WATCH_TARGET_FULL -> {
-                // Defensive: the WatchCreate record already guarantees FULL⇒empty path, so a
+                // Defensive: the WatchCreate record already guarantees FULL=>empty path, so a
                 // decoded FULL frame cannot reach here non-empty. Kept for direct-call safety.
                 return pathBytes.length == 0 ? null : "FULL target must carry an empty path";
             }
@@ -78,14 +78,14 @@ final class WatchTargetValidator {
     }
 
     /**
-     * Validates the §1 A3 absolute path grammar. A PREFIX subtree target MAY carry one
-     * trailing {@code /} (§3.4 {@code /a/}); a KEY target MUST be a concrete canonical path.
+     * Validates the absolute path grammar. A PREFIX subtree target MAY carry one trailing
+     * {@code /} (the {@code /a/} subtree form); a KEY target MUST be a concrete canonical path.
      */
     private static String validateGrammar(String path, boolean prefix) {
         if (path.isEmpty() || path.charAt(0) != '/') {
             return "path must be absolute (begin with '/'): " + path;
         }
-        // §3.4 subtree form: strip a single trailing slash for a PREFIX before segment checks
+        // Subtree form: strip a single trailing slash for a PREFIX before segment checks
         // (the root "/" is left intact). The slash stays on WatchTarget.path() for the filter.
         String body = path;
         if (prefix && body.length() > 1 && body.charAt(body.length() - 1) == '/') {
@@ -114,7 +114,7 @@ final class WatchTargetValidator {
         return null;
     }
 
-    /** §1 A3-1 {@code seg-char = ALPHA / DIGIT / "." / "_" / "-"}. */
+    /** {@code seg-char = ALPHA / DIGIT / "." / "_" / "-"} (the allowed characters in a path segment). */
     private static boolean isSegChar(char c) {
         return (c >= 'a' && c <= 'z')
                 || (c >= 'A' && c <= 'Z')

@@ -15,7 +15,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.fail;
 
 /**
- * The edge-data-plane gate seed sweep (CT-39 sim level): the committed ≥500-seed manifest
+ * The edge-data-plane gate seed sweep: the committed >=500-seed manifest
  * (the same loader as {@link AdversarialGateSeedSweepTest}) run through an
  * {@link EdgeFanOutSim} with 3 edges + the real {@link C1StreamDriver} + the full CP fault
  * schedule + edge faults, with {@link EdgeInvariants} checked after every tick.
@@ -23,12 +23,12 @@ import static org.junit.jupiter.api.Assertions.fail;
  * <h2>What is enforced vs recorded</h2>
  * <ul>
  *   <li><b>SAFETY (enforced, throws):</b> per-edge version monotonicity and no-stale-overwrite
- *       (and the read-side INV-M1 monitor inside {@link EdgeActor}) are checked every tick;
+ *       (and the read-side monotonic-read guarantee monitor inside {@link EdgeActor}) are checked every tick;
  *       a violation on ANY seed throws {@link SimInvariants.SafetyViolation} and fails the
  *       build naming the seed. <b>This count must be ZERO across all seeds.</b></li>
  *   <li><b>LIVENESS (recorded, never fails):</b> end-of-run convergence ({@code finalCheck}
  *       after a heal-all + drain). Under a never-healed fault schedule an edge can legitimately
- *       remain behind, so a convergence miss is recorded, not failed — mirroring how the CP
+ *       remain behind, so a convergence miss is recorded, not failed - mirroring how the CP
  *       gate records liveness stalls. The convergence rate is asserted only to be non-vacuous
  *       (the gate must converge on a healthy majority) and reported in the failure message if
  *       it dips, but a low rate under never-healed schedules is expected, not a bug.</li>
@@ -53,7 +53,7 @@ class EdgeAdversarialGateSeedSweepTest {
 
         // Convergence is bucketed by whether a QUIET DRAIN WINDOW genuinely exists after
         // heal+settle (i.e. the CP cluster itself fully converged). Only those seeds give the
-        // edge a chance to converge — an edge subscribed to a CP node the AdversarialSim left
+        // edge a chance to converge - an edge subscribed to a CP node the AdversarialSim left
         // crashed-and-not-restarted (it records crash arms but does not rebuild them this
         // round) or behind can NEVER catch the leader; that is a CP-sim liveness limit, not a
         // C1 fault. So the C1 correctness signal is "edges converge WHEN a quiet window
@@ -67,7 +67,7 @@ class EdgeAdversarialGateSeedSweepTest {
                     /* edgeFaults */ true, new C1StreamDriver(),
                     AdversarialSchedule.defaultIntensity(), EdgeInvariants.BOUND_MS);
             // Throws SimInvariants.SafetyViolation (carrying the seed) on ANY per-tick edge
-            // safety breach — the hard, enforced bar (must be ZERO across all seeds).
+            // safety breach - the hard, enforced bar (must be ZERO across all seeds).
             sim.run();
 
             EdgeActivity activity = sim.activity();
@@ -104,7 +104,7 @@ class EdgeAdversarialGateSeedSweepTest {
                         + seedsWithDelivery + "/" + seeds.size() + ")");
 
         // The MEANINGFUL C1 correctness bar: when a quiet drain window exists (CP converged),
-        // the edges must converge at a high rate — the C1 catch-up/heal path actually heals.
+        // the edges must converge at a high rate - the stream driver catch-up/heal path actually heals.
         assertTrue(quietWindowSeeds > 0, "the sweep must produce some quiet-window seeds");
         double convergenceGivenQuiet = (double) convergedGivenQuiet / quietWindowSeeds;
         assertTrue(convergenceGivenQuiet >= 0.9,
@@ -116,7 +116,7 @@ class EdgeAdversarialGateSeedSweepTest {
 
         // Greppable summary for the report. Safety violations are 0 by construction (the run
         // throws on any). The RAW convergence rate is honestly low because the AdversarialSim
-        // leaves many CP clusters non-converged under the full fault schedule — expected.
+        // leaves many CP clusters non-converged under the full fault schedule - expected.
         double rawRate = (double) convergedRaw / seeds.size();
         System.out.println("EDGE-GATE-SUMMARY: seeds=" + seeds.size()
                 + " safetyViolations=0"

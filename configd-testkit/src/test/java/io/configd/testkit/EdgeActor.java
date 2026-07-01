@@ -23,14 +23,14 @@ import java.util.function.LongSupplier;
 
 /**
  * A deterministic simulation actor modelling one eventually-consistent edge cache node.
- * It drives the <b>real production {@link EdgeClientCore}</b> for ALL protocol handling — the
- * apply chain, snapshot reassembly + cutover, the ADR-0039 frontier staleness measure, the
- * per-batch CURSOR_ACK, and the INV-M1 monitor-wired read seam all live inside the core, so the
- * 507-seed gate exercises real C2 code. The actor retains ONLY the sim-actor concerns:
+ * It drives the <b>real production {@link EdgeClientCore}</b> for ALL protocol handling - the
+ * apply chain, snapshot reassembly + cutover, the frontier staleness measure, the
+ * per-batch CURSOR_ACK, and the monotonic-read guarantee monitor-wired read seam all live inside the core, so the
+ * 507-seed gate exercises real edge-client code. The actor retains ONLY the sim-actor concerns:
  * <ul>
  *   <li>the deterministic FIFO {@link #inbox} fed by the edge network;</li>
  *   <li>crash/restart incarnations, lag/unlag (a cache has no durable state);</li>
- *   <li>the {@link EdgeStream} ↔ {@link EdgeFrame} network adapter (mapping the sim's
+ *   <li>the {@link EdgeStream} <-> {@link EdgeFrame} network adapter (mapping the sim's
  *       message model onto the core's wire-frame {@code onFrame} surface).</li>
  * </ul>
  *
@@ -40,16 +40,16 @@ import java.util.function.LongSupplier;
  *
  * <p><b>Cursor-ack channel.</b> The core emits {@code CURSOR_ACK} frames through its
  * {@link EdgeClientCore.FrameSink}; this actor forwards the ack seq to {@link #cursorAckSink}
- * (wired by the C1 driver to the owning session's {@code onCursorAck}). The C1(a) backward-
+ * (wired by the stream driver to the owning session's {@code onCursorAck}). The stream driver backward-
  * snapshot refusal lives in the core, which re-acks the real cursor.
  *
  * <p><b>Reconnect directives.</b> The core may queue a reconnect directive on heartbeat
- * silence (the C2 failover policy). The V1/C1 sim has no second fan-out endpoint to fail over
- * to (multi-endpoint failover is the C2 edge <i>process</i>'s job, part b), so this actor
- * <b>drains</b> directives and ignores them — the sim's own server-side ack-lag→snapshot heal
- * path (driven by {@link C1StreamDriver}) is what reconverges a stranded edge here.
+ * silence (the C2 failover policy). The sim has no second fan-out endpoint to fail over
+ * to (multi-endpoint failover is the edge-client <i>process</i>'s job, part b), so this actor
+ * <b>drains</b> directives and ignores them - the sim's own server-side ack-lag->snapshot heal
+ * path (driven by the stream driver - {@link C1StreamDriver}) is what reconverges a stranded edge here.
  *
- * <p>Not thread-safe; one actor per node, mutated on the single sim thread (R-01).
+ * <p>Not thread-safe; one actor per node, mutated on the single sim thread.
  */
 final class EdgeActor {
 
@@ -63,7 +63,7 @@ final class EdgeActor {
     private final Clock clock;
 
     /**
-     * The INV-M1 monitor wired into the core's read store. Test-mode ({@code testMode = true})
+     * The monotonic-read guarantee monitor wired into the core's read store. Test-mode ({@code testMode = true})
      * so a {@code monotonic_read} violation throws an {@link AssertionError} that fails the
      * seed. One registry per actor (counts are diagnostic only).
      */
@@ -72,22 +72,22 @@ final class EdgeActor {
     /** Diagnostic registry shared by the monitor and the core's implausible-frontier counter. */
     private final MetricsRegistry metrics;
 
-    /** The real production C2 client engine (rebuilt on every incarnation). */
+    /** The real production edge-client engine (rebuilt on every incarnation). */
     private EdgeClientCore core;
 
     /** Deterministic FIFO inbox; messages are delivered by the edge network. */
     private final Deque<EdgeStream> inbox = new ArrayDeque<>();
 
-    /** Incarnation counter — bumped on every crash (models a cache reincarnation). */
+    /** Incarnation counter - bumped on every crash (models a cache reincarnation). */
     private int incarnation;
 
     private boolean alive = true;
     private boolean lagging;
 
     /**
-     * OBSERVER-ONLY apply seam (Phase V2). Fired on every {@code APPLIED} notification so the
+     * OBSERVER-ONLY apply seam. Fired on every {@code APPLIED} notification so the
      * {@link io.configd.probe.PropagationProbe} can sample logical visibility time. Defaults
-     * to {@link EdgeApplyObserver#NONE}. Survives crash/restart — it is a harness binding, not
+     * to {@link EdgeApplyObserver#NONE}. Survives crash/restart - it is a harness binding, not
      * edge state, so {@link #freshState()} does not touch it.
      */
     private EdgeApplyObserver applyObserver = EdgeApplyObserver.NONE;
@@ -96,8 +96,8 @@ final class EdgeActor {
     private long deliveredCount;
 
     /**
-     * Edge→server CURSOR_ACK sink: invoked with the highest applied seq when the core emits a
-     * {@code CURSOR_ACK} frame. The C1 driver wires this to {@code FanOutSessionCore.onCursorAck}.
+     * Edge-to-server CURSOR_ACK sink: invoked with the highest applied seq when the core emits a
+     * {@code CURSOR_ACK} frame. The stream driver wires this to {@code FanOutSessionCore.onCursorAck}.
      * {@code NONE} by default (the V1 DirectInjectionDriver path does not ack).
      */
     private LongConsumer cursorAckSink = NONE_ACK;
@@ -105,10 +105,10 @@ final class EdgeActor {
     private static final LongConsumer NONE_ACK = seq -> { };
 
     /**
-     * OPT-IN C3 recovery seam: when non-null, drained {@link EdgeClientCore.ConnectionDirective}s
+     * OPT-IN reconnect/recovery seam: when non-null, drained {@link EdgeClientCore.ConnectionDirective}s
      * are forwarded here (the sim wires {@link EdgeFanOutSim#enableEdgeRecovery} to a real
-     * {@link C1StreamDriver} resubscribe). Null (the default) preserves the historical
-     * drain-and-ignore behavior — the 507-seed gate path is byte-identical.
+     * stream driver resubscribe). Null (the default) preserves the historical
+     * drain-and-ignore behavior - the 507-seed gate path is byte-identical.
      */
     private Consumer<EdgeClientCore.ConnectionDirective> directiveSink;
 
@@ -124,7 +124,7 @@ final class EdgeActor {
             @Override public long currentTimeMillis() { return timeSource.getAsLong(); }
             @Override public long nanoTime() { return timeSource.getAsLong() * 1_000_000L; }
         };
-        // testMode=true → monotonic_read violations throw AssertionError (fail the seed).
+        // testMode=true -> monotonic_read violations throw AssertionError (fail the seed).
         this.metrics = new MetricsRegistry();
         this.monitor = new InvariantMonitor(metrics, true);
         freshState();
@@ -133,7 +133,7 @@ final class EdgeActor {
     /** Builds a fresh production {@link EdgeClientCore} at cursor 0. */
     private void freshState() {
         // The core's FrameSink forwards CURSOR_ACK seqs to the wired cursorAckSink; all other
-        // edge→server frames are never emitted by the core. The implausible-frontier counter
+        // edge-to-server frames are never emitted by the core. The implausible-frontier counter
         // shares the actor's diagnostic registry. The sim runs full-store (no subscription).
         EdgeClientCore.FrameSink sink = frame -> {
             if (frame instanceof EdgeFrame.CursorAck ack) {
@@ -148,7 +148,7 @@ final class EdgeActor {
     }
 
     /**
-     * Wires the edge→server CURSOR_ACK sink (C1). The stream driver passes the owning
+     * Wires the edge-to-server CURSOR_ACK sink. The stream driver passes the owning
      * session's {@code onCursorAck}; passing null resets to the no-op (V1 path).
      */
     void setCursorAckSink(LongConsumer sink) {
@@ -156,7 +156,7 @@ final class EdgeActor {
     }
 
     /**
-     * OPT-IN (C3): forwards drained connection directives to {@code sink} instead of
+     * OPT-IN (reconnect/recovery): forwards drained connection directives to {@code sink} instead of
      * discarding them. Never set on the gate path (the default null keeps the historical
      * drain-and-ignore, so existing seeds are byte-identical).
      */
@@ -164,7 +164,7 @@ final class EdgeActor {
         this.directiveSink = sink;
     }
 
-    /** C3 recovery: the sim driver re-subscribed this edge — complete the reconnect cycle. */
+    /** Reconnect recovery: the sim driver re-subscribed this edge - complete the reconnect cycle. */
     void onResubscribed() {
         core.onReconnected();
     }
@@ -181,7 +181,7 @@ final class EdgeActor {
     }
 
     // -----------------------------------------------------------------------
-    // Inbox — fed by the edge network (deterministic FIFO)
+    // Inbox - fed by the edge network (deterministic FIFO)
     // -----------------------------------------------------------------------
 
     /** Enqueues a message delivered by the edge network. Queues even while lagging. */
@@ -194,7 +194,7 @@ final class EdgeActor {
     }
 
     // -----------------------------------------------------------------------
-    // Tick — drain the inbox into the core (mapping EdgeStream -> EdgeFrame)
+    // Tick - drain the inbox into the core (mapping EdgeStream -> EdgeFrame)
     // -----------------------------------------------------------------------
 
     /**
@@ -228,18 +228,18 @@ final class EdgeActor {
                 case EdgeStream.Heartbeat hb ->
                         core.onFrame(new EdgeFrame.Heartbeat(hb.latestSeq(), hb.serverNowMillis()));
                 case EdgeStream.ErrorClose err ->
-                        // C4: the policy disconnect rides the REAL core reaction —
+                        // Governor: the policy disconnect rides the REAL core reaction -
                         // onErrorClose queues the reconnect directive (cursor-resume),
                         // exactly as the production edge process reacts to ERROR_CLOSE.
                         core.onFrame(new EdgeFrame.ErrorClose(err.code(), err.message()));
             }
         }
         // Run the real periodic tick (re-ack on advance; heartbeat-silence reconnect policy;
-        // the C3 DISCONNECTED-entry re-bootstrap detector).
+        // the reconnect DISCONNECTED-entry re-bootstrap detector).
         core.tick(timeSource.getAsLong());
         // Directives: with no sink wired (the gate path), drain-and-ignore as ever (the sim
-        // heals via the server's ack-lag → snapshot path). With the OPT-IN C3 recovery sink
-        // wired, forward them — the sink performs a REAL resubscribe through the driver.
+        // heals via the server's ack-lag -> snapshot path). With the OPT-IN C3 recovery sink
+        // wired, forward them - the sink performs a REAL resubscribe through the driver.
         EdgeClientCore.ConnectionDirective directive;
         while ((directive = core.pollDirective()) != null) {
             if (directiveSink != null) {
@@ -251,10 +251,10 @@ final class EdgeActor {
     /**
      * Maps a wholesale {@link EdgeStream.Snapshot} onto the core's frame surface by
      * serializing + chunking it into the {@code SNAPSHOT_BEGIN / SNAPSHOT_CHUNK* /
-     * SNAPSHOT_END} flow — exercising the REAL core reassembly + cutover path (incl. the
-     * C1(a) backward-snapshot refusal). The driver-side {@link C1StreamDriver} reassembled
+     * SNAPSHOT_END} flow - exercising the REAL core reassembly + cutover path (incl. the
+     * stream driver backward-snapshot refusal). The driver-side {@link C1StreamDriver} reassembled
      * the chunks into one message for the edge network; here the actor re-chunks so the core
-     * runs its production reassembly exactly as the C2 process will.
+     * runs its production reassembly exactly as the edge-client process will.
      */
     private void feedSnapshot(ConfigSnapshot snapshot, long seq) {
         byte[] body = EdgeSnapshotCodec.serialize(snapshot);
@@ -267,7 +267,7 @@ final class EdgeActor {
         core.onFrame(new EdgeFrame.SnapshotEnd(seq));
     }
 
-    /** Fires the Phase V2 observer if the single notification advanced the cursor (APPLIED). */
+    /** Fires the apply observer if the single notification advanced the cursor (APPLIED). */
     private void observeIfApplied(CommitNotification n, long cursorBefore) {
         if (core.cursor() > cursorBefore && core.cursor() >= n.seq()) {
             applyObserver.onApplied(edgeId, n.seq(), n.commitTimestampMillis(), timeSource.getAsLong());
@@ -286,11 +286,11 @@ final class EdgeActor {
     }
 
     // -----------------------------------------------------------------------
-    // Reads — real LocalConfigStore cursor path through the core (INV-M1)
+    // Reads - real LocalConfigStore cursor path through the core (monotonic-read guarantee)
     // -----------------------------------------------------------------------
 
     /**
-     * Serves a cursor-bound read through the core's read store (real INV-M1
+     * Serves a cursor-bound read through the core's read store (real cursor
      * {@code monotonic_read} seam); in test mode a monotonicity violation throws and fails
      * the seed.
      */
@@ -298,7 +298,7 @@ final class EdgeActor {
         return core.get(key, cursor);
     }
 
-    /** Convenience cursorless read (no INV-M1 gate). */
+    /** Convenience cursorless read (no cursor gate). */
     ReadResult get(String key) {
         return core.get(key);
     }
@@ -326,7 +326,7 @@ final class EdgeActor {
     }
 
     /**
-     * Attaches the OBSERVER-ONLY Phase V2 apply seam. Passing {@link EdgeApplyObserver#NONE}
+     * Attaches the OBSERVER-ONLY apply seam. Passing {@link EdgeApplyObserver#NONE}
      * (the default) is a no-op. Never affects behavior or the determinism digest.
      */
     void setApplyObserver(EdgeApplyObserver observer) {
@@ -374,13 +374,13 @@ final class EdgeActor {
 
     int gapsDetected() { return alive ? core.gapsDetected() : 0; }
 
-    /** C3 / CT-06: DISCONNECTED-entry re-bootstrap directives the core queued. */
+    /** DISCONNECTED-entry re-bootstrap directives the core queued. */
     int disconnectedRebootstraps() { return alive ? core.disconnectedRebootstraps() : 0; }
 
     int snapshotsApplied() { return alive ? core.snapshotsApplied() : 0; }
 
     long deliveredCount() { return deliveredCount; }
 
-    /** Heartbeats observed in this incarnation (C1 carrier; the core wires the frontier). */
+    /** Heartbeats observed in this incarnation (stream carrier; the core wires the frontier). */
     int heartbeatsObserved() { return alive ? core.heartbeatsObserved() : 0; }
 }

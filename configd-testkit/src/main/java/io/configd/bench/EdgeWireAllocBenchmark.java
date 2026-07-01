@@ -12,7 +12,7 @@ import java.util.List;
 import java.util.concurrent.TimeUnit;
 
 /**
- * Netty-migration baseline (Phase R) — <b>surface 3: edge fan-out streaming wire</b>
+ * Netty-migration baseline - <b>surface 3: edge fan-out streaming wire</b>
  * ({@code configd-distribution-service}). Measures the per-frame allocation of the edge
  * {@link EdgeFrameCodec} as the fan-out server / edge client actually exercise it
  * ({@code FanOutServer.send} line 644, {@code EdgeStreamClient} line 537 call the
@@ -24,22 +24,22 @@ import java.util.concurrent.TimeUnit;
  * NOTIFY is the high-volume push frame (every committed delta fans out to every
  * subscriber). Its encode path is allocation-heavy by construction: a per-notification
  * {@code CommandCodec.encodeBatch} blob, an intermediate {@code List<byte[]>}, a
- * per-notification {@code ByteBuffer}, then the final frame array — several allocations
+ * per-notification {@code ByteBuffer}, then the final frame array - several allocations
  * per frame, multiplied by the batch size. Decode rebuilds {@code ArrayList}s,
  * {@code ConfigDelta}s, mutation lists, and {@code byte[]}s. This is precisely the term a
  * pooled-{@code ByteBuf} streaming encoder would target.
  *
  * <ul>
- *   <li>{@code encodeNotify} — STATUS QUO server→edge push, {@code notifyCount} deltas
+ *   <li>{@code encodeNotify} - STATUS QUO server->edge push, {@code notifyCount} deltas
  *       per frame (1 = a single commit; 64 = {@code MAX_NOTIFY_BATCH}, a full coalesced
  *       batch).</li>
- *   <li>{@code decodeNotify} — the edge receive side.</li>
- *   <li>{@code encodeHeartbeat} — the cheap coalesced keep-alive frame, for contrast
+ *   <li>{@code decodeNotify} - the edge receive side.</li>
+ *   <li>{@code encodeHeartbeat} - the cheap coalesced keep-alive frame, for contrast
  *       (payload-independent; the same tiny frame regardless of {@code notifyCount}).</li>
  * </ul>
  *
  * <p><b>Scope (baseline honesty):</b> isolates the wire-codec allocation of a SIGNED delta
- * (the production steady-state shape) — the term Netty's pooled {@code ByteBuf} / an
+ * (the production steady-state shape) - the term Netty's pooled {@code ByteBuf} / an
  * into-buffer codec rewrite would replace. Two production costs sit ON TOP of this and are
  * NOT included here (both additive, same direction): the {@code SSLSocket} write allocation,
  * and {@code FanOutSessionCore}'s per-frame batch assembly (the growing {@code ArrayList} +
@@ -65,7 +65,7 @@ public class EdgeWireAllocBenchmark {
     /** Config value size per mutation (a typical small config blob). */
     private static final int VALUE_BYTES = 64;
 
-    /** Ed25519 signature length — every production delta is signed (mandatory). */
+    /** Ed25519 signature length - every production delta is signed (mandatory). */
     private static final int ED25519_SIG_BYTES = 64;
 
     private EdgeFrame.Notify notifyFrame;
@@ -80,7 +80,7 @@ public class EdgeWireAllocBenchmark {
         }
         List<CommitNotification> notifications = new ArrayList<>(notifyCount);
         for (int i = 0; i < notifyCount; i++) {
-            // One Put per delta — encodeBatch requires >= 1 mutation. SIGNED, the production
+            // One Put per delta - encodeBatch requires >= 1 mutation. SIGNED, the production
             // steady-state shape (ConfigdServer initializes Ed25519 signing as mandatory):
             // a 64-byte Ed25519 signature, a non-zero epoch, and an 8-byte nonce. The bytes'
             // values are irrelevant to allocation; the lengths drive the wire size + the
@@ -99,7 +99,7 @@ public class EdgeWireAllocBenchmark {
                 /* serverNowMillis */ 1_700_000_000_000L);
     }
 
-    /** STATUS QUO server→edge push: encode a NOTIFY batch of {@code notifyCount} deltas. */
+    /** STATUS QUO server->edge push: encode a NOTIFY batch of {@code notifyCount} deltas. */
     @Benchmark
     public byte[] encodeNotify() {
         return EdgeFrameCodec.encode(notifyFrame);

@@ -8,32 +8,30 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * A crash-capable {@link Storage} for durability testing (RR-003 / RR-086).
+ * A crash-capable {@link Storage} for durability testing.
  * <p>
  * <b>Durability model (mirrors {@code FileStorage}).</b> A power loss reverts
  * any change to durable storage that was not fsynced before the crash. The two
  * write kinds differ in <em>where</em> their fsync lives, and this harness models
  * that faithfully:
  * <ul>
- *   <li><b>{@code put} / {@code appendToLog} — self-durable.</b>
+ *   <li><b>{@code put} / {@code appendToLog} - self-durable.</b>
  *       {@code FileStorage.put} writes a temp file, {@code force(true)}s it,
  *       atomic-renames, and fsyncs the directory before returning;
  *       {@code FileStorage.appendToLog} {@code force(true)}s the data. So once
  *       either returns, the bytes are on the platter. These are promoted to the
  *       durable image immediately.</li>
- *   <li><b>{@code truncateLog} / {@code renameLog} — rename-style, pending
- *       until {@link #sync()}.</b> {@code FileStorage} performs the
- *       delete/rename but does NOT fsync the directory; the rename only becomes
- *       durable when a following {@code sync()} (the directory fsync) runs. A
- *       crash before that {@code sync()} reverts the rename. This is exactly the
- *       RR-086 hazard: {@code RaftLog.truncateFrom} and {@code RaftLog.compact}
- *       call {@code storage.sync()} after {@code rewriteWal()} precisely to make
- *       the rename durable — delete that {@code sync()} (the surviving RR-086
- *       mutant) and the WAL rewrite is lost on crash, which this harness makes
- *       observable. A wrapper over {@code FileStorage}, or a plain in-memory
- *       map, cannot see this: an atomic rename is visible to a same-directory
- *       reopen whether or not the directory was fsynced, so fsync removal is
- *       silent there (RR-086's exact gap).</li>
+ *   <li><b>{@code truncateLog} / {@code renameLog} - rename-style, pending
+ *       until {@link #sync()}.</b> {@code FileStorage} performs the delete/rename
+ *       but does NOT fsync the directory; the rename only becomes durable when a
+ *       following {@code sync()} (the directory fsync) runs. A crash before that
+ *       {@code sync()} reverts the rename. {@code RaftLog.truncateFrom} and
+ *       {@code RaftLog.compact} call {@code storage.sync()} after
+ *       {@code rewriteWal()} precisely to make the rename durable - remove that
+ *       {@code sync()} and the WAL rewrite is lost on crash, which this harness
+ *       makes observable. A wrapper over {@code FileStorage}, or a plain in-memory
+ *       map, cannot detect this: an atomic rename is visible to a same-directory
+ *       reopen whether or not the directory was fsynced.</li>
  * </ul>
  * A {@link #crash()} discards every rename-style mutation still awaiting a
  * {@code sync()}; self-durable writes already in the durable image survive.
@@ -44,13 +42,13 @@ import java.util.Map;
  * image), so the recovered view is independent of the crashed instance.
  * <p>
  * <b>Arming a crash at a point.</b> Crashes are armed semantically against the
- * specific durable step a test cares about — {@link #crashBeforeKeyPut(String)},
- * {@link #crashAfterKeyDurable(String)}, {@link #crashBeforeWalDelete(String)} —
+ * specific durable step a test cares about - {@link #crashBeforeKeyPut(String)},
+ * {@link #crashAfterKeyDurable(String)}, {@link #crashBeforeWalDelete(String)} -
  * or after a fixed number of writes ({@link #armCrashAfterWrites(int)}), so a
  * crash can be placed deterministically at, or in the middle of, a multi-step
  * logical operation such as {@code compact()}.
  * <p>
- * Not thread-safe; the Raft consensus path is single-threaded (R-01).
+ * Not thread-safe; the Raft consensus path is single-threaded (owner-thread model).
  */
 final class CrashStorage implements Storage {
 
@@ -80,9 +78,9 @@ final class CrashStorage implements Storage {
         }
     }
 
-    /** Bytes that have reached the platter — survive a crash. */
+    /** Bytes that have reached the platter - survive a crash. */
     private Image durable = new Image();
-    /** durable + pending rename-style ops applied — what the live instance reads. */
+    /** durable + pending rename-style ops applied - what the live instance reads. */
     private Image working = new Image();
     /** Rename-style mutations awaiting the directory fsync (sync()). */
     private final List<Pending> pendingRenames = new ArrayList<>();
@@ -99,7 +97,7 @@ final class CrashStorage implements Storage {
      * stops the process mid-operation; the in-process test keeps executing the
      * Java that follows, and this flag prevents those post-crash calls from
      * mutating the durable image. The test must {@link #recoveredView()} to model
-     * the restart. (An explicit {@link #crash()} does NOT set this — callers that
+     * the restart. (An explicit {@link #crash()} does NOT set this - callers that
      * crash explicitly then keep using the instance are responsible for their own
      * sequencing.)
      */
@@ -115,7 +113,7 @@ final class CrashStorage implements Storage {
     private String lieOnSyncKey;
 
     CrashStorage() {
-        // Empty durable image — models a brand-new node with no prior state.
+        // Empty durable image - models a brand-new node with no prior state.
     }
 
     private CrashStorage(Image durableSeed) {
@@ -125,7 +123,7 @@ final class CrashStorage implements Storage {
 
     /**
      * Returns a fresh {@code CrashStorage} seeded with this storage's current
-     * <em>durable</em> image — i.e. what a restart would see. Rename-style
+     * <em>durable</em> image - i.e. what a restart would see. Rename-style
      * mutations not yet fsynced are intentionally NOT carried over.
      */
     CrashStorage recoveredView() {
@@ -143,7 +141,7 @@ final class CrashStorage implements Storage {
 
     /**
      * Arms a crash to fire <em>just before</em> the first {@code put} to the
-     * named key. Models a power loss before the snapshot blob is even written —
+     * named key. Models a power loss before the snapshot blob is even written -
      * so neither the blob nor any WAL truncation is durable and the full WAL is
      * intact.
      */
@@ -171,8 +169,8 @@ final class CrashStorage implements Storage {
     }
 
     /**
-     * Arms an fsync-LIE for the named key (RR-005-adjacent durability cell): a subsequent
-     * {@code put(key, …)} returns normally — the device ACKs the fsync — but the bytes are
+     * Arms an fsync-LIE for the named key: a subsequent
+     * {@code put(key, ...)} returns normally - the device ACKs the fsync - but the bytes are
      * written to the live (working) image ONLY, never to the durable image. A {@link #crash()}
      * / {@link #recoveredView()} therefore LOSES them, even though {@code put} reported success.
      * Models disk firmware that acknowledges fsync then drops the write on power loss; the caller
@@ -197,7 +195,7 @@ final class CrashStorage implements Storage {
      * Crashes: discards every rename-style mutation that has not been fsynced via
      * {@link #sync()}. Self-durable writes ({@code put}/{@code appendToLog})
      * already in the durable image survive. Any {@code RaftLog}/{@code RaftNode}
-     * still holding this instance must be discarded — use {@link #recoveredView()}
+     * still holding this instance must be discarded - use {@link #recoveredView()}
      * to model the restart.
      */
     void crash() {
@@ -205,7 +203,7 @@ final class CrashStorage implements Storage {
         working = durable.copy();
     }
 
-    // ---- Self-durable writes: reach the durable image immediately ----
+    // Self-durable writes: reach the durable image immediately.
 
     @Override
     public void put(String key, byte[] value) {
@@ -218,7 +216,7 @@ final class CrashStorage implements Storage {
         }
         byte[] v = value.clone();
         if (lieOnSyncKey != null && lieOnSyncKey.equals(key)) {
-            // fsync-lie: visible to the live instance now, but NEVER durable — the bytes are
+            // fsync-lie: visible to the live instance now, but NEVER durable - the bytes are
             // dropped on crash()/recoveredView() despite this put returning normally.
             working.kv.put(key, v.clone());
             operationCount++;
@@ -247,7 +245,7 @@ final class CrashStorage implements Storage {
         maybeAutoCrash();
     }
 
-    // ---- Rename-style ops: durable only after the next sync() (dir fsync) ----
+    // Rename-style ops: durable only after the next sync() (directory fsync).
 
     @Override
     public void truncateLog(String logName) {
@@ -321,7 +319,7 @@ final class CrashStorage implements Storage {
         pendingRenames.clear();
     }
 
-    // ---- Reads: served from the working image (durable + pending renames) ----
+    // Reads: served from the working image (durable + pending renames).
 
     @Override
     public byte[] get(String key) {

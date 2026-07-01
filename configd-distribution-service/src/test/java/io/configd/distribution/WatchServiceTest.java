@@ -105,7 +105,7 @@ class WatchServiceTest {
     }
 
     // -----------------------------------------------------------------------
-    // Event dispatch — basic
+    // Event dispatch - basic
     // -----------------------------------------------------------------------
 
     @Nested
@@ -134,7 +134,7 @@ class WatchServiceTest {
             service.onConfigChange(
                     List.of(new ConfigMutation.Put("key", VALUE)), 1);
 
-            // Don't advance clock — window hasn't expired
+            // Don't advance clock - window hasn't expired
             int dispatched = service.tick();
             assertEquals(0, dispatched);
             assertTrue(received.isEmpty());
@@ -293,7 +293,7 @@ class WatchServiceTest {
         @Test
         void watcherWithHighStartVersionSkipsOldEvents() {
             List<WatchEvent> received = new CopyOnWriteArrayList<>();
-            // Watcher starts at version 10 — won't get events <= 10
+            // Watcher starts at version 10 - won't get events <= 10
             service.register("", 10, received::add);
 
             service.onConfigChange(

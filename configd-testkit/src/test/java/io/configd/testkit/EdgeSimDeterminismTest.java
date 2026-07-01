@@ -15,38 +15,38 @@ import java.util.HexFormat;
 import static org.junit.jupiter.api.Assertions.*;
 
 /**
- * Determinism for {@link EdgeFanOutSim} (RR-010 extended to the edge plane): the
- * same seed must produce a byte-identical execution — CP state AND edge state — and
+ * Determinism for {@link EdgeFanOutSim} (extended to the edge plane): the
+ * same seed must produce a byte-identical execution - CP state AND edge state - and
  * distinct seeds must differ (non-vacuity).
  *
- * <h2>Digest scope (NOTE-2, design review §C)</h2>
+ * <h2>Digest scope (NOTE-2, design review section C)</h2>
  * The per-tick fold folds, deterministically, the state that proves replayability of the
  * combined CP+edge machine, and DELIBERATELY OMITS state that is either redundant or not a
  * determinism signal:
  * <ul>
- *   <li><b>Folded — CP per node:</b> {@code role.ordinal}, {@code currentTerm},
+ *   <li><b>Folded - CP per node:</b> {@code role.ordinal}, {@code currentTerm},
  *       {@code leaderId}, {@code log.lastIndex/commitIndex/lastApplied}, and
- *       {@code store.currentVersion()} — the same shape {@code SimulationDeterminismTest} /
+ *       {@code store.currentVersion()} - the same shape {@code SimulationDeterminismTest} /
  *       {@code AdversarialSimTest} use (CP control-flow + applied version).</li>
- *   <li><b>Folded — edge per actor:</b> {@code incarnation}, {@code cursor},
- *       {@code currentVersion}, {@code staleness().ordinal()}, {@code inboxSize()} — the
- *       Phase V1 observable that captures every crash/restart/lag/partition transition and
+ *   <li><b>Folded - edge per actor:</b> {@code incarnation}, {@code cursor},
+ *       {@code currentVersion}, {@code staleness().ordinal()}, {@code inboxSize()} - the
+ *       observable that captures every crash/restart/lag/partition transition and
  *       every apply.</li>
  *   <li><b>Deliberately OMITTED:</b> per-key store <em>value bytes</em> (a deterministic
  *       function of the identical command stream, so version identity already implies them
- *       — folding bytes would only slow the digest); the <em>commit timestamps</em> (the
- *       C-1 skewed-clock surface — they are an observability signal, not a determinism one,
+ *       -  folding bytes would only slow the digest); the <em>commit timestamps</em> (the
+ *       C-1 skewed-clock surface - they are an observability signal, not a determinism one,
  *       and a future skew-config change must NOT spuriously flip this digest); and the
  *       edge-network <em>message schedule</em> (an internal detail; its EFFECT shows in
- *       cursor/inbox/version, which ARE folded). The digest thus proves "same seed ⇒ same
- *       CP+edge trajectory and applied state", which is the replayability guarantee RR-010
+ *       cursor/inbox/version, which ARE folded). The digest thus proves "same seed => same
+ *       CP+edge trajectory and applied state", which is the replayability guarantee
  *       requires, without over- or under-claiming.</li>
  * </ul>
  *
- * <p>Edge faults are ON so the crash/restart/lag/partition paths enter the digest — any
+ * <p>Edge faults are ON so the crash/restart/lag/partition paths enter the digest - any
  * non-seed-derived edge randomness would diverge the two runs. A second variant runs the
  * same fold with the real {@link C1StreamDriver} so the live-drain path is also proven
- * deterministic (same seed twice ⇒ identical digest).
+ * deterministic (same seed twice => identical digest).
  */
 class EdgeSimDeterminismTest {
 
@@ -77,7 +77,7 @@ class EdgeSimDeterminismTest {
     /**
      * The live-drain variant: the same seed run twice with the real {@link C1StreamDriver}
      * must produce a byte-identical digest, AND it must DIFFER from the {@link StreamDriver#NONE}
-     * digest (the C1 driver actually delivers — proving the digest sees the drain). The
+     * digest (the C1 driver actually delivers - proving the digest sees the drain). The
      * driver is stateful per run, so a fresh instance is supplied for each replay.
      */
     @Test
@@ -114,7 +114,7 @@ class EdgeSimDeterminismTest {
             sim.tick();
             try {
                 dos.writeInt(t);
-                // CP state — same fold as SimulationDeterminismTest / AdversarialSimTest.
+                // CP state - same fold as SimulationDeterminismTest / AdversarialSimTest.
                 for (int i = 0; i < CP_NODES; i++) {
                     dos.writeInt(cp.node(i).role().ordinal());
                     dos.writeLong(cp.node(i).currentTerm());
@@ -126,7 +126,7 @@ class EdgeSimDeterminismTest {
                     dos.writeLong(log.lastApplied());
                     dos.writeLong(cp.store(i).currentVersion());
                 }
-                // Edge state — the Phase V1 observable per edge.
+                // Edge state - the observable per edge.
                 for (EdgeActor edge : sim.edges()) {
                     dos.writeInt(edge.incarnation());
                     dos.writeLong(edge.cursor());

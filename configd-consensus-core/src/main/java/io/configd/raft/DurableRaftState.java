@@ -11,7 +11,7 @@ import static io.configd.raft.RaftArtifactMagic.STATE_MAGIC;
 
 /**
  * Persists Raft's required durable state: {@code currentTerm} and
- * {@code votedFor} (Raft §5.2, Figure 2).
+ * {@code votedFor} (Raft section 5.2, Figure 2).
  * <p>
  * Raft requires these two values to survive process restarts. Without
  * persistence, a restarted node can:
@@ -23,7 +23,7 @@ import static io.configd.raft.RaftArtifactMagic.STATE_MAGIC;
  * Every mutation of term or votedFor MUST go through this class to
  * guarantee durability before the in-memory state is updated.
  * <p>
- * Storage format: 12 bytes — [term:8 bytes (long)] + [votedFor:4 bytes (int, -1 for null)]
+ * Storage format: 12 bytes - [term:8 bytes (long)] + [votedFor:4 bytes (int, -1 for null)]
  */
 public final class DurableRaftState {
 
@@ -32,10 +32,10 @@ public final class DurableRaftState {
 
     private final Storage storage;
     /**
-     * PA-2021 (ADR-0042): at-rest integrity codec over the 12-byte
-     * {@code [term][votedFor]} payload. Never null — a keyless
+     * At-rest integrity codec over the 12-byte
+     * {@code [term][votedFor]} payload. Never null - a keyless
      * {@link IntegrityEnvelope} is the default (in-memory mode and existing tests
-     * unchanged, reads legacy raw bytes); the server wires a KEYED one so a forged
+     * unchanged, reads legacy raw bytes); the server wires a keyed one so a forged
      * {@code votedFor} (recomputed CRC, no valid MAC) is refused on load.
      */
     private final IntegrityEnvelope integrity;
@@ -52,12 +52,12 @@ public final class DurableRaftState {
     }
 
     /**
-     * Creates a new DurableRaftState with an explicit at-rest integrity codec
-     * (PA-2021 / ADR-0042), loading any previously persisted state.
+     * Creates a new DurableRaftState with an explicit at-rest integrity codec,
+     * loading any previously persisted state.
      * <p>
      * {@code raft.persistent_state} is an atomic-rename artifact (never torn), so a
      * structurally-complete-but-MAC-invalid file under a keyed codec is
-     * unambiguously tamper and {@link #load()} fails loud — a forged {@code votedFor}
+     * unambiguously tamper and {@link #load()} fails loud - a forged {@code votedFor}
      * must never load (it would violate Election Safety). A keyless codec accepts
      * legacy raw (pre-envelope) state for back-compat.
      *
@@ -87,7 +87,7 @@ public final class DurableRaftState {
 
     /**
      * Updates the current term. Persists to durable storage before returning.
-     * Clears votedFor when the term advances (Raft §5.2: vote is per-term).
+     * Clears votedFor when the term advances (Raft section 5.2: vote is per-term).
      * <p>
      * <b>Crash safety:</b> Persistence happens BEFORE in-memory update.
      * If persist() throws (disk full, I/O error), in-memory state remains
@@ -147,7 +147,7 @@ public final class DurableRaftState {
         this.votedFor = candidate;
     }
 
-    // ---- Serialization ----
+    // Serialization
 
     /**
      * Persists the given values to durable storage. Called with the NEW values
@@ -158,7 +158,7 @@ public final class DurableRaftState {
         ByteBuffer buf = ByteBuffer.allocate(12);
         buf.putLong(term);
         buf.putInt(voted != null ? voted.id() : VOTED_FOR_NULL);
-        // PA-2021 (ADR-0042): wrap the 12-byte payload in the at-rest integrity
+        // wrap the 12-byte payload in the at-rest integrity
         // envelope before persisting.
         storage.put(STORAGE_KEY, integrity.wrap(STATE_MAGIC, buf.array()));
         storage.sync();
@@ -166,8 +166,8 @@ public final class DurableRaftState {
 
     private void load() {
         byte[] data = storage.get(STORAGE_KEY);
-        // PA-2021 (ADR-0042): unwrapOrNull returns null ONLY for structurally-absent
-        // or too-short bytes (fresh node / first boot) — fresh init at term 0, as
+        // unwrapOrNull returns null ONLY for structurally-absent
+        // or too-short bytes (fresh node / first boot)  -  fresh init at term 0, as
         // today. A structurally-complete-but-tampered envelope (keyed-MAC mismatch,
         // CRC32C mismatch, rolled version, or algId=NONE downgrade under a key)
         // THROWS IntegrityException, which propagates: a forged votedFor must not

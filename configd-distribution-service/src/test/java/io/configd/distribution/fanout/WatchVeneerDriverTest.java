@@ -27,12 +27,12 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * The end-to-end watch veneer matrix driven through {@link FanOutConnectionDriver} (RFC §2 §4 /
- * §7). Exercises the security gate (the crux), fail-closed behavior, {@code watch_id} no-reuse,
- * multiplex isolation, cursor resume, the behind-buffer catch-up, and the path-grammar
- * (BAD_SUBSCRIBE) surface. Uses a real {@link FanOutBuffer} + {@link SnapshotReplaySource}, a
- * recording {@link RecordingTransportSink} (the transport delegate behind the veneer), a
- * {@link FakeClock}, and a lambda {@link WatchAuthorizer} — no threads, no I/O.
+ * End-to-end watch veneer matrix driven through {@link FanOutConnectionDriver}. Exercises the
+ * security gate (the crux), fail-closed behavior, {@code watch_id} no-reuse, multiplex
+ * isolation, cursor resume, the behind-buffer catch-up, and the path-grammar (BAD_SUBSCRIBE)
+ * surface. Uses a real {@link FanOutBuffer} + {@link SnapshotReplaySource}, a recording
+ * {@link RecordingTransportSink} (the transport delegate behind the veneer), a
+ * {@link FakeClock}, and a lambda {@link WatchAuthorizer} - no threads, no I/O.
  *
  * <p>Inbound is driven deterministically: {@link #feed} posts the frame and drains the session
  * command onto the test thread (acting as the session thread); {@link #tick} advances the core.
@@ -76,7 +76,7 @@ class WatchVeneerDriverTest {
         driver.session().tick(clock.now());
     }
 
-    // ---- the security gate (W7) — the crux ---------------------------------
+    // ---- the security gate (W7) - the crux ---------------------------------
 
     @Test
     void denyingAuthorizerRejectsWithNotAuthorizedAndZeroDataFrames() {
@@ -98,7 +98,7 @@ class WatchVeneerDriverTest {
 
     @Test
     void allowingAuthorizerEmitsWatchCreatedThenWatchEvents() {
-        setup(ALLOW); // empty buffer ⇒ first watch subscribes TAIL
+        setup(ALLOW); // empty buffer => first watch subscribes TAIL
         feed(keyCreate(1, "/k/a"));
 
         List<EdgeFrame.WatchCreated> created = out.sentOfType(EdgeFrame.WatchCreated.class);
@@ -122,7 +122,7 @@ class WatchVeneerDriverTest {
         // connection-level NOTIFY. The gate must reject BEFORE the core drain starts, so not a
         // single NOTIFY leaks the full chain to a non-root principal.
         setup(DENY);
-        buffer.publish(put(1, "/secret/k", "v")); // data exists — a NOTIFY would fire if subscribed
+        buffer.publish(put(1, "/secret/k", "v")); // data exists - a NOTIFY would fire if subscribed
         feed(fullCreate(1, EdgeFrame.WATCH_FLAG_FULL_CHAIN_VERIFY, WatchCursor.fromNow()));
         tick();
         tick();
@@ -191,7 +191,7 @@ class WatchVeneerDriverTest {
         feed(cancel(1)); // id 1 stays burned in everUsed
         out.clear();
 
-        feed(keyCreate(1, "/k/b")); // reuse id 1 → BAD_SUBSCRIBE (W2-8)
+        feed(keyCreate(1, "/k/b")); // reuse id 1 -> BAD_SUBSCRIBE (W2-8)
         assertEquals(1, out.sent().size());
         assertReject(1, ErrorCode.BAD_SUBSCRIBE);
     }
@@ -210,7 +210,7 @@ class WatchVeneerDriverTest {
 
         List<Long> delivered = out.sentOfType(EdgeFrame.WatchEvent.class).stream()
                 .map(EdgeFrame.WatchEvent::s).toList();
-        // Cross-check: the delivered set is exactly the scalar readSince(2) set, filtered (FULL ⇒ all).
+        // Cross-check: the delivered set is exactly the scalar readSince(2) set, filtered (FULL => all).
         List<Long> expected = ((Result.Ok) buffer.readSince(2)).notifications().stream()
                 .map(CommitNotification::seq).toList();
         assertEquals(List.of(3L, 4L, 5L), delivered);
@@ -228,7 +228,7 @@ class WatchVeneerDriverTest {
         ReplaySource replay = snapshotAt(10, "/k/7", "v7", "/k/8", "v8", "/k/9", "v9", "/k/10", "v10");
         setup(ALLOW, "edge-1", tiny, replay);
 
-        feed(fullCreate(1, 0, WatchCursor.of(0, 2))); // readSince(2) GAPs → SNAPSHOT_FIRST
+        feed(fullCreate(1, 0, WatchCursor.of(0, 2))); // readSince(2) GAPs -> SNAPSHOT_FIRST
         EdgeFrame.WatchCreated created = out.sentOfType(EdgeFrame.WatchCreated.class).get(0);
         assertEquals(EdgeFrame.Mode.SNAPSHOT_FIRST, created.shards().get(0).mode());
 
@@ -279,8 +279,8 @@ class WatchVeneerDriverTest {
     void fullTargetWithNonEmptyPathIsStructurallyRejectedAtTheWire() {
         // A FULL target MUST carry an empty path (W5-4). The EdgeFrame.WatchCreate record enforces
         // this structurally, so a malformed FULL frame is a codec FRAME_CORRUPT and never reaches
-        // the veneer — there is no veneer path that can build it. Documented here as the structural
-        // invariant that discharges the "FULL non-empty → BAD_SUBSCRIBE" matrix cell.
+        // the veneer - there is no veneer path that can build it. Documented here as the structural
+        // invariant that discharges the "FULL non-empty -> BAD_SUBSCRIBE" matrix cell.
         assertThrows(IllegalArgumentException.class, () -> new EdgeFrame.WatchCreate(
                 1, 0, EdgeFrame.WATCH_TARGET_FULL, "/x".getBytes(StandardCharsets.UTF_8),
                 WatchCursor.fromNow(), 0));
@@ -288,7 +288,7 @@ class WatchVeneerDriverTest {
 
     @Test
     void aPrefixSubtreeTrailingSlashIsAcceptedGrammar() {
-        // §3.4: the subtree form /a/ is the canonical PREFIX target — it must NOT be grammar-rejected.
+        // The subtree form /a/ is the canonical PREFIX target - it must NOT be grammar-rejected.
         setup(ALLOW);
         feed(prefixCreate(1, "/a/"));
         assertTrue(out.sentOfType(EdgeFrame.WatchCanceled.class).isEmpty(),

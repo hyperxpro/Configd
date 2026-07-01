@@ -19,7 +19,7 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.atomic.AtomicLong;
 
 /**
- * Phase V fan-out head-to-head (surface 3) — the <b>out-of-JVM subscriber load client</b>. Opens
+ * Fan-out head-to-head (surface 3) - the <b>out-of-JVM subscriber load client</b>. Opens
  * {@code subscribers} long-lived edge streams (virtual thread each), subscribes each in TAIL mode,
  * and drains the {@code NOTIFY} fan-out from {@link FanOutPushServerMain} while acking periodically
  * (so the slow-consumer governor never demotes a keeping-up subscriber). Lives in its own JVM so
@@ -27,12 +27,12 @@ import java.util.concurrent.atomic.AtomicLong;
  *
  * <p>Owns two axes:
  * <ul>
- *   <li><b>Delivery throughput</b> — {@code measureCount × subscribers} notifications delivered ÷
+ *   <li><b>Delivery throughput</b> - {@code measureCount x subscribers} notifications delivered /
  *       wall time from {@code GO} to the last delivery (all in this client's {@code nanoTime}, so
  *       it is internally consistent). This is the fan-out rate the transport sustains.</li>
- *   <li><b>One-way delivery latency</b> — {@code recvMillis − notify.commitTimestampMillis}, recorded
+ *   <li><b>One-way delivery latency</b> - {@code recvMillis - notify.commitTimestampMillis}, recorded
  *       in an {@link Histogram}. NOTE: {@code System.currentTimeMillis()} is the only clock
- *       comparable across two JVMs on one box, so this is <b>ms-resolution</b> — a coarse indicator,
+ *       comparable across two JVMs on one box, so this is <b>ms-resolution</b> - a coarse indicator,
  *       not a sub-ms tail. The trustworthy fan-out axes are server-side syscalls/op (strace) and
  *       delivery throughput; latency here is labelled coarse on purpose.</li>
  * </ul>
@@ -91,7 +91,7 @@ public final class FanOutLoadClientMain {
                     sock.setTcpNoDelay(true);
                     DataInputStream in = new DataInputStream(sock.getInputStream());
                     OutputStream out = sock.getOutputStream();
-                    // SUBSCRIBE full-store, TAIL from 0 (empty store → no snapshot).
+                    // SUBSCRIBE full-store, TAIL from 0 (empty store -> no snapshot).
                     out.write(EdgeFrameCodec.encode(
                             new EdgeFrame.Subscribe(true, List.of(), 0L, -1L, "edge-" + id)));
                     out.flush();
@@ -117,7 +117,7 @@ public final class FanOutLoadClientMain {
                                 long c = received[id].incrementAndGet();
                                 maxSeq = Math.max(maxSeq, cn.seq());
                                 if (ph != null && ph.recordLatency) {
-                                    long lat = (nowMs - cn.commitTimestampMillis()) * 1000L; // →micros
+                                    long lat = (nowMs - cn.commitTimestampMillis()) * 1000L; // ->micros
                                     hist[id].recordValue(Math.max(1L, lat));
                                 }
                                 if (ph != null && signaled[id] < ph.target[id] && c >= ph.target[id]) {

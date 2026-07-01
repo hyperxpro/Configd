@@ -9,7 +9,7 @@ import java.nio.file.Path;
 /**
  * Deterministic serializer for a {@link Schedule}. The output is a stable function
  * of the schedule (ordered lists, fixed formatting), so two runs of the same seed
- * yield a byte-identical file — the gate-(iv) reproducibility proof
+ * yield a byte-identical file - the reproducibility proof
  * ({@code diff schedule-<seed>.json}).
  */
 public final class ScheduleJson {

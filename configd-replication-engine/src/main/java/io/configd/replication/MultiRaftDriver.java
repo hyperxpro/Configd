@@ -24,11 +24,11 @@ import java.util.concurrent.TimeUnit;
  * Manages multiple Raft groups on a single node. Each tick advances all
  * groups. Messages from the transport are routed to the correct group.
  * <p>
- * Design: historically a single I/O thread called {@link #tick()} which iterated all groups (R-01).
- * Phase 0 Workstream B adds the owner-executor pool: {@link #tickOwner(int)} ticks the groups bound
- * to one owner thread (per-owner scheduling) and {@link #ownerExecutor(int)} gives each group's owner
- * for marshalling. The {@code groups} map is a {@link ConcurrentHashMap} so owner threads and the
- * inbound path read it concurrently with infrequent add/remove (H-5).
+ * Each group has a dedicated owner thread supplied by the {@link OwnerExecutorPool}.
+ * {@link #tickOwner(int)} ticks the groups bound to one owner thread (per-owner scheduling)
+ * and {@link #ownerExecutor(int)} gives each group's owner for marshalling. The {@code groups}
+ * map is a {@link ConcurrentHashMap} so owner threads and the inbound path read it
+ * concurrently with infrequent add/remove.
  * <p>
  * Groups are identified by integer group IDs. Each group ID maps to
  * exactly one {@link RaftNode}. Adding or removing groups is expected
@@ -49,7 +49,7 @@ public final class MultiRaftDriver {
     private final Map<Integer, RaftNode> groups;
 
     /**
-     * Phase 0 — Workstream B — the owner-executor pool. Null in legacy/test wiring (which drives
+     * The owner-executor pool. Null in legacy/test wiring (which drives
      * {@link #tick()} on a single thread); set by the server via {@link #setOwnerPool} to enable
      * per-owner ticking ({@link #tickOwner}) and owner-targeted marshalling ({@link #ownerExecutor}).
      * Volatile: published by the wiring thread, read by every owner + inbound thread.
@@ -57,17 +57,16 @@ public final class MultiRaftDriver {
     private volatile OwnerExecutorPool ownerPool;
 
     /**
-     * Stage 2 M2 (rehoming) — the DYNAMIC group→owner-index mapping; the authority for routing and tick
-     * eligibility. Empty by default: {@link #currentOwnerIndex} falls back to the static
-     * {@code floorMod(gid, N)}. A rehoming handoff atomically re-points a group here. A
-     * {@link ConcurrentHashMap} so owner + inbound threads read it while {@link #rehomeGroup} writes it.
-     * DORMANT in production (single-group is never rehomed); exercised by tests + a future Phase-1
-     * placement policy. See docs/phase0-B-stage2/m2-rehoming-handoff-design.md.
+     * Dynamic group-to-owner-index mapping - the authority for routing and tick eligibility.
+     * Empty by default: {@link #currentOwnerIndex} falls back to the static {@code floorMod(gid, N)}.
+     * A rehoming handoff atomically re-points a group here. A {@link ConcurrentHashMap} so owner +
+     * inbound threads read it while {@link #rehomeGroup} writes it.
+     * Dormant in production (single-group is never rehomed).
      */
     private final Map<Integer, Integer> groupOwner = new ConcurrentHashMap<>();
 
     /**
-     * Stage 2 M2 (rehoming) — groups currently mid-handoff. While a group is here, {@link #tickOwner}/
+     * Groups currently mid-handoff. While a group is here, {@link #tickOwner}/
      * {@link #maybeCompactOwner} skip it and marshalled work re-dispatches (check-and-bounce), so no
      * entry point runs on an ambiguous owner during the handoff window. Cleared once the gaining owner
      * has adopted.
@@ -75,20 +74,20 @@ public final class MultiRaftDriver {
     private final Set<Integer> migrating = ConcurrentHashMap.newKeySet();
 
     /**
-     * Stage 2 M3 (coalesced heartbeats) — ONE {@link HeartbeatCoalescer} per owner thread (index =
-     * owner index), or {@code null} when coalescing is not enabled (legacy/test wiring). Each is touched
-     * only on its owner's thread: {@link #tickOwner} opens its window and drains it; the group's
-     * {@code CoalescingRaftTransport} (bound to the same instance via {@link #heartbeatCoalescer}) records
-     * into it during {@code node.tick()}. Volatile: published by the wiring thread via
-     * {@link #enableHeartbeatCoalescing}, read by every owner thread. See docs/phase0-B-stage2-m3/design.md.
+     * One {@link HeartbeatCoalescer} per owner thread (index = owner index), or {@code null} when
+     * coalescing is not enabled (legacy/test wiring). Each is touched only on its owner's thread:
+     * {@link #tickOwner} opens its window and drains it; the group's {@code CoalescingRaftTransport}
+     * (bound to the same instance via {@link #heartbeatCoalescer}) records into it during
+     * {@code node.tick()}. Volatile: published by the wiring thread via
+     * {@link #enableHeartbeatCoalescing}, read by every owner thread.
      */
     private volatile HeartbeatCoalescer[] coalescers;
 
     /**
-     * Stage 2 M3 — where {@link #tickOwner} drains each owner's coalesced heartbeats (one call per peer).
-     * Set together with {@link #coalescers} by {@link #enableHeartbeatCoalescing}; {@code null} ⇒ coalescing
-     * disabled. The implementation owns the framing (1 group ⇒ a plain AppendEntries, wire unchanged; &gt;1
-     * ⇒ a {@link CoalescedHeartbeat}).
+     * Where {@link #tickOwner} drains each owner's coalesced heartbeats (one call per peer).
+     * Set together with {@link #coalescers} by {@link #enableHeartbeatCoalescing}; null means
+     * coalescing is disabled. The implementation owns the framing (1 group produces a plain
+     * AppendEntries; more than 1 produces a {@link CoalescedHeartbeat}).
      */
     private volatile CoalescedHeartbeatTransport heartbeatDrain;
 
@@ -136,9 +135,9 @@ public final class MultiRaftDriver {
         if (groups.remove(groupId) == null) {
             throw new IllegalArgumentException("Group not registered: " + groupId);
         }
-        // Stage 2 M2 (H-5): also drop any rehoming state so a later addGroup of the same id starts
-        // clean on the static floorMod owner — otherwise a stale groupOwner override / migrating mark
-        // would route the fresh node to the wrong owner (red-team Defect 2).
+        // Also drop any rehoming state so a later addGroup of the same id starts clean on the
+        // static floorMod owner - otherwise a stale groupOwner override or migrating mark
+        // would route the fresh node to the wrong owner.
         groupOwner.remove(groupId);
         migrating.remove(groupId);
     }
@@ -152,7 +151,7 @@ public final class MultiRaftDriver {
      * <p>
      * This is the primary driver loop entry point. The caller (I/O thread)
      * invokes this at a fixed interval (e.g., every 1ms). Each call
-     * iterates all groups exactly once — O(groups), not O(groups * peers).
+     * iterates all groups exactly once - O(groups), not O(groups * peers).
      */
     public void tick() {
         for (RaftNode node : groups.values()) {
@@ -161,12 +160,12 @@ public final class MultiRaftDriver {
     }
 
     /**
-     * Threshold-gated Raft-log compaction across all groups (RR-005). The server tick loop
-     * calls this so {@link RaftNode#maybeCompact(long)} is actually reachable in the wired
-     * server — without it the only {@code triggerSnapshot()} caller was the circular
-     * {@code sendInstallSnapshot}, so each group's WAL grew for the life of the process.
-     * O(groups); a group only snapshots when its applied-since-snapshot span exceeds the
-     * threshold (the snapshot work itself is therefore amortized and rare).
+     * Threshold-gated Raft-log compaction across all groups. The server tick loop calls this
+     * so {@link RaftNode#maybeCompact(long)} is reachable in the wired server - without it
+     * the only {@code triggerSnapshot()} caller was the circular {@code sendInstallSnapshot},
+     * so each group's WAL grew for the life of the process. O(groups); a group only snapshots
+     * when its applied-since-snapshot span exceeds the threshold (snapshot work is amortized
+     * and rare).
      *
      * @param appliedSinceSnapshotThreshold applied entries a group may retain past its
      *                                       snapshot point before compacting
@@ -176,10 +175,6 @@ public final class MultiRaftDriver {
             node.maybeCompact(appliedSinceSnapshotThreshold);
         }
     }
-
-    // ========================================================================
-    // Owner-executor pool (Phase 0 Workstream B) — per-owner ticking + marshalling
-    // ========================================================================
 
     /**
      * Binds the owner-executor pool. Called once by the server at wiring, before any owner is
@@ -196,11 +191,11 @@ public final class MultiRaftDriver {
     }
 
     /**
-     * Stage 2 M3 — enable coalesced heartbeats: create one {@link HeartbeatCoalescer} per owner and route
-     * each owner's per-tick drain to {@code drain}. Call once at wiring AFTER {@link #setOwnerPool}, before
-     * any group is ticked; then bind each group's {@code CoalescingRaftTransport} to {@link #heartbeatCoalescer}
-     * for its owner. Strictly additive — until this runs, {@link #tickOwner} ticks exactly as before and the
-     * decorators pass through (legacy/test wiring leaves coalescing off).
+     * Enables coalesced heartbeats: creates one {@link HeartbeatCoalescer} per owner and routes
+     * each owner's per-tick drain to {@code drain}. Call once at wiring after {@link #setOwnerPool},
+     * before any group is ticked; then bind each group's {@code CoalescingRaftTransport} to
+     * {@link #heartbeatCoalescer} for its owner. Strictly additive - until this runs,
+     * {@link #tickOwner} ticks exactly as before (legacy/test wiring leaves coalescing off).
      *
      * @param drain where {@link #tickOwner} sends each owner's coalesced heartbeats (one call per peer)
      * @throws IllegalStateException if the owner pool has not been set
@@ -221,7 +216,7 @@ public final class MultiRaftDriver {
     }
 
     /**
-     * Stage 2 M3 — the {@link HeartbeatCoalescer} for an owner, for binding that owner's groups'
+     * The {@link HeartbeatCoalescer} for an owner, for binding that owner's groups'
      * {@code CoalescingRaftTransport} decorators. Available only after {@link #enableHeartbeatCoalescing}.
      *
      * @throws IllegalStateException if coalescing has not been enabled
@@ -235,20 +230,19 @@ public final class MultiRaftDriver {
     }
 
     /**
-     * Stage 2 M3 — demultiplex a received {@link CoalescedHeartbeat} back into per-group inbound routing:
-     * each group's empty AppendEntries is delivered via {@link #routeMessage}, exactly as if it had arrived
-     * un-coalesced. Exercised by the N&gt;1 test surfaces.
+     * Demultiplexes a received {@link CoalescedHeartbeat} back into per-group inbound routing:
+     * each group's empty AppendEntries is delivered via {@link #routeMessage}, exactly as if it
+     * had arrived un-coalesced. Exercised by N&gt;1 test surfaces.
      *
-     * <p><b>@implNote — threading contract / NOT the production receive path.</b> This calls
-     * {@link #routeMessage} INLINE on the caller's thread, and {@code routeMessage} runs
-     * {@code node.handleMessage} on the calling thread for a non-rehomed group (every production group),
-     * which asserts the owner thread. So this is only safe when the caller's thread is the owner of EVERY
-     * group in {@code ch} — i.e. a single-owner sim / test, where all groups share one owner. A coalesced
-     * frame on the real wire can bundle groups with DIFFERENT owners at N&gt;1, so the production receive
-     * path does NOT call this: {@code RaftTransportAdapter.registerInboundHandler} decodes the frame and
-     * dispatches each group through its OWN owner executor (Phase 1 Seam F; see server-wiring-decision-log
-     * DL-F-03). Calling this from an inbound/IO thread at N&gt;1 would run {@code handleMessage} off-owner
-     * and trip {@code RaftNode.assertOwnerThread()}.
+     * <p><b>Threading note - not the production receive path.</b> This calls {@link #routeMessage}
+     * inline on the caller's thread, and {@code routeMessage} runs {@code node.handleMessage} on
+     * the calling thread for a non-rehomed group, which asserts the owner thread. So this is only
+     * safe when the caller's thread is the owner of EVERY group in {@code ch} - i.e. a single-owner
+     * sim or test where all groups share one owner. On the real wire a coalesced frame can bundle
+     * groups with DIFFERENT owners at N&gt;1, so the production inbound handler decodes the frame
+     * and dispatches each group through its own owner executor separately. Calling this from an
+     * inbound/IO thread at N&gt;1 would run {@code handleMessage} off-owner and trip the owner
+     * assertion.
      *
      * @param from the node that sent the coalesced heartbeat (the AppendEntries also carry {@code leaderId})
      * @param ch   the coalesced heartbeat
@@ -260,7 +254,7 @@ public final class MultiRaftDriver {
     }
 
     /**
-     * The owner executor for a group — the ONLY executor on which that group's {@link RaftNode} may
+     * The owner executor for a group - the ONLY executor on which that group's {@link RaftNode} may
      * run. Inbound/propose/read/flush marshal their {@code RaftNode} work onto this.
      *
      * @throws IllegalStateException if the owner pool has not been set
@@ -274,9 +268,9 @@ public final class MultiRaftDriver {
     }
 
     /**
-     * Stage 2 M2 — the CURRENT owner index for a group: the rehoming override if one exists, else the
-     * static {@code floorMod(gid, N)} default. The single source of truth for routing + tick eligibility.
-     * At N=1 / no-rehome there is no override, so this is exactly the M1 static mapping.
+     * The current owner index for a group: the rehoming override if one exists, else the
+     * static {@code floorMod(gid, N)} default. The single source of truth for routing and tick
+     * eligibility. At N=1 with no rehome active there is no override, so this is the static mapping.
      *
      * @throws IllegalStateException if the owner pool has not been set
      */
@@ -290,22 +284,21 @@ public final class MultiRaftDriver {
     }
 
     /**
-     * Per-owner consensus tick: ticks every group bound to {@code ownerIndex}. MUST be invoked ON that
+     * Per-owner consensus tick: ticks every group bound to {@code ownerIndex}. MUST be invoked on that
      * owner's thread (the per-owner scheduled task), so each {@code node.tick()} runs on its group's
-     * owner thread — preserving R-01′ (the {@code assertOwnerThread()} net asserts it). At N=1 a single
-     * owner ticks every group, exactly reproducing the R-01 {@link #tick()} loop.
+     * owner thread. At N=1 a single owner ticks every group, exactly reproducing the {@link #tick()} loop.
      */
     public void tickOwner(int ownerIndex) {
         OwnerExecutorPool p = ownerPool;
         if (p == null) {
             throw new IllegalStateException("owner pool not set — setOwnerPool() must run at wiring");
         }
-        // Stage 2 M3: open this owner's heartbeat-coalescing window for the duration of its tick. Each
-        // group's empty AppendEntries (heartbeat) emitted during node.tick() is buffered into hc instead
-        // of sent; at the end we drain hc into one message per peer (cost flat in group count). Gate on
-        // BOTH coalescers AND heartbeatDrain (enableHeartbeatCoalescing sets them together): this is
-        // fail-safe — we never open a heartbeat window we cannot drain, so a heartbeat is never buffered
-        // only to be silently discarded (which would starve followers).
+        // Open this owner's heartbeat-coalescing window for the duration of its tick. Each
+        // group's empty AppendEntries (heartbeat) emitted during node.tick() is buffered into hc
+        // instead of sent; at the end we drain hc into one message per peer (cost flat in group
+        // count). Gate on BOTH coalescers AND heartbeatDrain (enableHeartbeatCoalescing sets them
+        // together): we never open a heartbeat window we cannot drain, so a heartbeat is never
+        // buffered only to be silently discarded (which would starve followers).
         HeartbeatCoalescer[] hcs = coalescers;
         CoalescedHeartbeatTransport drain = heartbeatDrain;
         HeartbeatCoalescer hc = (hcs != null && drain != null) ? hcs[ownerIndex] : null;
@@ -315,17 +308,17 @@ public final class MultiRaftDriver {
         try {
             for (Map.Entry<Integer, RaftNode> e : groups.entrySet()) {
                 int g = e.getKey();
-                // Stage 2 M2: tick only the groups this owner CURRENTLY owns (rehoming-aware) and that are
-                // NOT mid-handoff (a migrating group is owned by nobody until adopt — skipping it keeps the
-                // ambiguous window tick-free). At N=1/no-rehome this is exactly p.ownerIndexOf(g)==ownerIndex.
+                // Tick only the groups this owner currently owns (rehoming-aware) and that are NOT
+                // mid-handoff (a migrating group is owned by nobody until adopt - skipping it keeps
+                // the ambiguous window tick-free).
                 if (currentOwnerIndex(g) == ownerIndex && !migrating.contains(g)) {
                     e.getValue().tick();
                 }
             }
         } finally {
-            // Stage 2 M3 (H-2): drain the coalesced heartbeats EVEN IF a group's tick() threw — otherwise
-            // the heartbeats already recorded this tick would be dropped, and a recurring throw would
-            // starve followers into spurious elections (the RR-113 failure mode this milestone fixes).
+            // Drain the coalesced heartbeats even if a group's tick() threw - otherwise the
+            // heartbeats already recorded this tick would be dropped, and a recurring throw would
+            // starve followers into spurious elections.
             if (hc != null) {
                 drainHeartbeats(hc, drain);
             }
@@ -333,11 +326,10 @@ public final class MultiRaftDriver {
     }
 
     /**
-     * Stage 2 M3 — drain one owner's coalesced heartbeats, sending one message per peer via {@code drain}
-     * (guaranteed non-null by the caller's both-wired gate). Per-peer exception isolation: one peer's send
-     * failure must not starve the others (mirrors {@code sendAppendEntries}'s codec-reject guard;
-     * fire-and-forget, Raft retransmits). The drain is pure I/O — it never re-enters a {@link RaftNode}, so
-     * a concurrent rehome cannot tear it.
+     * Drains one owner's coalesced heartbeats, sending one message per peer via {@code drain}
+     * (guaranteed non-null by the caller's both-wired gate). Per-peer exception isolation: one peer's
+     * send failure must not starve the others (fire-and-forget, Raft retransmits). The drain is pure
+     * I/O - it never re-enters a {@link RaftNode}, so a concurrent rehome cannot tear it.
      */
     private void drainHeartbeats(HeartbeatCoalescer hc, CoalescedHeartbeatTransport drain) {
         for (Map.Entry<NodeId, Map<Integer, AppendEntriesRequest>> e : hc.drainAndEndTick().entrySet()) {
@@ -361,7 +353,7 @@ public final class MultiRaftDriver {
         }
         for (Map.Entry<Integer, RaftNode> e : groups.entrySet()) {
             int g = e.getKey();
-            // Stage 2 M2: same rehoming-aware + not-migrating filter as tickOwner.
+            // Same rehoming-aware, not-migrating filter as tickOwner.
             if (currentOwnerIndex(g) == ownerIndex && !migrating.contains(g)) {
                 e.getValue().maybeCompact(appliedSinceSnapshotThreshold);
             }
@@ -369,32 +361,31 @@ public final class MultiRaftDriver {
     }
 
     /**
-     * Stage 2 M2 — rehome {@code groupId} from its current owner to {@code targetOwnerIndex} via the
-     * quiesce→publish→adopt handoff (docs/phase0-B-stage2/m2-rehoming-handoff-design.md). DORMANT in
-     * production (single-group is never rehomed); exercised by tests + a future Phase-1 placement policy.
+     * Rehomes {@code groupId} from its current owner to {@code targetOwnerIndex} via a
+     * quiesce-then-publish-then-adopt handoff. Dormant in production (single-group is never
+     * rehomed); used by tests and a future placement policy.
      *
-     * <p>Ordering — the executor {@code .get()} barriers give happens-before, so there is no torn state
-     * and no double-ownership window:
+     * <p>Ordering - the executor {@code .get()} barriers give happens-before, so there is no torn
+     * state and no double-ownership window:
      * <ol>
-     *   <li>mark the group migrating (tick + marshalled work now skip / bounce it);</li>
-     *   <li>on the LOSING owner's thread, in order: QUIESCE ({@code node.quiesceForHandoff()} —
-     *       force-sync buffered entries so the gaining owner adopts a clean, durable state), PUBLISH the
-     *       routing flip ({@code groupOwner→target}), then DETACH ({@code node.beginHandoff()} → the
-     *       HANDOFF sentinel);</li>
-     *   <li>on the GAINING owner's thread: ADOPT ({@code node.adoptOwnerThread()}), ordered after the
-     *       detach by the barrier — which also publishes all of the losing owner's final state here;</li>
-     *   <li>clear migrating (the gaining owner now ticks + serves the group).</li>
+     *   <li>Mark the group migrating (tick + marshalled work now skip or bounce it).</li>
+     *   <li>On the losing owner's thread, in order: QUIESCE ({@code node.quiesceForHandoff()} -
+     *       force-sync buffered entries so the gaining owner adopts a clean, durable state),
+     *       PUBLISH the routing flip ({@code groupOwner->target}), then DETACH
+     *       ({@code node.beginHandoff()} to the HANDOFF sentinel).</li>
+     *   <li>On the gaining owner's thread: ADOPT ({@code node.adoptOwnerThread()}), ordered after
+     *       the detach by the barrier, which also publishes the losing owner's final state here.</li>
+     *   <li>Clear migrating (the gaining owner now ticks and serves the group).</li>
      * </ol>
-     * If the GAINING owner cannot adopt (e.g. its executor is unavailable) after the losing owner has
-     * detached, the handoff is rolled back to the losing owner ({@link #abortHandoff}): routing is
-     * restored to its exact pre-rehome state and the losing owner re-adopts, so the group resumes on its
-     * original owner with no torn state and no lost message. Only if the LOSING owner is ALSO unavailable
-     * does the group stay loudly wedged on the HANDOFF sentinel (every access fires) — never silently
-     * mis-owned. {@code migrating} is always cleared.
+     * If the gaining owner cannot adopt after the losing owner has detached, the handoff rolls back
+     * to the losing owner ({@link #abortHandoff}): routing is restored to its exact pre-rehome state
+     * and the losing owner re-adopts, so the group resumes with no torn state and no lost message.
+     * Only if the losing owner is also unavailable does the group stay loudly wedged on the HANDOFF
+     * sentinel (every access fires) - never silently mis-owned. {@code migrating} is always cleared.
      *
-     * <p>The handoff is UNINTERRUPTIBLE (red-team Finding 1): an interrupt does not abandon it mid-flight
-     * (which would let a queued owner task publish/detach AFTER the coordinator unwound — wedging the
-     * group); it completes or rolls back atomically, and the interrupt is re-asserted to the caller after.
+     * <p>The handoff is uninterruptible: an interrupt does not abandon it mid-flight (which would let
+     * a queued owner task publish/detach AFTER the coordinator unwound - wedging the group); it
+     * completes or rolls back atomically, and the interrupt is re-asserted to the caller after.
      *
      * @throws IllegalStateException    if the owner pool is not set, or a handoff step fails on an owner
      * @throws IllegalArgumentException if the group is unknown or already on the target owner
@@ -412,7 +403,7 @@ public final class MultiRaftDriver {
         if (node == null) {
             throw new IllegalArgumentException("Group not registered: " + groupId);
         }
-        Integer priorOverride = groupOwner.get(groupId); // null ⇒ the group was on its static floorMod owner
+        Integer priorOverride = groupOwner.get(groupId); // null means the group was on its static floorMod owner
         int from = priorOverride != null ? priorOverride : p.ownerIndexOf(groupId);
         if (from == targetOwnerIndex) {
             throw new IllegalArgumentException(
@@ -425,19 +416,19 @@ public final class MultiRaftDriver {
             runOnOwnerAwait(p.ownerByIndex(from), () -> {
                 node.quiesceForHandoff();                  // QUIESCE: force-sync so B adopts a durable state
                 groupOwner.put(groupId, targetOwnerIndex); // PUBLISH the routing flip (on the losing owner)
-                node.beginHandoff();                        // DETACH: ownerThread → HANDOFF sentinel
+                node.beginHandoff();                        // DETACH: ownerThread -> HANDOFF sentinel
             });
             detached = true;
             // ADOPT on the GAINING owner (ordered after the detach by the await barrier above).
             runOnOwnerAwait(p.ownerByIndex(targetOwnerIndex), node::adoptOwnerThread);
-            detached = false; // adopt succeeded — handoff complete, nothing to roll back
+            detached = false; // adopt succeeded - handoff complete, nothing to roll back
         } catch (RuntimeException e) {
             if (detached) {
-                // The losing owner detached but the gaining owner could not adopt — roll back to A.
+                // The losing owner detached but the gaining owner could not adopt - roll back to A.
                 try {
                     abortHandoff(groupId, from, priorOverride, node, p);
                 } catch (RuntimeException abortFailed) {
-                    e.addSuppressed(abortFailed); // A also unavailable — group stays wedged on HANDOFF (loud)
+                    e.addSuppressed(abortFailed); // A also unavailable - group stays wedged on HANDOFF (loud)
                 }
             }
             throw e;
@@ -447,34 +438,35 @@ public final class MultiRaftDriver {
     }
 
     /**
-     * Stage 2 M2 — roll a partial handoff back to the losing owner (see {@link #rehomeGroup}). The losing
-     * owner has detached ({@code ownerThread==HANDOFF}) and routing was published to the target, but the
-     * gaining owner never adopted. Restore routing to its EXACT pre-rehome state ({@code priorOverride},
-     * or no override if the group was on its static owner) and re-bind the losing owner via
-     * {@code adoptOwnerThread()} (legal because {@code ownerThread} is still the HANDOFF sentinel). Runs
-     * while {@code migrating} is still set, so no tick / marshalled work touches the node during rollback.
-     * The losing owner's state is intact and durable (it quiesced before detaching, and the gaining owner
-     * never touched it) ⇒ no torn state, no lost message.
+     * Rolls a partial handoff back to the losing owner (see {@link #rehomeGroup}). The losing
+     * owner has detached ({@code ownerThread==HANDOFF}) and routing was published to the target, but
+     * the gaining owner never adopted. Restores routing to its exact pre-rehome state
+     * ({@code priorOverride}, or no override if the group was on its static owner) and re-binds the
+     * losing owner via {@code adoptOwnerThread()} (legal because {@code ownerThread} is still the
+     * HANDOFF sentinel). Runs while {@code migrating} is still set, so no tick or marshalled work
+     * touches the node during rollback. The losing owner's state is intact and durable (it quiesced
+     * before detaching, and the gaining owner never touched it), so there is no torn state and no
+     * lost message.
      */
     private void abortHandoff(int groupId, int fromOwnerIndex, Integer priorOverride, RaftNode node,
                               OwnerExecutorPool p) {
         if (priorOverride != null) {
             groupOwner.put(groupId, priorOverride); // restore the prior rehoming override
         } else {
-            groupOwner.remove(groupId);             // group was on its static owner — leave no override
+            groupOwner.remove(groupId);             // group was on its static owner - leave no override
         }
-        runOnOwnerAwait(p.ownerByIndex(fromOwnerIndex), node::adoptOwnerThread); // HANDOFF → losing owner
+        runOnOwnerAwait(p.ownerByIndex(fromOwnerIndex), node::adoptOwnerThread); // HANDOFF -> losing owner
     }
 
     /**
-     * Runs {@code task} on {@code owner} and blocks UNINTERRUPTIBLY until it completes, surfacing any
-     * failure. Uninterruptible by design (red-team Finding 1): a {@link Future#get()} interrupt does NOT
-     * cancel the already-submitted owner task, so ABANDONING the wait here would let that task run later
-     * (publish / detach / adopt) AFTER the coordinator unwound and the {@code finally} cleared
-     * {@code migrating} — wedging the group in a torn published-but-not-adopted state the rollback was
-     * meant to prevent. Instead we keep waiting for the bounded owner task to finish, then re-assert the
-     * interrupt to the caller: the handoff completes (or rolls back) ATOMICALLY and the interrupt is
-     * honoured AFTER, never lost.
+     * Runs {@code task} on {@code owner} and blocks uninterruptibly until it completes, surfacing any
+     * failure. Uninterruptible by design: a {@link Future#get()} interrupt does NOT cancel the
+     * already-submitted owner task, so abandoning the wait here would let that task run later
+     * (publish, detach, or adopt) AFTER the coordinator unwound and the {@code finally} cleared
+     * {@code migrating} - wedging the group in a torn published-but-not-adopted state the rollback
+     * was meant to prevent. Instead we keep waiting for the bounded owner task to finish, then
+     * re-assert the interrupt to the caller: the handoff completes (or rolls back) atomically and
+     * the interrupt is honoured after, never lost.
      */
     private static void runOnOwnerAwait(ScheduledExecutorService owner, Runnable task) {
         Future<?> f = owner.submit(task);
@@ -485,7 +477,7 @@ public final class MultiRaftDriver {
                     f.get();
                     return;
                 } catch (InterruptedException e) {
-                    interrupted = true; // defer — never abandon a queued handoff step mid-flight
+                    interrupted = true; // defer - never abandon a queued handoff step mid-flight
                 } catch (java.util.concurrent.ExecutionException e) {
                     throw new IllegalStateException(
                             "rehoming handoff step failed on an owner executor", e.getCause());
@@ -512,26 +504,24 @@ public final class MultiRaftDriver {
     public void routeMessage(int groupId, RaftMessage message) {
         RaftNode node = groups.get(groupId);
         if (node == null) {
-            return; // absent group → drop (stale message for a removed/unknown group), as before
+            return; // absent group - drop stale message for a removed or unknown group
         }
-        // Stage 2 M2 check-and-bounce: only the group's CURRENT owner touches the node. If the group is
-        // mid-handoff, or it has been REHOMED and this thread is not its current owner (stale routing),
-        // RE-DISPATCH to the current owner instead of running handleMessage off-owner — no message lost
-        // (re-queued), none misrouted (only the owner touches the node).
+        // Only the group's current owner may touch the node. If the group is mid-handoff, or it has
+        // been rehomed and this thread is not its current owner (stale routing), re-dispatch to the
+        // current owner instead of running handleMessage off-owner - no message lost (re-queued),
+        // none misrouted (only the owner touches the node).
         //
-        // The bounce is gated on the group being REHOME-AFFECTED (migrating, or carrying a dynamic
-        // groupOwner override). A NEVER-REHOMED group — which is EVERY group in production (single-group,
-        // dormant rehoming) — never bounces, so a missed marshalling hop still runs handleMessage
-        // off-owner and the net FIRES (threading-contract §6.2 "test the tester" preserved; a bounce
-        // here would silently auto-correct a missed hop and mask the bug — red-team Defect 1). At N=1 /
-        // no-rehome this is identical to M1.
+        // The bounce is gated on the group being rehome-affected (migrating, or carrying a dynamic
+        // groupOwner override). A never-rehomed group - which is every group in production - never
+        // bounces, so a missed marshalling hop still runs handleMessage off-owner and the owner
+        // assertion fires ("test the tester" preserved; a bounce here would silently auto-correct a
+        // missed hop and mask the bug).
         //
-        // {@code !node.isDetached()} (symmetric with runFlushOnCurrentOwner — replay SHOULD-FIX): do NOT
-        // bounce a group WEDGED on the HANDOFF sentinel (an abandoned handoff / the rare double-fault, not
-        // migrating). No real owner will ever run it, so re-dispatching would LIVELOCK the owner thread
-        // (CPU burn + the message never delivered). Fall through so handleMessage's guard FIRES once (loud)
-        // — "loudly wedged", consistent with the flush path. (A transient settled rehome has a REAL new
-        // owner ⇒ isDetached()==false ⇒ the stale-routing bounce still lands there.)
+        // Do NOT bounce a group wedged on the HANDOFF sentinel (an abandoned handoff, not migrating).
+        // No real owner will ever run it, so re-dispatching would livelock the owner thread (CPU burn
+        // and the message never delivered). Fall through so handleMessage's guard fires once (loud) -
+        // consistent with the flush path. A transient settled rehome has a real new owner, so
+        // isDetached()==false and the stale-routing bounce still lands correctly.
         if (ownerPool != null
                 && (migrating.contains(groupId)
                         || (groupOwner.containsKey(groupId) && node.boundToAnotherThread() && !node.isDetached()))) {
@@ -545,9 +535,8 @@ public final class MultiRaftDriver {
      * Proposes a command to the specified Raft group. Only the leader
      * of that group can accept proposals.
      * <p>
-     * RR-004 / ADR-0033: returns a {@link ProposeOutcome} carrying the assigned
-     * {@code (index, term)} on acceptance so the caller can register a
-     * commit-outcome callback on the owning {@link RaftNode}.
+     * Returns a {@link ProposeOutcome} carrying the assigned {@code (index, term)} on acceptance
+     * so the caller can register a commit-outcome callback on the owning {@link RaftNode}.
      *
      * @param groupId the target Raft group identifier
      * @param command the command bytes to replicate
@@ -559,13 +548,12 @@ public final class MultiRaftDriver {
         if (node == null) {
             return ProposeOutcome.rejected(ProposalResult.NOT_LEADER);
         }
-        // Stage 2 M2: a propose returns its (index,term) synchronously (H-1), so it cannot be silently
-        // re-queued like routeMessage. If the group is mid-handoff or has been rehomed away from this
-        // thread, reject as NOT_LEADER — the external client retries (via the leader hint) and the retry
-        // re-marshals onto the current owner (there is no internal re-marshal; the wired proposer captures
-        // ownerExecutor(gid) once at wiring). Gated on rehome-affected (same as routeMessage) so a missed
-        // hop on a NEVER-rehomed group still reaches node.propose() off-owner and FIRES the net (§6.2).
-        // Inert at N=1 / no-rehome.
+        // A propose returns its (index,term) synchronously, so it cannot be silently re-queued like
+        // routeMessage. If the group is mid-handoff or has been rehomed away from this thread, reject
+        // as NOT_LEADER - the external client retries via the leader hint and the retry re-marshals
+        // onto the current owner (the wired proposer captures ownerExecutor(gid) once at wiring).
+        // Gated on rehome-affected (same as routeMessage) so a missed hop on a never-rehomed group
+        // still reaches node.propose() off-owner and fires the owner assertion. Inert at N=1.
         if (ownerPool != null
                 && (migrating.contains(groupId)
                         || (groupOwner.containsKey(groupId) && node.boundToAnotherThread()))) {
@@ -575,16 +563,15 @@ public final class MultiRaftDriver {
     }
 
     /**
-     * Stage 2 M2 — marshal a coalescing group-commit flush onto the group's CURRENT owner. Wired by the
-     * production server as the {@link RaftNode.FlushScheduler} (replacing a closure that CAPTURED the owner
-     * executor once, which would dispatch onto the OLD owner after a rehome). The owner is re-resolved
-     * here via {@link #ownerExecutor} (rehoming-aware) and, when the task runs, {@link #runFlushOnCurrentOwner}
-     * applies the same check-and-bounce as {@link #routeMessage}: a flush scheduled before a rehome lands on
-     * the NEW owner, and never runs on an ambiguous owner mid-handoff. The flush ({@code RaftNode.flushDurable})
-     * is owner-guarded, so any residual off-owner dispatch FIRES rather than silently racing.
-     * <p>DORMANT in production (single group is never rehomed ⇒ the current owner is always the static
-     * floorMod owner) and inert at N=1. If the owner pool is not set (legacy/test wiring), the flush runs
-     * inline on the caller — exactly the pre-pool behaviour.
+     * Marshals a coalescing group-commit flush onto the group's current owner. Wired by the
+     * production server as the {@link RaftNode.FlushScheduler} (replacing a closure that captured
+     * the owner executor once, which would dispatch onto the old owner after a rehome). The owner
+     * is re-resolved via {@link #ownerExecutor} (rehoming-aware) and, when the task runs,
+     * {@link #runFlushOnCurrentOwner} applies the same check-and-bounce as {@link #routeMessage}:
+     * a flush scheduled before a rehome lands on the new owner, never on an ambiguous owner
+     * mid-handoff. The flush ({@code RaftNode.flushDurable}) is owner-guarded, so any residual
+     * off-owner dispatch fires rather than silently racing.
+     * <p>If the owner pool is not set (legacy/test wiring), the flush runs inline on the caller.
      *
      * @param groupId     the group whose buffered entries to flush
      * @param flush       the flush task (the group's {@code RaftNode::flushDurable} reference)
@@ -593,9 +580,9 @@ public final class MultiRaftDriver {
     public void dispatchFlush(int groupId, Runnable flush, long delayMicros) {
         ScheduledExecutorService owner;
         try {
-            owner = ownerExecutor(groupId); // current owner (rehoming-aware via currentOwnerIndex)
+            owner = ownerExecutor(groupId); // current owner (rehoming-aware)
         } catch (IllegalStateException noPool) {
-            flush.run(); // legacy/test wiring without a pool — run inline on the caller, as before
+            flush.run(); // legacy/test wiring without a pool - run inline on the caller, as before
             return;
         }
         Runnable task = () -> runFlushOnCurrentOwner(groupId, flush);
@@ -607,34 +594,28 @@ public final class MultiRaftDriver {
     }
 
     /**
-     * The body of a dispatched flush, run ON an owner thread: check-and-bounce, then flush. If the group is
-     * mid-handoff, or has been rehomed away from the executing owner (stale dispatch), RE-DISPATCH to the
-     * current owner instead of flushing off-owner — mirroring {@link #routeMessage}. Otherwise run the flush
-     * (on the current owner ⇒ {@code RaftNode.flushDurable}'s guard is silent). A removed group drops the
-     * stale flush (nothing to sync).
+     * Body of a dispatched flush, run on an owner thread: check-and-bounce, then flush. If the
+     * group is mid-handoff, or has been rehomed away from the executing owner (stale dispatch),
+     * re-dispatch to the current owner instead of flushing off-owner - mirroring
+     * {@link #routeMessage}. A removed group drops the stale flush.
      */
     private void runFlushOnCurrentOwner(int groupId, Runnable flush) {
         RaftNode node = groups.get(groupId);
         if (node == null) {
-            return; // group removed — drop the stale flush
+            return; // group removed - drop the stale flush
         }
-        // Bounce while a handoff is in flight (migrating), or for a STALE dispatch to the old owner after a
-        // SETTLED rehome (the node is owned by a different REAL owner — re-dispatch lands there). But do
-        // NOT bounce a group WEDGED on the HANDOFF sentinel ({@code isDetached} yet not migrating — an
-        // abandoned handoff / the rare double-fault): no real owner will ever run it, so re-dispatching
-        // would LIVELOCK the owner thread (red-team Finding 2). Fall through instead so flushDurable's
-        // guard FIRES once (loud) rather than spinning silently — consistent with "loudly wedged".
+        // Bounce while a handoff is in flight (migrating), or for a stale dispatch to the old owner
+        // after a settled rehome (re-dispatch lands on the new real owner). Do NOT bounce a group
+        // wedged on the HANDOFF sentinel (an abandoned handoff, not migrating): no real owner will
+        // ever run it, so re-dispatching would livelock the owner thread. Fall through instead so
+        // flushDurable's guard fires once (loud) rather than spinning silently.
         if (migrating.contains(groupId)
                 || (groupOwner.containsKey(groupId) && node.boundToAnotherThread() && !node.isDetached())) {
             ownerExecutor(groupId).execute(() -> runFlushOnCurrentOwner(groupId, flush));
             return;
         }
-        flush.run(); // current owner ⇒ on-owner & silent; wedged HANDOFF node ⇒ guard FIRES (loud, no spin)
+        flush.run(); // on-owner and silent; wedged HANDOFF node fires the guard (loud, no spin)
     }
-
-    // ========================================================================
-    // Query methods
-    // ========================================================================
 
     /**
      * Returns the {@link RaftNode} for the given group, or {@code null}

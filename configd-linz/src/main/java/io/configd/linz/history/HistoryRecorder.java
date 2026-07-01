@@ -11,10 +11,10 @@ import java.util.Set;
  * it from many threads; the single driver JVM gives every op a {@link System#nanoTime()}
  * timestamp from one monotonic clock.
  *
- * <p>Enforces the <b>unique-token precondition</b> (design §11.3 test 6): every
- * non-failed PUT must carry a globally-unique value token, so a read can pin
- * exactly which write it observed and two writes of the same bytes can never be
- * confused. A reused token is a recorder bug and throws immediately.
+ * <p>Enforces the <b>unique-token precondition</b>: every non-failed PUT must carry
+ * a globally-unique value token, so a read can pin exactly which write it observed
+ * and two writes of the same bytes can never be confused. A reused token is a
+ * recorder bug and throws immediately.
  */
 public final class HistoryRecorder {
 
@@ -38,7 +38,7 @@ public final class HistoryRecorder {
     /**
      * Records a linearizable READ. {@code observed} is the token read (or {@code ""}
      * for 404/absent) when {@code status} is OK; for an indeterminate read
-     * (503/timeout) pass status INFO — it carries no definite value and is dropped
+     * (503/timeout) pass status INFO - it carries no definite value and is dropped
      * from the checked history.
      */
     public void recordRead(int client, String key, String observed, Op.Status status, long callNs, long retNs) {

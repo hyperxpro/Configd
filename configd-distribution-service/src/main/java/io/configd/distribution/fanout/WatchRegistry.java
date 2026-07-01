@@ -8,12 +8,12 @@ import java.util.Map;
 import java.util.Set;
 
 /**
- * The per-connection watch table (RFC §2 W2-8 / §3.1): maps a client-assigned
- * {@code watch_id} to its live {@link WatchEntry}, and remembers <b>every</b> id ever used so
- * a {@code watch_id} is <b>never reused</b> for the connection's lifetime — even after the
- * prior watch is canceled or closed. The no-reuse rule removes the late-frame-misattribution
- * hazard the multiplex would otherwise admit (W2-8): a stray in-flight frame from a canceled
- * watch can never be mistaken for a freshly-created one.
+ * The per-connection watch table (W2-8): maps a client-assigned {@code watch_id} to its live
+ * {@link WatchEntry}, and remembers <b>every</b> id ever used so a {@code watch_id} is
+ * <b>never reused</b> for the connection's lifetime - even after the prior watch is canceled
+ * or closed. The no-reuse rule removes the late-frame-misattribution hazard the multiplex
+ * would otherwise admit (W2-8): a stray in-flight frame from a canceled watch can never be
+ * mistaken for a freshly-created one.
  *
  * <h2>Threading</h2>
  * <b>Session-thread-confined.</b> Every mutation ({@link #register}/{@link #cancel}) and every
@@ -80,7 +80,7 @@ final class WatchRegistry {
     }
 
     /**
-     * The number of distinct {@code watch_id}s ever used on this connection — the no-reuse budget
+     * The number of distinct {@code watch_id}s ever used on this connection - the no-reuse budget
      * (W2-8). Because {@code everUsed} never shrinks, the driver bounds it (a per-connection
      * watch-id budget) so a long-lived connection with high watch churn cannot grow it unbounded.
      */
@@ -89,10 +89,9 @@ final class WatchRegistry {
     }
 
     /**
-     * One live watch (RFC §2 §3.1). Immutable; the per-connection shared drain (W8-6) means a
-     * watch carries no independent cursor/queue state — only its identity, principal, target,
-     * and the resume seq it requested (used only by the FIRST watch to position the shared
-     * core drain).
+     * One live watch. Immutable; the per-connection shared drain (W8-6) means a watch carries
+     * no independent cursor/queue state - only its identity, principal, target, and the resume
+     * seq it requested (used only by the FIRST watch to position the shared core drain).
      *
      * @param watchId      the client-assigned multiplex id (W2-8)
      * @param principal    the authenticated identity that created (and is authorized for) it

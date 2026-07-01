@@ -7,23 +7,23 @@ import java.util.List;
 import java.util.concurrent.atomic.AtomicLong;
 
 /**
- * B1 (Session 4) — an injectable {@link Storage} decorator for the OPERATIONAL storage
+ * An injectable {@link Storage} decorator for the OPERATIONAL storage
  * faults that throw / delay / truncate in place: write-failure, ENOSPC, fsync-failure,
  * short-read, latency. It composes over any delegate {@code Storage}.
  * <p>
  * Scope and fidelity (see {@code docs/session-4/storage-fault-layer-design.md}): this
  * injector exercises how CALLERS react to a storage op that fails or lies in place. It
- * does NOT model the crash/power-loss durability window — torn-write, fsync-lie, and
+ * does NOT model the crash/power-loss durability window - torn-write, fsync-lie, and
  * crash-at-point belong to {@code CrashStorage} (consensus-core test), which alone
- * faithfully models the directory-fsync-pending window (the RR-086 gap). A
+ * faithfully models the directory-fsync-pending window (the fsync-ack gap). A
  * {@code FaultInjectingStorage} over {@code CrashStorage} composes the two: operational
  * faults plus a faithful crash model.
  * <p>
  * Faults are armed up-front and fire deterministically (count-down or threshold), so a
  * cell places a fault at an exact operation. The injected exception type is
- * {@link UncheckedIOException} — the {@code Storage} contract is unchecked, so a real
+ * {@link UncheckedIOException} - the {@code Storage} contract is unchecked, so a real
  * device error surfaces unchecked; a caller that only catches narrower types is a finding.
- * Not thread-safe beyond the single Raft path (R-01); counters are atomic for test reads.
+ * Not thread-safe beyond the single Raft path; counters are atomic for test reads.
  */
 public final class FaultInjectingStorage implements Storage {
 

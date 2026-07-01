@@ -13,34 +13,34 @@ import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.TimeUnit;
 
 /**
- * CT-34 / gate-3 — the edge node's <b>in-process read path</b>
- * ({@link LocalConfigStore#get}): the §3 hot-path law binds THIS path (lock-free, zero
+ * The edge node's <b>in-process read path</b>
+ * ({@link LocalConfigStore#get}): the section 3 hot-path law binds THIS path (lock-free, zero
  * steady-state allocation, no reflection). Run with {@code -prof gc} and verify:
  * <pre>
  *   getMiss            gc.alloc.rate.norm == 0 B/op   (pre-allocated NOT_FOUND singleton)
- *   getIntoHit         gc.alloc.rate.norm == 0 B/op   (the VDR-0001 strict-zero-alloc API)
- *   getHit             gc.alloc.rate.norm == one ReadResult (32 B/op measured) — the
+ *   getIntoHit         gc.alloc.rate.norm == 0 B/op   (the strict-zero-alloc API)
+ *   getHit             gc.alloc.rate.norm == one ReadResult (32 B/op measured) - the
  *                      documented, accepted nursery allocation shared with
  *                      VersionedConfigStore (see ReadResult's javadoc: the flyweight
  *                      alternative was removed for an aliasing hazard); the HAMT
  *                      traversal itself allocates nothing
- *   getHitWithCursor   same as getHit (the INV-M1 cursor gate adds one branch, no alloc)
+ *   getHitWithCursor   same as getHit (the cursor gate adds one branch, no alloc)
  * </pre>
  *
- * <p>Measured on the gate box (size=10000): getMiss ≈6 ns / 0 B; getIntoHit ≈117 ns /
- * 0 B; getHit ≈89 ns / 32 B; getHitWithCursor ≈89 ns / 32 B.
+ * <p>Measured on the gate box (size=10000): getMiss ~6 ns / 0 B; getIntoHit ~117 ns /
+ * 0 B; getHit ~89 ns / 32 B; getHitWithCursor ~89 ns / 32 B.
  *
  * <p><b>Hit-leg variance (why the gate binds only getMiss/getIntoHit):</b> the hit
- * legs' 32 B/op can read ≈0 B/op on some runs — C2's escape analysis sometimes
+ * legs' 32 B/op can read ~0 B/op on some runs - the JVM's escape analysis sometimes
  * scalar-replaces the ReadResult once fully warmed (observed run-to-run on the gate
  * box). The miss and getInto legs are zero-alloc STRUCTURALLY (no allocation in their
- * bytecode), so {@code gates/jmh-gc-check.sh} gates exactly those two — a deterministic
+ * bytecode), so {@code gates/jmh-gc-check.sh} gates exactly those two - a deterministic
  * zero-vs-nonzero check, immune to JIT luck; the hit legs are captured for trend only.
  *
- * <p><b>Scope honesty (CT-34):</b> the HTTP serving shell above this path
+ * <p><b>Scope honesty:</b> the HTTP serving shell above this path
  * ({@code EdgeHttpServer}) allocates per request (exchange, headers, strings) and is
- * deliberately NOT measured here — it is not the §3 library read path and is honestly
- * priced as non-hot-path in the C2 design (§3.8). The contract's zero-steady-state-
+ * deliberately NOT measured here - it is not the section 3 library read path and is honestly
+ * priced as non-hot-path in the edge client design (section 3.8). The contract's zero-steady-state-
  * allocation claim is made for, and proven on, the in-process paths above.
  *
  * <p>Smoke run (~2 min on the 2-vCPU box):
@@ -71,7 +71,7 @@ public class LocalConfigStoreReadBenchmark {
     @Setup(Level.Trial)
     public void setUp() {
         // Build the HAMT externally (the VersionedStoreReadBenchmark pattern) and load it
-        // as one snapshot — the steady-state shape of a caught-up edge.
+        // as one snapshot - the steady-state shape of a caught-up edge.
         HamtMap<String, VersionedValue> data = HamtMap.empty();
         keys = new String[size];
         byte[] value = new byte[64];
@@ -89,7 +89,7 @@ public class LocalConfigStoreReadBenchmark {
             randomIndices[i] = rng.nextInt(size);
         }
         cursor = 0;
-        // A satisfiable cursor (store version == size): the INV-M1 gate passes; allocated
+        // A satisfiable cursor (store version == size): the cursor gate passes; allocated
         // once at setup, NOT per op (a real client reuses its cursor between reads).
         satisfiableCursor = new VersionCursor(size, 0L);
         dst = new byte[64];
@@ -103,20 +103,20 @@ public class LocalConfigStoreReadBenchmark {
         bh.consume(store.get(keys[idx]));
     }
 
-    /** Miss: pre-allocated NOT_FOUND singleton — TRUE zero allocation. */
+    /** Miss: pre-allocated NOT_FOUND singleton - TRUE zero allocation. */
     @Benchmark
     public void getMiss(Blackhole bh) {
         bh.consume(store.get("config/absent/key"));
     }
 
-    /** Cursor-gated hit (the edge serving path's read): the INV-M1 branch, same alloc. */
+    /** Cursor-gated hit (the edge serving path's read): the cursor branch, same alloc. */
     @Benchmark
     public void getHitWithCursor(Blackhole bh) {
         int idx = randomIndices[cursor++ & 0xFFFF];
         bh.consume(store.get(keys[idx], satisfiableCursor));
     }
 
-    /** The VDR-0001 strict-zero-alloc hit path: value copied into a caller buffer. */
+    /** The strict-zero-alloc hit path: value copied into a caller buffer. */
     @Benchmark
     public void getIntoHit(Blackhole bh) {
         int idx = randomIndices[cursor++ & 0xFFFF];

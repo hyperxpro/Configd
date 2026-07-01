@@ -9,8 +9,8 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * S7/D-3 — {@link ReplayGuard} unit coverage. The HTTP-level verbatim-replay
- * attack lives in {@code ConfigHandlerReplayTest}; these tests pin the guard's
+ * {@link ReplayGuard} unit coverage. The HTTP-level verbatim-replay attack lives
+ * in {@code ConfigHandlerReplayTest}; these tests pin the guard's
  * accept/stale/replay decisions and its bound deterministically with a fake clock.
  */
 final class ReplayGuardTest {

@@ -14,7 +14,7 @@ import java.util.List;
  * A minimal TEST-ONLY edge client that speaks edge protocol v1 over a raw socket: it encodes
  * {@code SUBSCRIBE} / {@code CURSOR_ACK} via {@link EdgeFrameCodec} and decodes server frames
  * with the same peekLength discipline the server uses. It is the counterpart to the live edge
- * (C2) for the {@code FanOutServer} integration test — deliberately tiny so the test exercises
+ * (C2) for the {@code FanOutServer} integration test - deliberately tiny so the test exercises
  * the real wire, not a mock.
  */
 final class EdgeProtocolClient implements AutoCloseable {

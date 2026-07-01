@@ -28,9 +28,8 @@ import java.util.Objects;
  *   <li>Store new snapshot to volatile field (StoreStore barrier)</li>
  * </ol>
  * <p>
- * Follows the Read-Copy-Update (RCU) pattern (ADR-0005). The writer thread
- * must be externally serialized — no internal synchronization is provided
- * for writes.
+ * Follows the Read-Copy-Update (RCU) pattern. The writer thread must be
+ * externally serialized - no internal synchronization is provided for writes.
  *
  * @see ConfigSnapshot
  * @see HamtMap
@@ -40,7 +39,7 @@ public final class LocalConfigStore {
     private final Clock clock;
 
     /**
-     * The current snapshot. Single volatile pointer — readers load this
+     * The current snapshot. Single volatile pointer - readers load this
      * with acquire semantics; the writer stores with release semantics.
      * No AtomicReference wrapper to avoid the extra indirection.
      */
@@ -50,8 +49,7 @@ public final class LocalConfigStore {
     /**
      * Optional invariant monitor for INV-M1 ({@code monotonic_read}). When
      * non-null, {@link #get(String, VersionCursor)} reports a violation
-     * whenever the current snapshot's version falls below the client's
-     * cursor (F-0073).
+     * whenever the current snapshot's version falls below the client's cursor.
      */
     private final InvariantMonitor invariantMonitor;
 
@@ -103,14 +101,14 @@ public final class LocalConfigStore {
     }
 
     // -----------------------------------------------------------------------
-    // Reader methods — any thread, zero allocation on miss
+    // Reader methods - any thread, zero allocation on miss
     // -----------------------------------------------------------------------
 
     /**
      * Reads the current value for a config key.
      * <p>
      * Returns {@link ReadResult#NOT_FOUND} (pre-allocated singleton) on miss.
-     * On hit, allocates a single {@link ReadResult} — unavoidable since each
+     * On hit, allocates a single {@link ReadResult} - unavoidable since each
      * result carries the value's version.
      *
      * @param key config key (non-null)
@@ -130,7 +128,7 @@ public final class LocalConfigStore {
      * Reads a value with monotonic read enforcement via a version cursor.
      * <p>
      * If the client's cursor version exceeds this store's current version,
-     * the store is stale relative to that client — returns
+     * the store is stale relative to that client - returns
      * {@link ReadResult#NOT_FOUND} to signal that the client should retry
      * or fall back to a different edge node.
      *
@@ -143,8 +141,8 @@ public final class LocalConfigStore {
         Objects.requireNonNull(cursor, "cursor must not be null");
         ConfigSnapshot snap = currentSnapshot;
         if (snap.version() < cursor.version()) {
-            // Store is behind the client — monotonic-read violation (INV-M1).
-            // F-0073: route through InvariantMonitor when wired so that
+            // Store is behind the client -- monotonic-read violation (INV-M1).
+            // Route through InvariantMonitor when wired so that
             // configd.invariant.violation.monotonic_read increments.
             if (invariantMonitor != null) {
                 invariantMonitor.assertMonotonicRead(key, cursor.version(), snap.version());
@@ -163,9 +161,9 @@ public final class LocalConfigStore {
      * wrapper. Writes the value bytes into {@code dst} starting at offset 0
      * and stores the version at {@code versionOut[0]}.
      * <p>
-     * See VDR-0001: this API exists for throughput-critical internal callers
-     * (delta propagation, bulk replay) that want strict zero allocation on
-     * both hit and miss paths. External consumers should keep using
+     * This API exists for throughput-critical internal callers (delta
+     * propagation, bulk replay) that want strict zero allocation on both hit
+     * and miss paths. External consumers should keep using
      * {@link #get(String)} for ergonomics.
      *
      * @param key        the config key (non-null)
@@ -211,7 +209,7 @@ public final class LocalConfigStore {
     }
 
     // -----------------------------------------------------------------------
-    // Writer methods — single DeltaApplier thread only
+    // Writer methods - single DeltaApplier thread only
     // -----------------------------------------------------------------------
 
     /**
@@ -220,7 +218,7 @@ public final class LocalConfigStore {
      * volatile store.
      * <p>
      * The delta's {@code fromVersion} must match the store's current version.
-     * If it does not, the delta is rejected (gap detected — the caller must
+     * If it does not, the delta is rejected (gap detected - the caller must
      * request a full snapshot sync).
      *
      * @param delta the delta to apply

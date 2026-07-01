@@ -21,13 +21,13 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * PA-2021 GREEN — at-rest integrity of the Raft snapshot blob (ADR-0042).
+ * Tests at-rest integrity of the Raft snapshot blob.
  * <p>
  * Builds a real KEYED {@link RaftLog} over a {@link io.configd.common.FileStorage}
  * temp dir, persists a snapshot (compacting the WAL prefix so the blob is the sole
  * record of [1..S]), flips ONE byte of the on-disk {@code raft-log.snapshot}
  * payload (and, for the strongest variant, recomputes the envelope's CRC32C so only
- * the HMAC catches it), and constructs a new RaftLog → recovery REFUSES (throws
+ * the HMAC catches it), and constructs a new RaftLog - recovery REFUSES (throws
  * {@link IntegrityException}) rather than loading the attacker's state.
  * <p>
  * The same attack against the unauthenticated code is captured succeeding in
@@ -82,7 +82,7 @@ class SnapshotIntegrityTest {
         flipFirst(raw, (byte) 'A', (byte) 'B');
         Files.write(blob, raw, StandardOpenOption.TRUNCATE_EXISTING);
 
-        // Recovery must REFUSE — fail loud, do not load the tampered state.
+        // Recovery must REFUSE - fail loud, do not load the tampered state.
         IntegrityException ex = assertThrows(IntegrityException.class,
                 () -> new RaftLog(storage, env));
         assertTrue(ex.getMessage().contains("CRC32C") || ex.getMessage().contains("MAC"),
@@ -100,7 +100,7 @@ class SnapshotIntegrityTest {
         node.propose(KvStateMachine.put("secret", "AAAA"));
         node.triggerSnapshot();
 
-        // Stronger attacker: flip a payload byte AND fix the CRC32C — only the HMAC
+        // Stronger attacker: flip a payload byte AND fix the CRC32C - only the HMAC
         // (which the attacker cannot forge without the key) can catch this.
         Path blob = tempDir.resolve(BLOB_FILE);
         byte[] raw = Files.readAllBytes(blob);
@@ -166,13 +166,13 @@ class SnapshotIntegrityTest {
 
     /**
      * Install-snapshot shares the SAME integrity code path as a local snapshot:
-     * {@code handleInstallSnapshot} (RaftNode.java:2084) persists the received blob
-     * via {@code log.persistSnapshot(installed)} — the identical call
-     * {@code triggerSnapshot} (RaftNode.java:462) makes — so the blob is written
+     * {@code handleInstallSnapshot} persists the received blob via
+     * {@code log.persistSnapshot(installed)} - the identical call
+     * {@code triggerSnapshot} makes - so the blob is written
      * through {@code RaftLog.serializeSnapshot} (keyed wrap) and recovered through
      * {@code RaftLog.readSnapshotBlob} (keyed unwrap). This test drives the real
      * install path on a follower, then tampers the persisted blob and asserts
-     * recovery refuses — proving a forged installed snapshot is rejected on the
+     * recovery refuses - proving a forged installed snapshot is rejected on the
      * same path as a local one (NOT a parallel test-only wiring).
      */
     @Test
@@ -231,7 +231,7 @@ class SnapshotIntegrityTest {
         assertEquals("2", sm2.snapshotState().get("b"));
     }
 
-    // ---- helpers ----
+    // Helpers
 
     private static void flipFirst(byte[] data, byte from, byte to) {
         for (int i = 0; i < data.length; i++) {

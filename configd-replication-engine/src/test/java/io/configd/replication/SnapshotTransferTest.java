@@ -15,7 +15,7 @@ import java.util.Random;
 import static org.junit.jupiter.api.Assertions.*;
 
 /**
- * Tests for {@link SnapshotTransfer} — chunked send/receive/assemble
+ * Tests for {@link SnapshotTransfer} - chunked send/receive/assemble
  * roundtrip, edge cases, and determinism.
  */
 class SnapshotTransferTest {

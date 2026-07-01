@@ -7,25 +7,25 @@ import java.util.random.RandomGeneratorFactory;
 
 /**
  * Seed-derived, fully replayable fault + workload schedule for the adversarial
- * simulation (adversarial-sim-design §2). Every fault and client op is a pure
- * function of the master seed via the RR-010 {@code mixSeed} pattern, so a run is
+ * simulation (adversarial-sim-design section 2). Every fault and client op is a pure
+ * function of the master seed via the deterministic {@code mixSeed} pattern, so a run is
  * reproducible by seed alone and a failing seed can be expanded into a concrete,
- * minimizable schedule (§5 ddmin).
+ * minimizable schedule (section 5 ddmin).
  * <p>
  * The schedule is <em>expanded eagerly</em> at construction into an ordered list of
  * {@link Event}s keyed by logical tick. Eager expansion is what makes the schedule
- * a first-class, serializable, shrinkable object (a failing seed → a concrete event
+ * a first-class, serializable, shrinkable object (a failing seed -> a concrete event
  * list that ddmin can reduce), rather than a hidden side effect of per-tick RNG
  * draws.
  * <p>
  * Stream separation: each fault family draws from its own sub-stream
  * ({@code mixSeed(seed, TAG)} with a family-specific tag distinct from every node
- * id), so adding/removing a family never perturbs another family's draws — a
+ * id), so adding/removing a family never perturbs another family's draws - a
  * property that keeps historical seeds stable.
  */
 final class AdversarialSchedule {
 
-    // Stream tags — fixed constants, all >= 1_000 so they never collide with a
+    // Stream tags - fixed constants, all >= 1_000 so they never collide with a
     // node id (node ids are small non-negative ints) used by RaftSimulation's
     // per-node election streams.
     private static final int TAG_FAULT = 1_001;
@@ -76,7 +76,7 @@ final class AdversarialSchedule {
         this.ops = expandWorkload(intensity);
     }
 
-    /** Construct directly from explicit events/ops — used by ddmin minimization. */
+    /** Construct directly from explicit events/ops - used by ddmin minimization. */
     private AdversarialSchedule(long seed, int nodeCount, int totalTicks,
             List<Event> events, List<Op> ops) {
         this.seed = seed;
@@ -86,7 +86,7 @@ final class AdversarialSchedule {
         this.ops = List.copyOf(ops);
     }
 
-    /** Knobs controlling fault/op density — defaults give a busy adversarial run. */
+    /** Knobs controlling fault/op density - defaults give a busy adversarial run. */
     record Intensity(int faultCount, int opCount, double minPartitionFraction) {}
 
     static Intensity defaultIntensity() {
@@ -177,7 +177,7 @@ final class AdversarialSchedule {
     }
 
     /**
-     * SplitMix64 finalizer — identical to {@code RaftSimulation.mixSeed} (RR-010),
+     * SplitMix64 finalizer - identical to {@code RaftSimulation.mixSeed},
      * duplicated here because that method is private. Keeping the two in lockstep
      * is intentional: both derive independent streams from one master seed.
      */

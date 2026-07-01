@@ -9,16 +9,16 @@ import org.junit.jupiter.api.Test;
 import static org.junit.jupiter.api.Assertions.*;
 
 /**
- * CT-08 — the ADR-0039 §5 / ADR-0035 handoff-item-4 implausibility tripwire.
+ * The implausibility tripwire for the covered-frontier staleness model.
  *
- * <p>A frontier in the future beyond the documented ≤50ms NTP-skew allowance, or a frontier
+ * <p>A frontier in the future beyond the documented <=50ms NTP-skew allowance, or a frontier
  * that would jump backwards, is flagged on a dedicated counter
- * ({@code edge_staleness_implausible_total}) and the offending sample is clamped — never
+ * ({@code edge_staleness_implausible_total}) and the offending sample is clamped - never
  * silently trusted. A skewed or lying clock must be visible.
  *
  * <p>Verifies: within-skew future frontier clamps to 0 WITHOUT counting; beyond-skew future
  * frontier counts + clamps; a backwards frontier (regression) counts + holds; the counter is
- * the wired {@link MetricsRegistry.Counter} (so Session 6 can alert on it).
+ * the wired {@link MetricsRegistry.Counter} so alerts can fire on it.
  */
 class StalenessSkewTripwireTest {
 
@@ -48,7 +48,7 @@ class StalenessSkewTripwireTest {
 
     @Test
     void withinSkewAllowanceFutureFrontierClampsWithoutCounting() {
-        // 50ms ahead: exactly at the allowance — tolerated as clock skew, clamped, NOT counted.
+        // 50ms ahead: exactly at the allowance - tolerated as clock skew, clamped, NOT counted.
         tracker.recordUpdate(1, clock.timeMs + 50);
         assertEquals(0, tracker.stalenessMs(), "within-skew future frontier clamps to 0");
         assertEquals(0L, implausible.get(), "within-skew skew must NOT count as implausible");
@@ -56,7 +56,7 @@ class StalenessSkewTripwireTest {
 
     @Test
     void beyondSkewFutureFrontierCountsAndClamps() {
-        // 51ms ahead: beyond the allowance — a leader/relay clock ahead of ours. Counted +
+        // 51ms ahead: beyond the allowance - a leader/relay clock ahead of ours. Counted +
         // clamped (staleness 0), never reported as a negative staleness.
         tracker.recordUpdate(1, clock.timeMs + 51);
         assertEquals(0, tracker.stalenessMs(), "beyond-skew future frontier clamps to 0");
@@ -82,8 +82,8 @@ class StalenessSkewTripwireTest {
     @Test
     void backwardsFrontierViaUpdateCountsAndHolds() {
         tracker.recordUpdate(2, clock.timeMs);       // frontier = now (staleness 0)
-        clock.timeMs += 1_000;                        // wall advances 1s → staleness 1000
-        // A re-ordered/older commit ts that would move the frontier back — refused.
+        clock.timeMs += 1_000;                        // wall advances 1s -> staleness 1000
+        // A re-ordered/older commit ts that would move the frontier back - refused.
         tracker.recordUpdate(3, clock.timeMs - 5_000);
         assertEquals(1_000, tracker.stalenessMs(),
                 "frontier must hold at the earlier-but-higher value (regression refused)");

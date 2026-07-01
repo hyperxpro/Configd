@@ -5,14 +5,14 @@ import java.util.List;
 import java.util.SplittableRandom;
 
 /**
- * A fully-deterministic fault + workload plan derived purely from a seed (design
- * §9). Because the binary has no determinism seam (election RNG is nanoTime-seeded),
- * reproducibility is of the <b>inputs</b> — which faults and ops at which logical
- * offsets — not of which node wins. Two runs of the same seed therefore produce a
- * byte-identical {@code schedule-<seed>.json}; the recorded history differs by design.
+ * A fully-deterministic fault + workload plan derived purely from a seed. Because the
+ * binary has no determinism seam (election RNG is nanoTime-seeded), reproducibility
+ * is of the <b>inputs</b> - which faults and ops at which logical offsets - not of
+ * which node wins. Two runs of the same seed therefore produce a byte-identical
+ * {@code schedule-<seed>.json}; the recorded history differs by design.
  *
  * <p>Faults are <b>sequential single faults</b> (each heals before the next begins),
- * so at most one node is ever faulted — quorum is preserved (n &ge; 3), keeping the
+ * so at most one node is ever faulted - quorum is preserved (n >= 3), keeping the
  * cluster available while still continuously adversarial. A correct system stays
  * linearizable throughout.
  */
@@ -64,7 +64,7 @@ public final class Schedule {
         SplittableRandom workRoot = root.split();
         int putCut = readPct + (100 - readPct) * 9 / 10; // 90% of the non-reads are PUT
 
-        // ---- workload: each client a steady, jittered op stream ----
+        // workload: each client a steady, jittered op stream
         List<List<WorkOp>> workload = new ArrayList<>();
         for (int c = 0; c < clients; c++) {
             SplittableRandom r = workRoot.split();
@@ -83,7 +83,7 @@ public final class Schedule {
             workload.add(ops);
         }
 
-        // ---- faults: sequential single faults after the cluster settles ----
+        // faults: sequential single faults after the cluster settles
         List<FaultEvent> faults = new ArrayList<>();
         long t = 2500 + faultRng.nextLong(800);
         while (t < durationMs - 1500) {

@@ -9,7 +9,7 @@ import java.nio.ByteBuffer;
 import java.util.concurrent.TimeUnit;
 
 /**
- * Netty-migration baseline (Phase R) — <b>surface 4: inter-node consensus wire</b>
+ * Netty-migration baseline - <b>surface 4: inter-node consensus wire</b>
  * ({@code configd-transport}). Measures the per-message allocation of the Raft
  * {@link FrameCodec} as the consensus transport actually exercises it, with
  * {@code -prof gc} (the metric is {@code gc.alloc.rate.norm}, B/op).
@@ -18,27 +18,27 @@ import java.util.concurrent.TimeUnit;
  * The production send path ({@code TcpRaftTransport.send}, line 502) calls the
  * <b>allocating</b> {@link FrameCodec#encode(MessageType, int, long, byte[])} per message
  * and writes the returned {@code byte[]} to a <b>per-connection</b> {@code DataOutputStream}
- * — so the per-message, application-controlled transport allocation is exactly one
+ * - so the per-message, application-controlled transport allocation is exactly one
  * {@code encode} frame array (the stream wrapper is amortised once per connection, not per
  * message; the {@code SSLEngine}'s network buffers are JDK-internal and buffer-reused).
  *
  * <ul>
- *   <li>{@code encodeAllocating} — the STATUS QUO: what {@code TcpRaftTransport} calls today.
- *       Expect ≈ {@code frameSize(payload)} B/op (one heap frame per message).</li>
- *   <li>{@code encodeInto} — the ACHIEVABLE FLOOR with the existing, <b>currently-unused</b>
+ *   <li>{@code encodeAllocating} - the STATUS QUO: what {@code TcpRaftTransport} calls today.
+ *       Expect ~ {@code frameSize(payload)} B/op (one heap frame per message).</li>
+ *   <li>{@code encodeInto} - the ACHIEVABLE FLOOR with the existing, <b>currently-unused</b>
  *       {@link FrameCodec#encode(ByteBuffer, MessageType, int, long, byte[])} into-variant and
- *       a reused buffer. Expect ≈ 0 B/op. This is the key control: it shows how much of the
+ *       a reused buffer. Expect ~ 0 B/op. This is the key control: it shows how much of the
  *       status-quo allocation is removable <b>without Netty</b>, just by switching to the
  *       zero-copy variant the codec already ships.</li>
- *   <li>{@code decode} — the receive side ({@code TcpRaftTransport} line 432): allocates the
+ *   <li>{@code decode} - the receive side ({@code TcpRaftTransport} line 432): allocates the
  *       payload {@code byte[]} + one {@link FrameCodec.Frame} record per message.</li>
  * </ul>
  *
- * <p><b>Scope (baseline honesty):</b> this isolates the wire-codec allocation — the term
+ * <p><b>Scope (baseline honesty):</b> this isolates the wire-codec allocation - the term
  * Netty's pooled {@code ByteBuf} would replace. The {@code SSLSocket} read/write allocation
  * is a separate, harder-to-isolate component; if this surface is convicted it is measured
  * end-to-end during migration. Payload sizes span the real range:
- * {@code 0} (a coalesced heartbeat, the M3 high-frequency message), {@code 256} (a small
+ * {@code 0} (a coalesced heartbeat, the high-frequency message), {@code 256} (a small
  * AppendEntries), {@code 4096} (a batched AppendEntries).
  *
  * <pre>
@@ -88,11 +88,11 @@ public class TransportFrameAllocBenchmark {
     }
 
     /**
-     * TRUE PRODUCTION SEND: what {@code TcpRaftTransport.encodeWire()} allocates per message —
+     * TRUE PRODUCTION SEND: what {@code TcpRaftTransport.encodeWire()} allocates per message - 
      * the codec frame PLUS a second {@code byte[4 + frame]} to prepend the 4-byte sender node
-     * id ({@code System.arraycopy}). This ≈2× the frame is the real per-message send
+     * id ({@code System.arraycopy}). This ~2x the frame is the real per-message send
      * allocation; {@code encodeAllocating} is only the codec half. The achievable floor folds
-     * the sender id into one reused buffer alongside the frame (cf. {@code encodeInto}) — a
+     * the sender id into one reused buffer alongside the frame (cf. {@code encodeInto}) - a
      * slightly larger in-place change than swapping in the encode-into variant alone.
      */
     @Benchmark

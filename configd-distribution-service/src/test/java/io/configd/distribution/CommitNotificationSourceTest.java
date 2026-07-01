@@ -17,15 +17,15 @@ import java.util.TreeMap;
 import static org.junit.jupiter.api.Assertions.*;
 
 /**
- * Proves the §4.6 / ADR-0034 claims for {@link CommitNotificationSource} as
- * implemented by {@link FanOutBuffer}:
+ * Proves the core claims for {@link CommitNotificationSource} as implemented by
+ * {@link FanOutBuffer}:
  * <ul>
- *   <li>(a) bound — sustained appends never grow beyond the ring;</li>
- *   <li>(b) overflow policy — eviction increments the drop count and a stale
- *       cursor gets a GAP signal (never silent wrong/duplicated data);</li>
- *   <li>(c) replayability — after overflow, a consumer that replays from the
- *       {@link ReplaySource} and resumes tailing observes EVERY committed
- *       mutation's effect exactly, across a seeded randomized interleaving.</li>
+ *   <li>(a) bound - sustained appends never grow beyond the ring;</li>
+ *   <li>(b) overflow policy - eviction increments the drop count and a stale cursor gets a
+ *       GAP signal (never silent wrong/duplicated data);</li>
+ *   <li>(c) replayability - after overflow, a consumer that replays from the
+ *       {@link ReplaySource} and resumes tailing observes EVERY committed mutation's
+ *       effect exactly, across a seeded randomized interleaving.</li>
  * </ul>
  */
 class CommitNotificationSourceTest {
@@ -99,7 +99,7 @@ class CommitNotificationSourceTest {
     }
 
     // ==================================================================
-    // (b) OVERFLOW POLICY — drop count + GAP on stale cursor
+    // (b) OVERFLOW POLICY - drop count + GAP on stale cursor
     // ==================================================================
     @Test
     void overflowIncrementsDropCountAndStaleCursorGetsGap() {
@@ -107,7 +107,7 @@ class CommitNotificationSourceTest {
         FanOutBuffer buf = new FanOutBuffer(cap);
         Authoritative auth = new Authoritative();
 
-        // Fill exactly to capacity — no eviction yet.
+        // Fill exactly to capacity - no eviction yet.
         for (int i = 0; i < cap; i++) {
             buf.publish(auth.applyAndNotify(put("k" + i, "v" + i), 1000 + i));
         }
@@ -117,7 +117,7 @@ class CommitNotificationSourceTest {
         assertFalse(r0.isGap());
         assertEquals(cap, ((CommitNotificationSource.Result.Ok) r0).notifications().size());
 
-        // Overflow by 3 — evicts seq 1,2,3.
+        // Overflow by 3 - evicts seq 1,2,3.
         for (int i = cap; i < cap + 3; i++) {
             buf.publish(auth.applyAndNotify(put("k" + i, "v" + i), 1000 + i));
         }
@@ -180,7 +180,7 @@ class CommitNotificationSourceTest {
     }
 
     // ==================================================================
-    // (c) REPLAYABILITY — exactly-once over effect across overflow,
+    // (c) REPLAYABILITY - exactly-once over effect across overflow,
     //     seeded randomized interleaving of appends / overflows / reads.
     // ==================================================================
     @Test
@@ -247,7 +247,7 @@ class CommitNotificationSourceTest {
             CommitNotificationSource.Result tail = buf.readSince(cursor);
             if (tail.isGap()) {
                 // The buffer raced ahead again; the replay snapshot already covers
-                // everything up to its seq, so just return — next round re-drains.
+                // everything up to its seq, so just return - next round re-drains.
                 return cursor;
             }
             applyNotifications(((CommitNotificationSource.Result.Ok) tail).notifications(), view);
@@ -262,7 +262,7 @@ class CommitNotificationSourceTest {
         long prev = Long.MIN_VALUE;
         for (CommitNotification n : ns) {
             // Contiguity / monotonicity assertion: a non-GAP run must be strictly
-            // ascending in seq with no duplicates (the RR-066 hazard class).
+            // ascending in seq with no duplicates (the non-atomic read hazard this test pins).
             assertTrue(n.seq() > prev, "non-GAP run must be strictly ascending in seq");
             prev = n.seq();
             for (ConfigMutation m : n.delta().mutations()) {
@@ -280,7 +280,7 @@ class CommitNotificationSourceTest {
 
     @Test
     void legacyDeltaAppendStillWorks() {
-        // The pre-ADR-0034 append(ConfigDelta) path must still feed the buffer.
+        // The legacy append(ConfigDelta) path must still feed the buffer.
         FanOutBuffer buf = new FanOutBuffer(4);
         buf.append(new ConfigDelta(0, 1, List.of(put("k", "v"))));
         assertEquals(1, buf.size());

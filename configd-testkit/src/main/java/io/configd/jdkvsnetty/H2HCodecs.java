@@ -14,12 +14,12 @@ import java.util.List;
 import java.util.zip.CRC32C;
 
 /**
- * BEST-JDK single-pass, into-buffer encoders for the head-to-head — the "JDK done properly"
+ * BEST-JDK single-pass, into-buffer encoders for the head-to-head - the "JDK done properly"
  * side of the race. Each method writes the production wire bytes <b>directly into one caller-
  * supplied buffer</b>, eliminating the intermediate {@code List<byte[]>}, per-element
  * {@code ByteBuffer}s, and double payload/out arrays that the status-quo codecs allocate. The
  * caller reuses the buffer across calls, so the steady-state allocation of the framing itself
- * is ~0 — no Netty, no new dependency.
+ * is ~0 - no Netty, no new dependency.
  *
  * <p><b>Byte-identity is the contract.</b> {@code WireH2HCorrectnessTest} proves every method
  * here reproduces the exact bytes of the production {@code FrameCodec}/{@code EdgeFrameCodec}.
@@ -30,7 +30,7 @@ import java.util.zip.CRC32C;
  * {@link CommandCodec#encodeBatch} (one blob per notification) and
  * {@link ConfigDelta#signature()} / {@link ConfigDelta#nonce()} (a defensive clone each),
  * because those are the public data-model API the production codec calls. That term is
- * <em>upstream of the wire</em> — neither a reused JDK buffer nor a pooled Netty {@code ByteBuf}
+ * <em>upstream of the wire</em> - neither a reused JDK buffer nor a pooled Netty {@code ByteBuf}
  * touches it. Removing it requires data-model into-variants (a JDK-side refactor, orthogonal to
  * the transport). The {@code messageBuildingFloor} bench leg measures exactly this residual.
  */
@@ -53,7 +53,7 @@ final class H2HCodecs {
     static int encodeSendWireInto(ByteBuffer out, int senderId, MessageType type,
                                   int groupId, long term, byte[] payload) {
         out.clear();
-        out.putInt(senderId); // ByteBuffer defaults to BIG_ENDIAN → identical to the bit-shift wrap
+        out.putInt(senderId); // ByteBuffer defaults to BIG_ENDIAN -> identical to the bit-shift wrap
         FrameCodec.encode(out, type, groupId, term, payload);
         return out.position();
     }
@@ -63,7 +63,7 @@ final class H2HCodecs {
     // ---------------------------------------------------------------------
 
     /**
-     * BEST-JDK NOTIFY encode into a reused heap buffer — single pass, no intermediate
+     * BEST-JDK NOTIFY encode into a reused heap buffer - single pass, no intermediate
      * {@code List<byte[]>}, no per-notification {@code ByteBuffer}, no payload-then-out double
      * array. Byte-identical to {@link EdgeFrameCodec#encode(EdgeFrame)} for a NOTIFY frame.
      *

@@ -18,16 +18,15 @@ import static org.junit.jupiter.api.Assertions.*;
  * election-response handlers, driven through the public {@code handleMessage}
  * seam so the production code path (not a synthetic shim) executes.
  * <p>
- * S2/mutation-gap (RR-085): {@code handleAppendEntriesResponse},
- * {@code maybeAdvanceCommitIndex}, {@code handleInstallSnapshotResponse},
- * {@code handleRequestVoteResponse}, {@code handlePreVoteRequest}, and
- * {@code handleTimeoutNow} carried conditional-branch and arithmetic survivors
- * (higher-term step-down guards, the nextIndex walk-back floor, the
- * commit-advance term/quorum boundary, the snapshot-response matchIndex clamp,
- * the quorum->becomeLeader transition, the PreVote stale-term / recent-leader
- * shields). Each test asserts the observable effect of the mutated line:
- * a role change that must (or must not) happen, a nextIndex/matchIndex value,
- * a vote response field. Deterministic, no sleeps.
+ * Covers {@code handleAppendEntriesResponse}, {@code maybeAdvanceCommitIndex},
+ * {@code handleInstallSnapshotResponse}, {@code handleRequestVoteResponse},
+ * {@code handlePreVoteRequest}, and {@code handleTimeoutNow} - focusing on
+ * conditional-branch and arithmetic boundaries (higher-term step-down guards,
+ * the nextIndex walk-back floor, the commit-advance term/quorum boundary, the
+ * snapshot-response matchIndex clamp, the quorum->becomeLeader transition, the
+ * PreVote stale-term / recent-leader shields). Each test asserts the observable
+ * effect at the boundary: a role change that must (or must not) happen, a
+ * nextIndex/matchIndex value, a vote response field. Deterministic, no sleeps.
  */
 class RaftNodeReplicationUnitTest {
 
@@ -100,9 +99,7 @@ class RaftNodeReplicationUnitTest {
                 new java.util.Random(1));
     }
 
-    // ====================================================================
-    // handleAppendEntries — follower-side term/log-matching/commit handling
-    // ====================================================================
+    // handleAppendEntries - follower-side term/log-matching/commit handling
 
     @Nested
     class AppendEntriesFollower {
@@ -198,9 +195,7 @@ class RaftNodeReplicationUnitTest {
         }
     }
 
-    // ====================================================================
-    // handleAppendEntriesResponse — higher-term step-down + nextIndex walk-back
-    // ====================================================================
+    // handleAppendEntriesResponse - higher-term step-down + nextIndex walk-back
 
     @Nested
     class AppendResponse {
@@ -224,7 +219,7 @@ class RaftNodeReplicationUnitTest {
             long term = leader.currentTerm();
             // Repeatedly reject from N2. nextIndex starts at lastIndex()+1 and is
             // decremented by one each rejection, but the Math.max(1, ni-1) floor
-            // pins it at 1 — it must NEVER reach 0 (which would make prevLogIndex
+            // pins it at 1 - it must NEVER reach 0 (which would make prevLogIndex
             // -1). Kills the Math.max floor mutant (max(1,..)->max(0,..)) and the
             // ni-1 arithmetic.
             for (int i = 0; i < 50; i++) {
@@ -259,9 +254,7 @@ class RaftNodeReplicationUnitTest {
         }
     }
 
-    // ====================================================================
-    // maybeAdvanceCommitIndex — quorum + current-term boundary
-    // ====================================================================
+    // maybeAdvanceCommitIndex - quorum + current-term boundary
 
     @Nested
     class CommitAdvance {
@@ -289,9 +282,7 @@ class RaftNodeReplicationUnitTest {
         }
     }
 
-    // ====================================================================
-    // handleInstallSnapshotResponse — step-down + matchIndex clamp
-    // ====================================================================
+    // handleInstallSnapshotResponse - step-down + matchIndex clamp
 
     @Nested
     class SnapshotResponse {
@@ -321,9 +312,7 @@ class RaftNodeReplicationUnitTest {
         }
     }
 
-    // ====================================================================
     // handleRequestVoteResponse / PreVote / TimeoutNow
-    // ====================================================================
 
     @Nested
     class VotingResponses {
@@ -415,9 +404,7 @@ class RaftNodeReplicationUnitTest {
         }
     }
 
-    // ====================================================================
-    // becomeFollower — term-adoption boundary
-    // ====================================================================
+    // becomeFollower - term-adoption boundary
 
     @Nested
     class BecomeFollowerBoundary {
@@ -433,7 +420,7 @@ class RaftNodeReplicationUnitTest {
             node.handleMessage(new RequestVoteRequest(5, N2, 0, 0, false));
             assertEquals(N2, node.votedFor());
             // An AppendEntries at the SAME term 5 must NOT clear the vote (becomeFollower
-            // L1437 boundary `newTerm > currentTerm` — only a strict increase adopts a
+            // L1437 boundary `newTerm > currentTerm` - only a strict increase adopts a
             // new term and clears the vote).
             node.handleMessage(new AppendEntriesRequest(5, N3, 0, 0, List.of(), 0));
             assertEquals(5, node.currentTerm());
@@ -441,9 +428,7 @@ class RaftNodeReplicationUnitTest {
         }
     }
 
-    // ====================================================================
     // handleInstallSnapshot / handleInstallSnapshotResponse boundaries
-    // ====================================================================
 
     @Nested
     class SnapshotInstall {
@@ -473,8 +458,8 @@ class RaftNodeReplicationUnitTest {
             // First install index 5.
             follower.handleMessage(new InstallSnapshotRequest(1, N2, 5, 1, 0, new byte[]{9}, true, null));
             t.clear();
-            // A second snapshot at index 5 (== our snapshotIndex) must be ignored — no
-            // re-install — but still acked success. Kills handleInstallSnapshot L1981
+            // A second snapshot at index 5 (== our snapshotIndex) must be ignored - no
+            // re-install - but still acked success. Kills handleInstallSnapshot L1981
             // boundary (lastIncludedIndex <= snapshotIndex).
             follower.handleMessage(new InstallSnapshotRequest(1, N2, 5, 1, 0, new byte[]{8}, true, null));
             assertEquals(5, follower.log().snapshotIndex(), "must not re-install at the same point");

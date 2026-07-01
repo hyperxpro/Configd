@@ -32,8 +32,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 /**
  * jqwik property-based fuzz suite for {@link RaftMessageCodec}.
  *
- * <p>Closes the codec-bounds requirement of Phase 4 (gap-closure §6,
- * row "jqwik for codec bounds") for the consensus wire path. Each
+ * <p>Covers the codec bounds for the consensus wire path. Each
  * Raft RPC type has a roundtrip property; non-Raft frame types and
  * truncated payloads are explicitly rejected.
  */
@@ -244,7 +243,7 @@ class RaftMessageCodecPropertyTest {
     }
 
     /**
-     * Same guard, but for the per-entry command-length field — a single
+     * Same guard, but for the per-entry command-length field - a single
      * entry with an oversized cmdLen must not allocate.
      */
     @Property(tries = 100)

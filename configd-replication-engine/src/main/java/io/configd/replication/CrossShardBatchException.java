@@ -7,10 +7,10 @@ import java.util.Set;
 import java.util.TreeSet;
 
 /**
- * Thrown when a multi-key write (a {@code BATCH}) spans more than one shard — cross-shard atomicity is
- * DISCLAIMED (ADR {@code adr-multiraft-cross-shard}, D-C). The message names the offending key→shard
- * mapping so the operator can co-locate the keys (route them to one shard via a shared scope/prefix) and
- * use the single-shard atomic BATCH instead. A clear rejection, never a silent partial write.
+ * Thrown when a multi-key write (a {@code BATCH}) spans more than one shard. Cross-shard atomicity
+ * is disclaimed: the message names the offending key-to-shard mapping so the operator can co-locate
+ * the keys (route them to one shard via a shared scope/prefix) and use the single-shard atomic BATCH
+ * instead. A clear rejection, never a silent partial write.
  *
  * @see CrossShardWriteGuard
  */
@@ -29,7 +29,7 @@ public final class CrossShardBatchException extends RuntimeException {
         this.keyToShard = keyToShard;
     }
 
-    /** The offending key→shard mapping (the keys did not all resolve to one shard). */
+    /** The offending key-to-shard mapping (the keys did not all resolve to one shard). */
     public Map<String, Integer> keyToShard() {
         return keyToShard;
     }

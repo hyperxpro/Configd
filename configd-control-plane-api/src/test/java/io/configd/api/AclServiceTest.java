@@ -18,17 +18,17 @@ import static org.junit.jupiter.api.Assertions.*;
  * Tests for {@link AclService}.
  * <p>
  * Authorization is evaluated as <b>union of all matching ancestor grants</b> + <b>absolute
- * deny-precedence</b> + <b>default-deny</b> (RFC §01 A5-4; {@code access-control.md} §4; DL-N-08).
+ * deny-precedence</b> + <b>default-deny</b> ({@code access-control.md} section 4).
  * The {@link UnionOfAncestors}, {@link DenyPrecedence}, {@link DefaultDeny}, and
  * {@link GrantDenyIndependence} suites <b>prove</b> these semantics adversarially (they fail under the
  * historical longest-match-only evaluation); {@link ProductionByteIdentity} pins the deployed
  * single-root-grant configuration to decisions identical to longest-match.
  * <p>
- * The O-3 capability-expansion suites prove the new vocabulary and its relationships (RFC §01 A5-1/A5-2;
- * {@code access-control.md} §2): {@link ListIndependentOfRead} (R-CAP-1, {@code LIST} ⊥ {@code READ}),
- * {@link WatchRequiresRead} (R-CAP-2 / INV-WATCH-READ, effective-{@code WATCH} = {@code WATCH} ∧
- * {@code READ}), and {@link AdminIsNotSuperCapability} (DL-O3-01). Each is written to <b>fail</b> if the
- * coupling were wrong (e.g. {@code READ}⇒{@code LIST}, {@code READ}⇒{@code WATCH}, or {@code ADMIN}
+ * The capability-expansion suites prove the new vocabulary and its relationships
+ * ({@code access-control.md} section 2): {@link ListIndependentOfRead} ({@code LIST} independent of
+ * {@code READ}), {@link WatchRequiresRead} (INV-WATCH-READ, effective-{@code WATCH} = {@code WATCH} AND
+ * {@code READ}), and {@link AdminIsNotSuperCapability}. Each is written to <b>fail</b> if the
+ * coupling were wrong (e.g. {@code READ}->{@code LIST}, {@code READ}->{@code WATCH}, or {@code ADMIN}
  * super-capability).
  */
 class AclServiceTest {
@@ -41,7 +41,7 @@ class AclServiceTest {
     }
 
     // -----------------------------------------------------------------------
-    // Basic grant and check (single-level grants — byte-identical to longest-match)
+    // Basic grant and check (single-level grants - byte-identical to longest-match)
     // -----------------------------------------------------------------------
 
     @Nested
@@ -91,16 +91,16 @@ class AclServiceTest {
     }
 
     // -----------------------------------------------------------------------
-    // Union of ancestors (A5-4 union) — PROVES composition; FAILS under longest-match-only
+    // Union of ancestors - PROVES composition; FAILS under longest-match-only
     // -----------------------------------------------------------------------
 
     @Nested
     class UnionOfAncestors {
 
         /**
-         * The canonical proof (prompt §3): a READ grant on an ancestor and a WRITE grant on a
-         * descendant compose to READ∧WRITE on a key under the descendant. Longest-match-only would
-         * return ONLY the descendant's caps (WRITE), dropping the ancestor READ — this asserts the
+         * The canonical proof: a READ grant on an ancestor and a WRITE grant on a descendant compose to
+         * READ+WRITE on a key under the descendant. Longest-match-only would
+         * return ONLY the descendant's caps (WRITE), dropping the ancestor READ - this asserts the
          * union keeps both.
          */
         @Test
@@ -122,7 +122,7 @@ class AclServiceTest {
         @Test
         void descendantCapDoesNotShadowAncestorCap() {
             acl.grant("db.", "alice", Set.of(READ));
-            acl.grant("db.conn.", "alice", Set.of(WRITE)); // WRITE only — no READ at this level
+            acl.grant("db.conn.", "alice", Set.of(WRITE)); // WRITE only - no READ at this level
 
             // db.conn.pool matches both "db." (READ) and "db.conn." (WRITE) -> union READ+WRITE
             assertTrue(acl.isAllowed("alice", "db.conn.pool", READ),
@@ -155,7 +155,7 @@ class AclServiceTest {
     }
 
     // -----------------------------------------------------------------------
-    // Deny precedence (A5-4 — deny absolute) — PROVES both directions
+    // Deny precedence (deny absolute) - PROVES both directions
     // -----------------------------------------------------------------------
 
     @Nested
@@ -178,7 +178,7 @@ class AclServiceTest {
          * under longest-match-only a longer READ-only grant "restricted" a shorter READ+WRITE grant as
          * a side effect of only-longest-wins. Under union that side effect is gone (the shorter grant's
          * WRITE would survive), so restricting a sensitive child is now expressed <b>explicitly</b> with
-         * a DENY — and that DENY wins.
+         * a DENY - and that DENY wins.
          */
         @Test
         void denyAtDescendantOverridesAllowAtAncestor() {
@@ -265,7 +265,7 @@ class AclServiceTest {
     }
 
     // -----------------------------------------------------------------------
-    // Default-deny (A5-4) — no ALLOW means denied; a lone DENY never grants
+    // Default-deny - no ALLOW means denied; a lone DENY never grants
     // -----------------------------------------------------------------------
 
     @Nested
@@ -298,7 +298,7 @@ class AclServiceTest {
     }
 
     // -----------------------------------------------------------------------
-    // ALLOW / DENY independence — grant() and deny() are orthogonal effects at a prefix
+    // ALLOW / DENY independence - grant() and deny() are orthogonal effects at a prefix
     // -----------------------------------------------------------------------
 
     @Nested
@@ -328,7 +328,7 @@ class AclServiceTest {
     }
 
     // -----------------------------------------------------------------------
-    // O-3: LIST ⊥ READ (R-CAP-1 / A5-2) — PROVES non-crossing in BOTH directions
+    // LIST independent of READ - PROVES non-crossing in BOTH directions
     // -----------------------------------------------------------------------
 
     @Nested
@@ -373,13 +373,13 @@ class AclServiceTest {
     }
 
     // -----------------------------------------------------------------------
-    // O-3: effective-WATCH = WATCH ∧ READ (R-CAP-2 / INV-WATCH-READ) — the load-bearing coupling
+    // effective-WATCH = WATCH AND READ (INV-WATCH-READ) - the load-bearing coupling
     // -----------------------------------------------------------------------
 
     @Nested
     class WatchRequiresRead {
 
-        /** WATCH granted but READ absent ⇒ NOT authorized to watch. The core INV-WATCH-READ proof. */
+        /** WATCH granted but READ absent -> NOT authorized to watch. The core INV-WATCH-READ proof. */
         @Test
         void watchWithoutReadIsNotAuthorized() {
             acl.grant("a.", "alice", Set.of(WATCH)); // WATCH but no READ
@@ -388,7 +388,7 @@ class AclServiceTest {
                     "WATCH without READ yields NO effective watch authz (INV-WATCH-READ)");
         }
 
-        /** WATCH ∧ READ ⇒ authorized to watch. */
+        /** WATCH AND READ -> authorized to watch. */
         @Test
         void watchWithReadIsAuthorized() {
             acl.grant("a.", "alice", Set.of(READ, WATCH));
@@ -397,7 +397,7 @@ class AclServiceTest {
                     "WATCH ∧ READ over the target → authorized as a streaming read");
         }
 
-        /** READ alone is not WATCH — WATCH is a separate grantable capability. */
+        /** READ alone is not WATCH - WATCH is a separate grantable capability. */
         @Test
         void readGrantAloneDoesNotConferWatch() {
             acl.grant("a.", "alice", Set.of(READ)); // READ, no WATCH
@@ -446,13 +446,13 @@ class AclServiceTest {
     }
 
     // -----------------------------------------------------------------------
-    // O-3: ADMIN is NOT a super-capability (DL-O3-01 / RFC A5-2: no "ADMIN implies others")
+    // ADMIN is NOT a super-capability (no "ADMIN implies others")
     // -----------------------------------------------------------------------
 
     @Nested
     class AdminIsNotSuperCapability {
 
-        /** An ADMIN-only principal is authorized for ADMIN alone — never for the other four caps. */
+        /** An ADMIN-only principal is authorized for ADMIN alone - never for the other four caps. */
         @Test
         void adminOnlyPrincipalIsNotAuthorizedForOtherCaps() {
             acl.grant("a.", "alice", Set.of(ADMIN)); // ADMIN only
@@ -466,21 +466,21 @@ class AclServiceTest {
     }
 
     // -----------------------------------------------------------------------
-    // Production byte-identity — the deployed single root grant (ConfigdServer.java)
+    // Production byte-identity - the deployed single root grant (ConfigdServer.java)
     // -----------------------------------------------------------------------
 
     @Nested
     class ProductionByteIdentity {
 
         /**
-         * Replicates the ONLY production grant <b>exactly</b>: {@code ConfigdServer.java:726}
+         * Replicates the ONLY production grant <b>exactly</b>:
          * {@code grant("", "root", EnumSet.allOf(Permission.class))}. With a single rule there are no
          * overlapping ancestors and no DENY (a trivial one-element antichain), so union+deny decides
-         * identically to longest-match for every key. The O-3 expansion makes {@code allOf} cover all
-         * five caps, so root gains {@code LIST} and effective {@code WATCH} ({@code WATCH} ∧ {@code READ}
-         * both held) — root has everything, which is correct. The load-bearing wiring guarantee is that
-         * the historical {@code READ}/{@code WRITE}/{@code ADMIN} decisions are <b>unchanged</b>, and that
-         * every non-root principal stays default-denied for <b>every</b> capability.
+         * identically to longest-match for every key. {@code allOf} covers all five caps, so root gains
+         * {@code LIST} and effective {@code WATCH} ({@code WATCH} AND {@code READ} both held) - root has
+         * everything, which is correct. The load-bearing wiring guarantee is that the historical
+         * {@code READ}/{@code WRITE}/{@code ADMIN} decisions are <b>unchanged</b>, and that every
+         * non-root principal stays default-denied for <b>every</b> capability.
          */
         @Test
         void singleRootGrantBehavesIdenticallyToLongestMatch() {
@@ -488,11 +488,11 @@ class AclServiceTest {
             acl.grant("", "root", EnumSet.allOf(AclService.Permission.class));
 
             for (String key : new String[]{"db.host", "app.name", "/a/b/c", "", "x"}) {
-                // Historical decisions — byte-identical to longest-match for the deployed config.
+                // Historical decisions - byte-identical to longest-match for the deployed config.
                 assertTrue(acl.isAllowed("root", key, READ), key);
                 assertTrue(acl.isAllowed("root", key, WRITE), key);
                 assertTrue(acl.isAllowed("root", key, ADMIN), key);
-                // New caps: root holds all of allOf, so LIST and effective WATCH (WATCH ∧ READ) are granted.
+                // New caps: root holds all of allOf, so LIST and effective WATCH (WATCH AND READ) are granted.
                 assertTrue(acl.isAllowed("root", key, LIST), key);
                 assertTrue(acl.isAllowed("root", key, WATCH), key);
             }
@@ -560,7 +560,7 @@ class AclServiceTest {
             assertTrue(acl.isAllowed("alice", "db.host", READ));
         }
 
-        /** Revoke removes the whole entry — both ALLOW and DENY — so a standing deny is also cleared. */
+        /** Revoke removes the whole entry - both ALLOW and DENY - so a standing deny is also cleared. */
         @Test
         void revokeClearsDenyToo() {
             acl.grant("/", "alice", Set.of(READ, WRITE));

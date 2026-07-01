@@ -31,44 +31,36 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * Phase 0 — Workstream B — Stage 2 — M2b S3: the rehoming-injected S2–S4 invariant surface, a
- * REAL-EXECUTOR stress test. The deterministic single-drive-thread sim cannot model true multi-owner
- * concurrency; this test rehomes groups under adversarial schedules WHILE a concurrent multi-owner
- * workload (per-owner tick + propose + marshalled inbound + retargeted group-commit flush) runs across
- * N&gt;1 owner threads — the interaction of the M2a/M2b handoff mechanism with the live fault matrix,
- * which is where a subtle handoff bug the unit/jcstress proofs missed would surface.
+ * Real-executor stress test for the rehoming handoff mechanism. The deterministic single-drive-thread
+ * sim cannot model true multi-owner concurrency; this test rehomes groups under adversarial schedules
+ * WHILE a concurrent multi-owner workload (per-owner tick + propose + marshalled inbound + retargeted
+ * group-commit flush) runs across N&gt;1 owner threads - the interaction of the handoff mechanism with
+ * the live fault matrix, where a subtle handoff bug the unit/jcstress proofs missed would surface.
  *
  * <p>The invariants asserted hold under ALL interleavings if the mechanism is correct (so the test is
  * robust, not flaky):
  * <ul>
- *   <li><b>Owner isolation across rehomes</b> — ZERO {@code raft_owner_thread} fires: every {@code RaftNode}
- *       entry point ran on the group's CURRENT owner thread, even as groups move between owners.</li>
- *   <li><b>In-node safety invariants</b> — the {@code CountingThrowingChecker} throws on ANY invariant
- *       (the 9 RaftNode checks), so a violation anywhere aborts the run.</li>
- *   <li><b>Liveness / non-vacuity</b> — every group's commitIndex GROWS past its pre-sweep baseline: groups
- *       keep committing across the rehomes (a dead handoff that wedged a group would leave it at baseline
- *       or fire).</li>
- *   <li><b>No deadlock/livelock</b> — the sweep completes within the timeout.</li>
+ *   <li><b>Owner isolation across rehomes</b> - ZERO {@code raft_owner_thread} fires: every
+ *       {@code RaftNode} entry point ran on the group's CURRENT owner thread, even as groups
+ *       move between owners.</li>
+ *   <li><b>In-node safety invariants</b> - the {@code CountingThrowingChecker} throws on ANY
+ *       invariant, so a violation anywhere aborts the run.</li>
+ *   <li><b>Liveness / non-vacuity</b> - every group's commitIndex GROWS past its pre-sweep
+ *       baseline: groups keep committing across the rehomes (a dead handoff that wedged a group
+ *       would leave it at baseline or fire).</li>
+ *   <li><b>No deadlock/livelock</b> - the sweep completes within the timeout.</li>
  * </ul>
  *
- * <p>Production stays single-group and never rehomes; this multi-group/rehoming surface is test-only until
- * Phase-1 sharding. See docs/phase0-B-stage2-m2b/.
+ * <p>Production stays single-group and never rehomes; this multi-group/rehoming surface is test-only.
  *
- * <p><b>De-flake (pre-EC2 cleanup, 2026-06-27).</b> This test deliberately runs REAL distinct owner
- * threads — its core assertion is that {@code raft_owner_thread} NEVER fires across rehomes, which is
- * only meaningful with genuinely separate OS owner threads. A single-thread / FIFO deterministic
- * scheduler would bind every group to one thread, making owner-isolation pass <em>vacuously</em> and
- * destroying the exact coverage this test exists for (catching live multi-owner handoff races the
- * deterministic sim cannot model — see above). The schedule therefore stays non-deterministic <em>by
- * design</em>; what is made deterministic is the <em>verdict</em>. The asserted invariants (zero owner
- * fires, per-group commit growth, no deadlock) hold under ALL interleavings, so the only historical
- * flakiness was wall-clock-budget sensitivity on the CPU-credit-throttled 2-vCPU box (per-task
- * {@code .get(10s)} round-trips and a 90s {@code producersDone.await}). Those <em>throughput</em>
- * budgets are removed: task round-trips use unbounded {@code .get()} and the workload is awaited with no
- * budget. The SOLE wall-clock deadline is the method-level {@code @Timeout(600)} — a pure DEADLOCK
- * ceiling: a correct run finishes the bounded workload in seconds (≈1.3s un-throttled), so 600s only
- * fires on a genuine wedge, and then with a JUnit thread dump. Cleanup joins keep a generous 60s bound
- * (a thread that ignores {@code shutdownNow} interrupt is a real bug, not throttle).
+ * <p>This test deliberately runs REAL distinct owner threads - its core assertion is that
+ * {@code raft_owner_thread} NEVER fires across rehomes, which is only meaningful with genuinely
+ * separate OS owner threads. A single-thread / FIFO deterministic scheduler would bind every group
+ * to one thread, making owner-isolation pass vacuously and destroying the exact coverage this test
+ * exists for. The schedule therefore stays non-deterministic by design; what is made deterministic
+ * is the verdict. The asserted invariants hold under ALL interleavings. The sole wall-clock deadline
+ * is the method-level {@code @Timeout(600)} - a pure deadlock ceiling: a correct run finishes the
+ * bounded workload in seconds, so 600s only fires on a genuine wedge.
  */
 class RehomingInjectedSweepTest {
 
@@ -118,7 +110,7 @@ class RehomingInjectedSweepTest {
     }
 
     @Test
-    @Timeout(600) // pure DEADLOCK ceiling (a correct run is ~seconds); see class doc — NOT a throughput budget
+    @Timeout(600) // pure DEADLOCK ceiling (a correct run is ~seconds); see class doc - NOT a throughput budget
     void rehomingUnderConcurrentMultiOwnerWorkload_holdsInvariants_keepsCommitting_zeroFires() throws Exception {
         // Seed-sweep: each seed drives a different rehome SEQUENCE; real-executor scheduling adds
         // interleaving diversity on top. CI runs 1 sweep (fast smoke); the S3 verification runs many
@@ -162,7 +154,7 @@ class RehomingInjectedSweepTest {
         AtomicLong rehomes = new AtomicLong();
         AtomicInteger keepInjecting = new AtomicInteger(1);
 
-        // PRODUCERS — drive the workload, each unit marshalled onto the group's CURRENT owner (rehoming
+        // PRODUCERS - drive the workload, each unit marshalled onto the group's CURRENT owner (rehoming
         // aware). The .get() surfaces any owner-thread throwable (tripwire or in-node invariant).
         for (int p = 0; p < producers; p++) {
             final int pid = p;
@@ -171,19 +163,19 @@ class RehomingInjectedSweepTest {
                     start.await();
                     for (int i = 0; i < itersPer && failure.get() == null; i++) {
                         final int gid = gids[(pid + i) % gids.length];
-                        // (a) per-owner tick — OWNER-indexed, on that owner's OWN executor (tickOwner self-
+                        // (a) per-owner tick - OWNER-indexed, on that owner's OWN executor (tickOwner self-
                         //     filters to the groups it currently owns, so it is safe under rehoming; coupling it
                         //     to a group's executor would let tickOwner(oldOwner) run on a new owner after a race).
                         final int oi = (pid + i) % n;
                         pool.ownerByIndex(oi).submit(() -> driver.tickOwner(oi)).get();
-                        // (b) propose to a group — marshalled onto its CURRENT owner; driver.propose self-bounces
+                        // (b) propose to a group - marshalled onto its CURRENT owner; driver.propose self-bounces
                         //     (rejects NOT_LEADER) if the group rehomed away from the resolved owner (no fire).
                         driver.ownerExecutor(gid).submit(() -> {
                             if (driver.propose(gid, ("v" + gid).getBytes()).result() == ProposalResult.ACCEPTED) {
                                 accepted.incrementAndGet();
                             }
                         }).get();
-                        // (c) marshalled inbound (production pattern) — benign low-term vote (rejected, no state
+                        // (c) marshalled inbound (production pattern) - benign low-term vote (rejected, no state
                         //     change), on the current owner; handleMessage runs on-owner, or bounces if rehomed.
                         driver.ownerExecutor(gid).execute(() ->
                                 driver.routeMessage(gid, new RequestVoteRequest(0L, PHANTOM, 0L, 0L, true)));
@@ -196,8 +188,8 @@ class RehomingInjectedSweepTest {
             });
         }
 
-        // REHOMING INJECTOR — move random groups to random target owners under adversarial timing, while
-        // the workload runs. rehomeGroup quiesces→publishes→adopts (migrating gates tick + bounces work).
+        // REHOMING INJECTOR - move random groups to random target owners under adversarial timing, while
+        // the workload runs. rehomeGroup quiesces -> publishes -> adopts (migrating gates tick + bounces work).
         work.submit(() -> {
             try {
                 start.await();
@@ -206,13 +198,13 @@ class RehomingInjectedSweepTest {
                     int gid = gids[rnd.nextInt(gids.length)];
                     int target = rnd.nextInt(n);
                     if (driver.currentOwnerIndex(gid) == target) {
-                        continue; // already there — pick again
+                        continue; // already there - pick again
                     }
                     try {
                         driver.rehomeGroup(gid, target);
                         rehomes.incrementAndGet();
                     } catch (IllegalArgumentException raced) {
-                        // a concurrent state read raced (already-on-target / unknown) — benign, retry
+                        // a concurrent state read raced (already-on-target / unknown) - benign, retry
                     }
                 }
             } catch (Throwable t) {
@@ -220,7 +212,7 @@ class RehomingInjectedSweepTest {
             }
         });
 
-        // SAFE-RIDER — read the S-set + the owner-published monitorView off-owner, concurrently. These are
+        // SAFE-RIDER - read the S-set + the owner-published monitorView off-owner, concurrently. These are
         // the only legal cross-owner reads and must NEVER trip the net.
         work.submit(() -> {
             try {
@@ -254,12 +246,12 @@ class RehomingInjectedSweepTest {
                 "OWNER ISOLATION VIOLATED under rehoming — a group entry point ran off its current owner; first: "
                         + checker.firstViolation.get());
 
-        // PRE-DRAIN liveness (SELF-SUFFICIENT — does not rely on the drain): the injector is stopped and the
+        // PRE-DRAIN liveness (SELF-SUFFICIENT - does not rely on the drain): the injector is stopped and the
         // barriers are uninterruptible, so no group is left migrating. Tick each group ONCE on its current
         // owner (refresh monitorView; NO propose) and assert it committed PAST its baseline DURING the
-        // concurrent rehoming phase — proving consensus progressed ACROSS the rehomes, not only in the drain.
+        // concurrent rehoming phase - proving consensus progressed ACROSS the rehomes, not only in the drain.
         // A group wedged mid-sweep would either have FIRED the net (caught above) or show no pre-drain growth
-        // here. (S3 verifier hardening.)
+        // here.
         long minPreDrain = Long.MAX_VALUE;
         for (int k = 0; k < gids.length; k++) {
             int gid = gids[k];
@@ -273,7 +265,7 @@ class RehomingInjectedSweepTest {
         }
         assertEquals(0, checker.ownerFires.get(), "the pre-drain liveness tick must not fire");
 
-        // DRAIN — settle every group back onto its static owner, then propose + tick it there (clean shutdown +
+        // DRAIN - settle every group back onto its static owner, then propose + tick it there (clean shutdown +
         // a post-settle confirmation that the group still serves on its static owner after the sweep).
         for (int gid : gids) {
             int target = pool.ownerIndexOf(gid);

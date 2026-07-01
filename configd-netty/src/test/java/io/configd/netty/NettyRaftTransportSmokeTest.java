@@ -26,7 +26,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * De-risking smoke test for {@link NettyRaftTransport} (plaintext) — confirms the core round-trip /
+ * De-risking smoke test for {@link NettyRaftTransport} (plaintext) - confirms the core round-trip /
  * bidirectional / concurrency / unknown-peer / shutdown behaviour before the full 3-transport
  * {@code AbstractRaftTransportContract} folds these in. Mirrors the plaintext legs of
  * {@code TcpRaftTransportTest}.

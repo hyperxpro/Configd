@@ -18,11 +18,11 @@ import java.util.function.BiConsumer;
  *
  * <h3>Internal node types</h3>
  * <ul>
- *   <li>{@link BitmapIndexedNode} — sparse array with a 32-bit bitmap indicating
+ *   <li>{@link BitmapIndexedNode} - sparse array with a 32-bit bitmap indicating
  *       which of the 32 possible hash-fragment slots are occupied.</li>
- *   <li>{@link ArrayNode} — full 32-element array used when a bitmap node
+ *   <li>{@link ArrayNode} - full 32-element array used when a bitmap node
  *       exceeds 16 children, avoiding bitCount overhead for dense levels.</li>
- *   <li>{@link CollisionNode} — flat array for keys sharing the same full
+ *   <li>{@link CollisionNode} - flat array for keys sharing the same full
  *       32-bit hash code (extremely rare with good hash functions).</li>
  * </ul>
  *
@@ -110,7 +110,7 @@ public final class HamtMap<K, V> {
         Node<K, V> base = (root != null) ? root : BitmapIndexedNode.<K, V>empty();
         Node<K, V> newRoot = base.put(key, value, hash, 0, sc);
         if (newRoot == base && sc.delta == 0) {
-            return this; // value unchanged — zero allocation
+            return this; // value unchanged - zero allocation
         }
         return new HamtMap<>(newRoot, size + sc.delta);
     }
@@ -231,7 +231,7 @@ public final class HamtMap<K, V> {
             int idx = index(bit);
 
             if ((bitmap & bit) == 0) {
-                // Empty slot — insert inline leaf
+                // Empty slot - insert inline leaf
                 sc.delta = 1;
                 int n = Integer.bitCount(bitmap);
                 if (n >= PROMOTE_THRESHOLD) {
@@ -249,7 +249,7 @@ public final class HamtMap<K, V> {
             Object existingVal = array[2 * idx + 1];
 
             if (existingKey == null) {
-                // Sub-node — recurse
+                // Sub-node - recurse
                 Node<K, V> child = (Node<K, V>) existingVal;
                 Node<K, V> newChild = child.put(key, value, hash, shift + BITS, sc);
                 if (newChild == child) {
@@ -260,7 +260,7 @@ public final class HamtMap<K, V> {
 
             K ek = (K) existingKey;
             if (key.equals(ek)) {
-                // Same key — update value in place
+                // Same key - update value in place
                 if (value.equals(existingVal)) {
                     return this;
                 }
@@ -268,7 +268,7 @@ public final class HamtMap<K, V> {
                 return cloneAndSet(2 * idx + 1, value);
             }
 
-            // Different key, same hash fragment at this level — merge
+            // Different key, same hash fragment at this level - merge
             sc.delta = 1;
             int existingHash = spread(ek.hashCode());
             Node<K, V> merged = mergeLeaves(shift + BITS,
@@ -558,14 +558,14 @@ public final class HamtMap<K, V> {
                 newPairs[2 * n + 1] = value;
                 return new CollisionNode<>(this.hash, newPairs);
             }
-            // Different hash — nest this collision node under a bitmap node
+            // Different hash - nest this collision node under a bitmap node
             // and insert the new key alongside it.
             sc.delta = 1;
             int frag = (this.hash >>> shift) & MASK;
             int bit = 1 << frag;
             BitmapIndexedNode<K, V> wrapper = new BitmapIndexedNode<>(bit,
                     new Object[]{null, this});
-            // Re-route through the wrapper's put — it will place the new key
+            // Re-route through the wrapper's put - it will place the new key
             // at the correct fragment. Use a fresh SizeChange since the wrapper
             // doesn't know about the collision node's entries.
             var innerSc = new SizeChange();

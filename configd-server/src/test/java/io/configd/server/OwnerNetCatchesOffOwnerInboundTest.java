@@ -34,11 +34,11 @@ import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.api.io.TempDir;
 
 /**
- * Phase 0 — Workstream B (Stage 1B) — "test the tester" UNDER THE NEW POOL WIRING.
+ * "Test the tester" under the new pool wiring.
  *
  * <p>{@link RaftInboundMarshallingTest} proves the inbound seam marshals; {@link
  * RaftNodeConcurrencyStressTest} proves the {@code assertOwnerThread()} tripwire catches an off-owner
- * touch in isolation. This test closes the gap the threading-contract §6.2 demands before R-01 is
+ * touch in isolation. This test closes the gap the threading contract demands before the single-writer rule is
  * deleted: the net must still CATCH a missed marshalling hop AFTER consensus is routed through the
  * owner executor and {@code bindOwnerThread()} activates the guard in PRODUCTION mode (metric, not
  * throw). "A guard that stopped firing after the refactor is worse than no guard."
@@ -46,18 +46,18 @@ import org.junit.jupiter.api.io.TempDir;
  * <p>Wiring mirrors {@link ConfigdServer}: a real {@link InvariantMonitor} in PRODUCTION mode
  * ({@code testMode=false}) is the {@code RaftNode.InvariantChecker}, so a tripwire fire increments
  * the {@code invariant.violation.raft_owner_thread} counter (exported as
- * {@code invariant_violation_raft_owner_thread_total}) and keeps serving — exactly the live server
+ * {@code invariant_violation_raft_owner_thread_total}) and keeps serving - exactly the live server
  * behaviour. The node's owner is bound to a dedicated owner executor (the N=1 {@code
  * ownerExecutor(gid)} stand-in), and inbound delivery goes through the PRODUCTION {@link
  * ConfigdServer#raftInboundHandler} seam.
  *
  * <ul>
- *   <li><b>{@link #correctlyMarshalledInboundDoesNotTripTheNet()}</b> — with the hop intact, routing
- *       lands on the owner thread → the guard stays silent → counter 0. The clean-path half (matches
+ *   <li><b>{@link #correctlyMarshalledInboundDoesNotTripTheNet()}</b> - with the hop intact, routing
+ *       lands on the owner thread -> the guard stays silent -> counter 0. The clean-path half (matches
  *       verification D's "violation counter is 0 on a clean run").</li>
- *   <li><b>{@link #offOwnerInboundTripsTheNetUnderTheNewWiring()}</b> — THE SCRATCH-BREAK SHAPE: the
+ *   <li><b>{@link #offOwnerInboundTripsTheNetUnderTheNewWiring()}</b> - THE SCRATCH-BREAK SHAPE: the
  *       routing is invoked off-owner (the missed hop), so {@code handleMessage} touches the {@code
- *       RaftNode} on a foreign thread and the tripwire fires → counter &gt;= 1. This is the same red
+ *       RaftNode} on a foreign thread and the tripwire fires -> counter &gt;= 1. This is the same red
  *       a scratch edit removing {@code raftExecutor.execute(...)} in {@code raftInboundHandler}
  *       produces, captured here deterministically.</li>
  * </ul>
@@ -79,7 +79,7 @@ class OwnerNetCatchesOffOwnerInboundTest {
         });
     }
 
-    /** A stale-term AppendEntries — a leader (term >= 1) rejects it and replies, so it exercises state. */
+    /** A stale-term AppendEntries - a leader (term >= 1) rejects it and replies, so it exercises state. */
     private static AppendEntriesRequest staleAppendEntries() {
         return new AppendEntriesRequest(0L, NodeId.of(2), 0L, 0L, List.of(), 0L);
     }
@@ -96,7 +96,7 @@ class OwnerNetCatchesOffOwnerInboundTest {
 
     /**
      * Builds a single-node leader whose owner is bound to {@code owner} and whose checker is the
-     * PRODUCTION-mode {@link InvariantMonitor} (records the violation metric, does not throw) — the
+     * PRODUCTION-mode {@link InvariantMonitor} (records the violation metric, does not throw) - the
      * wired-server discipline. Binds the owner as the FIRST task on the owner executor (H-6), then
      * self-elects on it (single-node), all on-owner so the bind/elect path is clean.
      */
@@ -135,7 +135,7 @@ class OwnerNetCatchesOffOwnerInboundTest {
             RaftNode node = buildBoundLeader(registry, owner);
             MultiRaftDriver driver = driverFor(node);
 
-            // The PRODUCTION seam, targeting the SAME executor the owner is bound to → on-owner.
+            // The PRODUCTION seam, targeting the SAME executor the owner is bound to -> on-owner.
             var inbound = ConfigdServer.raftInboundHandler(driver, GROUP, owner);
 
             CountDownLatch routed = new CountDownLatch(1);
@@ -165,7 +165,7 @@ class OwnerNetCatchesOffOwnerInboundTest {
             MultiRaftDriver driver = driverFor(node);
 
             // THE MISSED HOP (the scratch-break shape): route the inbound message INLINE on a foreign
-            // thread, i.e. driver.routeMessage(...) WITHOUT owner.execute(...) — exactly what removing
+            // thread, i.e. driver.routeMessage(...) WITHOUT owner.execute(...) - exactly what removing
             // `raftExecutor.execute` in ConfigdServer.raftInboundHandler would do. node.handleMessage()
             // then touches the RaftNode off its bound owner, so assertOwnerThread() must fire.
             CountDownLatch routed = new CountDownLatch(1);
@@ -185,9 +185,9 @@ class OwnerNetCatchesOffOwnerInboundTest {
     }
 
     /**
-     * Verification D (clean run): a fully-wired {@link ConfigdServer} — owner bound on owner[0], the
+     * Verification D (clean run): a fully-wired {@link ConfigdServer} - owner bound on owner[0], the
      * consensus tick on owner[0], the H-3 scrape + a linearizable read exercising the read double-hop
-     * onto the owner — must produce ZERO off-owner violations. The net is ACTIVE in production
+     * onto the owner - must produce ZERO off-owner violations. The net is ACTIVE in production
      * (prod-mode {@code InvariantMonitor}), so a latent missed hop at any wired call site would leave
      * the {@code invariant_violation_raft_owner_thread_total} counter present/non-zero in the live
      * {@code /metrics} exposition. This is the full-boot regression guard complementing the seam-level
@@ -207,7 +207,7 @@ class OwnerNetCatchesOffOwnerInboundTest {
             // Let the owner bind + several consensus ticks + the H-3 scrape run on owner[0].
             Thread.sleep(300);
             // Exercise the linearizable-read double-hop onto the owner (a no-quorum node returns 503,
-            // but the readIndex()/completeRead() still run ON the owner — a missed hop would trip).
+            // but the readIndex()/completeRead() still run ON the owner - a missed hop would trip).
             int port = apiPort(server);
             HttpClient.newHttpClient().send(
                     HttpRequest.newBuilder()
@@ -218,7 +218,7 @@ class OwnerNetCatchesOffOwnerInboundTest {
 
             String metrics = scrapeMetrics(server, port);
             long violations = counterValue(metrics, "invariant_violation_raft_owner_thread_total");
-            // -1 = the counter line is absent (never fired) — the desired clean state; 0 also clean.
+            // -1 = the counter line is absent (never fired) - the desired clean state; 0 also clean.
             assertTrue(violations <= 0,
                     "Verification D: the live server's raft_owner_thread violation counter must be 0 "
                             + "(absent) on a clean run — a non-zero value means a wired call site reads "
@@ -229,7 +229,7 @@ class OwnerNetCatchesOffOwnerInboundTest {
     }
 
     private static int apiPort(ConfigdServer server) {
-        // ADR-0043 M2: the admin server is now Netty; use the public bound-port accessor rather than
+        // The admin server is now Netty; use the public bound-port accessor rather than
         // reflecting into a transport-specific internal field.
         return server.apiPort();
     }

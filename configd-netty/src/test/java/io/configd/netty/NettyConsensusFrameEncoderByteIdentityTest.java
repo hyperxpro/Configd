@@ -20,15 +20,14 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * Golden-bytes equivalence for the production {@link NettyConsensusFrameEncoder}: the in-pipeline
  * encoder must emit, for every frame shape, the <b>byte-identical</b> wire sequence of the JDK
  * adapter's single source of truth, {@link RaftWireProtocol#encodeWire(int, FrameCodec.Frame)}
- * — {@code [4B big-endian senderId] || FrameCodec frame}.
+ * - {@code [4B big-endian senderId] || FrameCodec frame}.
  *
- * <p>This is the "equivalence by construction" pin for the encode side of the M4 Netty consensus
- * transport: {@code AbstractRaftTransportContract} proves the two transports are functionally
- * interchangeable end-to-end, and this test additionally proves the Netty encoder's <em>bytes</em>
- * are exactly the JDK's — so the allocation win measured by
- * {@link NettyConsensusFrameEncoderAllocationTest} is a win on the <em>identical</em> wire, not a
- * different (cheaper) encoding. The encoder is driven the production way — in a Netty pipeline via
- * {@link EmbeddedChannel} — so the bytes under assertion are produced by the real
+ * <p>{@code AbstractRaftTransportContract} proves the two transports are functionally interchangeable
+ * end-to-end; this test additionally proves the Netty encoder's <em>bytes</em> are exactly the JDK's,
+ * so the allocation win measured by {@link NettyConsensusFrameEncoderAllocationTest} is a win on the
+ * <em>identical</em> wire, not a different (cheaper) encoding. The encoder is driven the production
+ * way - in a Netty pipeline via {@link EmbeddedChannel} - so the bytes under assertion are produced
+ * by the real
  * {@link io.netty.handler.codec.MessageToByteEncoder} path, not a hand-rolled replica.
  */
 class NettyConsensusFrameEncoderByteIdentityTest {
@@ -53,7 +52,7 @@ class NettyConsensusFrameEncoderByteIdentityTest {
      */
     private static void assertWireIdentity(int senderId, FrameCodec.Frame frame) {
         EmbeddedChannel ch = new EmbeddedChannel(new NettyConsensusFrameEncoder(senderId));
-        ch.config().setAllocator(PooledByteBufAllocator.DEFAULT); // match production (DR-N17)
+        ch.config().setAllocator(PooledByteBufAllocator.DEFAULT); // match production
         try {
             assertTrue(ch.writeOutbound(frame), "encoder must produce an outbound buffer");
             ByteBuf out = ch.readOutbound();
@@ -65,7 +64,7 @@ class NettyConsensusFrameEncoderByteIdentityTest {
                         + " group=" + frame.groupId() + " term=" + frame.term()
                         + " payloadLen=" + frame.payload().length;
                 assertArrayEquals(expected, actual, label);
-                // The frame is also exactly FrameCodec.decode-able after the 4-byte sender prefix —
+                // The frame is also exactly FrameCodec.decode-able after the 4-byte sender prefix -
                 // i.e. the encoder wrote a valid, CRC-correct frame, not merely matching bytes.
                 byte[] frameOnly = new byte[actual.length - RaftWireProtocol.SENDER_ID_SIZE];
                 System.arraycopy(actual, RaftWireProtocol.SENDER_ID_SIZE, frameOnly, 0, frameOnly.length);
@@ -86,7 +85,7 @@ class NettyConsensusFrameEncoderByteIdentityTest {
     /** Varied {@link MessageType}, groupId, term, and payload size (incl. empty, 256B, 4KB) + extremes. */
     private static List<FrameCodec.Frame> representativeFrames() {
         List<FrameCodec.Frame> frames = new ArrayList<>();
-        // Empty heartbeat — the M3 coalesced hot path.
+        // Empty heartbeat - the coalesced hot path.
         frames.add(new FrameCodec.Frame(MessageType.HEARTBEAT, 0, 0L, new byte[0]));
         // Small + medium + large payloads with varied content.
         frames.add(new FrameCodec.Frame(MessageType.APPEND_ENTRIES, 1, 5L, payload(1)));
@@ -98,7 +97,7 @@ class NettyConsensusFrameEncoderByteIdentityTest {
         frames.add(new FrameCodec.Frame(MessageType.PRE_VOTE, 4, 7L, payload(0)));
         frames.add(new FrameCodec.Frame(MessageType.INSTALL_SNAPSHOT, 9, 1024L, payload(512)));
         frames.add(new FrameCodec.Frame(MessageType.TIMEOUT_NOW, 5, 11L, payload(4)));
-        // groupId / term extremes — exercise the big-endian int/long writes against encodeWire.
+        // groupId / term extremes - exercise the big-endian int/long writes against encodeWire.
         frames.add(new FrameCodec.Frame(MessageType.APPEND_ENTRIES_RESPONSE, Integer.MAX_VALUE,
                 Long.MAX_VALUE, payload(33)));
         frames.add(new FrameCodec.Frame(MessageType.REQUEST_VOTE_RESPONSE, Integer.MIN_VALUE,

@@ -20,7 +20,7 @@ import java.util.concurrent.atomic.AtomicLong;
 import static org.junit.jupiter.api.Assertions.*;
 
 /**
- * Tests for {@link EdgeConfigClient} — the high-level edge config facade.
+ * Tests for {@link EdgeConfigClient} - the high-level edge config facade.
  */
 class EdgeConfigClientTest {
 
@@ -63,11 +63,10 @@ class EdgeConfigClientTest {
     }
 
     /**
-     * Builds a snapshot stamped with the CURRENT clock time as its commit timestamp
-     * (ADR-0039: the snapshot timestamp is the frontier the edge measures staleness
-     * against). A snapshot received "now" carries ~now's timestamp, so loading it leaves
-     * the edge CURRENT and the staleness transitions are driven by the clock advancing
-     * afterward — the property these tests exercise.
+     * Builds a snapshot stamped with the CURRENT clock time as its commit timestamp.
+     * The snapshot timestamp is the frontier the edge measures staleness against, so a
+     * snapshot received "now" leaves the edge CURRENT; staleness transitions are then
+     * driven by the clock advancing afterward.
      */
     private ConfigSnapshot buildSnapshot(long version, String... keyValues) {
         long ts = clock.currentTimeMillis();
@@ -109,7 +108,7 @@ class EdgeConfigClientTest {
     }
 
     // -----------------------------------------------------------------------
-    // Reads — delegation to LocalConfigStore
+    // Reads - delegation to LocalConfigStore
     // -----------------------------------------------------------------------
 
     @Nested

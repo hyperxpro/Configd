@@ -3,7 +3,7 @@ package io.configd.testkit;
 import io.configd.common.Storage;
 
 /**
- * Seam over the RR-003 {@link io.configd.common.Storage} crash fixture that the
+ * Seam over the crash-storage durability fixture that the
  * adversarial simulation ({@link AdversarialSim}) uses to inject crash-restart
  * faults. Implemented in package {@code io.configd.raft} by
  * {@code CrashStorageAdapter}, which wraps the package-private {@code CrashStorage}
@@ -17,7 +17,7 @@ public interface CrashStorageHandle extends Storage {
 
     /**
      * Arms an automatic crash after the {@code afterWrites}-th mutating storage op,
-     * so a crash can be placed deterministically at — or mid — a logical operation
+     * so a crash can be placed deterministically at - or mid - a logical operation
      * (e.g. mid-{@code compact()}).
      */
     void armCrashAfterWrites(int afterWrites);
@@ -26,7 +26,7 @@ public interface CrashStorageHandle extends Storage {
     boolean didCrash();
 
     /**
-     * A fresh storage over only the durable (fsynced) image — i.e. what a process
+     * A fresh storage over only the durable (fsynced) image - i.e. what a process
      * restart would read after the crash. Pending unsynced writes are dropped.
      */
     Storage recoveredView();

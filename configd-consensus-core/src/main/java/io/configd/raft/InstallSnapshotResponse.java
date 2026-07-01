@@ -5,7 +5,7 @@ import io.configd.common.NodeId;
 import java.util.Objects;
 
 /**
- * Raft InstallSnapshot RPC response (Raft §7).
+ * Raft InstallSnapshot RPC response (Raft section 7).
  * <p>
  * Sent by a follower after processing an {@link InstallSnapshotRequest}.
  * The leader uses the response to update its view of the follower's state.

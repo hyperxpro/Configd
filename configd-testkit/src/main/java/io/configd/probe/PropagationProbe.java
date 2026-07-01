@@ -9,29 +9,29 @@ import java.util.Objects;
 import java.util.TreeMap;
 
 /**
- * Synthetic propagation probe (Session 3 Phase V2 — charter §3 V2). A
+ * Synthetic propagation probe. A
  * <b>transport-agnostic</b> recorder of config-propagation staleness: the wall (or
  * logical) time between a committed write becoming visible at the boundary
  * ({@link #recordPublished}) and an observer applying it ({@link #recordVisible}).
  *
- * <p>The staleness sample for an observer is {@code visibleTs − publishTs}. This is
- * exactly the consistency-contract §2 INV-S1 measurement
- * ({@code staleness = observer_now − commit_timestamp(last_applied)}), where the
+ * <p>The staleness sample for an observer is {@code visibleTs - publishTs}. This is
+ * exactly the staleness invariant measurement
+ * ({@code staleness = observer_now - commit_timestamp(last_applied)}), where the
  * publish timestamp is the leader-assigned commit timestamp
- * ({@link io.configd.distribution.CommitNotification#commitTimestampMillis()}, ADR-0035 §2)
+ * ({@link io.configd.distribution.CommitNotification#commitTimestampMillis()}, per the commit-timestamp spec section 2)
  * and the visible timestamp is the observer's clock at apply. Samples are recorded
  * into per-observer and global {@link Histogram}s and surfaced as a structured
  * {@link #report()} plus machine-greppable {@code PROBE-HISTOGRAM:} summary lines.
  *
  * <h2>Two modes, one recorder</h2>
- * The same probe serves both probe modes (charter §3 V2):
+ * The same probe serves both probe modes:
  * <ul>
  *   <li><b>simulator</b> (logical time): a single sim thread feeds exact logical
- *       publish/visible timestamps, so recorded percentiles are exact — used to
+ *       publish/visible timestamps, so recorded percentiles are exact - used to
  *       check the staleness <em>mechanism</em>;</li>
  *   <li><b>live multi-node</b> (wall time): concurrent observers feed
- *       {@code System.currentTimeMillis()} samples — used for honest, hardware-caveated
- *       numbers (Session 5 sets the real p99 &lt; 500 ms target).</li>
+ *       {@code System.currentTimeMillis()} samples - used for honest, hardware-caveated
+ *       numbers.</li>
  * </ul>
  *
  * <h2>Thread-safety</h2>
@@ -97,11 +97,11 @@ public final class PropagationProbe {
 
     /**
      * Records that committed sequence {@code seq} became visible at the boundary at
-     * {@code publishTsMillis} (the leader-assigned commit timestamp — contract §2 / ADR-0035 §2).
+     * {@code publishTsMillis} (the leader-assigned commit timestamp - contract section 2 / per the commit-timestamp spec section 2).
      * Idempotent-friendly: re-publishing the same seq overwrites the recorded publish
      * time with the latest, so a re-delivered notification cannot corrupt the clock.
      *
-     * @param seq            the applied-mutation sequence S (ADR-0033); must be &ge; 0
+     * @param seq            the applied-mutation sequence S; must be &ge; 0
      * @param publishTsMillis the publish/commit timestamp in ms; must be &ge; 0
      */
     public synchronized void recordPublished(long seq, long publishTsMillis) {
@@ -117,12 +117,12 @@ public final class PropagationProbe {
 
     /**
      * Records that observer {@code observerId} saw committed sequence {@code seq} at
-     * {@code visibleTsMillis}. The staleness sample is {@code visibleTsMillis − publishTs}.
+     * {@code visibleTsMillis}. The staleness sample is {@code visibleTsMillis - publishTs}.
      * <p>
      * If {@code seq} was never published (no matching {@link #recordPublished}), the call
      * is counted as <b>unmatched</b> (per observer and globally) and contributes nothing
-     * to the latency distribution — unmatched seqs are ignored gracefully, never silently.
-     * A negative staleness (visible before published — clock skew or a logically-impossible
+     * to the latency distribution - unmatched seqs are ignored gracefully, never silently.
+     * A negative staleness (visible before published - clock skew or a logically-impossible
      * out-of-order sample) is clamped to 0 so the histogram stays well-formed; a sample above
      * {@link #HIGHEST_TRACKABLE_MILLIS} is clamped to the ceiling and counted as overflow.
      *
@@ -144,7 +144,7 @@ public final class PropagationProbe {
         }
         long staleness = visibleTsMillis - publishTs;
         if (staleness < 0) {
-            staleness = 0; // observed "before" published (skew / out-of-order) — floor, do not drop
+            staleness = 0; // observed "before" published (skew / out-of-order) - floor, do not drop
         }
         boolean overflow = staleness > HIGHEST_TRACKABLE_MILLIS;
         if (overflow) {
@@ -226,7 +226,7 @@ public final class PropagationProbe {
 
     /**
      * Exact count of recorded samples whose staleness is {@code >= valueMs}, across all
-     * observers. This is the methodology §3a/F1 "tail-bin sample count": a p999/p9999 backed
+     * observers. This is the methodology "tail-bin sample count": a p999/p9999 backed
      * by only a handful of samples at/above its value is low-confidence, and this is how a
      * report states that count honestly rather than guessing it. Counts the closed interval
      * {@code [valueMs, HIGHEST_TRACKABLE_MILLIS]} on the HdrHistogram.
@@ -265,7 +265,7 @@ public final class PropagationProbe {
 
     /**
      * Returns only the machine-greppable {@code PROBE-HISTOGRAM:} summary lines (one per
-     * observer, then global), in deterministic order — the form gate-3 / CI greps for.
+     * observer, then global), in deterministic order - the form CI greps for.
      *
      * @return the summary lines, newline-separated, ending with a newline
      */

@@ -28,41 +28,41 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.fail;
 
 /**
- * C5 (CT-24) at the server core: the bootstrap snapshot transfer vs the BOUNDED transport
- * queue (the {@code FanOutServer.Connection} model — a non-blocking
- * {@code ArrayBlockingQueue.offer}, default 64 frames, drained by a writer thread).
+ * Pins the bootstrap snapshot transfer vs the BOUNDED transport queue (the
+ * {@code FanOutServer.Connection} model - a non-blocking {@code ArrayBlockingQueue.offer},
+ * default 64 frames, drained by a writer thread).
  *
  * <p><b>The hole this test was written to catch (found RED, fixed in
  * {@code performSnapshotTransfer}):</b> the transfer emitted BEGIN + ALL chunks + END in
  * one burst inside a single {@code tick}. Any transfer whose chunk count exceeded the
- * transport queue's free space had chunks silently REFUSED mid-burst, which (a) marked
- * the session closed ({@code transport_gone}) on the first refused chunk, (b) then
- * resurrected it to STREAMING at the end of the transfer tail, and (c) delivered a TORN
- * chunk sequence to the edge — whose reassembly failure is routed into the ADR-0040
- * poison ladder (bounded retries → quarantine → TERMINAL process exit). Net effect: a
- * zero-state edge with a store larger than {@code transportQueueFrames ×
- * snapshotChunkBytes} (~64 MiB at production defaults; proportionally less for any
- * operator-tuned smaller chunk) could NEVER bootstrap — the exact C5 charter case.
+ * transport queue's free space had chunks silently REFUSED mid-burst, which (a) marked the
+ * session closed ({@code transport_gone}) on the first refused chunk, (b) then resurrected
+ * it to STREAMING at the end of the transfer tail, and (c) delivered a TORN chunk sequence
+ * to the edge - whose reassembly failure is routed through the poison ladder (bounded
+ * retries -> quarantine -> TERMINAL process exit). Net effect: a zero-state edge with a
+ * store larger than {@code transportQueueFrames x snapshotChunkBytes} (~64 MiB at
+ * production defaults; proportionally less for any operator-tuned smaller chunk) could
+ * NEVER bootstrap.
  *
  * <p><b>Pinned behavior (the fix):</b> a refused snapshot-frame offer is transport
  * BACKPRESSURE, not transport death: the transfer pauses and resumes on the next tick
  * exactly where it left off (BEGIN / chunk index / END), completing once the writer has
  * drained queue space. The cutover mutations (cursor=S, resume STREAMING) happen ONLY at
- * completion; {@code lastAckedSeq} stays behind throughout (the C1(a) self-healing
- * discipline); nothing interleaves inside the BEGIN..END envelope; writes committed
- * during the paused transfer are delivered afterwards as the contiguous seq&gt;S tail
- * (the C5-1 exact-cutover clause, now proven under backpressure).
+ * completion; {@code lastAckedSeq} stays behind throughout (the self-healing discipline);
+ * nothing interleaves inside the BEGIN..END envelope; writes committed during the paused
+ * transfer are delivered afterwards as the contiguous seq&gt;S tail (exact-cutover clause,
+ * now proven under backpressure).
  *
- * <p>Deterministic: no threads — the test plays the writer's role by draining the
- * bounded sink between ticks.
+ * <p>Deterministic: no threads - the test plays the writer's role by draining the bounded
+ * sink between ticks.
  */
 class BootstrapSnapshotBackpressureTest {
 
-    /** Snapshot chunk size for the test: small chunks ⇒ many chunks ⇒ wide transfer. */
+    /** Snapshot chunk size for the test: small chunks => many chunks => wide transfer. */
     private static final int CHUNK_BYTES = 1_024;
-    /** Transport queue capacity (frames) — far below the chunk count, like a slow writer. */
+    /** Transport queue capacity (frames) - far below the chunk count, like a slow writer. */
     private static final int QUEUE_CAPACITY = 8;
-    /** Store entries; ~1 KiB each ⇒ ≈ STORE_KEYS chunks at CHUNK_BYTES. */
+    /** Store entries; ~1 KiB each => approximately STORE_KEYS chunks at CHUNK_BYTES. */
     private static final int STORE_KEYS = 48;
 
     /**
@@ -168,7 +168,7 @@ class BootstrapSnapshotBackpressureTest {
         long s = version; // the snapshot seq S the bootstrap will cut over at
         FanOutSessionCore session = newSession(buffer);
 
-        // Zero-state edge joins: cursor 0 + data exists ⇒ SNAPSHOT_FIRST (the C3 rule).
+        // Zero-state edge joins: cursor 0 + data exists => SNAPSHOT_FIRST.
         session.onSubscribe(new EdgeFrame.Subscribe(true, List.of(), 0L, -1L, "edge-boot"));
         sink.drain(1); // SUBSCRIBE_OK
         assertEquals(EdgeFrame.Mode.SNAPSHOT_FIRST,
@@ -176,13 +176,13 @@ class BootstrapSnapshotBackpressureTest {
 
         // First tick: the transfer MUST NOT die on the bounded queue (this assertion is
         // the red/green pivot: pre-fix the first refused chunk marked the session closed
-        // with onSessionClosed("transport_gone"), then resurrected it — both wrong).
+        // with onSessionClosed("transport_gone"), then resurrected it - both wrong).
         clock.advance(10);
         session.tick(clock.now());
         assertNotEquals(FanOutSessionCore.SessionState.CLOSED, session.state(),
                 "a bounded transport queue mid-snapshot is BACKPRESSURE, not transport death");
 
-        // While the transfer is paused on backpressure, writes keep committing — the
+        // While the transfer is paused on backpressure, writes keep committing - the
         // sustained-concurrent-writes case. They must come out AFTER the snapshot as the
         // contiguous seq>S tail.
         commit(buffer, "straddle/a", "during-1");
@@ -236,7 +236,7 @@ class BootstrapSnapshotBackpressureTest {
                     .equals(fatValue(i)), "boot/k" + i + " byte-exact in the snapshot");
         }
 
-        // --- the exact cutover under backpressure (C5-1) ---
+        // --- the exact cutover under backpressure ---
         // The completion tick legitimately continues into the streaming drain, so the
         // cursor may already be past S (it tails the straddle writes the same tick);
         // the EXACTNESS proof is the first-tail-seq assertion below.
@@ -246,7 +246,7 @@ class BootstrapSnapshotBackpressureTest {
         assertEquals(FanOutSessionCore.SessionState.STREAMING, session.state());
 
         // The straddle writes (committed while the transfer was paused) come out as the
-        // contiguous seq>S tail — no skip, no re-delivery of anything ≤ S.
+        // contiguous seq>S tail - no skip, no re-delivery of anything <= S.
         session.onCursorAck(s); // the edge applied the snapshot
         clock.advance(10);
         session.tick(clock.now());
@@ -307,7 +307,7 @@ class BootstrapSnapshotBackpressureTest {
     }
 
     /**
-     * The harshest pacing: a ONE-slot transport, never pre-drained — EVERY frame
+     * The harshest pacing: a ONE-slot transport, never pre-drained - EVERY frame
      * (BEGIN included: the SUBSCRIBE_OK still occupies the slot when the transfer
      * starts) hits the would-block branch at least once. The envelope must still come
      * out exactly once, in order, with the cutover deferred to the accepted END, and
@@ -325,7 +325,7 @@ class BootstrapSnapshotBackpressureTest {
         long s = version;
         FanOutSessionCore session = newSession(buffer, oneSlot, metrics);
 
-        // SUBSCRIBE_OK fills the single slot — the transfer's BEGIN is refused first.
+        // SUBSCRIBE_OK fills the single slot - the transfer's BEGIN is refused first.
         session.onSubscribe(new EdgeFrame.Subscribe(true, List.of(), 0L, -1L, "edge-1slot"));
         clock.advance(10);
         session.tick(clock.now());

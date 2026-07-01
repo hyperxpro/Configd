@@ -41,37 +41,34 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.fail;
 
 /**
- * C5 / CT-24 at PROCESS level: a REAL {@link EdgeNodeMain} joins a live
- * {@link ConfigdServer} MID-write-storm (a writer thread driving sequential HTTP PUTs
- * with per-write-UNIQUE values — the double-apply tripwire: any duplicate application
- * with different effect resurrects an older unique value and fails the final byte
- * sweep), and must converge with cursor-exactness observable at the HTTP surface.
+ * A REAL {@link EdgeNodeMain} joins a live {@link ConfigdServer} MID-write-storm (a writer
+ * thread driving sequential HTTP PUTs with per-write-unique values — the double-apply
+ * tripwire: any duplicate application with different effect resurrects an older unique value
+ * and fails the final byte sweep), and must converge with cursor-exactness observable at the
+ * HTTP surface.
  *
  * <ul>
  *   <li><b>Production-defaults leg:</b> the server's own {@code --edge-port} endpoint
- *       ({@code FanOutConfig.defaults()}). Pins: SNAPSHOT_FIRST was the mechanism
- *       (cursor-0 join against a populated store), EXACTLY one transfer, zero gaps /
- *       zero backward refusals / zero verify rejections over ordered loopback TCP, tail
- *       deltas applied after the cutover, final store byte-equal to the server's, and
- *       the consistent-refusal discipline on every in-flight read (each response is
- *       either the cursor-behind refusal or a version ≥ the cursor — never stale data
- *       under a cursor).</li>
- *   <li><b>Wide-window leg (big store / small chunks / small transport queue):</b> a
- *       second fan-out endpoint over the SAME ADR-0034 seams (the EdgeFailoverTest
- *       recipe) with {@code snapshotChunkBytes=2048} and {@code transportQueueFrames=8}
- *       against a pre-populated multi-hundred-KiB store — hundreds of chunks through an
- *       8-frame bounded queue, so the snapshot transfer is genuinely PACED against
- *       transport backpressure over a real socket while the storm commits into the
- *       window. HARD non-vacuity (screen C5-2): at least one write commits between edge
- *       start and cutover completion. This leg rides the C5 backpressure fix in
- *       {@code FanOutSessionCore.performSnapshotTransfer} — pre-fix, the burst emission
- *       tore the transfer on the first full-queue chunk and the bootstrap could never
- *       complete ({@code BootstrapSnapshotBackpressureTest} pins the core-level
- *       red/green).</li>
+ *       ({@code FanOutConfig.defaults()}). Pins: SNAPSHOT_FIRST was the mechanism (cursor-0
+ *       join against a populated store), EXACTLY one transfer, zero gaps / zero backward
+ *       refusals / zero verify rejections over ordered loopback TCP, tail deltas applied
+ *       after the cutover, final store byte-equal to the server's, and the consistent-
+ *       refusal discipline on every in-flight read (each response is either the cursor-behind
+ *       refusal or a version >= the cursor — never stale data under a cursor).</li>
+ *   <li><b>Wide-window leg (big store / small chunks / small transport queue):</b> a second
+ *       fan-out endpoint with {@code snapshotChunkBytes=2048} and
+ *       {@code transportQueueFrames=8} against a pre-populated multi-hundred-KiB store —
+ *       hundreds of chunks through an 8-frame bounded queue, so the snapshot transfer is
+ *       genuinely PACED against transport backpressure over a real socket while the storm
+ *       commits into the window. Hard non-vacuity: at least one write commits between edge
+ *       start and cutover completion. This leg verifies the backpressure fix in
+ *       {@code FanOutSessionCore.performSnapshotTransfer} — pre-fix, the burst emission tore
+ *       the transfer on the first full-queue chunk and the bootstrap could never complete
+ *       ({@code BootstrapSnapshotBackpressureTest} pins the core-level red/green).</li>
  * </ul>
  *
  * <p>Deadline-polling only — no sleep-as-synchronization; the {@link Timeout} is hang
- * detection, generous for the throttled 2-vCPU box (RR-094).
+ * detection, generous for the throttled 2-vCPU box.
  */
 @Timeout(180)
 class EdgeBootstrapUnderSustainedWritesProcessTest {
@@ -103,9 +100,7 @@ class EdgeBootstrapUnderSustainedWritesProcessTest {
         }
     }
 
-    // -----------------------------------------------------------------------
     // The write storm (one sequential writer; unique value per write)
-    // -----------------------------------------------------------------------
 
     /** A sustained sequential write storm on a virtual thread; per-write-unique values. */
     private final class WriteStorm {
@@ -146,9 +141,7 @@ class EdgeBootstrapUnderSustainedWritesProcessTest {
         }
     }
 
-    // -----------------------------------------------------------------------
-    // Leg 1 — production defaults
-    // -----------------------------------------------------------------------
+    // Leg 1 - production defaults
 
     @Test
     void freshEdgeJoinsMidStormAndConvergesWithExactCutoverAtProductionDefaults()
@@ -237,9 +230,7 @@ class EdgeBootstrapUnderSustainedWritesProcessTest {
                 "the edge store version equals the last committed seq");
     }
 
-    // -----------------------------------------------------------------------
-    // Leg 2 — wide transfer window: big store / small chunks / small queue
-    // -----------------------------------------------------------------------
+    // Leg 2 - wide transfer window: big store / small chunks / small queue
 
     @Test
     void wideWindowBootstrapPacedByBoundedTransportStraddlesWritesAndConvergesExactly()
@@ -255,7 +246,7 @@ class EdgeBootstrapUnderSustainedWritesProcessTest {
             putCommitted(serverBase, "bulk/k" + i, bulkValue + "-" + i);
         }
 
-        // The wide-window endpoint over the SAME ADR-0034 seams (EdgeFailoverTest recipe).
+        // The wide-window endpoint (same pattern as EdgeFailoverTest).
         FanOutConfig smallChunks = new FanOutConfig(
                 256, 80, 64, 262_144, 8_192L, 250L, 5L, 2_048);
         endpointB = new FanOutServer(
@@ -307,9 +298,7 @@ class EdgeBootstrapUnderSustainedWritesProcessTest {
                 edge.core().mode());
         // 1 on a fast box; 2 is legitimate on a loaded runner: the post-cutover CURSOR_ACK
         // can lag one RTT behind a server whose test-scaled ack-lag threshold then fires a
-        // redundant (idempotent, forward) re-demote envelope — the deliberate C1(a)
-        // self-healing design, signed off as c5-signoff-review F3. First seen as a CI
-        // flake on 1c39615 (gate-1, expected <1> but was <2>). A TORN/RESTARTED transfer
+        // redundant (idempotent, forward) re-demote envelope. A TORN/RESTARTED transfer
         // cannot hide here: it yields gaps/refusals/content divergence, all pinned to
         // exact zeros below — snapshotsApplied is NOT the torn-transfer discriminator.
         int paced = edge.core().snapshotsApplied();
@@ -323,9 +312,7 @@ class EdgeBootstrapUnderSustainedWritesProcessTest {
         assertEquals(fenceSeq, edge.core().currentVersion());
     }
 
-    // -----------------------------------------------------------------------
-    // Fixture (the EdgeNodeIntegrationTest pattern)
-    // -----------------------------------------------------------------------
+    // Fixture
 
     private ConfigdServer startServer() throws Exception {
         Path signingKey = tempDir.resolve("signing-key.bin");
@@ -354,9 +341,7 @@ class EdgeBootstrapUnderSustainedWritesProcessTest {
         return EdgeNodeMain.start(cfg);
     }
 
-    // -----------------------------------------------------------------------
     // Helpers (deadline-polling; no sleep-as-sync)
-    // -----------------------------------------------------------------------
 
     /** Polls until served at the cursor; every non-200 must be the consistent refusal. */
     private HttpResponse<String> pollUntilServed(String edgeBase, String key, long seq)

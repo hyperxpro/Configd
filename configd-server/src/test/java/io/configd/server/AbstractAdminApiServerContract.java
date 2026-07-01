@@ -47,26 +47,26 @@ import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * The full S7 control-plane contract for the admin / control-plane HTTP API, run identically against
- * <b>all three</b> transports (ADR-0043 M2 / DR-N2): {@link JdkAdminApiServerContractTest} starts the
+ * The full control-plane contract for the admin / control-plane HTTP API, run identically against
+ * <b>all three</b> transports: {@link JdkAdminApiServerContractTest} starts the
  * JDK {@link HttpApiServer}, {@link NettyAdminApiServerContractTest} starts the Netty
  * {@link NettyHttpApiServer} on its auto-selected tier, and {@link NettyAdminApiServerNioFallbackTest}
  * forces the pure-Java NIO tier. Because all three adapters delegate to the same
- * {@link AdminApiHandler}, every S7 control — authn (Bearer/401 + {@code WWW-Authenticate}), authz
+ * {@link AdminApiHandler}, every security control - authn (Bearer/401 + {@code WWW-Authenticate}), authz
  * (ACL/403), privilege-escalation refusal, audit completeness + chain verification, replay
- * (401/409), strong-read fail-close (ADR-0030 INV-1 / RR-020), and the C6 path-normalization evasion
- * vectors — must hold byte-for-byte on each. A control that passes on JDK but not Netty is a
- * migration regression (the worst outcome — charter §3 rule 1), so this is the equivalence proof, not
+ * (401/409), strong-read fail-close, and the path-normalization evasion
+ * vectors - must hold byte-for-byte on each. A control that passes on JDK but not Netty is a
+ * migration regression (the worst outcome), so this is the equivalence proof, not
  * a hopeful re-implementation.
  *
  * <p>The four incumbent JDK test classes (ConfigHandlerAuthTest, ConfigHandlerAuditTest,
- * ConfigHandlerReplayTest, StrongReadFailClosedTest) are consolidated here verbatim — same
- * assertions, same failure messages, same behaviour — and the per-server bind is the only thing the
+ * ConfigHandlerReplayTest, StrongReadFailClosedTest) are consolidated here verbatim - same
+ * assertions, same failure messages, same behaviour - and the per-server bind is the only thing the
  * subclasses vary. The incumbent classes reached the bound port via reflection on the private
  * {@code server} field; that does not work for Netty, so this contract uses {@link ServerHandle#port()}
  * uniformly (the JDK adapter already exposes the identical {@link HttpApiServer#port()}).
  *
- * <p><b>C6 / RR-020 (load-bearing, do not weaken).</b> The strong-read key is derived from
+ * <p><b>(load-bearing, do not weaken).</b> The strong-read key is derived from
  * {@link URI#getPath()} (percent-decoded, not normalized, not lower-cased), and BOTH adapters build
  * that {@code java.net.URI} the identical way ({@code getRequestURI()} on the JDK exchange, {@code new
  * URI(request.uri())} on Netty), so the classification is byte-identical across transports. The
@@ -156,14 +156,14 @@ abstract class AbstractAdminApiServerContract {
         return acl;
     }
 
-    /** A write service whose proposer always commits — auth is the gate under test. */
+    /** A write service whose proposer always commits - auth is the gate under test. */
     private static ConfigWriteService committingWriteService() {
         ConfigWriteService.RaftProposer proposer =
                 (scope, keys, command) -> new ConfigWriteService.ProposeCommitResult.Committed(1L);
         return new ConfigWriteService(proposer, null, null);
     }
 
-    /** A write service whose proposer commits at seq=42 — the audit-completeness fixture. */
+    /** A write service whose proposer commits at seq=42 - the audit-completeness fixture. */
     private static ConfigWriteService committingWriteServiceSeq42() {
         return new ConfigWriteService(
                 (scope, keys, command) -> new ConfigWriteService.ProposeCommitResult.Committed(42L), null, null);
@@ -216,7 +216,7 @@ abstract class AbstractAdminApiServerContract {
     }
 
     // =======================================================================
-    // Section 1 — ConfigHandlerAuthTest (RR-087): authn / authz / escalation.
+    // Section 1 - ConfigHandlerAuthTest: authn / authz / escalation.
     // =======================================================================
 
     // ------------------------------------------------------------------
@@ -225,8 +225,8 @@ abstract class AbstractAdminApiServerContract {
 
     @Test
     void getWithNoTokenIsUnauthenticated() throws Exception {
-        // S7/D-1 (corrected semantics): a MISSING credential is AUTHENTICATION,
-        // not authorization — RFC 7235 + charter §7 require 401 (was 403 pre-S7),
+        // Corrected semantics: a MISSING credential is AUTHENTICATION,
+        // not authorization - RFC 7235 requires 401,
         // with a WWW-Authenticate: Bearer challenge.
         int port = start(authSpec());
         HttpResponse<String> resp = send(port, "GET", "/v1/config/app/feature", null, null);
@@ -238,7 +238,7 @@ abstract class AbstractAdminApiServerContract {
 
     @Test
     void getWithInvalidTokenIsUnauthenticated() throws Exception {
-        // S7/D-1: an INVALID credential is still authentication failure -> 401.
+        // An INVALID credential is still authentication failure -> 401.
         int port = start(authSpec());
         HttpResponse<String> resp = send(port, "GET", "/v1/config/app/feature", "bogus", null);
         assertEquals(401, resp.statusCode(), "an unknown token must be 401");
@@ -249,7 +249,7 @@ abstract class AbstractAdminApiServerContract {
 
     @Test
     void getWithMalformedAuthorizationHeaderIsUnauthenticated() throws Exception {
-        // S7/D-1: a non-"Bearer " header leaves token null -> authenticate(null)
+        // A non-"Bearer " header leaves token null -> authenticate(null)
         // -> Denied -> 401 (not 403).
         int port = start(authSpec());
         HttpRequest req = HttpRequest.newBuilder()
@@ -262,7 +262,7 @@ abstract class AbstractAdminApiServerContract {
     }
 
     // ------------------------------------------------------------------
-    // S7/D-1: mutating calls (PUT/DELETE) must ALSO return 401 (not 403)
+    // Mutating calls (PUT/DELETE) must ALSO return 401 (not 403)
     // for missing/malformed/invalid credentials. Each is its own attack.
     // ------------------------------------------------------------------
 
@@ -351,13 +351,13 @@ abstract class AbstractAdminApiServerContract {
     }
 
     // ------------------------------------------------------------------
-    // S7/D-4: privilege-escalation coverage. An authenticated caller must NOT
+    // Privilege-escalation coverage. An authenticated caller must NOT
     // be able to escalate a READ grant into a WRITE/DELETE, nor reach a key
-    // outside its granted prefix. Each is a 403 (authenticated, unauthorized) —
+    // outside its granted prefix. Each is a 403 (authenticated, unauthorized) -
     // never a 401, and never a success. NOTE: there is NO HTTP membership or
     // restore endpoint (membership = Raft proposeConfigChange; restore =
     // ops/scripts/restore-snapshot.sh), so privilege control for those lives at
-    // the Raft/CLI layer, not here — there is no endpoint to attack.
+    // the Raft/CLI layer, not here - there is no endpoint to attack.
     // ------------------------------------------------------------------
 
     @Test
@@ -401,7 +401,7 @@ abstract class AbstractAdminApiServerContract {
     }
 
     // =======================================================================
-    // Section 2 — ConfigHandlerAuditTest (S7/D-2): audit completeness + chain.
+    // Section 2 - ConfigHandlerAuditTest: audit completeness + chain.
     //
     // These assert on the AuditLog after the requests. The AuditLog is built
     // here, wired into the spec, and reachable for the post-request assertion.
@@ -494,7 +494,7 @@ abstract class AbstractAdminApiServerContract {
     }
 
     // =======================================================================
-    // Section 3 — ConfigHandlerReplayTest (S7/D-3): replay protection.
+    // Section 3 - ConfigHandlerReplayTest: replay protection.
     // =======================================================================
 
     private final AtomicLong replayNow = new AtomicLong(2_000_000_000_000L); // fixed wall clock
@@ -541,7 +541,7 @@ abstract class AbstractAdminApiServerContract {
     void verbatimReplayIsRejectedWhileFreshNonceIsAccepted() throws Exception {
         int port = startReplay(new ReplayGuard(replayClock(), 300_000L, 1000));
 
-        // 1) A valid PUT — capture the EXACT request (same headers + body).
+        // 1) A valid PUT - capture the EXACT request (same headers + body).
         HttpRequest original = put(port, "app/feature", "on", replayNow.get(), "nonce-A");
         HttpResponse<String> first = client.send(original, HttpResponse.BodyHandlers.ofString());
         assertEquals(200, first.statusCode(), "the original valid PUT must commit: " + first.body());
@@ -560,7 +560,7 @@ abstract class AbstractAdminApiServerContract {
     @Test
     void staleTimestampIsRejected() throws Exception {
         int port = startReplay(new ReplayGuard(replayClock(), 300_000L, 1000));
-        // A request whose timestamp is well outside the ±300s window.
+        // A request whose timestamp is well outside the +/-300s window.
         HttpRequest stale = put(port, "app/feature", "on", replayNow.get() - 600_000L, "nonce-S");
         HttpResponse<String> resp = client.send(stale, HttpResponse.BodyHandlers.ofString());
         assertEquals(401, resp.statusCode(), "a stale-timestamp request must be rejected (401): " + resp.body());
@@ -595,7 +595,7 @@ abstract class AbstractAdminApiServerContract {
     }
 
     // =======================================================================
-    // Section 4 — StrongReadFailClosedTest (RR-020 / ADR-0030 INV-1): strong
+    // Section 4 - StrongReadFailClosedTest: strong
     // reads served linearizably on the leader, fail-closed elsewhere; plus the
     // five C6 path-normalization evasion vectors (load-bearing on all three).
     // =======================================================================
@@ -697,7 +697,7 @@ abstract class AbstractAdminApiServerContract {
     @Test
     void strongReadKeyIgnoresExplicitStaleRequest() throws Exception {
         // Even if the client explicitly asks for stale, a strong-read key on a
-        // follower must still fail closed — the requested consistency is ignored.
+        // follower must still fail closed - the requested consistency is ignored.
         VersionedConfigStore store = seededStore();
         AtomicBoolean isLeader = new AtomicBoolean(false);
         int port = startStrong(store, readService(store, isLeader),
@@ -730,7 +730,7 @@ abstract class AbstractAdminApiServerContract {
     @Test
     void ordinaryKeyOnFollowerStillServesStale() throws Exception {
         // The fail-closed contract applies ONLY to strong-read keys. An ordinary
-        // key on a follower must keep serving its bounded-stale local copy — the
+        // key on a follower must keep serving its bounded-stale local copy - the
         // fix must not turn every follower read into a denial.
         VersionedConfigStore store = seededStore();
         AtomicBoolean isLeader = new AtomicBoolean(false);
@@ -745,18 +745,18 @@ abstract class AbstractAdminApiServerContract {
     }
 
     // ------------------------------------------------------------------
-    // RR-020 (a5-batch-review §RR-020 hardening) — encoded-key bypass resistance.
+    // Encoded-key bypass resistance.
     //
     // The strong-read classification keys off the SAME percent-decoded path
     // (getRequestURI().getPath()) that resolves the value, so the classification
-    // key is structurally identical to the store-resolution key — a strong key's
+    // key is structurally identical to the store-resolution key - a strong key's
     // value cannot be read under a non-strong classification by encoding tricks.
     // These tests LOCK that decode-before-check property against a future change
     // (e.g. switching to getRawPath()/normalize/toLowerCase) by pinning the
     // classification for each evasion vector. We assert via the OBSERVABLE
     // behavior (fail-closed on a follower), not internals, so the test survives
     // refactors but still catches a real bypass. C6: these MUST pass on the Netty
-    // and NIO subclasses too — both adapters build new URI(request.uri()), so the
+    // and NIO subclasses too - both adapters build new URI(request.uri()), so the
     // percent-decoded path (and thus the classification) is byte-identical.
     // ------------------------------------------------------------------
 
@@ -764,7 +764,7 @@ abstract class AbstractAdminApiServerContract {
     void percentEncodedPrefixIsClassifiedStrongAndFailsClosed() throws Exception {
         // %73 == 's': "/v1/config/%73ecure/killswitch" decodes to "secure/killswitch".
         // The decode happens BEFORE the strong-read check, so this is still a strong
-        // key and a follower must fail closed — NOT serve the stale local DENY.
+        // key and a follower must fail closed - NOT serve the stale local DENY.
         VersionedConfigStore store = seededStore();
         AtomicBoolean isLeader = new AtomicBoolean(false);
         int port = startStrong(store, readService(store, isLeader),
@@ -813,7 +813,7 @@ abstract class AbstractAdminApiServerContract {
     @Test
     void leadingDoubleSlashIsADifferentKeyNotAStrongLeak() throws Exception {
         // "//secure/killswitch" -> key "/secure/killswitch" (leading slash), which
-        // does NOT startWith("secure/"). It is therefore NOT a strong key — but
+        // does NOT startWith("secure/"). It is therefore NOT a strong key - but
         // crucially it is also a DIFFERENT store key, so it cannot leak the strong
         // key's value: the seeded "secure/killswitch" is not stored under this key,
         // so an ordinary stale read returns 404 (no value), never the DENY.
@@ -846,7 +846,7 @@ abstract class AbstractAdminApiServerContract {
     }
 
     // =======================================================================
-    // Section 5 — C7: the /metrics Bearer gate (F-0055). The incumbent proved
+    // Section 5 - C7: the /metrics Bearer gate. The incumbent proved
     // this only on a direct JDK server (ConfigdServerTest#find0055); production
     // has cut over to NettyHttpApiServer, so it must hold on Netty + NIO too.
     // The handler's /metrics gate checks the authInterceptor ONLY (no ACL), so
@@ -888,8 +888,8 @@ abstract class AbstractAdminApiServerContract {
     }
 
     // =======================================================================
-    // Section 6 — C9: overloaded write -> 429 + Retry-After (S6/D-1, RR-110).
-    // The §11 write-overload contract: a bounded-queue 429 carrying a Retry-After
+    // Section 6 - C9: overloaded write -> 429 + Retry-After.
+    // The section 11 write-overload contract: a bounded-queue 429 carrying a Retry-After
     // backoff. Modelled by a proposer that returns ProposeCommitResult.Overloaded.
     // =======================================================================
 
@@ -916,7 +916,7 @@ abstract class AbstractAdminApiServerContract {
     }
 
     // =======================================================================
-    // Section 7 — C10: method 405. An unsupported method on the config endpoint,
+    // Section 7 - C10: method 405. An unsupported method on the config endpoint,
     // and a non-GET on a fixed endpoint, are both 405 Method Not Allowed.
     // =======================================================================
 
@@ -937,10 +937,10 @@ abstract class AbstractAdminApiServerContract {
     }
 
     // =======================================================================
-    // Section 8 — C11: server-side TLS. Exercises the Netty SslHandler path and
+    // Section 8 - C11: server-side TLS. Exercises the Netty SslHandler path and
     // regression-proves the JDK HttpsServer path: a server SSLContext (self-signed
     // cert) is passed via ServerSpec.sslContext (the JDK adapter wraps it in an
-    // HttpsServer; the Netty adapter wraps it in a server-mode SslHandler — both
+    // HttpsServer; the Netty adapter wraps it in a server-mode SslHandler - both
     // server-side, no client auth). A trusting client GETs the PUBLIC /health/live
     // over HTTPS -> 200. The keystore/truststore are generated ONCE per subclass
     // (@BeforeAll runs once per concrete test container in JUnit 5) via the SAME
@@ -1050,18 +1050,18 @@ abstract class AbstractAdminApiServerContract {
     }
 
     // =======================================================================
-    // Section 9 — O-6 Seam 2b: the reserved-prefix ADMIN gate over real HTTP.
+    // Section 9 - ADMIN gate over real HTTP.
     //
     // A key under `_acl/` (or `_system/`) requires ADMIN for EVERY method (closing both policy MUTATION and
     // DISCLOSURE), fail-closed, and byte-identical in production (only root touches _acl/, and root holds
     // ADMIN). The gate DECISION is the handler's, but the decode-before-gate property rides each adapter's
-    // `new URI(request.uri())` — so a regression in either adapter's URI handling surfaces here on all three
+    // `new URI(request.uri())` - so a regression in either adapter's URI handling surfaces here on all three
     // transports. The percent-decoding evasion vectors (%5Facl/, _acl%2F, _acl/../) are sent VERBATIM via
     // sendRaw so the encoded bytes reach the server unmodified and are decoded by the SAME path the
     // strong-read C6 vectors rely on. Write-time validation rejects malformed _acl/ policy with a 400.
     // =======================================================================
 
-    /** root → allOf (break-glass); admin → ADMIN on `_acl/`; writer → broad WRITE but NOT ADMIN. */
+    /** root -> allOf (break-glass); admin -> ADMIN on `_acl/`; writer -> broad WRITE but NOT ADMIN. */
     private static AuthInterceptor gateAuthInterceptor() {
         return new AuthInterceptor(token -> switch (token) {
             case "root" -> new AuthInterceptor.AuthResult.Authenticated("root", Set.of());
@@ -1131,7 +1131,7 @@ abstract class AbstractAdminApiServerContract {
     @Test
     void writeTimeValidationRejectsMalformedReservedPolicyOverHttp() throws Exception {
         int port = startGate();
-        // adminP is authorized (ADMIN) but the body is malformed policy ⇒ 400 at write-time (pre-commit).
+        // adminP is authorized (ADMIN) but the body is malformed policy => 400 at write-time (pre-commit).
         assertEquals(400, send(port, "PUT", "/v1/config/_acl/roles/x", "admin", "allow NOPE app.").statusCode(),
                 "a malformed _acl/ policy body must be rejected 400 even for an ADMIN principal");
         assertEquals(400, send(port, "PUT", "/v1/config/_acl/roles/admin", "admin", "allow READ app.").statusCode(),
@@ -1142,7 +1142,7 @@ abstract class AbstractAdminApiServerContract {
     void percentDecodingEvasionVectorsAreStillAdminGated() throws Exception {
         int port = startGate();
         // Each decodes to an `_acl/` key BEFORE the gate (the adapter's new URI(...).getPath() decodes), so a
-        // non-ADMIN writer is still 403 — the gate keys off the decoded key, exactly like the store/loader.
+        // non-ADMIN writer is still 403 - the gate keys off the decoded key, exactly like the store/loader.
         assertEquals(403, sendRaw(port, "PUT", "/v1/config/%5Facl/roles/x", "writer", "v").statusCode(),
                 "%5Facl/ decodes to _acl/ → ADMIN-gated");
         assertEquals(403, sendRaw(port, "PUT", "/v1/config/_acl%2Froles/x", "writer", "v").statusCode(),

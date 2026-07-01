@@ -41,15 +41,13 @@ import java.util.concurrent.TimeUnit;
 import static io.netty.handler.codec.http.HttpVersion.HTTP_1_1;
 
 /**
- * Production Netty edge read-serving HTTP/1.1 server (ADR-0043, M1) — the Netty adapter over the
+ * Production Netty edge read-serving HTTP/1.1 server — the Netty adapter over the
  * transport-agnostic {@link EdgeReadHandler}. Serves byte-identical responses to the JDK
  * {@link EdgeHttpServer} on the canonical request paths by construction (both delegate to the same
- * logic; DR-N2 / exact-match routing DR-N4), at 8.7× less server-side allocation (head-to-head
- * evidence, {@code docs/jdk-vs-netty/verdict.md}; re-proven on
- * this production pipeline by {@code docs/netty-migration/m1-edge-read-gc-proof.md}).
+ * logic; routing is exact-match), at 8.7x less server-side allocation.
  *
- * <p><b>Transport.</b> Tier selected at startup by {@link NettyTransport} (io_uring → Epoll → NIO,
- * runtime-detected; CI exercises the fallback). {@code MultiThreadIoEventLoopGroup} +
+ * <p><b>Transport.</b> Tier selected at startup by {@link NettyTransport} (io_uring then Epoll then
+ * NIO, runtime-detected; CI exercises the fallback). {@code MultiThreadIoEventLoopGroup} +
  * {@code PooledByteBufAllocator.DEFAULT}; {@code HttpServerCodec} with a hand-rolled handler (no
  * {@code HttpObjectAggregator} on the hot path); pooled response buffer; keep-alive honoured;
  * {@code voidPromise} writes; flush on {@code channelReadComplete}.
@@ -57,15 +55,14 @@ import static io.netty.handler.codec.http.HttpVersion.HTTP_1_1;
  * <p><b>Allocation discipline (hot path).</b> The handler IS the {@link EdgeReadHandler.Sink} (no
  * per-request sink object), allocates exactly the one {@link HttpHeaders} the response needs (handed
  * INTO the response), one pooled body {@link ByteBuf}, and one response object — matching the
- * head-to-head prototype. The slowloris deadline is enforced by a single self-rescheduling watcher
- * keyed off a {@code deadlineNanos} timestamp, so a completed request costs only one {@code long}
- * write (NOT a per-request {@code schedule()} — an earlier naive rearm cost ~104 B/req and broke the
- * 8.7× bar; see the gc-proof doc).
+ * prototype. The slowloris deadline is enforced by a single self-rescheduling watcher keyed off a
+ * {@code deadlineNanos} timestamp, so a completed request costs only one {@code long} write (NOT a
+ * per-request {@code schedule()} — an earlier naive rearm cost ~104 B/req and was eliminated).
  *
- * <p><b>Hardening the head-to-head prototype lacked</b> (a public read port is hostile, charter §3):
- * bounded {@code HttpServerCodec} (oversize line/header → 400 + close); a request-size ceiling
- * (oversize body → 413 + close); a request-completion deadline (slowloris incl. the dribble variant);
- * {@link IdleStateHandler} idle reaping; and a leak-free {@code ByteBuf} lifecycle (M1.4).
+ * <p><b>Hardening the head-to-head prototype lacked</b> (a public read port is hostile):
+ * bounded {@code HttpServerCodec} (oversize line/header: 400 + close); a request-size ceiling
+ * (oversize body: 413 + close); a request-completion deadline (slowloris incl. the dribble
+ * variant); {@link IdleStateHandler} idle reaping; and a leak-free {@code ByteBuf} lifecycle.
  */
 public final class NettyEdgeHttpServer {
 
@@ -87,9 +84,8 @@ public final class NettyEdgeHttpServer {
     private Channel serverChannel;
 
     /**
-     * Same constructor shape as {@link EdgeHttpServer} (so the M1.7 swap in {@code EdgeNodeMain} is a
-     * one-line change). The F-S7-TLS-2 {@code /metrics} scrape token is read from the same system
-     * property both adapters observe.
+     * Same constructor shape as {@link EdgeHttpServer}. The {@code /metrics} scrape token is read
+     * from the same system property both adapters observe.
      */
     public NettyEdgeHttpServer(int port, EdgeClientCore core,
                                StrongReadKeyClass strongReadKeyClass,
@@ -153,7 +149,7 @@ public final class NettyEdgeHttpServer {
         return ((InetSocketAddress) serverChannel.localAddress()).getPort();
     }
 
-    /** Bounded graceful shutdown (the JDK-25 io_uring shutdown-slowness mitigation, netty42-api.md §2). */
+    /** Bounded graceful shutdown (mitigates io_uring shutdown slowness on JDK 25). */
     public void stop() {
         if (serverChannel != null) {
             serverChannel.close();
@@ -187,7 +183,7 @@ public final class NettyEdgeHttpServer {
 
         // Slowloris deadline (allocation-free hot path): a single self-rescheduling watcher enforces
         // "a request must complete by deadlineNanos". Each completed request just writes deadlineNanos;
-        // the watcher reschedules itself only when it fires (≈ once per timeout window, not per request).
+        // the watcher reschedules itself only when it fires (approximately once per timeout window, not per request).
         private long deadlineNanos;
         private ScheduledFuture<?> deadlineWatcher;
         private Runnable deadlineCheck;

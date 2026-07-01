@@ -12,23 +12,23 @@ import java.util.Set;
 import java.util.random.RandomGenerator;
 
 /**
- * HyParView overlay network management (ADR-0003).
+ * HyParView overlay network management.
  * <p>
  * HyParView maintains two views of the network:
  * <ul>
- *   <li><b>Active view</b> — small set of peers with open connections.
+ *   <li><b>Active view</b> - small set of peers with open connections.
  *       These peers are used for eager push in Plumtree. Typical size: 4-6.</li>
- *   <li><b>Passive view</b> — larger set of peers used for recovery when
+ *   <li><b>Passive view</b> - larger set of peers used for recovery when
  *       active view members fail. Typical size: 24-30.</li>
  * </ul>
  * <p>
  * Membership protocol:
  * <ul>
- *   <li><b>Join</b> — new node contacts a known peer; that peer adds it to
+ *   <li><b>Join</b> - new node contacts a known peer; that peer adds it to
  *       its active view and forwards a ForwardJoin to random active peers.</li>
- *   <li><b>Shuffle</b> — periodic exchange of passive view entries between
+ *   <li><b>Shuffle</b> - periodic exchange of passive view entries between
  *       active peers, ensuring passive views remain fresh.</li>
- *   <li><b>Disconnect</b> — when an active peer is removed, it is moved to
+ *   <li><b>Disconnect</b> - when an active peer is removed, it is moved to
  *       the passive view and a passive peer is promoted.</li>
  * </ul>
  * <p>

@@ -13,8 +13,8 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * CLI parsing/validation matrix for {@link EdgeNodeConfig} (C2 design §4 — flag names are
- * contractual; charter §6 rule 8 named configs).
+ * CLI parsing/validation matrix for {@link EdgeNodeConfig}. Flag names are contractual;
+ * changing them breaks deployed scripts and operator runsheets.
  */
 class EdgeNodeConfigTest {
 
@@ -82,7 +82,7 @@ class EdgeNodeConfigTest {
 
     @Test
     void partialTlsTripleIsRejectedFailClosed() {
-        // F-0050 class: a missing TLS flag must never silently downgrade to plaintext.
+        // A missing TLS flag must never silently downgrade to plaintext.
         assertThrows(IllegalArgumentException.class,
                 () -> EdgeNodeConfig.parse(minimal("--tls-cert", "/tmp/c.pem")));
         assertThrows(IllegalArgumentException.class,

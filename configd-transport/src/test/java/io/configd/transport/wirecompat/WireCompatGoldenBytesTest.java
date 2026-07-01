@@ -13,7 +13,7 @@ import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.fail;
 
 /**
- * §8.10 wire-compat guardrail. Encodes one frame of every
+ * Wire-compat guardrail (section 8.10). Encodes one frame of every
  * {@link io.configd.transport.MessageType} with the canonical inputs
  * defined in {@link WireFixtureGenerator} and asserts byte-equality
  * against the golden bytes in {@link GoldenFixtures}.

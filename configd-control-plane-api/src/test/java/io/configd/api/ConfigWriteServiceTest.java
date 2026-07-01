@@ -8,16 +8,16 @@ import org.junit.jupiter.api.Test;
 import static org.junit.jupiter.api.Assertions.*;
 
 /**
- * RR-004 / ADR-0033: the write service is commit-confirmed. These tests assert
- * the new taxonomy — a successful write returns {@link WriteResult.Committed}
- * carrying the applied-mutation sequence (NOT a free-running local proposalId),
- * and the failure variants Lost / Indeterminate are distinguishable from both
- * success and from NotLeader / Overloaded.
+ * The write service is commit-confirmed. These tests assert the taxonomy: a
+ * successful write returns {@link WriteResult.Committed} carrying the
+ * applied-mutation sequence (NOT a free-running local proposalId), and the
+ * failure variants Lost / Indeterminate are distinguishable from both success
+ * and from NotLeader / Overloaded.
  * <p>
- * (The previous tests pinned the defect — {@code Accepted(proposalId)} returned
+ * (The previous tests pinned the defect - {@code Accepted(proposalId)} returned
  * at local append, with {@code proposalIdsIncrement} asserting a local
- * AtomicLong. Per ADR-0033 :79-81 those are updated, not weakened: they pinned
- * the bug, not a discriminating property.)
+ * AtomicLong. Those tests were updated, not weakened: they pinned the bug, not a
+ * discriminating property.)
  */
 class ConfigWriteServiceTest {
 

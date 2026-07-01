@@ -6,12 +6,12 @@ import io.configd.testkit.CrashStorageHandle;
 import java.util.List;
 
 /**
- * Adapts the RR-003 {@link CrashStorage} durability fixture (package-private in
+ * Adapts the {@link CrashStorage} durability fixture (package-private in
  * {@code io.configd.raft}, consumed here via the consensus-core <b>test-jar</b>) to
  * the {@link AdversarialSim.CrashStorageHandle} seam used by the adversarial
  * simulation. This class lives in {@code io.configd.raft} precisely so it can see
- * the package-private {@code CrashStorage} without that class being made public —
- * the lead's "do not duplicate the class" constraint with zero edits to RR-003's
+ * the package-private {@code CrashStorage} without that class being made public - 
+ * the lead's "do not duplicate the class" constraint with zero edits to the fixture's
  * file.
  * <p>
  * {@link #create()} is the single factory the testkit calls; if the test-jar is

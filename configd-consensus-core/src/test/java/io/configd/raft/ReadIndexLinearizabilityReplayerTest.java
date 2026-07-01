@@ -21,7 +21,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * Replays the safety invariants of {@code spec/ReadIndexSpec.tla} against
  * the live {@link ReadIndexState} implementation.
  *
- * <p>Closes the spec→code link for SPEC-GAP-4 / R-14b / PA-5023. The TLA+
+ * <p>Closes the spec-to-code link for read-index linearizability. The TLA+
  * model proves the protocol-level invariants over an abstract state
  * machine; this replayer drives the concrete Java implementation through
  * a randomised sequence of model-equivalent actions and asserts the same
@@ -29,12 +29,12 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  *
  * <p>Invariants checked (mirroring the TLA spec):
  * <ul>
- *   <li><b>ReadIndexBoundedByMaxIndex</b> — every recorded readIndex is
+ *   <li><b>ReadIndexBoundedByMaxIndex</b> - every recorded readIndex is
  *       &le; the maxCommitIndex visible at the time the read was started.</li>
- *   <li><b>ReadFreshness</b> — a read can only become {@code isReady}
+ *   <li><b>ReadFreshness</b> - a read can only become {@code isReady}
  *       once {@code lastApplied >= readIndex} AND leadership has been
  *       confirmed.</li>
- *   <li><b>NoStaleLeaderServe</b> — after a step-down ({@code clear()}),
+ *   <li><b>NoStaleLeaderServe</b> - after a step-down ({@code clear()}),
  *       no previously-pending read can become ready.</li>
  * </ul>
  */
@@ -56,7 +56,7 @@ class ReadIndexLinearizabilityReplayerTest {
         long lastApplied = 0L;
         int quorumSize = 2;  // 3-node cluster
 
-        // Shadow ledger: id -> (readIndex, leadershipConfirmed) — what the
+        // Shadow ledger: id -> (readIndex, leadershipConfirmed) - what the
         // spec invariant should observe.
         Map<Long, ShadowEntry> shadow = new LinkedHashMap<>();
         // Track every ID ever issued so we can audit step-down behaviour.
@@ -150,7 +150,7 @@ class ReadIndexLinearizabilityReplayerTest {
     }
 
     /**
-     * ReadFreshness — a read can never be served before its readIndex is
+     * ReadFreshness: a read can never be served before its readIndex is
      * caught up by lastApplied, regardless of how many heartbeat rounds
      * have confirmed leadership.
      */
@@ -171,7 +171,7 @@ class ReadIndexLinearizabilityReplayerTest {
     }
 
     /**
-     * ReadIndexBoundedByMaxIndex — the recorded readIndex is exactly
+     * ReadIndexBoundedByMaxIndex: the recorded readIndex is exactly
      * the commit index passed in, and never higher than the cluster's
      * current commit at the time of issue.
      */

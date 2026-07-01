@@ -24,7 +24,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
  * If this passes, the per-CP-node {@link io.configd.distribution.FanOutBuffer}
  * listener wiring, the second {@link AdversarialNetwork} (seeded from a NEW mixSeed
  * tag), and the edge fault sub-stream provably do not perturb the committed
- * 507-seed adversarial gate set — the existing gate stays valid unchanged.
+ * 507-seed adversarial gate set - the existing gate stays valid unchanged.
  */
 class EdgeSeedCompatTest {
 
@@ -66,7 +66,7 @@ class EdgeSeedCompatTest {
 
     /**
      * Folds the per-tick CP state (role/term/leader/log indices/store version per
-     * node) into a SHA-256 digest — the SAME shape both runs use, so any CP
+     * node) into a SHA-256 digest - the SAME shape both runs use, so any CP
      * divergence shows as a digest mismatch.
      */
     private static String foldCp(long seed, Stepper stepper) {

@@ -11,9 +11,9 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * Canonical, deterministic frame instances for the edge-codec golden fixture
- * (CT-41). One frame of EVERY {@link FrameType}, every {@link ErrorCode}, the
- * empty-NOTIFY edge case, and a {@link EdgeFrame.SnapshotChunk} at exactly 1 MiB.
+ * Canonical, deterministic frame instances for the edge-codec golden fixture.
+ * One frame of EVERY {@link FrameType}, every {@link ErrorCode}, the empty-NOTIFY edge
+ * case, and a {@link EdgeFrame.SnapshotChunk} at exactly 1 MiB.
  *
  * <p>The inputs here are fixed constants so the encoded bytes are stable: this is the
  * single source of truth both {@code EdgeFrameCodecGoldenFixtureTest} (which asserts
@@ -30,7 +30,7 @@ final class EdgeFrameFixtures {
     private static final byte[] SIG = bytes(0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88,
             0x99, 0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xF0, 0x0F);
 
-    /** Fixed 8-byte nonce used in the F-0052 signed-NOTIFY fixture. */
+    /** Fixed 8-byte nonce used in the signed-NOTIFY fixture. */
     private static final byte[] NONCE = bytes(0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08);
 
     /**
@@ -89,7 +89,7 @@ final class EdgeFrameFixtures {
 
     /**
      * Canonical, deterministic 0x02 ({@link EdgeFrameCodec#EDGE_WIRE_VERSION_V2}) fixtures:
-     * one frame of every RFC §2 watch type ({@code WATCH_*}), plus a {@code NOTIFY} reused at
+     * one frame of every watch type ({@code WATCH_*}), plus a {@code NOTIFY} reused at
      * 0x02 (proving the design-A "only the version byte differs" property vs its 0x01 fixture)
      * and an {@code ERROR_CLOSE} carrying the new {@link ErrorCode#NOT_AUTHORIZED} code. The
      * cursor vector is pinned in three forms: single-component (N=1, {@code watch_create}),
@@ -145,13 +145,13 @@ final class EdgeFrameFixtures {
         m.put("watch_snapshot_begin.bin", new EdgeFrame.WatchSnapshotBegin(7L, 1, 200L, 2, 4096L));
         m.put("watch_snapshot_chunk.bin",
                 new EdgeFrame.WatchSnapshotChunk(7L, 1, 0, bytes(0x10, 0x20, 0x30, 0x40)));
-        // At-cap (1 MiB) watch snapshot chunk — too large to inline as hex; pinned by its
+        // At-cap (1 MiB) watch snapshot chunk - too large to inline as hex; pinned by its
         // full-frame CRC32C in EdgeFrameGoldenBytes.goldenCrcV2() (mirrors the v1 at-cap chunk).
         m.put("watch_snapshot_chunk_1mib.bin",
                 new EdgeFrame.WatchSnapshotChunk(7L, 1, 3, oneMiBFill()));
         m.put("watch_snapshot_end.bin", new EdgeFrame.WatchSnapshotEnd(7L, 1, 200L));
 
-        // A NOTIFY reused on a 0x02 connection — byte-identical to its v1 fixture
+        // A NOTIFY reused on a 0x02 connection - byte-identical to its v1 fixture
         // (notify_single_unsigned) except the version byte and the CRC over it (W5-2 / W5-11).
         m.put("notify_reused.bin", new EdgeFrame.Notify(List.of(notif(100L, 1_700_000_000_000L,
                 new ConfigDelta(99L, 100L,
@@ -192,7 +192,7 @@ final class EdgeFrameFixtures {
         return out;
     }
 
-    /** v2 oversize fixtures (the 1 MiB watch snapshot chunk) — CRC-pinned, not inline hex. */
+    /** v2 oversize fixtures (the 1 MiB watch snapshot chunk) - CRC-pinned, not inline hex. */
     static List<String> oversizeV2FixtureNames() {
         List<String> out = new ArrayList<>();
         out.add("watch_snapshot_chunk_1mib.bin");

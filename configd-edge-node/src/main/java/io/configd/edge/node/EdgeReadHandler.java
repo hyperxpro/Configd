@@ -12,25 +12,24 @@ import java.security.MessageDigest;
 import java.util.Objects;
 
 /**
- * Transport-agnostic edge read-serving decision logic (ADR-0043 / Netty-migration DR-N2).
+ * Transport-agnostic edge read-serving decision logic.
  *
- * <p>This is the single source of truth for the edge read surface's behaviour — routing, the
- * cursor/staleness/strong-read/not-subscribed clauses, health gating, the {@code /metrics}
- * Bearer gate, method validation, and the metric/INV-M1 side-effects. It is driven by both the
- * JDK {@link EdgeHttpServer} adapter and the Netty {@link NettyEdgeHttpServer} adapter so the two
+ * <p>This is the single source of truth for the edge read surface's behaviour - routing, the
+ * cursor/staleness/strong-read/not-subscribed clauses, health gating, the {@code /metrics} Bearer
+ * gate, method validation, and metric side-effects. It is driven by both the JDK
+ * {@link EdgeHttpServer} adapter and the Netty {@link NettyEdgeHttpServer} adapter so the two
  * transports serve <b>byte-identical</b> responses on the canonical request paths by construction
- * (routing is exact-match — DR-N4), not by parallel re-implementation (the head-to-head prototype
- * diverged: no health/metrics endpoints, no 405, and it set the stale header only on hits — DR-N2).
+ * (routing is exact-match). The head-to-head prototype diverged: no health/metrics endpoints, no
+ * 405, and it set the stale header only on hits.
  *
  * <p><b>Allocation discipline.</b> The logic writes to a {@link Sink} rather than building a
  * response object + header map per request, so it adds <b>no</b> per-request allocation over the
- * head-to-head Netty prototype (the gc-proof's 1,716 B/req must hold — charter §3). Header names
- * and the constant strings are interned; the only per-request strings are the cursor/version
- * decimal renderings the prototype already paid.
+ * prototype (1,716 B/req must hold). Header names and the constant strings are interned; the only
+ * per-request strings are the cursor/version decimal renderings the prototype already paid.
  *
- * <p>The control flow mirrors {@link EdgeHttpServer.ConfigReadHandler} exactly, including the
- * order of clauses (method → key → onRead → stale-header → strong-read → not-subscribed →
- * cursor-parse → store read → found/refused/miss) and which paths record the read-latency sample.
+ * <p>The control flow mirrors {@code EdgeHttpServer.ConfigReadHandler} exactly, including the
+ * order of clauses (method, key, onRead, stale-header, strong-read, not-subscribed,
+ * cursor-parse, store read, found/refused/miss) and which paths record the read-latency sample.
  */
 public final class EdgeReadHandler {
 
@@ -39,7 +38,7 @@ public final class EdgeReadHandler {
     private static final String CT_OCTET = "application/octet-stream";
     private static final String CT_PROM = "text/plain; version=0.0.4; charset=utf-8";
 
-    /** Sentinel for "no cursor header supplied" (mirrors {@link EdgeHttpServer}). */
+    /** Sentinel for "no cursor header supplied". */
     static final long NO_CURSOR = Long.MIN_VALUE;
 
     private final EdgeClientCore core;
@@ -50,10 +49,10 @@ public final class EdgeReadHandler {
 
     /**
      * @param core               the edge client core (lock-free read path + staleness)
-     * @param strongReadKeyClass the CT-37 strong-read predicate (shared with the storage filter)
+     * @param strongReadKeyClass the strong-read predicate (shared with the storage filter)
      * @param exporter           the Prometheus exporter over the process registry
      * @param metrics            the edge metric series (reads/refusals)
-     * @param metricsScrapeToken F-S7-TLS-2: the optional {@code /metrics} Bearer secret; null = open
+     * @param metricsScrapeToken the optional {@code /metrics} Bearer secret; null = open
      */
     public EdgeReadHandler(EdgeClientCore core, StrongReadKeyClass strongReadKeyClass,
                            PrometheusExporter exporter, EdgeNodeMetrics metrics,
@@ -106,7 +105,7 @@ public final class EdgeReadHandler {
         }
     }
 
-    // ---- GET /v1/config/{key} (mirrors EdgeHttpServer.ConfigReadHandler.handle exactly) ----
+    // ---- GET /v1/config/{key} ----
 
     private void handleConfig(boolean get, String path, String cursorHeader, Sink out) {
         if (notGet(get, out)) return;
@@ -118,15 +117,16 @@ public final class EdgeReadHandler {
         metrics.onRead();
         long readStart = System.nanoTime();
         try {
-            // CT-03: stale header on EVERY read while STALE+ (set before any refusal branch, so a
-            // refused/served response alike carries it — EdgeHttpServer sets it at the top).
+            // Stale header on EVERY read while STALE+ (set before any refusal branch, so a
+            // refused/served response alike carries it).
             boolean stale = core.stalenessState().ordinal()
                     >= StalenessTracker.State.STALE.ordinal();
             if (stale) {
                 out.header(EdgeHttpServer.HDR_STALE, "true");
             }
 
-            // CT-37 store-and-never-serve: fail closed BEFORE the store is consulted.
+            // Strong-read keys are never served from bounded-stale edge state; fail closed
+            // BEFORE the store is consulted.
             if (strongReadKeyClass.isStrongReadKey(key)) {
                 metrics.onReadRefused(EdgeNodeMetrics.REASON_STRONG_READ);
                 out.header(EdgeHttpServer.HDR_FAIL_CLOSED, "strong-read");
@@ -137,7 +137,7 @@ public final class EdgeReadHandler {
                 return;
             }
 
-            // ADR-0040 §2: out-of-slice reads refuse with a DISTINCT reason before the store read.
+            // Out-of-slice reads refuse with a DISTINCT reason before the store read.
             if (!core.servesKey(key)) {
                 metrics.onReadRefused(EdgeNodeMetrics.REASON_NOT_SUBSCRIBED);
                 out.header(EdgeHttpServer.HDR_REFUSED, "not-subscribed");
@@ -155,7 +155,7 @@ public final class EdgeReadHandler {
             }
 
             // Snapshot localVersion BEFORE the read so the !found classification is sound (see
-            // EdgeHttpServer). The cursor'd get() routes through the monitor-wired store → INV-M1.
+            // EdgeHttpServer). The cursor'd get() routes through the monitor-wired store.
             long localVersion = core.currentVersion();
             ReadResult result = (cursorVersion == NO_CURSOR)
                     ? core.get(key)
@@ -183,7 +183,7 @@ public final class EdgeReadHandler {
         }
     }
 
-    // ---- GET /metrics (F-S7-TLS-2 Bearer gate, then the exposition) ----
+    // ---- GET /metrics ----
 
     private void handleMetrics(String authHeader, Sink out) {
         if (metricsScrapeToken != null) {
@@ -201,7 +201,7 @@ public final class EdgeReadHandler {
         out.commit(200, CT_PROM, bytes(exporter.export()));
     }
 
-    // ---- helpers (identical semantics to EdgeHttpServer) ----
+    // ---- helpers ----
 
     private static boolean notGet(boolean get, Sink out) {
         if (get) return false;

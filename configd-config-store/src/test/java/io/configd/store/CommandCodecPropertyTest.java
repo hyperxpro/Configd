@@ -23,12 +23,9 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 /**
  * jqwik property-based fuzz suite for {@link CommandCodec}.
  *
- * <p>Closes the codec-bounds requirement of Phase 4 (gap-closure §6,
- * row "jqwik for codec bounds"). The state-machine is the part of the
- * system most exposed to attacker-controlled bytes after authentication
- * — these properties prove that bounds enforcement is consistent and
- * that no malformed payload can drive the decoder into an invalid
- * state.
+ * <p>The state-machine is the part of the system most exposed to attacker-controlled bytes
+ * after authentication - these properties prove that bounds enforcement is consistent and
+ * that no malformed payload can drive the decoder into an invalid state.
  */
 class CommandCodecPropertyTest {
 
@@ -86,7 +83,7 @@ class CommandCodecPropertyTest {
     }
 
     /**
-     * Empty input is the noop sentinel — there is no bytes-in branch that
+     * Empty input is the noop sentinel - there is no bytes-in branch that
      * decodes to anything else, even by accident.
      */
     @Property(tries = 1)
@@ -156,7 +153,7 @@ class CommandCodecPropertyTest {
 
     /**
      * BATCH with a count larger than the cap is rejected before
-     * allocating the mutation list — this is the same amplification
+     * allocating the mutation list - this is the same amplification
      * guard as the PUT value-length check.
      */
     @Property(tries = 100)
@@ -182,7 +179,7 @@ class CommandCodecPropertyTest {
     }
 
     /**
-     * encodeBatch on an empty list raises eagerly — empty batches are a
+     * encodeBatch on an empty list raises eagerly - empty batches are a
      * client-side bug and must not produce a wire frame whose semantics
      * is "no-op" (that is the dedicated zero-byte payload form).
      */
@@ -193,7 +190,7 @@ class CommandCodecPropertyTest {
     }
 
     /**
-     * Truncating any encoded PUT/DELETE/BATCH must raise — the decoder
+     * Truncating any encoded PUT/DELETE/BATCH must raise - the decoder
      * never silently returns a partial command.
      */
     @Property(tries = 200)

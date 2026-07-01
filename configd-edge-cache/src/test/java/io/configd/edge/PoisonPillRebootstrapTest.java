@@ -23,16 +23,15 @@ import java.util.List;
 import static org.junit.jupiter.api.Assertions.*;
 
 /**
- * The ADR-0040 poison-pill policy, end to end through the PRODUCTION
- * {@link EdgeClientCore} apply path (CT-33; screen condition C3-2 — including the
- * terminal fail-loud case).
+ * The poison-pill policy, end to end through the PRODUCTION {@link EdgeClientCore} apply
+ * path, including the terminal fail-loud case.
  *
  * <p>The apply-throw is manufactured with the TEST-ONLY
- * {@link EdgeClientCore.ApplyFaultInjector} seam (the {@code loadSnapshotForced}
- * test-the-tester precedent): Configd stores opaque bytes, so no delta that decodes and
- * verifies can be made to throw through the real codec/applier — ADR-0040's very point.
- * Everything downstream of the injected throw (the catch, the {@link PoisonPillPolicy}
- * ladder, the directives, the counters, the terminal latch) is production code.
+ * {@link EdgeClientCore.ApplyFaultInjector} seam: Configd stores opaque bytes, so no
+ * delta that decodes and verifies can be made to throw through the real codec/applier -
+ * that is the whole point of a poison pill. Everything downstream of the injected throw
+ * (the catch, the {@link PoisonPillPolicy} ladder, the directives, the counters, the
+ * terminal latch) is production code.
  *
  * <p>The simulated shell behavior between failures mirrors {@code EdgeStreamClient}:
  * drain the directive, {@code onReconnected()}, redeliver from the directive's resume
@@ -133,7 +132,7 @@ class PoisonPillRebootstrapTest {
     }
 
     // -----------------------------------------------------------------------
-    // The ladder: bounded retries → quarantine + forced re-bootstrap
+    // The ladder: bounded retries -> quarantine + forced re-bootstrap
     // -----------------------------------------------------------------------
 
     @Nested
@@ -144,7 +143,7 @@ class PoisonPillRebootstrapTest {
             applySeqOne();
             injector.poisonSeq = 2;
 
-            // Failures 1 and 2: bounded retries — resubscribe at the CURRENT cursor.
+            // Failures 1 and 2: bounded retries - resubscribe at the CURRENT cursor.
             for (int attempt = 1; attempt <= 2; attempt++) {
                 core.onFrame(new EdgeFrame.Notify(List.of(notif(2, 1, 2, "k", "v2"))));
                 var r = drainOne(EdgeClientCore.ConnectionDirective.ReconnectNextEndpoint.class);
@@ -155,7 +154,7 @@ class PoisonPillRebootstrapTest {
             assertEquals(2, core.poisonPolicy().retries());
             assertEquals(0, core.poisonPolicy().quarantines());
 
-            // Failure 3 (maxRetries): quarantine — forced snapshot re-bootstrap at cursor 0.
+            // Failure 3 (maxRetries): quarantine - forced snapshot re-bootstrap at cursor 0.
             core.onFrame(new EdgeFrame.Notify(List.of(notif(2, 1, 2, "k", "v2"))));
             var rb = drainOne(EdgeClientCore.ConnectionDirective.ReconnectNextEndpoint.class);
             assertEquals(0, rb.resumeCursor(), "ADR-0040: forced re-bootstrap is cursor 0");
@@ -232,7 +231,7 @@ class PoisonPillRebootstrapTest {
             assertEquals(2, core.poisonPolicy().quarantinedSeq());
 
             // The forced re-bootstrap (cursor 0) yields SNAPSHOT_FIRST: a snapshot at the
-            // server's latest seq (>= the poison — the CP applied it fine) cuts over.
+            // server's latest seq (>= the poison - the CP applied it fine) cuts over.
             feedSnapshot(snapshot(5, "k", "v5", "other", "x"), 5);
 
             assertEquals(5, core.cursor());
@@ -248,7 +247,7 @@ class PoisonPillRebootstrapTest {
     }
 
     // -----------------------------------------------------------------------
-    // Terminal fail-loud (screen condition C3-2 — the pinned cases)
+    // Terminal fail-loud (the pinned cases)
     // -----------------------------------------------------------------------
 
     @Nested
@@ -269,7 +268,7 @@ class PoisonPillRebootstrapTest {
         void snapshotFailingToApplyDuringForcedRebootstrapIsTerminal() {
             quarantineSeqTwo();
 
-            // ADR-0040 §1.3 verbatim: the forced re-bootstrap's snapshot fails to apply.
+            // The forced re-bootstrap's snapshot itself fails to apply.
             injector.poisonSnapshots = true;
             feedSnapshot(snapshot(5, "k", "v5"), 5);
 
@@ -286,7 +285,7 @@ class PoisonPillRebootstrapTest {
             quarantineSeqTwo();
 
             // The server chose TAIL for cursor 0 (young ring, nothing evicted): the poison
-            // seq comes back as a DELTA and throws again — no snapshot can be obtained
+            // seq comes back as a DELTA and throws again - no snapshot can be obtained
             // without new wire surface, so the edge must die visibly, not hot-loop.
             core.onFrame(new EdgeFrame.Notify(List.of(notif(2, 1, 2, "k", "v2"))));
 
@@ -329,7 +328,7 @@ class PoisonPillRebootstrapTest {
     }
 
     // -----------------------------------------------------------------------
-    // Non-poison boundaries (ADR-0040 scope edges)
+    // Non-poison boundaries (scope edges)
     // -----------------------------------------------------------------------
 
     @Nested
@@ -337,8 +336,8 @@ class PoisonPillRebootstrapTest {
 
         @Test
         void invalidSignatureIsNotAPoisonPill() {
-            // F-0052 fail-closed: a SIGNED delta with no verifier is rejected, the chain
-            // halts, staleness surfaces it — the poison policy never sees it (ADR-0040 §1).
+            // Fail-closed: a SIGNED delta with no verifier is rejected; the chain
+            // halts, staleness surfaces it - the poison policy never sees it.
             ConfigDelta signed = new ConfigDelta(0, 1,
                     List.of(new ConfigMutation.Put("k", bytes("v"))),
                     new byte[64], 1L, new byte[8]);
@@ -402,7 +401,7 @@ class PoisonPillRebootstrapTest {
         @Test
         void retryCountsAreIsolatedPerSeq() {
             PoisonPillPolicy p = new PoisonPillPolicy();
-            // Two failures at seq 5 plus one at seq 6 must NOT quarantine anything —
+            // Two failures at seq 5 plus one at seq 6 must NOT quarantine anything -
             // the bounded count is per seq (a merged key would mis-quarantine at 3).
             assertEquals(PoisonPillPolicy.Action.RESUBSCRIBE, p.onApplyFailure(5, boom));
             assertEquals(PoisonPillPolicy.Action.RESUBSCRIBE, p.onApplyFailure(5, boom));
@@ -446,7 +445,7 @@ class PoisonPillRebootstrapTest {
         @Test
         void differentSeqFailingDuringRebootstrapExitsTheQuarantineAsAFreshFailure() {
             PoisonPillPolicy p = quarantined(new PoisonPillPolicy(), 7);
-            // Seqs apply in order: a failure at 9 means the re-bootstrap got PAST 7 —
+            // Seqs apply in order: a failure at 9 means the re-bootstrap got PAST 7 -
             // the old quarantine is moot; 9 starts its own bounded ladder (not terminal).
             assertEquals(PoisonPillPolicy.Action.RESUBSCRIBE, p.onApplyFailure(9, boom));
             assertEquals(-1, p.quarantinedSeq(), "the stale quarantine is released");

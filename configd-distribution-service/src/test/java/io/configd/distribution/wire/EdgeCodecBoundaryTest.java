@@ -14,8 +14,8 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * Exact-boundary unit tests for {@link EdgeFrameCodec} / {@link EdgeSnapshotCodec} that
- * pin the precise bounds-check thresholds the property test only fuzzes (gate-3 mutation
- * tightness): minimum frame size, the at-cap chunk, NOTIFY byte-cap split point, and the
+ * pin the precise bounds-check thresholds the property test only fuzzes: minimum frame
+ * size, the at-cap chunk, NOTIFY byte-cap split point, and the
  * snapshot envelope guards.
  */
 class EdgeCodecBoundaryTest {

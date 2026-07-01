@@ -43,21 +43,21 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 /**
- * Multi-Raft Phase 1 — Seam C: the N-group consensus bring-up proof. Drives the REAL production helper
+ * The N-group consensus bring-up proof. Drives the REAL production helper
  * {@link ConfigdServer#buildRaftGroup} (the single bring-up path the server loops over a shard) for
- * N∈{1,3} on a real {@link MultiRaftDriver} + {@link OwnerExecutorPool}, so this is "N groups actually
- * running" with production wiring — not a sim.
+ * N in {1,3} on a real {@link MultiRaftDriver} + {@link OwnerExecutorPool}, so this is "N groups actually
+ * running" with production wiring - not a sim.
  *
  * <p>What it discriminates:
  * <ul>
- *   <li><b>N=1 byte-identity foundation</b> — the single group reuses the node-level {@link Storage}
+ *   <li><b>N=1 byte-identity foundation</b> - the single group reuses the node-level {@link Storage}
  *       instance (so its WAL/snapshot bytes + paths are unchanged), and in no-peer mode carries no
  *       outbound adapter/coalescer (the no-op transport, exactly as today).</li>
- *   <li><b>Independent bring-up</b> — N groups each self-elect LEADER on their OWN owner thread, each with
+ *   <li><b>Independent bring-up</b> - N groups each self-elect LEADER on their OWN owner thread, each with
  *       its own durable storage directory ({@code dataDir/shard-<gid>}).</li>
- *   <li><b>Per-shard linearizability + isolation (S2/S4)</b> — a committed write to group k applies to
+ *   <li><b>Per-shard linearizability + isolation (S2/S4)</b> - a committed write to group k applies to
  *       group k's store ONLY; a sibling group's store never sees it.</li>
- *   <li><b>The DL-P1-06 outbound half</b> — each group's outbound adapter stamps ITS gid on the wire
+ *   <li><b>The outbound half</b> - each group's outbound adapter stamps ITS gid on the wire
  *       (a frame sent by group k carries {@code groupId == k}), not a captured constant 0.</li>
  * </ul>
  */
@@ -95,7 +95,7 @@ class MultiGroupBringupTest {
         // the same instance the node-level AuditLog uses in production).
         assertSame(nodeStorage, rt.storage(),
                 "at N=1 the single group must reuse the node-level Storage instance (byte-identity)");
-        // No peers ⇒ no-op transport ⇒ no outbound adapter / coalescer (exactly as today).
+        // No peers => no-op transport => no outbound adapter / coalescer (exactly as today).
         assertNull(rt.adapter(), "no-peer mode must have no outbound adapter");
         assertNull(rt.coalescingTransport(), "no-peer mode must have no coalescing transport");
         assertNotNull(rt.raftNode());
@@ -119,7 +119,7 @@ class MultiGroupBringupTest {
     @Test
     void nGroupsBringUpIndependentlyWithDistinctPerShardStorage(@TempDir Path dataDir) throws Exception {
         final int n = 3;
-        pool = new OwnerExecutorPool(n); // owner i ← gid i (floorMod(gid, n))
+        pool = new OwnerExecutorPool(n); // owner i <- gid i (floorMod(gid, n))
         MultiRaftDriver driver = new MultiRaftDriver(NODE, Clock.system());
         driver.setOwnerPool(pool);
 
@@ -177,12 +177,12 @@ class MultiGroupBringupTest {
         }
     }
 
-    // ---- DL-P1-06 outbound half: per-group adapter stamps its gid ---------------------------
+    // ---- outbound half: per-group adapter stamps its gid ---------------------------
 
     @Test
     void perGroupOutboundAdapterStampsItsGid(@TempDir Path dataDir) {
         // Build groups with a recording node-level transport endpoint; assert each group's OUTBOUND adapter
-        // stamps ITS gid on the wire — the latent N>1 correctness (pre-fix everything would carry gid 0).
+        // stamps ITS gid on the wire - the latent N>1 correctness (pre-fix everything would carry gid 0).
         MultiRaftDriver driver = new MultiRaftDriver(NODE, Clock.system()); // no pool needed (groupCommit off)
         for (int gid : new int[] {0, 1, 7}) {
             RecordingEndpoint endpoint = new RecordingEndpoint();
@@ -252,7 +252,7 @@ class MultiGroupBringupTest {
     }
 
     private static IntegrityEnvelope integrity() {
-        // A fixed test key — the at-rest MAC is real but the key material is irrelevant to bring-up.
+        // A fixed test key - the at-rest MAC is real but the key material is irrelevant to bring-up.
         return new IntegrityEnvelope(new SecretKeySpec(new byte[32], "HmacSHA256"));
     }
 

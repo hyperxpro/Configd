@@ -12,11 +12,11 @@ import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.TimeUnit;
 
 /**
- * Session 5 / Workstream A — A3 "reader-never-blocks-writer" empirical proof.
+ * "Reader-never-blocks-writer" empirical proof.
  *
  * <p>The edge read path ({@link LocalConfigStore#get}) is a single volatile
  * load of the {@code currentSnapshot} pointer followed by an immutable HAMT
- * traversal — the Read-Copy-Update (RCU) pattern (ADR-0005). The writer never
+ * traversal - the Read-Copy-Update (RCU) pattern. The writer never
  * mutates a structure a reader is traversing; it builds a new immutable
  * snapshot and publishes it with a single volatile store
  * ({@link LocalConfigStore#loadSnapshot}). There is no lock, no CAS loop, and
@@ -30,14 +30,14 @@ import java.util.concurrent.TimeUnit;
  * single writer thread ({@link #write}) that swaps the snapshot pointer in a
  * tight loop. We measure reader latency (SampleTime) and contrast it with the
  * {@code readOnly} group (same reader count, no writer). If the RCU claim
- * holds, reader p50/p99/p999 are statistically flat between the two groups —
+ * holds, reader p50/p99/p999 are statistically flat between the two groups - 
  * the concurrent writer does not appear in the reader's latency distribution.
  *
  * <p><b>Coordinated omission:</b> SampleTime times each reader invocation's own
  * service time with no externally-imposed arrival schedule, so CO is
- * structurally absent (methodology §3a). The number reported here is the
- * read service time <i>with a concurrent writer present</i> — the §3a/F2
- * "loaded" companion to {@code LocalConfigStoreReadBenchmark}'s unloaded read.
+ * structurally absent (methodology section 3a). The number reported here is the
+ * read service time <i>with a concurrent writer present</i> - the "loaded"
+ * companion to {@code LocalConfigStoreReadBenchmark}'s unloaded read.
  *
  * <p>Run (real serving read {@code get(key, cursor)}, two reader counts):
  * <pre>
@@ -101,7 +101,7 @@ public class ReadUnderWriteContentionBenchmark {
             data = data.put(key, new VersionedValue(value, i + 1, now));
         }
         snapA = new ConfigSnapshot(data, size, now);
-        // snapB: same key set, version bumped — a fresh immutable snapshot the
+        // snapB: same key set, version bumped - a fresh immutable snapshot the
         // writer can publish. Structural sharing means this is cheap and the
         // reader traversal cost is identical, so the only difference the reader
         // can observe is the volatile pointer flipping under it.
@@ -113,7 +113,7 @@ public class ReadUnderWriteContentionBenchmark {
         for (int i = 0; i < randomIndices.length; i++) {
             randomIndices[i] = rng.nextInt(size);
         }
-        // Cursor at version=size: passes the INV-M1 gate against snapA; snapB is
+        // Cursor at version=size: passes the cursor gate against snapA; snapB is
         // version size+1 (>= cursor) so it also passes. The reader therefore
         // always takes the full traverse path regardless of which snapshot is live.
         satisfiableCursor = new VersionCursor(size, 0L);
@@ -134,7 +134,7 @@ public class ReadUnderWriteContentionBenchmark {
     @GroupThreads(1)
     public void write() {
         // Ping-pong the volatile snapshot pointer. This is the RCU publish the
-        // reader races against — a single volatile store, no lock, no CAS.
+        // reader races against - a single volatile store, no lock, no CAS.
         // (loadSnapshot is the snapshot-swap method; we alternate two prebuilt
         // snapshots so the writer does no HAMT work on the measured path.)
         store.loadSnapshot((store.currentVersion() == size) ? snapB : snapA);

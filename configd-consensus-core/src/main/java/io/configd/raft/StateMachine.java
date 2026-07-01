@@ -13,16 +13,16 @@ public interface StateMachine {
      * command that does not advance the applied-mutation sequence). A caller
      * surfacing a commit sequence for a non-mutating entry should report the
      * current sequence (any S &le; current version satisfies read-your-writes for
-     * a no-op). See ADR-0033 (RR-004).
+     * a no-op).
      */
     long NON_MUTATING = -1L;
 
     /**
      * Applies a committed log entry to the state machine.
      * <p>
-     * RR-004 / ADR-0033: returns the <b>applied-mutation sequence</b> assigned to
-     * this entry — the per-group, gap-free-over-mutations counter that the read
-     * path serves as the version cursor (contract §6 read-your-writes). For
+     * Returns the <b>applied-mutation sequence</b> assigned to
+     * this entry - the per-group, gap-free-over-mutations counter that the read
+     * path serves as the version cursor (contract section 6 read-your-writes). For
      * non-mutating entries (no-op election entries, empty commands) the
      * implementation returns {@link #NON_MUTATING} ({@code -1}); the caller then
      * surfaces the current sequence. This return value lets the commit-outcome

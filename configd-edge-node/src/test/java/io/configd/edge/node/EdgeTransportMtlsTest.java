@@ -39,27 +39,24 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.fail;
 
 /**
- * CT-40, edge-CLIENT half (the server half is {@code FanOutServerMtlsTest}): the edge node
- * presents its client certificate over the SAME {@code TlsConfig}/{@code TlsManager} stack
- * as the control plane (ADR-0037 "mTLS consistent with the control plane's" by
- * construction) against a live mTLS {@link FanOutServer}.
+ * Edge-CLIENT mTLS tests (the server half is {@code FanOutServerMtlsTest}): the edge node
+ * presents its client certificate over the shared {@code TlsConfig}/{@code TlsManager} stack
+ * against a live mTLS {@link FanOutServer}.
  *
  * <ul>
- *   <li><b>trusted client cert</b> → handshake + SUBSCRIBE complete; the edge applies a
+ *   <li><b>trusted client cert</b> - handshake + SUBSCRIBE complete; the edge applies a
  *       published notification (functional, not just connected);</li>
- *   <li><b>untrusted (rogue) client cert</b> → the server rejects; the edge never
- *       subscribes (no SUBSCRIBE_OK, no heartbeats, store never advances) while its
- *       reconnect machinery demonstrably keeps trying;</li>
- *   <li><b>untrusted SERVER cert</b> → the CLIENT side rejects (trust-store verification
- *       + HTTPS endpoint identification — F-0051); the edge never subscribes.</li>
+ *   <li><b>untrusted (rogue) client cert</b> - the server rejects; the edge never subscribes
+ *       (no SUBSCRIBE_OK, no heartbeats, store never advances) while its reconnect machinery
+ *       demonstrably keeps trying;</li>
+ *   <li><b>untrusted SERVER cert</b> - the CLIENT side rejects (trust-store verification +
+ *       endpoint identification); the edge never subscribes.</li>
  * </ul>
  *
- * <h2>RR-094 fixture discipline</h2>
- * The keytool keystore generation is hoisted into a once-per-class {@code @BeforeAll}
- * fixture; each test carries a generous method {@link Timeout} for pure hang detection
- * (TLS-1.3 rejections may surface on first I/O rather than at handshake, so the negative
- * cases assert "never subscribed within a bounded observation", mirroring
- * FanOutServerMtlsTest's unusable-connection discipline).
+ * <p>Keytool keystore generation is hoisted into a once-per-class {@code @BeforeAll} fixture;
+ * each test carries a generous method {@link Timeout} for pure hang detection (TLS-1.3
+ * rejections may surface on first I/O rather than at handshake, so the negative cases assert
+ * "never subscribed within a bounded observation").
  */
 class EdgeTransportMtlsTest {
 
@@ -137,9 +134,7 @@ class EdgeTransportMtlsTest {
         }
     }
 
-    // -----------------------------------------------------------------------
     // Tests
-    // -----------------------------------------------------------------------
 
     @Test
     @Timeout(120)
@@ -179,8 +174,8 @@ class EdgeTransportMtlsTest {
     @Timeout(120)
     void untrustedServerCertIsRejectedByTheClient() throws Exception {
         // The server presents the ROGUE identity; the edge's trust store does not contain
-        // it → the CLIENT side must refuse (trust verification + F-0051 endpoint
-        // identification), never subscribe.
+        // it -> the CLIENT side must refuse (trust verification + endpoint identification),
+        // never subscribe.
         int port = startMtlsServer(rogueKeyStore);
         edge = startEdge(port, tlsManager(clientCert, clientKeyStore, serverTrustStore));
 
@@ -192,18 +187,18 @@ class EdgeTransportMtlsTest {
     @Test
     @Timeout(120)
     void blackholedEndpointHandshakeTimesOutAndEdgeKeepsRetrying() throws Exception {
-        // S4 Workstream A3 leg 1 (S3 handoff §1; CT-40 edge-side gap): an endpoint that
-        // completes the TCP accept but NEVER performs the TLS handshake (never reads/writes,
-        // holds the socket open). The ONLY mechanism that lets the edge abandon such a peer is
-        // HANDSHAKE_TIMEOUT_MS (the setSoTimeout around SSLSocket.startHandshake in
-        // EdgeStreamClient.createClientSocket). Without it, startHandshake() blocks forever and
-        // the edge wedges on the first peer — never failing over, never retrying.
+        // An endpoint that completes the TCP accept but NEVER performs the TLS handshake
+        // (never reads/writes, holds the socket open). The ONLY mechanism that lets the edge
+        // abandon such a peer is HANDSHAKE_TIMEOUT_MS (the setSoTimeout around
+        // SSLSocket.startHandshake in EdgeStreamClient.createClientSocket). Without it,
+        // startHandshake() blocks forever and the edge wedges on the first peer — never
+        // failing over, never retrying.
         //
-        // Proof the bound bites edge-side: the reconnect counter ADVANCES (the edge timed out of
-        // a black-holed handshake and looped to retry) while it never subscribes. If the timeout
-        // did not bite, the session thread would be parked in startHandshake and the counter
-        // could not advance — awaitReconnectAttempts would fail (this is the discriminator;
-        // mutation: drop the setSoTimeout(HANDSHAKE_TIMEOUT_MS) → this test hangs to its @Timeout).
+        // Proof the bound bites: the reconnect counter ADVANCES (the edge timed out of a
+        // black-holed handshake and looped) while it never subscribes. If the timeout did not
+        // bite, the session thread would be parked in startHandshake and the counter could not
+        // advance — awaitReconnectAttempts would fail. Mutation: drop
+        // setSoTimeout(HANDSHAKE_TIMEOUT_MS) -> this test hangs to its @Timeout.
         int port = startBlackholeServer();
         edge = startEdge(port, tlsManager(clientCert, clientKeyStore, serverTrustStore));
 
@@ -213,22 +208,19 @@ class EdgeTransportMtlsTest {
         assertEquals(0, edge.core().currentVersion(), "store never advances behind a dead endpoint");
     }
 
-    // -----------------------------------------------------------------------
     // Fixture plumbing
-    // -----------------------------------------------------------------------
 
     /**
-     * A3-1: an "accept-then-black-hole" endpoint. Binds a plain TCP listener and an accept
-     * loop that holds every accepted connection OPEN without ever performing the TLS
-     * handshake (no read, no write, no close), so the client blocks in {@code startHandshake()}
-     * until {@code HANDSHAKE_TIMEOUT_MS} bites — rather than getting an immediate EOF (which a
-     * close would deliver). Returns the listening port.
+     * Binds a plain TCP listener whose accept loop holds every accepted connection OPEN without
+     * ever performing the TLS handshake (no read, no write, no close), so the client blocks in
+     * {@code startHandshake()} until {@code HANDSHAKE_TIMEOUT_MS} bites — rather than getting
+     * an immediate EOF. Returns the listening port.
      */
     private int startBlackholeServer() throws IOException {
         blackhole = new ServerSocket();
         blackhole.bind(new InetSocketAddress("127.0.0.1", 0), 128);
         ServerSocket ss = blackhole;
-        List<Socket> held = new CopyOnWriteArrayList<>(); // keep accepted sockets open (un-GC'd)
+        List<Socket> held = new CopyOnWriteArrayList<>(); // keep accepted sockets open so they aren't GC'd
         Thread.ofVirtual().name("a3-1-blackhole-accept").start(() -> {
             try {
                 while (!ss.isClosed()) {
@@ -279,7 +271,7 @@ class EdgeTransportMtlsTest {
                         new ConfigMutation.Put(key, value.getBytes(StandardCharsets.UTF_8)))));
     }
 
-    /** Waits until the edge's reconnect counter shows ≥ n attempts (it IS retrying). */
+    /** Waits until the edge's reconnect counter shows >= n attempts (it IS retrying). */
     private static void awaitReconnectAttempts(EdgeNodeMain edge, int n) {
         long deadline = System.nanoTime() + Duration.ofSeconds(60).toNanos();
         while (System.nanoTime() < deadline) {

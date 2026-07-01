@@ -26,7 +26,7 @@ import java.util.zip.CRC32C;
 import static org.junit.jupiter.api.Assertions.*;
 
 /**
- * Tests for {@link DeltaApplier} — gap detection and delta sequencing.
+ * Tests for {@link DeltaApplier} - gap detection and delta sequencing.
  */
 class DeltaApplierTest {
 
@@ -320,7 +320,7 @@ class DeltaApplierTest {
             ConfigSigner verifier = new ConfigSigner(keyPair.getPublic());
             DeltaApplier verifyingApplier = new DeltaApplier(client, verifier);
 
-            byte[] badSignature = new byte[64]; // all zeros — invalid
+            byte[] badSignature = new byte[64]; // all zeros - invalid
             ConfigDelta delta = new ConfigDelta(0, 1, List.of(
                     new ConfigMutation.Put("key", bytes("value"))
             ), badSignature);
@@ -399,9 +399,8 @@ class DeltaApplierTest {
             byte[] leaderSig = leaderSm.lastSignature();
             assertNotNull(leaderSig);
 
-            // Construct the delta as the distribution service would (F-0052:
-            // propagate the leader's epoch + nonce so the edge reconstructs
-            // the identical signing payload).
+            // Construct the delta as the distribution service would: propagate the
+            // leader's epoch + nonce so the edge reconstructs the identical signing payload.
             ConfigDelta delta = new ConfigDelta(0, 1, List.of(
                     new ConfigMutation.Put("db.host", bytes("localhost"))
             ), leaderSig, leaderSm.lastEpoch(), leaderSm.lastNonce());
@@ -437,14 +436,13 @@ class DeltaApplierTest {
     }
 
     // -----------------------------------------------------------------------
-    // SEC-017 (iter-2): epoch persistence across process restart.
+    // Epoch persistence across process restart
     // -----------------------------------------------------------------------
 
     /**
-     * Closes the gap that motivated SEC-017: before this fix, the
-     * highest-seen-epoch counter lived only in memory, so a process
-     * restart let an attacker re-deliver an older leader-signed delta
-     * with a smaller epoch and have it accepted as fresh.
+     * Before the epoch sidecar, the highest-seen-epoch counter lived only in memory,
+     * so a process restart let an attacker re-deliver an older leader-signed delta
+     * with a smaller epoch and have it accepted as fresh. The sidecar closes this gap.
      */
     @Nested
     class EpochPersistence {
@@ -502,16 +500,15 @@ class DeltaApplierTest {
 
         @Test
         void epochReplayRejectedAcrossRestart() throws Exception {
-            // Phase 1 — write epoch 100 and persist it.
+            // Write epoch 100 and persist it.
             DeltaApplier first = new DeltaApplier(client, verifier, snapshotDir);
             assertEquals(DeltaApplier.ApplyResult.APPLIED,
                     first.offer(signedDelta(0, 1, 100L), clock.currentTimeMillis()));
             assertEquals(100L, first.highestSeenEpoch());
 
-            // Phase 2 — simulate process restart: brand-new EdgeConfigClient
-            // and brand-new DeltaApplier reading the same snapshot dir.
-            // Without SEC-017, the new applier would start with
-            // highestSeenEpoch=0 and accept a replay at epoch=42.
+            // Simulate process restart: brand-new EdgeConfigClient and brand-new DeltaApplier
+            // reading the same snapshot dir. Without the sidecar the new applier would start
+            // with highestSeenEpoch=0 and accept a replay at epoch=42.
             EdgeConfigClient client2 = new EdgeConfigClient(clock);
             client2.loadSnapshot(buildSnapshot(0));
             DeltaApplier restarted = new DeltaApplier(client2, verifier, snapshotDir);

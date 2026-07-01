@@ -19,7 +19,7 @@ import java.util.logging.Logger;
 import static org.junit.jupiter.api.Assertions.*;
 
 /**
- * H-009 (iter-2) regression — ensures that the tick-loop unhandled-throwable
+ * Ensures that the tick-loop unhandled-throwable
  * path bumps the {@code configd_tick_loop_throwable_total{class}} counter
  * family AND emits a structured SEVERE log record (not a stderr
  * {@code printStackTrace}).
@@ -27,7 +27,7 @@ import static org.junit.jupiter.api.Assertions.*;
  * <p>Drives {@link ConfigdServer#handleTickLoopThrowable(Throwable, ConfigdMetrics)}
  * directly so the test does not need to start a full server / scheduler.
  * The logic under test is the catch-block body lifted into a testable
- * method during the H-009 fix.
+ * method.
  */
 class TickLoopThrowableHandlerTest {
 
@@ -120,7 +120,7 @@ class TickLoopThrowableHandlerTest {
         assertEquals(2L, snap.get(illegalName).value());
 
         // PrometheusExporter must surface the new counter family under
-        // the sanitized name (dots → underscores) plus the _total suffix.
+        // the sanitized name (dots -> underscores) plus the _total suffix.
         PrometheusExporter exporter = new PrometheusExporter(registry);
         String text = exporter.export();
         assertTrue(text.contains("configd_tick_loop_throwable_"),
@@ -132,8 +132,8 @@ class TickLoopThrowableHandlerTest {
         MetricsRegistry registry = new MetricsRegistry();
         ConfigdMetrics metrics = new ConfigdMetrics(registry, () -> 0L);
 
-        // Defensive: a null throwable should not crash the tick loop —
-        // the silent-failure mode H-009 closes is "tick-loop dies on
+        // Defensive: a null throwable should not crash the tick loop -
+        // the silent-failure mode the fix closes is "tick-loop dies on
         // any unhandled throwable", and the handler itself must not be
         // a new source of throws.
         assertDoesNotThrow(() -> ConfigdServer.handleTickLoopThrowable(null, metrics));

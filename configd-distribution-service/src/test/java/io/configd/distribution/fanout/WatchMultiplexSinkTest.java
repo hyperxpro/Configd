@@ -24,12 +24,12 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * Unit matrix for {@link WatchMultiplexSink} (RFC §2 §3.2 / §5): the per-watch filter, the
- * core-frame → {@code WATCH_*} translation table, the {@code WATCH_PROGRESS} W5-7 upper-bound
- * clamp, and the legacy-passthrough byte-identity guarantee. Drives a real
- * {@link FanOutSessionCore} through the decorator (registering watches directly in the
- * {@link WatchRegistry}, the same state the driver would post on the session thread) and
- * records the translated frames at a {@link RecordingTransportSink} delegate.
+ * Unit matrix for {@link WatchMultiplexSink}: the per-watch filter, the core-frame to
+ * {@code WATCH_*} translation table, the {@code WATCH_PROGRESS} W5-7 upper-bound clamp, and
+ * the legacy-passthrough byte-identity guarantee. Drives a real {@link FanOutSessionCore}
+ * through the decorator (registering watches directly in the {@link WatchRegistry}, the same
+ * state the driver would post on the session thread) and records the translated frames at a
+ * {@link RecordingTransportSink} delegate.
  */
 class WatchMultiplexSinkTest {
 
@@ -40,7 +40,7 @@ class WatchMultiplexSinkTest {
     private FanOutBuffer buffer;
     private FanOutSessionCore core;
 
-    /** Builds a single-watch translating session over an empty buffer (TAIL ⇒ live streaming). */
+    /** Builds a single-watch translating session over an empty buffer (TAIL => live streaming). */
     private void singleWatch(WatchTarget target) {
         registry = new WatchRegistry();
         buffer = new FanOutBuffer(64);
@@ -83,7 +83,7 @@ class WatchMultiplexSinkTest {
 
     @Test
     void fullChainVerifyTargetMatchesAllKeysLikeFull() {
-        // A root-gated full_chain_verify watch is served as the FULL key stream (brief §6b / W8-4):
+        // A root-gated full_chain_verify watch is served as the FULL key stream (W8-4):
         // matches() short-circuits to all keys regardless of the nominal targetKind.
         singleWatch(new WatchTarget(0, EdgeFrame.WATCH_TARGET_KEY, "/app/db/host", true));
         buffer.publish(threeKeys(1));
@@ -114,7 +114,7 @@ class WatchMultiplexSinkTest {
 
     @Test
     void subscribeOkTranslatesToWatchCreatedWithShardModeVector() {
-        singleWatch(fullTarget(false)); // empty buffer ⇒ TAIL
+        singleWatch(fullTarget(false)); // empty buffer => TAIL
         EdgeFrame.WatchCreated created = out.sentOfType(EdgeFrame.WatchCreated.class).get(0);
         assertEquals(1L, created.watchId());
         assertEquals(1, created.shards().size(), "one shard at N=1");
@@ -140,7 +140,7 @@ class WatchMultiplexSinkTest {
     void heartbeatProgressClampsToDrainedCursorNotRawLatestSeq() {
         // The W5-7 upper-bound clamp: a source whose latestSeq() runs AHEAD of what readSince
         // delivers. The bookmark MUST carry the drained cursor (5), never the raw HEARTBEAT
-        // latestSeq (10) — advancing past unexamined commits would be a silent gap (W6-1).
+        // latestSeq (10) - advancing past unexamined commits would be a silent gap (W6-1).
         registry = new WatchRegistry();
         CommitNotificationSource ahead = new AheadOfDrainSource(/* latest */ 10, /* drainTo */ 5);
         FanOutSessionCore[] holder = new FanOutSessionCore[1];
@@ -151,12 +151,12 @@ class WatchMultiplexSinkTest {
         sink.setWatchConnection(true);
         registry.register(new WatchRegistry.WatchEntry(1L, "edge", Set.of(), fullTarget(false), 1L, 0));
         sink.expectWatchCreated(1L);
-        core.onSubscribe(new EdgeFrame.Subscribe(true, List.of(), 1L, -1L, "edge")); // cursor 1 ⇒ TAIL
+        core.onSubscribe(new EdgeFrame.Subscribe(true, List.of(), 1L, -1L, "edge")); // cursor 1 => TAIL
 
-        core.tick(2_000L); // drains seqs 2..5 ⇒ cursor 5 (latestSeq stays 10)
+        core.tick(2_000L); // drains seqs 2..5 => cursor 5 (latestSeq stays 10)
         assertEquals(5L, core.cursor());
         out.clear();
-        core.tick(2_000L + FanOutConfig.defaults().heartbeatMs()); // idle ⇒ heartbeat ⇒ WATCH_PROGRESS
+        core.tick(2_000L + FanOutConfig.defaults().heartbeatMs()); // idle => heartbeat => WATCH_PROGRESS
 
         EdgeFrame.WatchProgress progress = out.sentOfType(EdgeFrame.WatchProgress.class).get(0);
         assertEquals(1L, progress.watchId());
@@ -183,19 +183,19 @@ class WatchMultiplexSinkTest {
 
     private List<EdgeFrame> runLegacy(boolean decorate, CommitNotification... notifications) {
         RecordingTransportSink rec = new RecordingTransportSink();
-        // watchConnection stays false (the default) ⇒ pure passthrough.
+        // watchConnection stays false (the default) => pure passthrough.
         TransportSink sink = decorate
                 ? new WatchMultiplexSink(rec, new WatchRegistry(), () -> 0L)
                 : rec;
         FanOutBuffer buf = new FanOutBuffer(64);
         FanOutSessionCore session = new FanOutSessionCore(buf, snapshotAt(0), sink,
                 FanOutConfig.defaults(), FanOutSessionMetrics.NOOP, new FakeClock(1_000L));
-        session.onSubscribe(new EdgeFrame.Subscribe(true, List.of(), 0L, -1L, "edge")); // empty ⇒ TAIL
+        session.onSubscribe(new EdgeFrame.Subscribe(true, List.of(), 0L, -1L, "edge")); // empty => TAIL
         for (CommitNotification n : notifications) {
             buf.publish(n);
         }
         session.tick(1_000L);  // NOTIFY
-        session.tick(1_300L);  // idle past heartbeatMs ⇒ HEARTBEAT
+        session.tick(1_300L);  // idle past heartbeatMs => HEARTBEAT
         return rec.sent();
     }
 
@@ -251,7 +251,7 @@ class WatchMultiplexSinkTest {
 
     /**
      * A source whose {@code latestSeq()} deliberately runs ahead of what {@code readSince}
-     * delivers — to prove the {@code WATCH_PROGRESS} clamp uses the drained cursor, not the raw
+     * delivers - to prove the {@code WATCH_PROGRESS} clamp uses the drained cursor, not the raw
      * latest. {@code readSince(c)} returns the contiguous run {@code (c, drainTo]}.
      */
     private static final class AheadOfDrainSource implements CommitNotificationSource {

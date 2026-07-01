@@ -21,8 +21,8 @@ import java.util.Set;
 import java.util.concurrent.TimeUnit;
 
 /**
- * Netty-migration baseline (Phase R) — <b>surface 1: control/admin API</b>
- * ({@code configd-server} · {@link HttpApiServer}, JDK {@code com.sun.net.httpserver}).
+ * Allocation baseline for <b>surface 1: control/admin API</b>
+ * ({@code configd-server} - {@link HttpApiServer}, JDK {@code com.sun.net.httpserver}).
  * Measures the <b>end-to-end per-request allocation</b> of a real admin read served over a
  * real loopback connection, with {@code -prof gc} (metric {@code gc.alloc.rate.norm}, B/op).
  *
@@ -31,11 +31,11 @@ import java.util.concurrent.TimeUnit;
  * enabled) TLS allocation per request. To attribute, two legs share one reused
  * keep-alive {@link HttpClient}:
  * <ul>
- *   <li>{@code healthLive} — {@code GET /health/live}, a trivial constant-body handler. This
+ *   <li>{@code healthLive} - {@code GET /health/live}, a trivial constant-body handler. This
  *       is the CONTROL: the per-request garbage that exists for <b>any</b> request just from
- *       the JDK {@code HttpExchange} machinery + the client round-trip — independent of the
+ *       the JDK {@code HttpExchange} machinery + the client round-trip - independent of the
  *       config read path. This is the floor a hand-rolled Netty pipeline would attack.</li>
- *   <li>{@code configGet} — {@code GET /v1/config/{key}} hitting the real
+ *   <li>{@code configGet} - {@code GET /v1/config/{key}} hitting the real
  *       {@link VersionedConfigStore}. The marginal allocation over {@code healthLive} is the
  *       read path's own cost (store get + value response); the shared term is the shell.</li>
  * </ul>
@@ -65,7 +65,7 @@ public class AdminHttpAllocBenchmark {
 
     /**
      * The transport under test. {@code jdk} = the incumbent {@code com.sun.net.httpserver}
-     * {@link HttpApiServer}; {@code netty} = the M2 {@link NettyHttpApiServer} (ADR-0043). The client,
+     * {@link HttpApiServer}; {@code netty} = the {@link NettyHttpApiServer}. The client,
      * key set, value size and shell are identical across both legs, so the {@code configGet} B/op
      * DELTA between {@code jdk} and {@code netty} is the server-side transport allocation difference.
      */
@@ -139,7 +139,7 @@ public class AdminHttpAllocBenchmark {
                 .uri(URI.create(base + "/health/live")).GET().build();
 
         // Warm the connection + assert the wiring serves 200 (a 401/404 would measure the
-        // wrong path — fail loudly rather than silently baseline an error response).
+        // wrong path - fail loudly rather than silently baseline an error response).
         HttpResponse<byte[]> probe = client.send(configRequests[0], HttpResponse.BodyHandlers.ofByteArray());
         if (probe.statusCode() != 200) {
             throw new IllegalStateException("configGet probe expected 200 but got " + probe.statusCode()
@@ -157,7 +157,7 @@ public class AdminHttpAllocBenchmark {
         }
     }
 
-    /** The admin read path: GET /v1/config/{key} → 200 + value, over real loopback. */
+    /** The admin read path: GET /v1/config/{key} -> 200 + value, over real loopback. */
     @Benchmark
     public int configGet() throws Exception {
         HttpRequest req = configRequests[(cursor++ & 0x7fffffff) % KEY_COUNT];
@@ -165,7 +165,7 @@ public class AdminHttpAllocBenchmark {
         return resp.statusCode() + resp.body().length;
     }
 
-    /** CONTROL: GET /health/live — the JDK shell + client round-trip floor (no read path). */
+    /** CONTROL: GET /health/live - the JDK shell + client round-trip floor (no read path). */
     @Benchmark
     public int healthLive() throws Exception {
         HttpResponse<byte[]> resp = client.send(healthRequest, HttpResponse.BodyHandlers.ofByteArray());

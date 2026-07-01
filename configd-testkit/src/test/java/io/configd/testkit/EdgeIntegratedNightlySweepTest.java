@@ -9,24 +9,24 @@ import java.util.List;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * The INTEGRATED 10k-seed sweep (charter §7: "a 10k-seed integrated sweep run at least
+ * The INTEGRATED 10k-seed sweep (charter section 7: "a 10k-seed integrated sweep run at least
  * once, zero safety violations; liveness findings registered with seeds"). The
  * {@link AdversarialSimTest#nightlyAdversarialSweep} pattern applied to the integrated
- * configuration — the EXACT {@link EdgeAdversarialGateSeedSweepTest} topology (5 CP nodes
+ * configuration - the EXACT {@link EdgeAdversarialGateSeedSweepTest} topology (5 CP nodes
  * + 3 edges + the real {@link C1StreamDriver} + full CP fault schedule + edge faults +
  * per-tick {@link EdgeInvariants}) over sequential seeds instead of the committed
  * manifest.
  *
  * <p>Gated on {@code -Dconfigd.edge.nightly=true} (the established nightly-property
- * pattern); seed count override: {@code -Dconfigd.edge.sweepCount}. Run it ALONE — the
+ * pattern); seed count override: {@code -Dconfigd.edge.sweepCount}. Run it ALONE - the
  * 2-vCPU gate box cannot overlap it with another JVM workload.
  *
  * <h2>Enforced vs recorded (the gate-sweep discipline, unchanged)</h2>
  * <ul>
  *   <li><b>SAFETY (enforced):</b> any per-tick edge safety violation throws
- *       {@link SimInvariants.SafetyViolation} naming the seed — the sweep fails.</li>
- *   <li><b>LIVENESS (recorded):</b> CP liveness stalls (no leader ever elected — the
- *       RR-095 class) and edge convergence misses are counted and the offending seeds
+ *       {@link SimInvariants.SafetyViolation} naming the seed - the sweep fails.</li>
+ *   <li><b>LIVENESS (recorded):</b> CP liveness stalls (no leader ever elected) and
+ *       edge convergence misses are also counted and the offending seeds
  *       PRINTED for the register report, never failed. The meaningful edge-liveness
  *       signal is a convergence miss <em>given a quiet window</em> (CP converged after
  *       heal + settle); those seeds are listed separately.</li>
@@ -112,7 +112,7 @@ class EdgeIntegratedNightlySweepTest {
         System.out.println("[nightly-edge-integrated] quietWindowConvergenceMissSeeds(first "
                 + MAX_LISTED_SEEDS + ")=" + quietWindowMissSeeds);
 
-        // Non-vacuity only — liveness is reported, not failed (the gate-sweep discipline).
+        // Non-vacuity only - liveness is reported, not failed (the gate-sweep discipline).
         assertTrue(seedsWithDelivery > count / 2,
                 "the integrated sweep must actually deliver on most seeds (delivered on "
                         + seedsWithDelivery + "/" + count + ")");

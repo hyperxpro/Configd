@@ -13,11 +13,11 @@ import static org.junit.jupiter.api.Assertions.*;
  * Discriminating boundary/guard tests for the small safety-kernel classes
  * ({@link ClusterConfig}, {@link ReadIndexState}, {@link DurableRaftState}).
  * <p>
- * S2/mutation-gap (RR-085): these classes already had behavioral tests, but a
- * handful of survivors persisted because the existing tests exercised the
- * happy path without pinning the exact comparison/equality boundary the mutant
- * flips. Each test here is the minimal example that fails iff the named mutant
- * is applied: an equality at the boundary, a {@code <} vs {@code <=}, a removed
+ * These classes already had behavioral tests, but a
+ * handful of boundaries went untested because the existing tests exercised the
+ * happy path without pinning the exact comparison/equality boundary involved.
+ * Each test here is the minimal example that fails iff that boundary regresses:
+ * an equality at the boundary, a {@code <} vs {@code <=}, a removed
  * guard, or a degenerate {@code return 0}/{@code return ""}. Pure, in-process,
  * deterministic.
  */
@@ -28,9 +28,7 @@ class KernelBoundaryUnitTest {
     private static final NodeId N3 = NodeId.of(3);
     private static final NodeId N4 = NodeId.of(4);
 
-    // ====================================================================
     // ClusterConfig
-    // ====================================================================
 
     @Nested
     class ClusterConfigGuards {
@@ -97,9 +95,7 @@ class KernelBoundaryUnitTest {
         }
     }
 
-    // ====================================================================
-    // ReadIndexState — quorum boundaries
-    // ====================================================================
+    // ReadIndexState quorum boundaries
 
     @Nested
     class ReadIndexQuorumBoundaries {
@@ -162,9 +158,7 @@ class KernelBoundaryUnitTest {
         }
     }
 
-    // ====================================================================
-    // DurableRaftState — term-monotonicity boundary
-    // ====================================================================
+    // DurableRaftState term-monotonicity boundary
 
     @Nested
     class DurableTermBoundary {

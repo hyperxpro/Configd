@@ -13,15 +13,15 @@ import java.util.TreeMap;
  * <ul>
  *   <li><b>Safety</b> edge invariants (per-edge monotonicity, no-stale-overwrite,
  *       convergence) FAIL the seed by throwing {@link SimInvariants.SafetyViolation}
- *       in {@link EdgeInvariants} — they never land here.</li>
+ *       in {@link EdgeInvariants} - they never land here.</li>
  *   <li><b>Liveness</b> goals (a published notification is observed by a
  *       live+connected+non-lagging edge within {@code BOUND_MS}) are
- *       <em>recorded, never thrown</em> (RR-095 philosophy). A miss is an
+ *       <em>recorded, never thrown</em>. A miss is an
  *       {@link DeliveryViolation} appended here, capped so a pathological seed
  *       cannot OOM the recorder.</li>
  * </ul>
  * With {@link StreamDriver#NONE} every published notification is a delivery
- * violation — that is the executable backlog (the point of Phase V1).
+ * violation - that is the executable backlog.
  * <p>
  * Not thread-safe; one instance per seed, mutated on the single sim thread.
  */
@@ -31,7 +31,7 @@ final class EdgeActivity {
     static final int MAX_RECORDED_VIOLATIONS = 256;
 
     /**
-     * A recorded eventual-delivery-bound miss (contract §2 propagation budget):
+     * A recorded eventual-delivery-bound miss (contract section 2 propagation budget):
      * notification {@code seq} published at sim time {@code publishedAtMs} on the
      * edge's subscribed CP node was not observed by live edge {@code edgeId} within
      * {@code BOUND_MS}; {@code latenessMs} is the overshoot at the moment it was
@@ -48,7 +48,7 @@ final class EdgeActivity {
     private int snapshotsApplied;
 
     /**
-     * NOTE-1 (design review §C): publications excused EXACTLY at their deadline tick — a
+     * NOTE-1 (design review section C): publications excused EXACTLY at their deadline tick - a
      * still-owing edge that was ineligible (crashed / lagging / partitioned) on the precise
      * tick the deadline was evaluated, so it was excused rather than recorded as a
      * violation. Exposed so excused-vs-delivered is observable: a reviewer can see whether

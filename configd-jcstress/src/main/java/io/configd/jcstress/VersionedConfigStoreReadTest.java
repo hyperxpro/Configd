@@ -12,7 +12,7 @@ import org.openjdk.jcstress.infra.results.JJ_Result;
 import org.openjdk.jcstress.infra.results.J_Result;
 
 /**
- * RR-029 / W-1 — {@link VersionedConfigStore} lock-free read vs the single writer.
+ * Verifies {@link VersionedConfigStore} lock-free read vs the single writer.
  *
  * <p>The store is MVCC: the single writer (Raft apply thread) swaps the volatile
  * {@code currentSnapshot}; readers do one volatile read and walk the immutable
@@ -20,7 +20,7 @@ import org.openjdk.jcstress.infra.results.J_Result;
  * model exactly one writer + concurrent readers (more than one writer would test
  * an unsupported contract and is deliberately out of scope).
  *
- * <p><b>Invariant:</b> a read must return a <em>consistent</em> version — the
+ * <p><b>Invariant:</b> a read must return a <em>consistent</em> version - the
  * {@code (value, version)} pair it hands back must be one the writer actually
  * published atomically, never a torn cross-version splice (value of v=N stamped
  * with version M). We make this checkable by writing values whose bytes ENCODE
@@ -51,12 +51,10 @@ public final class VersionedConfigStoreReadTest {
         return v;
     }
 
-    // ------------------------------------------------------------------
     // Single writer advances the version; reader observes (value, version).
     // r1 = the version stamped on the ReadResult; r2 = the version DECODED from
     // the value bytes. They MUST be equal (a consistent snapshot). They differ
     // only on a torn MVCC read, which the single-volatile-read design forbids.
-    // ------------------------------------------------------------------
     @JCStressTest
     @State
     @Description("VersionedConfigStore: read-while-write must return a consistent (value,version)")
@@ -84,16 +82,14 @@ public final class VersionedConfigStoreReadTest {
         }
     }
 
-    // ------------------------------------------------------------------
-    // CF-31 probe: ReadResult hands out the live internal byte[] (valueUnsafe
-    // aliasing). Is that array ever observed mid-mutation cross-thread? The
-    // VersionedValue defensively COPIES on construction and is immutable, and the
-    // writer publishes a NEW VersionedValue (never mutates the old array) — so the
-    // reader's aliased array is effectively frozen. This test fails (FORBIDDEN) if
-    // a reader ever decodes a version from the bytes that does not match a version
-    // the writer actually published, i.e. a torn/visibility hazard on the shared
-    // array. A clean run is the safe-by-construction evidence.
-    // ------------------------------------------------------------------
+    // ReadResult hands out the live internal byte[] (valueUnsafe aliasing). Is that
+    // array ever observed mid-mutation cross-thread? The VersionedValue defensively
+    // COPIES on construction and is immutable, and the writer publishes a NEW
+    // VersionedValue (never mutates the old array) - so the reader's aliased array is
+    // effectively frozen. This test fails (FORBIDDEN) if a reader ever decodes a
+    // version from the bytes that does not match a version the writer actually
+    // published (a torn/visibility hazard). A clean run is the safe-by-construction
+    // evidence.
     @JCStressTest
     @State
     @Description("CF-31: aliased internal byte[] must never be observed torn under concurrent overwrite")

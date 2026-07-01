@@ -27,19 +27,19 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * Regression tests for the watch catch-up <b>snapshot</b> authorization fixes (redteam F1/F2):
- * the snapshot path is the one server→client path the per-{@code NOTIFY} filter does not cover, so
- * left unfixed a narrow watch received the whole store on its first snapshot — a read-authz bypass
+ * the snapshot path is the one server-to-client path the per-{@code NOTIFY} filter does not cover,
+ * so left unfixed a narrow watch received the whole store on its first snapshot - a read-authz bypass
  * around the subscription gate (W7-4 / W5-10). The fixes:
  * <ul>
  *   <li><b>W3-4 (F1):</b> a from-now watch ({@code cursor==0}, no {@code with_initial_snapshot})
- *       TAILs from the frontier — it is NOT put in {@code SNAPSHOT_FIRST}, so it receives <b>no</b>
+ *       TAILs from the frontier - it is NOT put in {@code SNAPSHOT_FIRST}, so it receives <b>no</b>
  *       catch-up snapshot at all (the common-path leak is eliminated outright).</li>
  *   <li><b>Source filtering (F1):</b> when a snapshot IS delivered ({@code with_initial_snapshot},
  *       or a resume behind the buffer), {@link FilteringReplaySource} filters it to the watch's
  *       target, so a narrow watch never receives a key it could not read; FULL /
  *       {@code full_chain_verify} (root-authorized) pass through whole.</li>
  *   <li><b>Fixed owner tag (F2):</b> a connection-level snapshot is tagged to the FIXED drain-owner
- *       captured when the drain starts, not {@code firstLiveWatchId()} per-frame — so an owner that
+ *       captured when the drain starts, not {@code firstLiveWatchId()} per-frame - so an owner that
  *       cancels mid-transfer cannot mis-attribute its snapshot to a {@code TAIL}-acked sibling.</li>
  * </ul>
  */
@@ -54,7 +54,7 @@ class WatchSnapshotAuthzRegressionTest {
 
     private FanOutConnectionDriver newDriver(ReplaySource replay) {
         FanOutBuffer buffer = new FanOutBuffer(64);
-        // One published commit ⇒ the source is non-empty (latestSeq >= 0).
+        // One published commit => the source is non-empty (latestSeq >= 0).
         buffer.publish(new CommitNotification(1, 1_001L, new ConfigDelta(0, 1,
                 List.of(new ConfigMutation.Put("/k/a", "v".getBytes(StandardCharsets.UTF_8))))));
         SlowConsumerGovernor gov =
@@ -71,7 +71,7 @@ class WatchSnapshotAuthzRegressionTest {
 
     @Test
     void fromNowNarrowWatchTailsWithNoSnapshot() {
-        // W3-4 (F1): a fresh from-now KEY watch on a non-empty store TAILs — no catch-up snapshot,
+        // W3-4 (F1): a fresh from-now KEY watch on a non-empty store TAILs - no catch-up snapshot,
         // so there is no whole-store exposure path at all.
         driver = newDriver(snapshot(1L, "/k/a", "public", "/secret/x", "TOPSECRET-cross-tenant"));
         feed(new EdgeFrame.WatchCreate(1L, 0, EdgeFrame.WATCH_TARGET_KEY,
@@ -112,7 +112,7 @@ class WatchSnapshotAuthzRegressionTest {
 
     @Test
     void fullWatchWithInitialSnapshotReceivesWholeStore() {
-        // FULL is root-authorized (W7-3) ⇒ NO filtering; it legitimately receives every key.
+        // FULL is root-authorized (W7-3) => NO filtering; it legitimately receives every key.
         driver = newDriver(snapshot(1L, "/k/a", "public", "/secret/x", "secret"));
         feed(new EdgeFrame.WatchCreate(1L, 0, EdgeFrame.WATCH_TARGET_FULL,
                 new byte[0], WatchCursor.fromNow(), EdgeFrame.WATCH_FLAG_WITH_INITIAL_SNAPSHOT));
@@ -141,7 +141,7 @@ class WatchSnapshotAuthzRegressionTest {
                 "B is acked TAIL — the protocol promises B no snapshot substream");
 
         out.clear();
-        out.blockNextOffers(1);               // block A's SNAPSHOT_BEGIN once → transfer pauses
+        out.blockNextOffers(1);               // block A's SNAPSHOT_BEGIN once -> transfer pauses
         driver.session().tick(clock.now());
         assertTrue(out.sentOfType(EdgeFrame.WatchSnapshotBegin.class).isEmpty(), "BEGIN paused");
 

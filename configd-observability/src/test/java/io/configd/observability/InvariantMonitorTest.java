@@ -10,7 +10,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import static org.junit.jupiter.api.Assertions.*;
 
 /**
- * Tests for {@link InvariantMonitor} — runtime invariant checking.
+ * Tests for {@link InvariantMonitor} - runtime invariant checking.
  */
 class InvariantMonitorTest {
 
@@ -22,7 +22,7 @@ class InvariantMonitorTest {
     }
 
     // -----------------------------------------------------------------------
-    // Test mode — violations throw AssertionError
+    // Test mode - violations throw AssertionError
     // -----------------------------------------------------------------------
 
     @Nested
@@ -76,7 +76,7 @@ class InvariantMonitorTest {
     }
 
     // -----------------------------------------------------------------------
-    // Production mode — violations record silently
+    // Production mode - violations record silently
     // -----------------------------------------------------------------------
 
     @Nested
@@ -211,8 +211,7 @@ class InvariantMonitorTest {
     }
 
     // -----------------------------------------------------------------------
-    // F-0073: Data-plane invariant helpers (INV-M1 monotonic_read,
-    //                                       INV-S1 staleness_bound)
+    // Data-plane invariant helpers (INV-M1 monotonic_read, INV-S1 staleness_bound)
     // -----------------------------------------------------------------------
 
     @Nested

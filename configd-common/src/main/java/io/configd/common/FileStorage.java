@@ -28,7 +28,7 @@ public final class FileStorage implements Storage {
     private final Path directory;
 
     /**
-     * S7.5 group commit: kept-open append channels for the batched WAL path
+     * Kept-open append channels for the batched WAL path
      * ({@link #appendToLogNoSync} / {@link #syncLog}). Holding the channel open across a
      * batch removes the per-entry open/close syscalls and lets one {@code force(true)}
      * durably commit N appended entries. Keyed by log name (the WAL is one or two names in
@@ -38,14 +38,14 @@ public final class FileStorage implements Storage {
      * <p>
      * The durable single-append {@link #appendToLog} path is deliberately left untouched
      * (open+write+force+close per call) so crash/fault-injection wrappers that delegate to it
-     * keep their exact, proven semantics — only callers that explicitly opt into the
+     * keep their exact, proven semantics - only callers that explicitly opt into the
      * no-sync/sync pair use these channels.
      */
     private final Map<String, FileChannel> appendChannels = new java.util.concurrent.ConcurrentHashMap<>();
 
     /**
      * Log names whose backing file was freshly created by the batched path and therefore
-     * still need a one-time directory fsync (so the file's existence — not just its bytes —
+     * still need a one-time directory fsync (so the file's existence, not just its bytes,
      * is durable) on the next {@link #syncLog}. Mirrors what {@link #put}'s {@link #sync()}
      * does for the rename path.
      */
@@ -75,7 +75,7 @@ public final class FileStorage implements Storage {
         try {
             // Write to temp file first, then atomic rename.
             // This prevents a crash between truncation and fsync from
-            // corrupting the existing file — critical for Raft persistent
+            // corrupting the existing file - critical for Raft persistent
             // state (currentTerm, votedFor) which must survive crashes.
             try (FileChannel channel = FileChannel.open(tmp,
                     StandardOpenOption.CREATE,
@@ -139,19 +139,16 @@ public final class FileStorage implements Storage {
         }
     }
 
-    // ========================================================================
-    // S7.5 group commit: batched WAL append (no-sync) + explicit per-log fsync.
+    // Batched WAL append (no-sync) + explicit per-log fsync.
     //
-    // Used ONLY by callers that explicitly opt in (RaftLog.appendNoSync / syncWal on the
-    // single tick thread). Holds the append channel open across the batch so one force(true)
-    // durably commits N entries — the fix for the per-op-fsync ceiling measured in PART 1.
-    // The durable single-append appendToLog() above is left byte-for-byte unchanged so
+    // Used ONLY by callers that explicitly opt in. Holds the append channel open across the
+    // batch so one force(true) durably commits N entries - eliminating the per-op fsync
+    // overhead. The durable single-append appendToLog() above is left unchanged so
     // crash/fault-injection wrappers that delegate to it keep their proven semantics.
     //
-    // Thread model: the raft-log WAL is touched only by the tick thread (R-01). appendChannels
-    // is a ConcurrentHashMap purely as defensive instance-state safety (audit-log uses a
+    // Thread model: the raft-log WAL is touched only by the single tick thread. appendChannels
+    // is a ConcurrentHashMap purely as defensive instance-state safety (the audit-log uses a
     // different log name and never touches the batched path).
-    // ========================================================================
 
     @Override
     public void appendToLogNoSync(String logName, byte[] data) {
@@ -173,7 +170,7 @@ public final class FileStorage implements Storage {
         FileChannel channel = appendChannels.get(logName);
         if (channel == null) {
             // Nothing buffered via the batched path (or it was just evicted by a
-            // truncate/rename). A directory sync satisfies the contract vacuously — there
+            // truncate/rename). A directory sync satisfies the contract vacuously - there
             // are no kept-open un-forced appends to flush.
             sync();
             return;
@@ -266,17 +263,14 @@ public final class FileStorage implements Storage {
             while (buffer.remaining() >= 4) {
                 int length = buffer.getInt();
 
-                // F-0011 fix: A crash during appendToLog() can leave a
-                // partially written trailing entry (length header written
-                // but data/CRC incomplete). Treat truncated trailing entries
-                // as uncommitted and discard them instead of crashing — the
-                // entry was never fsynced completely so it was never durable.
-                // A negative length also indicates corruption of the length
-                // field itself (partial write of the 4-byte int).
+                // A crash during appendToLog() can leave a partially written trailing entry
+                // (length header written but data/CRC incomplete). Treat truncated trailing
+                // entries as uncommitted and discard them - the entry was never fsynced
+                // completely so it was never durable. A negative length also indicates
+                // corruption of the length field itself (partial write of the 4-byte int).
                 if (length < 0 || buffer.remaining() < length + 4) {
-                    // Truncated trailing entry — stop reading.
-                    // All previously read entries (which had valid CRCs) are
-                    // intact. The partial entry is discarded.
+                    // Truncated trailing entry - stop reading. All previously read entries
+                    // (which had valid CRCs) are intact. The partial entry is discarded.
                     break;
                 }
 
@@ -303,10 +297,9 @@ public final class FileStorage implements Storage {
     }
 
     /**
-     * RR-005 (2): the WAL recovery read allocates a single {@link ByteBuffer} sized by the
-     * file length. A {@code long -> int} truncation on a ≥ 2 GiB WAL silently mis-sized the
-     * buffer (negative / wrapped) and read garbage. With Raft-log compaction now reachable
-     * (RR-005 (1) — {@code RaftNode.maybeCompact} wired into the server tick loop) the WAL is
+     * The WAL recovery read allocates a single {@link ByteBuffer} sized by the file length.
+     * A {@code long -> int} truncation on a WAL >= 2 GiB silently mis-sizes the buffer
+     * (negative / wrapped) and reads garbage. With Raft-log compaction wired the WAL is
      * bounded in practice; this is the fail-loud backstop: a WAL at/beyond the JVM
      * single-array limit refuses to load with a clear, actionable error rather than silently
      * truncating committed entries.
@@ -326,7 +319,7 @@ public final class FileStorage implements Storage {
     @Override
     public void truncateLog(String logName) {
         // Close any kept-open batched-append channel first: it points at the file we are about
-        // to delete; a later append must reopen the fresh inode (S7.5 group commit).
+        // to delete; a later append must reopen the fresh inode.
         evictAppendChannel(logName);
         Path file = directory.resolve(logName + ".wal");
         try {
@@ -339,7 +332,7 @@ public final class FileStorage implements Storage {
     @Override
     public void renameLog(String fromLogName, String toLogName) {
         // The rename replaces toLogName's inode (and consumes fromLogName); evict both kept-open
-        // channels so the next append reopens the correct, post-rename file (S7.5 group commit).
+        // channels so the next append reopens the correct, post-rename file.
         evictAppendChannel(fromLogName);
         evictAppendChannel(toLogName);
         Path from = directory.resolve(fromLogName + ".wal");

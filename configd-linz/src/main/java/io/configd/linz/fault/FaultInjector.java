@@ -10,24 +10,24 @@ import java.util.List;
 import java.util.concurrent.TimeUnit;
 
 /**
- * OS-level fault injection against the real node processes (design §5/§8): iptables
- * partitions and {@code kill -9}. This is the only mechanism that exercises the real
+ * OS-level fault injection against the real node processes: iptables partitions and
+ * {@code kill -9}. This is the only mechanism that exercises the real
  * blocking-SSLSocket / virtual-thread wire path the sim hides.
  *
  * <p><b>Partition mechanism.</b> Each node's Raft listens on a distinct
  * {@code 127.0.0.1:raftPort}, so a rule on that {@code --dport} cleanly cuts exactly
  * that node's inbound Raft socket without needing source-IP control (impossible on
- * single-host loopback — verified). The rule is <b>inserted at the top</b> of the
- * chain so it fires before any {@code -i lo -j ACCEPT}.
+ * single-host loopback). The rule is <b>inserted at the top</b> of the chain so it
+ * fires before any {@code -i lo -j ACCEPT}.
  *
  * <p><b>Why {@code REJECT --reject-with tcp-reset}, not {@code DROP}.</b> The Raft
  * transport opens outbound connections with {@code new Socket(addr, port)} and <b>no
  * connect timeout</b>, on the single tick thread. Under {@code DROP} (black-hole),
  * when the leader must (re)connect to an isolated peer its {@code connect()} blocks
- * for the full TCP SYN timeout — stalling the tick loop so the leader cannot commit
- * to <i>anyone</i> (a real Configd liveness gap, recorded as a finding). {@code REJECT}
- * fails the connect/send <b>fast</b> (RST), so the surviving majority keeps making
- * progress while the isolated node still cannot communicate — what a <i>safety</i>
+ * for the full TCP SYN timeout - stalling the tick loop so the leader cannot commit
+ * to <i>anyone</i> (a real Configd liveness gap). {@code REJECT} fails the
+ * connect/send <b>fast</b> (RST), so the surviving majority keeps making progress
+ * while the isolated node still cannot communicate - what a <i>safety</i>
  * (linearizability) test needs.
  *
  * <p>Every injected rule is tracked and removed by {@link #healAll()} /

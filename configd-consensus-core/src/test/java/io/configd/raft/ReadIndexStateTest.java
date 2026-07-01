@@ -25,9 +25,7 @@ class ReadIndexStateTest {
         state = new ReadIndexState();
     }
 
-    // ========================================================================
     // Basic lifecycle tests
-    // ========================================================================
 
     @Nested
     class BasicLifecycleTests {
@@ -79,9 +77,7 @@ class ReadIndexStateTest {
         }
     }
 
-    // ========================================================================
     // Readiness tests
-    // ========================================================================
 
     @Nested
     class ReadinessTests {
@@ -97,7 +93,7 @@ class ReadIndexStateTest {
         void readNotReadyWhenLeadershipConfirmedButNotApplied() {
             long readId = state.startRead(10);
             state.confirmLeadership(readId, 3, 2); // quorum met
-            // lastApplied (5) < readIndex (10) — not ready
+            // lastApplied (5) < readIndex (10) - not ready
             assertFalse(state.isReady(readId, 5));
         }
 
@@ -105,7 +101,7 @@ class ReadIndexStateTest {
         void readReadyWhenLeadershipConfirmedAndApplied() {
             long readId = state.startRead(5);
             state.confirmLeadership(readId, 3, 2); // quorum met
-            // lastApplied (5) >= readIndex (5) — ready
+            // lastApplied (5) >= readIndex (5) - ready
             assertTrue(state.isReady(readId, 5));
         }
 
@@ -137,9 +133,7 @@ class ReadIndexStateTest {
         }
     }
 
-    // ========================================================================
     // confirmAll tests
-    // ========================================================================
 
     @Nested
     class ConfirmAllTests {
@@ -187,9 +181,7 @@ class ReadIndexStateTest {
         }
     }
 
-    // ========================================================================
     // ReadIndex value tests
-    // ========================================================================
 
     @Nested
     class ReadIndexValueTests {
@@ -215,9 +207,7 @@ class ReadIndexStateTest {
         }
     }
 
-    // ========================================================================
     // Multiple concurrent reads
-    // ========================================================================
 
     @Nested
     class ConcurrentReadTests {

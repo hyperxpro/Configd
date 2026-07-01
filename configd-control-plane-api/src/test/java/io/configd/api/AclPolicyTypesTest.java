@@ -16,10 +16,10 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * Tests for the immutable authorization value types {@link PolicyRule}, {@link Policy}, and {@link Role}
- * (RFC §01 A5-3). Verifies null-rejection, defensive immutability (the records do not alias their
- * constructor inputs and expose unmodifiable views), empty-set permissiveness, the literal
- * {@code startsWith} matcher, and the {@link Role#rules()} flatten order.
+ * Tests for the immutable authorization value types {@link PolicyRule}, {@link Policy}, and {@link Role}.
+ * Verifies null-rejection, defensive immutability (the records do not alias their constructor inputs and
+ * expose unmodifiable views), empty-set permissiveness, the literal {@code startsWith} matcher, and the
+ * {@link Role#rules()} flatten order.
  */
 class AclPolicyTypesTest {
 

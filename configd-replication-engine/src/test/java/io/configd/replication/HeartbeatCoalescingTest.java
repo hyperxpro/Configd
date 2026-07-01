@@ -34,10 +34,10 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * Stage 2 M3 — coalesced-heartbeat proofs.
+ * Coalesced-heartbeat proofs.
  * <ul>
  *   <li><b>Flat-in-N (proof 1):</b> heartbeat message count per peer per tick is independent of the
- *       group count G — one coalesced message per peer regardless of G, with the un-coalesced baseline
+ *       group count G - one coalesced message per peer regardless of G, with the un-coalesced baseline
  *       asserted to scale with G (the test-the-tester de-regression proof).</li>
  *   <li><b>Decorator behaviour:</b> only an EMPTY AppendEntries inside the tick window is coalesced;
  *       non-empty AppendEntries (real replication), votes, and any out-of-window heartbeat pass straight
@@ -48,8 +48,8 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  *   <li><b>Driver orchestration:</b> {@code tickOwner} with coalescing enabled is correctly inert for a
  *       peerless leader (no heartbeats to coalesce) and never fires the net.</li>
  * </ul>
- * The real-leader end-to-end (many groups sharing a peer → one coalesced message, and no spurious
- * election) is carried by the cross-node sim (SeedSweepTest) and the M3 S3 load sweep.
+ * The real-leader end-to-end (many groups sharing a peer - one coalesced message, and no spurious
+ * election) is carried by the cross-node sim (SeedSweepTest) and the load sweep.
  */
 class HeartbeatCoalescingTest {
 
@@ -85,7 +85,7 @@ class HeartbeatCoalescingTest {
         }
     }
 
-    /** Counts direct (un-coalesced) sends per peer — the de-regression baseline. */
+    /** Counts direct (un-coalesced) sends per peer - the de-regression baseline. */
     private static final class RecordingTransport implements RaftTransport {
         final AtomicInteger total = new AtomicInteger();
         final Map<NodeId, Integer> perPeer = new ConcurrentHashMap<>();
@@ -111,7 +111,7 @@ class HeartbeatCoalescingTest {
     }
 
     // ------------------------------------------------------------------------
-    // Proof 1 — flat in group count
+    // Proof 1 - flat in group count
     // ------------------------------------------------------------------------
 
     @Test
@@ -134,7 +134,7 @@ class HeartbeatCoalescingTest {
                 groups.get(gid).send(PEER_A, emptyHeartbeat(1));
                 groups.get(gid).send(PEER_B, emptyHeartbeat(1));
             }
-            // Empties were buffered — nothing hit the delegate directly.
+            // Empties were buffered - nothing hit the delegate directly.
             assertEquals(0, delegate.total.get(), "in-window heartbeats must be buffered, not sent");
 
             CountingDrain drain = new CountingDrain();
@@ -152,14 +152,14 @@ class HeartbeatCoalescingTest {
     @Test
     void baseline_unCoalesced_scalesWithGroupCount() {
         // Test-the-tester: with coalescing OFF (no tick window open), G groups each send to two peers, so
-        // traffic is 2*G messages per tick — the amplification M3 removes. Proves the reduction is real.
+        // traffic is 2*G messages per tick - the amplification this removes. Proves the reduction is real.
         for (int g = 1; g <= 256; g *= 16) {
-            HeartbeatCoalescer hc = new HeartbeatCoalescer(); // never beginTick → not collecting
+            HeartbeatCoalescer hc = new HeartbeatCoalescer(); // never beginTick - not collecting
             RecordingTransport delegate = new RecordingTransport();
             for (int gid = 0; gid < g; gid++) {
                 CoalescingRaftTransport dec = new CoalescingRaftTransport(delegate, gid);
                 dec.bindCoalescer(() -> hc);
-                dec.send(PEER_A, emptyHeartbeat(1)); // not collecting → straight through
+                dec.send(PEER_A, emptyHeartbeat(1)); // not collecting - straight through
                 dec.send(PEER_B, emptyHeartbeat(1));
             }
             assertEquals(2 * g, delegate.total.get(),
@@ -168,7 +168,7 @@ class HeartbeatCoalescingTest {
     }
 
     // ------------------------------------------------------------------------
-    // Decorator behaviour — what is and is NOT coalesced
+    // Decorator behaviour - what is and is NOT coalesced
     // ------------------------------------------------------------------------
 
     @Test
@@ -178,7 +178,7 @@ class HeartbeatCoalescingTest {
         CoalescingRaftTransport dec = new CoalescingRaftTransport(delegate, 0);
         dec.bindCoalescer(() -> hc);
 
-        // (1) OUT of window: even an empty heartbeat passes straight through (H-1 — never delayed).
+        // (1) OUT of window: even an empty heartbeat passes straight through (never delayed outside a window).
         dec.send(PEER_A, emptyHeartbeat(1));
         assertEquals(1, delegate.total.get());
 
@@ -186,7 +186,7 @@ class HeartbeatCoalescingTest {
         // (2) IN window: a non-empty AppendEntries (real replication) is NEVER coalesced.
         dec.send(PEER_A, entryCarrying(1));
         assertEquals(2, delegate.total.get(), "entry-carrying AppendEntries must not be coalesced");
-        // (3) IN window: a vote is not an AppendEntries — passes through.
+        // (3) IN window: a vote is not an AppendEntries - passes through.
         dec.send(PEER_A, new RequestVoteRequest(1L, LOCAL, 0L, 0L, false));
         assertEquals(3, delegate.total.get(), "votes must not be coalesced");
         // (4) IN window: an empty heartbeat IS buffered (not sent now).
@@ -201,7 +201,7 @@ class HeartbeatCoalescingTest {
     }
 
     // ------------------------------------------------------------------------
-    // Proof 3 — demux round-trip through the real driver
+    // Proof 3 - demux round-trip through the real driver
     // ------------------------------------------------------------------------
 
     @Test
@@ -221,7 +221,7 @@ class HeartbeatCoalescingTest {
         long higherTerm = Math.max(g0.currentTerm(), g1.currentTerm()) + 5;
 
         // (a) A coalesced heartbeat carrying a HIGHER-TERM empty AppendEntries for BOTH groups: the demux
-        //     must deliver each to its group, and a higher-term AppendEntries makes a leader step down —
+        //     must deliver each to its group, and a higher-term AppendEntries makes a leader step down -
         //     an observable proof that each group received and processed ITS message.
         Map<Integer, AppendEntriesRequest> both = new LinkedHashMap<>();
         both.put(0, emptyHeartbeat(higherTerm));
@@ -231,7 +231,7 @@ class HeartbeatCoalescingTest {
         assertEquals(RaftRole.FOLLOWER, g0.role(), "group 0 must receive its demuxed heartbeat");
         assertEquals(RaftRole.FOLLOWER, g1.role(), "group 1 must receive its demuxed heartbeat");
 
-        // (b) NEUTER (test-the-tester): re-elect, then send a coalesced heartbeat that OMITS group 1 — only
+        // (b) NEUTER (test-the-tester): re-elect, then send a coalesced heartbeat that OMITS group 1 - only
         //     group 0 steps down; group 1, not in the message, is untouched. Proves delivery is per-group,
         //     not broadcast.
         RaftNode h0 = newSingleNodeLeader(pool, 2);
@@ -250,7 +250,7 @@ class HeartbeatCoalescingTest {
     }
 
     // ------------------------------------------------------------------------
-    // Driver orchestration — tickOwner with coalescing enabled is inert for a peerless leader
+    // Driver orchestration - tickOwner with coalescing enabled is inert for a peerless leader
     // ------------------------------------------------------------------------
 
     @Test
@@ -265,7 +265,7 @@ class HeartbeatCoalescingTest {
         RaftNode g0 = newSingleNodeLeader(pool, 0);
         driver.addGroup(0, g0);
         // Many ticks on the owner: a single-node (peerless) leader has no peers to heartbeat, so the
-        // coalescer stays empty and the drain is never called — coalescing is correctly inert, and the
+        // coalescer stays empty and the drain is never called - coalescing is correctly inert, and the
         // begin/try/finally orchestration runs clean (no exception, no net fire, leader stays leader).
         pool.ownerByIndex(0).submit(() -> {
             for (int i = 0; i < 200; i++) {

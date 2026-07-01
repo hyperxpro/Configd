@@ -15,7 +15,7 @@ import java.util.concurrent.TimeUnit;
  * Go binary over a serialized history and maps its exit code to a {@link Verdict}.
  *
  * <p>This is the only checker the harness trusts; the harness never decides
- * linearizability itself (ADR-0032 rejects a hand-rolled checker). The Go binary's
+ * linearizability itself. The Go binary's
  * contract: exit 0 = LINEARIZABLE, 1 = NON-LINEARIZABLE, anything else =
  * INDETERMINATE.
  */
@@ -30,7 +30,7 @@ public final class PorcupineChecker {
     /**
      * Resolves the checker binary from (in order): the {@code PORCUPINE_BIN} env
      * var, then the module-local {@code bin/porcupine-check}. Throws if neither
-     * exists — the harness must not silently "pass" without a real checker.
+     * exists - the harness must not silently "pass" without a real checker.
      */
     public static PorcupineChecker fromEnvironment() {
         String env = System.getenv("PORCUPINE_BIN");

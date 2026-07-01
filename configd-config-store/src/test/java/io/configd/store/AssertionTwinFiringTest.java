@@ -14,24 +14,20 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.fail;
 
 /**
- * §4.5 assertion-twin firing harness (RR-030) — config-store half.
+ * Assertion-twin firing harness - config-store half.
  * <p>
  * Fires the two twins that live in {@link ConfigStateMachine}:
  * <ul>
- *   <li>{@code per_key_order} (INV-W1) — a PUT whose assigned version is not strictly
- *       greater than the existing value's version. Driven by reflectively rewinding the
- *       sequence counter (the same precondition injection as
- *       {@code io.configd.server.InvariantNetMetricTest}; only the precondition is
- *       injected — the detection, throw, and metric path are the real production code).</li>
- *   <li>{@code apply_owner_thread} (RR-029 / W-1) — the single-writer owner-thread
- *       tripwire the RR-004 review (F-1, {@code rr-004-fix-review.md}) required a
- *       violation-path test for. We bind the owner on one thread (first apply), then drive
- *       {@code apply} from a SECOND thread and assert (a) the wired
- *       {@link ConfigStateMachine.InvariantChecker} throws and (b)
- *       {@code onApplyOwnerThreadViolation} increments. Closes the residual on RR-029.</li>
+ *   <li>{@code per_key_order} - a PUT whose assigned version is not strictly greater than
+ *       the existing value's version. Driven by reflectively rewinding the sequence counter
+ *       (only the precondition is injected - the detection, throw, and metric path are the
+ *       real production code).</li>
+ *   <li>{@code apply_owner_thread} - the single-writer owner-thread tripwire. We bind the
+ *       owner on one thread (first apply), then drive {@code apply} from a SECOND thread and
+ *       assert (a) the wired {@link ConfigStateMachine.InvariantChecker} throws and (b)
+ *       {@code onApplyOwnerThreadViolation} increments.</li>
  * </ul>
- * gate-2 step (g) runs this class with the consensus-core half
- * ({@code io.configd.raft.AssertionTwinFiringTest}).
+ * This class is run alongside the consensus-core half ({@code io.configd.raft.AssertionTwinFiringTest}).
  */
 class AssertionTwinFiringTest {
 

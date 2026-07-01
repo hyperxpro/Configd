@@ -8,19 +8,19 @@ import java.util.Map;
 import java.util.Objects;
 
 /**
- * The cross-shard multi-key write guard (ADR {@code adr-multiraft-cross-shard}, decision D-C: DISCLAIM).
+ * Cross-shard multi-key write guard.
  *
- * <p>Configd does NOT offer cross-shard atomicity. A multi-key write (a {@code BATCH}) is atomic only when
- * all its keys reside on ONE shard (co-located) — that becomes a single-group atomic log entry. A BATCH
- * whose keys resolve to more than one shard cannot be made atomic and is REJECTED with a clear error
- * naming the offending keys, rather than silently committing a partial write (the co-location obligation
- * is unenforced; this guard makes a violation observable — Red-Team).
+ * <p>Configd does NOT offer cross-shard atomicity. A multi-key write (a {@code BATCH}) is atomic
+ * only when all its keys reside on ONE shard (co-located) - that becomes a single-group atomic log
+ * entry. A BATCH whose keys resolve to more than one shard cannot be made atomic and is REJECTED
+ * with a clear error naming the offending keys, rather than silently committing a partial write.
+ * The co-location obligation is unenforced by the caller; this guard makes a violation observable.
  *
- * <p>Under the default {@code N=1} ({@link StaticShardMap#StaticShardMap(int) StaticShardMap(1)}) every key
- * resolves to group 0, so this guard never rejects — a single-shard deployment retains whole-keyspace
- * atomic BATCH, exactly as today (D-C "default N=1 below the throughput threshold").
+ * <p>Under the default N=1 ({@link StaticShardMap#StaticShardMap(int) StaticShardMap(1)}) every
+ * key resolves to group 0, so this guard never rejects - a single-shard deployment retains
+ * whole-keyspace atomic BATCH.
  *
- * <p>Pure + stateless; the caller supplies the already-extracted keys (e.g. from
+ * <p>Pure and stateless; the caller supplies the already-extracted keys (e.g. from
  * {@code CommandCodec.decode(cmd).Batch.mutations()}), so this stays free of any codec dependency.
  */
 public final class CrossShardWriteGuard {

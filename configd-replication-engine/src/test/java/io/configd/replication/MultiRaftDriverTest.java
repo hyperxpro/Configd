@@ -23,7 +23,7 @@ import java.util.random.RandomGenerator;
 import static org.junit.jupiter.api.Assertions.*;
 
 /**
- * Tests for {@link MultiRaftDriver} — multi-group management,
+ * Tests for {@link MultiRaftDriver} - multi-group management,
  * tick propagation, and message routing.
  */
 class MultiRaftDriverTest {
@@ -92,17 +92,17 @@ class MultiRaftDriverTest {
         driver = new MultiRaftDriver(LOCAL, clock);
     }
 
-    // RR-005 (1): driver.maybeCompact fans the threshold trigger out to each group, so
-    // Raft-log compaction is REACHABLE in the wired server (the ConfigdServer tick loop calls
-    // this). Without it the only triggerSnapshot() caller was the circular sendInstallSnapshot,
-    // so each group's WAL grew for the life of the process. In a @Nested class so it is never
-    // silently skipped by a bare -Dtest='MultiRaftDriverTest' class filter (surefire mixes
-    // outer-class @Test methods unreliably with @Nested groups).
+    // driver.maybeCompact fans the threshold trigger out to each group, so Raft-log compaction
+    // is reachable in the wired server (the ConfigdServer tick loop calls this). Without it the
+    // only triggerSnapshot() caller was the circular sendInstallSnapshot, so each group's WAL
+    // grew for the life of the process. In a @Nested class so it is never silently skipped by a
+    // bare -Dtest='MultiRaftDriverTest' class filter (surefire mixes outer-class @Test methods
+    // unreliably with @Nested groups).
     @Nested
     class RaftLogCompaction {
         @Test
         void maybeCompactFansOutAndCompactsGroupsOverThreshold() {
-            // A storage-backed single-node group so triggerSnapshot can persist (RR-003 path).
+            // A storage-backed single-node group so triggerSnapshot can persist.
             io.configd.common.Storage storage = io.configd.common.Storage.inMemory();
             RaftConfig config = RaftConfig.of(LOCAL, Set.of());
             RaftNode node = new RaftNode(config, new RaftLog(storage), new TestTransport(),
@@ -253,7 +253,7 @@ class MultiRaftDriverTest {
                 driver.tick();
             }
 
-            // node1 was not ticked after removal — still FOLLOWER
+            // node1 was not ticked after removal - still FOLLOWER
             assertEquals(RaftRole.FOLLOWER, node1.role());
             assertEquals(RaftRole.LEADER, node2.role());
         }
@@ -283,7 +283,7 @@ class MultiRaftDriverTest {
 
         @Test
         void routeMessageToNonexistentGroupIsDropped() {
-            // Should not throw — silently dropped
+            // Should not throw - silently dropped
             AppendEntriesRequest req = new AppendEntriesRequest(
                     1, NodeId.of(2), 0, 0, List.of(), 0);
 

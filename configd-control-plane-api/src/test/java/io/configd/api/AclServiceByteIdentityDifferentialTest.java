@@ -17,27 +17,27 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * BYTE-IDENTITY <b>differential</b> proof for O-6 Seam 1 (role-aware ACL).
+ * BYTE-IDENTITY <b>differential</b> proof for the role-aware ACL layer.
  * <p>
- * The load-bearing wiring guarantee is that with <b>empty role maps</b> — production's effective state:
+ * The load-bearing wiring guarantee is that with <b>empty role maps</b> - production's effective state:
  * no {@link AclService#defineRole} / {@link AclService#assignRole} is ever called by server code
- * ({@code ConfigdServer.java:726} is the sole grant) — every authorization decision is identical to the
- * pre-O6 own-grants-only evaluation, regardless of which authn-asserted roles a request carries (in
- * production, {@code authed.roles() == {"admin"}}, a role that is never defined; {@code ConfigdServer.java:720}).
+ * (the sole grant is {@code grant("", "root", allOf)}) - every authorization decision is identical to the
+ * own-grants-only evaluation, regardless of which authn-asserted roles a request carries (in production,
+ * {@code authed.roles() == {"admin"}}, a role that is never defined).
  * <p>
  * Unlike {@link AclServiceRoleTest#emptyRolesByteIdentical()} / {@code productionShapeThroughRoleAwarePath()},
  * which pin the <i>3-arg == 4-arg</i> internal consistency of {@link AclService} against <i>itself</i>,
  * this suite compares {@link AclService} against an <b>independent reference oracle</b> ({@link OracleAcl})
- * that re-implements the pre-O6 semantics — union-of-every-matching-ancestor + absolute deny-precedence +
- * default-deny + effective-{@code WATCH} = {@code WATCH} ∧ {@code READ} — with a deliberately <b>different
- * algorithm</b>: it brute-forces {@code key.startsWith(prefix)} over <i>all</i> stored prefixes rather
- * than navigating {@code floorKey}/{@code lowerKey}. So a regression that dropped an ancestor in the
- * optimized walk (or that let the role layer perturb {@code (allow, deny)} when no role is defined) would
- * make the two disagree. It then fuzzes thousands of random ACL configurations and {@code (principal,
- * key, permission)} triples through four lenses — the 3-arg call, the 4-arg call with no roles, with the
- * exact production {@code {"admin"}}, and with {@code {"admin"}} plus a random undefined role — asserting
- * every one equals the oracle. A deterministic seeded PRNG makes any failure reproducible, and failures
- * print the differing {@code (config, principal, key, permission)}.
+ * that re-implements the own-grants-only semantics - union-of-every-matching-ancestor + absolute
+ * deny-precedence + default-deny + effective-{@code WATCH} = {@code WATCH} AND {@code READ} - with a
+ * deliberately <b>different algorithm</b>: it brute-forces {@code key.startsWith(prefix)} over <i>all</i>
+ * stored prefixes rather than navigating {@code floorKey}/{@code lowerKey}. So a regression that dropped
+ * an ancestor in the optimized walk (or that let the role layer perturb {@code (allow, deny)} when no role
+ * is defined) would make the two disagree. It then fuzzes thousands of random ACL configurations and
+ * {@code (principal, key, permission)} triples through four lenses - the 3-arg call, the 4-arg call with
+ * no roles, with the exact production {@code {"admin"}}, and with {@code {"admin"}} plus a random undefined
+ * role - asserting every one equals the oracle. A deterministic seeded PRNG makes any failure reproducible,
+ * and failures print the differing {@code (config, principal, key, permission)}.
  */
 class AclServiceByteIdentityDifferentialTest {
 
@@ -60,7 +60,7 @@ class AclServiceByteIdentityDifferentialTest {
      * The independent pre-O6 reference oracle. Mirrors {@link AclService#grant}/{@link AclService#deny}/
      * {@link AclService#revoke} overwrite semantics (grant replaces a principal's ALLOW at the exact
      * prefix, deny replaces its DENY, revoke removes the whole entry) and evaluates a decision by a
-     * brute-force scan over <b>all</b> stored prefixes — intentionally a different traversal than
+     * brute-force scan over <b>all</b> stored prefixes - intentionally a different traversal than
      * {@link AclService}'s sorted-map {@code floorKey}/{@code lowerKey} walk.
      */
     private static final class OracleAcl {
@@ -104,7 +104,7 @@ class AclServiceByteIdentityDifferentialTest {
                 }
             }
             allow.removeAll(deny);                           // absolute deny-precedence; default-deny implicit
-            if (perm == WATCH) {                             // effective WATCH = WATCH ∧ READ (INV-WATCH-READ)
+            if (perm == WATCH) {                             // effective WATCH = WATCH AND READ (INV-WATCH-READ)
                 return allow.contains(WATCH) && allow.contains(READ);
             }
             return allow.contains(perm);
@@ -130,14 +130,14 @@ class AclServiceByteIdentityDifferentialTest {
     // -----------------------------------------------------------------------
 
     /**
-     * Over many random configurations (built only from grant/deny/revoke — the pre-O6 API surface, so the
+     * Over many random configurations (built only from grant/deny/revoke - the pre-O6 API surface, so the
      * role maps stay empty as in production), every (principal, key, permission) decision must equal the
      * independent oracle through all four lenses:
      * <ul>
-     *   <li>L1 — 3-arg {@code isAllowed(p, key, perm)};</li>
-     *   <li>L2 — 4-arg {@code isAllowed(p, Set.of(), key, perm)} (no authn-asserted roles);</li>
-     *   <li>L3 — 4-arg {@code isAllowed(p, Set.of("admin"), key, perm)} (the EXACT production shape);</li>
-     *   <li>L4 — 4-arg {@code isAllowed(p, Set.of("admin", <random-undefined>), key, perm)}.</li>
+     *   <li>L1 - 3-arg {@code isAllowed(p, key, perm)};</li>
+     *   <li>L2 - 4-arg {@code isAllowed(p, Set.of(), key, perm)} (no authn-asserted roles);</li>
+     *   <li>L3 - 4-arg {@code isAllowed(p, Set.of("admin"), key, perm)} (the EXACT production shape);</li>
+     *   <li>L4 - 4-arg {@code isAllowed(p, Set.of("admin", <random-undefined>), key, perm)}.</li>
      * </ul>
      * Because no role is ever defined, every lens must reduce to the own-grants-only oracle.
      */
@@ -203,7 +203,7 @@ class AclServiceByteIdentityDifferentialTest {
     // -----------------------------------------------------------------------
 
     /**
-     * Replicates the deployed config verbatim — the sole {@code grant("", "root", allOf)} — and drives it
+     * Replicates the deployed config verbatim - the sole {@code grant("", "root", allOf)} - and drives it
      * through the production authn shape {@code authed.roles() == {"admin"}} (a role never defined). Root
      * must be authorized for every capability on every key (its global own grant), and every non-root
      * principal must be fully default-denied; both equal the independent oracle. This extends
@@ -247,7 +247,7 @@ class AclServiceByteIdentityDifferentialTest {
      * Strictly beyond the production shape (server code never calls {@code assignRole}), this proves the
      * guard {@code if (!roles.isEmpty() || !staticRoles.isEmpty())} is sound: binding undefined static
      * roles makes the role block <i>execute</i>, but with no {@link AclService#defineRole} the lookup
-     * finds nothing and contributes nothing — so the decision still equals the independent oracle.
+     * finds nothing and contributes nothing - so the decision still equals the independent oracle.
      */
     @Test
     void undefinedStaticBindingFlipsGuardYetStaysByteIdentical() {
@@ -304,11 +304,11 @@ class AclServiceByteIdentityDifferentialTest {
     }
 
     // -----------------------------------------------------------------------
-    // (d) O-6 Seam 2a: an EMPTY config-policy is the PRODUCTION state (no _acl/ keys) — it must not perturb
+    // (d) An EMPTY config-policy is the PRODUCTION state (no _acl/ keys) - it must not perturb
     // a single decision. Nor must a config-policy whose roles cannot be resolved for the query: a binding to
     // an UNDEFINED config role (flips the config-block guard, resolution finds nothing), or a DEFINED-but-
     // UNBOUND, un-asserted config role with broad rules (no principal holds it). The oracle has no config
-    // concept, so each must leave every decision equal to the own-grants oracle — byte-identical, exactly
+    // concept, so each must leave every decision equal to the own-grants oracle - byte-identical, exactly
     // as in production. This is the 2a analog of {@link #undefinedStaticBindingFlipsGuardYetStaysByteIdentical}.
     // -----------------------------------------------------------------------
     @Test
@@ -339,9 +339,9 @@ class AclServiceByteIdentityDifferentialTest {
             }
 
             // Three config-policy states that must each contribute NOTHING:
-            //   (i)   EMPTY                       — the production state (guard short-circuits);
-            //   (ii)  bindings to an UNDEFINED role — flips the bindings guard; cp.roles().get() is null;
-            //   (iii) a DEFINED-but-UNBOUND, un-asserted role with allOf on "" — no principal resolves it.
+            //   (i)   EMPTY                       - the production state (guard short-circuits);
+            //   (ii)  bindings to an UNDEFINED role - flips the bindings guard; cp.roles().get() is null;
+            //   (iii) a DEFINED-but-UNBOUND, un-asserted role with allOf on "" - no principal resolves it.
             String undefRole = "cfg-undef-" + r.nextInt(1_000_000);
             Map<String, Set<String>> undefBindings = new HashMap<>();
             for (String p : QUERY_PRINCIPALS) {

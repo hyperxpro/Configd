@@ -23,18 +23,18 @@ import java.util.List;
 import java.util.concurrent.atomic.AtomicReference;
 
 /**
- * Phase V fan-out head-to-head (surface 3) — the <b>server side</b>. Boots the production
+ * Fan-out head-to-head (surface 3) - the <b>server side</b>. Boots the production
  * {@link NettyFanOutServer} (plaintext loopback) over a synthetic {@link FanOutBuffer}
  * {@code CommitNotificationSource}, then publishes committed notifications on command so the
  * fan-out push path can be measured under load. The ONLY thing that varies across a head-to-head
  * pair is the Netty transport tier, forced by {@code -Dconfigd.netty.transport=io_uring|epoll}
- * (fail-loud — a {@code tier=} that does not match the forced value is the silent-fallback trap and
+ * (fail-loud - a {@code tier=} that does not match the forced value is the silent-fallback trap and
  * is asserted against by the driver).
  *
  * <p>The server is the surface {@code strace}/{@code perf} attaches to; it does not self-measure.
  * Each published {@link CommitNotification} is stamped with {@code System.currentTimeMillis()} so
  * the out-of-JVM subscriber ({@link FanOutLoadClientMain}) can compute a one-way delivery latency
- * (ms resolution — the only cross-process-comparable clock on a single box).
+ * (ms resolution - the only cross-process-comparable clock on a single box).
  *
  * <pre>
  *   java --enable-preview -Dconfigd.netty.transport=io_uring -cp benchmarks.jar \
@@ -43,10 +43,10 @@ import java.util.concurrent.atomic.AtomicReference;
  *
  * <h2>Control protocol (line-based, one client)</h2>
  * <ul>
- *   <li>{@code GO <count> <valueBytes> <ratePerSec(0=max)>} — publish {@code count} notifications
+ *   <li>{@code GO <count> <valueBytes> <ratePerSec(0=max)>} - publish {@code count} notifications
  *       (one Put each), paced to {@code ratePerSec} or as fast as possible; replies
  *       {@code PUBLISHED <count> fromSeq=<s>}.</li>
- *   <li>{@code QUIT} — close the server and exit.</li>
+ *   <li>{@code QUIT} - close the server and exit.</li>
  * </ul>
  */
 public final class FanOutPushServerMain {
@@ -66,14 +66,15 @@ public final class FanOutPushServerMain {
 
         MetricsRegistry registry = new MetricsRegistry();
         RegistryFanOutSessionMetrics metrics = new RegistryFanOutSessionMetrics(registry);
-        // Large ring so the publisher never laps a prompt subscriber (no eviction → no GAP/snapshot).
+        // Large ring so the publisher never laps a prompt subscriber (no eviction -> no GAP/snapshot).
         FanOutBuffer buffer = new FanOutBuffer(1 << 20);
         AtomicReference<ConfigSnapshot> snapshot = new AtomicReference<>(ConfigSnapshot.EMPTY);
 
-        // BENCHMARK ISOLATION (charter §4.1 apples-to-apples): the slow-consumer governor is a
-        // SESSION-policy layer ABOVE the transport. Phase V measures the TRANSPORT; the governor's
-        // demotion→snapshot→reconnect path (tested by the M3 contract) would otherwise inject
-        // run-to-run noise that wrecks the 2-batch syscall delta — and crucially does so IDENTICALLY
+        // BENCHMARK ISOLATION (charter section 4.1 apples-to-apples): the slow-consumer governor is a
+        // SESSION-policy layer ABOVE the transport. This measures the TRANSPORT; the governor's
+        // demotion->snapshot->reconnect path (tested by the slow-consumer demotion contract) would
+        // otherwise inject run-to-run noise that wrecks the 2-batch syscall delta - and crucially
+        // does so IDENTICALLY
         // regardless of transport, so it adds nothing to an io_uring-vs-epoll comparison. We raise the
         // transport-queue + ack-lag thresholds (IDENTICAL for both transports) so a keeping-up
         // subscriber that briefly lags (e.g. under strace overhead) is not demoted. Defaults are

@@ -24,7 +24,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 
 /**
  * The {@link AbstractFanOutServerContract} bound to {@code NettyFanOutServer} with the transport tier
- * FORCED to NIO — the CI fail-loud fallback proof (charter §3.2): the entire behaviour contract must
+ * FORCED to NIO - the CI fail-loud fallback proof (charter section 3.2): the entire behaviour contract must
  * hold even on the portable NIO transport, not only the native io_uring/epoll tiers.
  *
  * <p>{@code NettyTransport.select()} reads {@link NettyTransport#PROP} in the {@code NettyFanOutServer}

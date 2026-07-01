@@ -9,19 +9,19 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import io.configd.edge.StalenessTracker;
 
 /**
- * CT-01 / CT-07 at SIM level (ADR-0039 frontier staleness, driven by the real
+ * Frontier staleness at SIM level, driven by the real
  * {@link C1StreamDriver} heartbeats + deltas through the production {@link io.configd.edge.EdgeClientCore}).
  *
- * <p>Two scenarios, both judged against the edges' staleness STATE (the contract §2 state
- * machine, now ADR-0039-measured):
+ * <p>Two scenarios, both judged against the edges' staleness STATE (the contract section 2 state
+ * machine, staleness-measure-spec-measured):
  * <ul>
- *   <li><b>idle-but-connected</b> — after the workload quiesces, a connected edge keeps
+ *   <li><b>idle-but-connected</b> - after the workload quiesces, a connected edge keeps
  *       receiving HEARTBEAT frames carrying {@code latestSeq == cursor}, so its frontier
- *       advances and it stays {@link StalenessTracker.State#CURRENT} across ≥35s of idle sim
- *       time. The pre-ADR-0039 idle-time proxy would have walked it to DISCONNECTED at 30s —
+ *       advances and it stays {@link StalenessTracker.State#CURRENT} across >=35s of idle sim
+ *       time. The prior idle-time proxy would have walked it to DISCONNECTED at 30s -
  *       this test is the executable proof of the fix at sim level;</li>
- *   <li><b>partitioned</b> — an edge cut off from its stream (no deltas, no heartbeats) walks
- *       CURRENT → STALE → DEGRADED → DISCONNECTED as sim time elapses past the thresholds.</li>
+ *   <li><b>partitioned</b> - an edge cut off from its stream (no deltas, no heartbeats) walks
+ *       CURRENT -> STALE -> DEGRADED -> DISCONNECTED as sim time elapses past the thresholds.</li>
  * </ul>
  */
 class EdgeStalenessFrontierSimTest {
@@ -31,7 +31,7 @@ class EdgeStalenessFrontierSimTest {
 
     /**
      * Idle-but-connected: a connected edge stays CURRENT indefinitely on heartbeats alone.
-     * Runs a short workload to catch the edges up, then ticks IDLE (no new ops — the workload
+     * Runs a short workload to catch the edges up, then ticks IDLE (no new ops - the workload
      * schedule is exhausted) for &gt;35s of sim time. The C1 driver emits HEARTBEAT frames
      * every {@code heartbeatMs} (250ms); each carries {@code latestSeq == cursor}, advancing
      * the frontier, so the edge never leaves CURRENT.
@@ -42,7 +42,7 @@ class EdgeStalenessFrontierSimTest {
     @Test
     void idleButConnectedEdgeStaysCurrentAcrossThirtyFiveSeconds() {
         // No edge faults, no CP faults; a workload (spread across WORKLOAD_TICKS) so a leader
-        // elects, commits land, and the edges catch up — then the schedule exhausts and the
+        // elects, commits land, and the edges catch up - then the schedule exhausts and the
         // system goes idle with only heartbeats flowing.
         EdgeFanOutSim sim = new EdgeFanOutSim(7L, CP_NODES, EDGES, WORKLOAD_TICKS,
                 /*edgeFaults*/ false, new C1StreamDriver(),
@@ -59,7 +59,7 @@ class EdgeStalenessFrontierSimTest {
         assertTrue(sim.edges().get(0).cursor() > 0, "non-vacuity: edges applied some deltas");
 
         // Phase 2: idle for >35s of sim time (the workload schedule is exhausted, so no new
-        // commits) — only heartbeats flow. The edge must stay CURRENT the WHOLE time.
+        // commits) - only heartbeats flow. The edge must stay CURRENT the WHOLE time.
         long start = sim.currentTime();
         while (sim.currentTime() - start < 35_500) {
             sim.tick();
@@ -69,13 +69,13 @@ class EdgeStalenessFrontierSimTest {
                                 + " must stay CURRENT (ADR-0039) at sim time " + sim.currentTime());
             }
         }
-        // Sanity: >35s elapsed — the pre-ADR-0039 idle proxy would have hit DISCONNECTED (30s).
+        // Sanity: >35s elapsed - the prior idle proxy would have hit DISCONNECTED (30s).
         assertTrue(sim.currentTime() - start >= 35_000);
     }
 
     /**
-     * Partitioned: an edge cut off from BOTH deltas and heartbeats walks CURRENT → STALE →
-     * DEGRADED → DISCONNECTED as sim time elapses past the 500ms / 5s / 30s thresholds.
+     * Partitioned: an edge cut off from BOTH deltas and heartbeats walks CURRENT -> STALE ->
+     * DEGRADED -> DISCONNECTED as sim time elapses past the 500ms / 5s / 30s thresholds.
      */
     @Test
     void partitionedEdgeWalksStaleDegradedDisconnected() {

@@ -18,11 +18,11 @@ import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * Multi-Raft Phase 1 — Seam F (D2): the inbound coalesced-heartbeat branch of
+ * The inbound coalesced-heartbeat branch of
  * {@link RaftTransportAdapter#registerInboundHandler}. A {@code RAFT_COALESCED_HEARTBEAT} frame must be
- * DEMUXed into one {@code handler.accept(from, gid, ae)} call per group — so each group's heartbeat is
+ * DEMUXed into one {@code handler.accept(from, gid, ae)} call per group - so each group's heartbeat is
  * dispatched on the SAME per-group path (its own owner thread, the unregistered-group drop), NOT routed
- * inline on the inbound thread (which would run handleMessage off-owner; see DL-F-03). A malformed
+ * inline on the inbound thread (which would run handleMessage off-owner). A malformed
  * coalesced payload is dropped without dispatch and without propagating.
  */
 class RaftTransportAdapterCoalescedInboundTest {
@@ -45,7 +45,7 @@ class RaftTransportAdapterCoalescedInboundTest {
     @Test
     void coalescedFrameIsDemuxedPerGroup() {
         CapturingTransport transport = new CapturingTransport();
-        // The adapter's own groupId (99) must be IGNORED for a coalesced frame — the per-group ids
+        // The adapter's own groupId (99) must be IGNORED for a coalesced frame - the per-group ids
         // come from the payload, not the adapter/frame header.
         RaftTransportAdapter adapter = new RaftTransportAdapter(transport, 99);
         List<Dispatch> dispatched = new ArrayList<>();

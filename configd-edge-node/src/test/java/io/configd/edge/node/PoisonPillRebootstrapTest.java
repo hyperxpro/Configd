@@ -41,29 +41,25 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.fail;
 
 /**
- * The ADR-0040 poison-pill ladder at PROCESS level, over the real wire (CT-33; screen
- * condition C3-2's terminal case, pinned at the process boundary): a real
- * {@link ConfigdServer}, a real {@link EdgeNodeMain}, and an apply fault injected through
- * the TEST-ONLY {@link EdgeClientCore.ApplyFaultInjector} seam (Configd stores opaque
- * bytes — no real delta can be made to throw; everything downstream of the injected
- * throw, including every reconnect cycle, resubscribe cursor, snapshot and process-exit
- * decision, is production code).
+ * The poison-pill ladder at PROCESS level, over the real wire: a real {@link ConfigdServer},
+ * a real {@link EdgeNodeMain}, and an apply fault injected through the TEST-ONLY
+ * {@link EdgeClientCore.ApplyFaultInjector} seam (Configd stores opaque bytes — no real delta
+ * can be made to throw; everything downstream of the injected throw, including every reconnect
+ * cycle, resubscribe cursor, snapshot and process-exit decision, is production code).
  *
  * <ul>
  *   <li><b>Recovery leg:</b> against a fan-out endpoint whose bounded queue is small
  *       (queueFrames 4), the post-quarantine cursor-0 resubscribe gets SNAPSHOT_FIRST
- *       (backlog &gt; queue): the snapshot covers the poison seq, the edge converges, the
+ *       (backlog > queue): the snapshot covers the poison seq, the edge converges, the
  *       process LIVES.</li>
- *   <li><b>Terminal leg (ADR-0040 §1.3 verbatim — "if the snapshot itself fails to
- *       apply"):</b> every snapshot cutover throws; the bounded retries exhaust, the
- *       quarantine forces a re-bootstrap, and ITS snapshot fails too — the edge can
- *       neither advance nor re-bootstrap, so the injected terminal action (production:
- *       {@code System.exit}({@code EdgeNodeMain.EXIT_POISON_TERMINAL})) runs after
+ *   <li><b>Terminal leg ("if the snapshot itself fails to apply"):</b> every snapshot cutover
+ *       throws; the bounded retries exhaust, the quarantine forces a re-bootstrap, and ITS
+ *       snapshot fails too — the edge can neither advance nor re-bootstrap, so the injected
+ *       terminal action (production: {@code System.exit(EXIT_POISON_TERMINAL)}) runs after
  *       {@code configd_edge_poison_pill_terminal_total} is emitted. Never a hot loop.
- *       (The TAIL-redelivered-poison terminal corner is pinned at core level in
- *       edge-cache's {@code PoisonPillRebootstrapTest} — since the C3 decideMode change,
- *       a cursor-0 resubscribe always snapshots when data exists, so that corner is
- *       defense-in-depth, not reachable over this wire.)</li>
+ *       (The TAIL-redelivered-poison corner is pinned at core level in edge-cache's
+ *       {@code PoisonPillRebootstrapTest} — a cursor-0 resubscribe always snapshots when
+ *       data exists, so that corner is defense-in-depth over this wire.)</li>
  * </ul>
  */
 @Timeout(120)
@@ -119,8 +115,8 @@ class PoisonPillRebootstrapTest {
     @Test
     void quarantineForcesSnapshotRebootstrapThatHealsPastThePoisonSeq() throws Exception {
         startServer();
-        // A separate fan-out endpoint over the SAME ADR-0034 seams (the EdgeFailoverTest
-        // pattern) with queueFrames=4: a cursor-0 subscriber whose backlog exceeds 4 gets
+        // A separate fan-out endpoint over the SAME seams (same commit-notification source)
+        // with queueFrames=4: a cursor-0 subscriber whose backlog exceeds 4 gets
         // SNAPSHOT_FIRST — the forced re-bootstrap genuinely snapshots at process level.
         smallQueueEndpoint = new FanOutServer(
                 new InetSocketAddress("127.0.0.1", 0), null,
@@ -188,13 +184,13 @@ class PoisonPillRebootstrapTest {
         edge = startEdge("edge-poison-term", server.fanOutServer().localPort(),
                 terminalRuns::incrementAndGet);
         SeqPoison poison = new SeqPoison();
-        poison.poisonAllApplies = true; // every delta apply throws…
-        poison.poisonSnapshots = true;  // …and every snapshot cutover throws (ADR-0040 §1.3)
+        poison.poisonAllApplies = true; // every delta apply throws
+        poison.poisonSnapshots = true;  // every snapshot cutover throws
         edge.core().setApplyFaultInjectorForTest(poison);
 
-        // The first commit starts the ladder: TAIL apply fails → resubscribe(0) →
-        // SNAPSHOT_FIRST (C3 decideMode: data exists) → snapshot fails → bounded retries
-        // exhaust → quarantine → forced re-bootstrap → ITS snapshot fails too → TERMINAL:
+        // The first commit starts the ladder: TAIL apply fails -> resubscribe(0) ->
+        // SNAPSHOT_FIRST (data exists) -> snapshot fails -> bounded retries exhaust ->
+        // quarantine -> forced re-bootstrap -> ITS snapshot fails too -> TERMINAL:
         // the injected exit action runs (production: System.exit non-zero).
         String serverBase = "http://127.0.0.1:" + server.apiPort();
         putCommitted(serverBase, "svc/t", "v1");
@@ -220,7 +216,7 @@ class PoisonPillRebootstrapTest {
                         l.startsWith("configd_edge_poison_pill_total ") && l.endsWith(" 1")));
     }
 
-    // --- fixture / helpers ---
+    // Fixture and helpers
 
     private void startServer() throws Exception {
         Path signingKey = tempDir.resolve("signing-key.bin");

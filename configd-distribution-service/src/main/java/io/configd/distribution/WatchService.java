@@ -16,16 +16,16 @@ import java.util.Set;
  * Clients register watches on key prefixes and receive push notifications
  * when matching config entries change. The system is designed for:
  * <ul>
- *   <li><b>Event-driven delivery</b> — push-based via {@link WatchListener}
+ *   <li><b>Event-driven delivery</b> - push-based via {@link WatchListener}
  *       callbacks. Never polling. Watchers are invoked when mutations
  *       are applied, not on a timer.</li>
- *   <li><b>Version-cursor tracking</b> — each watcher maintains a cursor
+ *   <li><b>Version-cursor tracking</b> - each watcher maintains a cursor
  *       (the version of the last event it processed). If a watcher falls
  *       behind, it can be caught up from the cursor position.</li>
- *   <li><b>Coalescing</b> — rapid mutations are batched via
+ *   <li><b>Coalescing</b> - rapid mutations are batched via
  *       {@link WatchCoalescer} before fan-out. Prevents thundering herd
  *       on burst writes.</li>
- *   <li><b>Fan-out aware</b> — efficiently dispatches events to multiple
+ *   <li><b>Fan-out aware</b> - efficiently dispatches events to multiple
  *       watchers via prefix matching. Only watchers whose prefixes match
  *       the mutated keys are notified.</li>
  * </ul>
@@ -38,9 +38,6 @@ import java.util.Set;
  * <p>
  * <b>Thread safety:</b> designed for single-threaded access from the
  * distribution service I/O thread. No synchronization is used.
- * <p>
- * <b>Design reference:</b> ADR-0006 (event-driven notifications),
- * ADR-0020 (prefix subscription model).
  *
  * @see WatchEvent
  * @see WatchCoalescer
@@ -52,7 +49,7 @@ public final class WatchService {
      * Callback interface for receiving watch notifications.
      * <p>
      * Implementations are invoked on the distribution service I/O thread.
-     * They must be fast and non-blocking — heavy processing should be
+     * They must be fast and non-blocking - heavy processing should be
      * dispatched to a worker thread or buffered for async delivery.
      */
     @FunctionalInterface
@@ -71,14 +68,14 @@ public final class WatchService {
      * Represents a registered watch. Tracks the watcher's prefix filter,
      * listener callback, and version cursor for monotonic delivery.
      * <p>
-     * The cursor is mutable — updated in-place during dispatch to avoid
+     * The cursor is mutable - updated in-place during dispatch to avoid
      * per-watcher-per-event object allocation.
      */
     public static final class Watch {
         private final long id;
         private final String prefix;
         private final WatchListener listener;
-        private long cursor;  // mutable — updated in-place during dispatch
+        private long cursor;  // mutable - updated in-place during dispatch
 
         public Watch(long id, String prefix, WatchListener listener, long cursor) {
             if (id <= 0) throw new IllegalArgumentException("id must be positive: " + id);

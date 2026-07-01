@@ -21,10 +21,8 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 /**
  * jqwik property-based fuzz suite for {@link FrameCodec}.
  *
- * <p>Closes the codec-bounds requirement of Phase 4 (gap-closure §6,
- * row "jqwik for codec bounds"). Targets the wire boundary of the
- * Raft transport — every property covers an adversarial input class
- * that could plausibly arrive on a TLS-terminated socket.
+ * <p>Targets the wire boundary of the Raft transport - every property covers an adversarial
+ * input class that could plausibly arrive on a TLS-terminated socket.
  */
 class FrameCodecPropertyTest {
 
@@ -49,7 +47,7 @@ class FrameCodecPropertyTest {
     }
 
     /**
-     * The encoded frame's declared length always equals its actual length —
+     * The encoded frame's declared length always equals its actual length:
      * a peer that trusts the length prefix to allocate its read buffer must
      * never see an off-by-one or sign-extension mismatch.
      */
@@ -68,7 +66,7 @@ class FrameCodecPropertyTest {
 
     /**
      * The ByteBuffer encode overload produces byte-identical output to the
-     * byte[] overload — these two paths must not diverge or a peer using
+     * byte[] overload - these two paths must not diverge or a peer using
      * the buffer overload could be silently incompatible with one using
      * the array overload.
      */
@@ -112,7 +110,7 @@ class FrameCodecPropertyTest {
 
     /**
      * Any unknown type code (i.e. not a defined MessageType ordinal) must
-     * raise — a peer must never accept a frame with a type it does not
+     * raise - a peer must never accept a frame with a type it does not
      * understand because that would silently bypass dispatch authorisation.
      */
     @Property(tries = 200)
@@ -148,11 +146,10 @@ class FrameCodecPropertyTest {
     }
 
     /**
-     * §8.10 (R-005/R-007/R-008): a frame whose wire-version byte differs
-     * from {@link FrameCodec#WIRE_VERSION} must be rejected at the decode
-     * boundary with {@link FrameCodec.UnsupportedWireVersionException}.
-     * A peer that silently downgrades to a foreign wire version is the
-     * canonical "smuggle past the deprecation cycle" failure mode.
+     * A frame whose wire-version byte differs from {@link FrameCodec#WIRE_VERSION} must be
+     * rejected at the decode boundary with {@link FrameCodec.UnsupportedWireVersionException}.
+     * A peer that silently accepts a foreign wire version is the canonical "smuggle past the
+     * deprecation cycle" failure mode.
      */
     @Property(tries = 200)
     void unknownWireVersionIsRejected(
@@ -212,7 +209,7 @@ class FrameCodecPropertyTest {
 
     /**
      * Any payload up to a generous upper bound encodes and decodes back
-     * byte-for-byte — there is no implicit truncation, no sign-extension
+     * byte-for-byte - there is no implicit truncation, no sign-extension
      * surprise on the int-length field for large payloads.
      */
     @Property(tries = 50)
@@ -230,7 +227,7 @@ class FrameCodecPropertyTest {
 
     /**
      * peekLength on any prefix of a valid frame returns exactly the same
-     * value as the full-frame decode path — a streaming reader can rely on
+     * value as the full-frame decode path - a streaming reader can rely on
      * the header prefix alone to size its buffer.
      */
     @Property(tries = 200)

@@ -15,7 +15,7 @@ import static org.junit.jupiter.api.Assertions.fail;
 /**
  * WAL backwards-compatibility stub.
  *
- * <p>R-005 / §8.10: a wire/format change requires a deprecation cycle of
+ * <p>A wire/format change requires a deprecation cycle of
  * at least two releases. The same rule applies to the WAL segment
  * format because an upgrading node must replay segments written by the
  * previous release before producing its first new entry.
@@ -37,7 +37,7 @@ import static org.junit.jupiter.api.Assertions.fail;
  *       from {@code ops/runbooks/upgrade.md}.</li>
  * </ol>
  *
- * <p>NOT pretending this passes — the {@link Disabled} annotation is
+ * <p>NOT pretending this passes - the {@link Disabled} annotation is
  * load-bearing, not decorative.
  */
 class WalWireCompatStubTest {
@@ -50,8 +50,8 @@ class WalWireCompatStubTest {
             "configd-consensus-core/src/test/resources", FIXTURE_RESOURCE);
 
     /**
-     * TODO(R-005): enable on first version bump. Today this test is a
-     * placeholder — disabling it is honest, leaving it in is a
+     * TODO: enable on first version bump. Today this test is a
+     * placeholder - disabling it is honest, leaving it in is a
      * commitment to wire it up before the WAL segment format changes.
      */
     @Test
@@ -66,7 +66,7 @@ class WalWireCompatStubTest {
         }
         assertNotNull(fixture);
         assertTrue(fixture.length > 0, "v0 WAL fixture is empty");
-        // TODO(R-005): once RaftLog exposes a replay-from-bytes API,
+        // TODO: once RaftLog exposes a replay-from-bytes API,
         // call it here and assert the resulting log has the expected
         // entries from the v0 fixture (term, index, command bytes).
         fail("WAL replay loader not yet wired up — see TODO above.");

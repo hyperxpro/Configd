@@ -8,13 +8,12 @@ import java.lang.management.ManagementFactory;
 import static org.junit.jupiter.api.Assertions.*;
 
 /**
- * Regression test for F-0042: {@link VersionedConfigStore#getInto(String, byte[], long[])}
- * must be zero-allocation on both hit and miss paths.
+ * {@link VersionedConfigStore#getInto(String, byte[], long[])} must be zero-allocation
+ * on both hit and miss paths.
  * <p>
- * The pre-existing {@link VersionedConfigStore#get(String)} allocates a
- * {@link ReadResult} (~24 B) on every hit — that is accepted under VDR-0001.
- * The primitive {@code getInto} variant is offered for throughput-critical
- * callers that want strict zero allocation; this test enforces that claim.
+ * The pre-existing {@link VersionedConfigStore#get(String)} allocates a {@link ReadResult}
+ * (~24 B) on every hit - that is accepted. The primitive {@code getInto} variant is offered
+ * for throughput-critical callers that want strict zero allocation; this test enforces that claim.
  */
 class VersionedConfigStoreAllocationTest {
 
@@ -60,12 +59,12 @@ class VersionedConfigStoreAllocationTest {
     }
 
     /**
-     * RR-009 (S5) — the arraycopy-survival guard. The other getInto tests assert
-     * only the RETURN code (length) and the version, so deleting the
-     * {@code System.arraycopy} in {@link VersionedConfigStore#getInto} survived PIT:
-     * getInto could return the correct length 64 with a GARBAGE {@code dst} and no
-     * test would notice. This asserts the value bytes are actually copied — it goes
-     * RED if the arraycopy is removed (verified by mutation-revert, S5/A).
+     * Arraycopy survival guard. The other getInto tests assert only the RETURN code
+     * (length) and the version, so deleting the {@code System.arraycopy} in
+     * {@link VersionedConfigStore#getInto} survived PIT: getInto could return the
+     * correct length 64 with a garbage {@code dst} and no test would notice. This
+     * asserts the value bytes are actually copied - it goes RED if the arraycopy is
+     * removed.
      */
     @Test
     void getIntoCopiesExactValueBytes() {
@@ -82,7 +81,7 @@ class VersionedConfigStoreAllocationTest {
 
         assertEquals(64, rc, "value length must be returned on hit");
         assertEquals(42L, versionOut[0], "version must be copied into versionOut[0]");
-        // The load-bearing assertion RR-009 was missing: the value bytes are copied.
+        // Assert that the value bytes are actually copied (not just the length returned).
         for (int i = 0; i < 64; i++) {
             assertEquals(payload[i], dst[i],
                     "getInto must copy value byte " + i + " (kills the arraycopy-removal mutant)");

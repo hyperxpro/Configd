@@ -38,44 +38,41 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * Phase 0 — Workstream B — Stage 2 — M1: the OWNER-ISOLATION proof at N&gt;1.
+ * Owner-isolation proof at N&gt;1.
  *
- * <p>Stage 1 deleted R-01 and routed consensus through {@code ownerExecutor(gid) = pool[floorMod(gid, N)]}
- * at <b>N=1</b> — one owner thread, behaviourally exact-R-01, so multi-group / multi-owner could not be
- * exercised. M1 generalizes the tick to per-owner ({@link MultiRaftDriver#tickOwner(int)} scheduled on
- * each owner) and this test exercises the new race surface N=1 never could: <b>multiple owner threads
- * driving multiple groups</b>. The property under test is OWNER ISOLATION:
+ * <p>The owner-executor pool generalizes the tick to per-owner ({@link MultiRaftDriver#tickOwner(int)}
+ * scheduled on each owner) and this test exercises the race surface that N=1 never could: multiple
+ * owner threads driving multiple groups. The property under test is OWNER ISOLATION:
  *
  * <blockquote>For each group g, every OWNER-ONLY entry point of its {@link RaftNode} executes on
- * {@code ownerExecutor(g)}'s thread and on no other — even when that "other" is itself a legitimate
- * owner thread for a <i>different</i> group.</blockquote>
+ * {@code ownerExecutor(g)}'s thread and on no other - even when that "other" is itself a legitimate
+ * owner thread for a different group.</blockquote>
  *
- * <p>The {@code assertOwnerThread()} net asserts this. The danger at N&gt;1 (that N=1 hid) is a
- * <b>per-pool</b> rather than <b>per-node</b> guard: a naive guard that merely checked "am I on some
- * owner thread?" would pass a cross-group access. This test proves the guard is per-node by running
- * group B's entry points on group A's <i>real owner thread</i> and showing the net still fires.
+ * <p>The {@code assertOwnerThread()} net asserts this. The danger at N&gt;1 is a per-pool rather
+ * than per-node guard: a naive guard that merely checked "am I on some owner thread?" would pass a
+ * cross-group access. This test proves the guard is per-node by running group B's entry points on
+ * group A's real owner thread and showing the net still fires.
  *
  * <ul>
- *   <li><b>{@link #perOwnerTick_cleanRun_zeroFires_nonVacuousAcrossAllOwners()}</b> — many producers
+ *   <li><b>{@link #perOwnerTick_cleanRun_zeroFires_nonVacuousAcrossAllOwners()}</b> - many producers
  *       drive {@code tickOwner(i)} + {@code maybeCompactOwner(i)} + {@code propose}, each marshalled
- *       onto the correct owner, across {@code N=3} owners concurrently, while a foreign safe-rider
- *       reads the S-set ({@code role}/{@code leaderId}) and {@code monitorView()} off-owner. Zero
- *       fires, and every owner makes real consensus progress (non-vacuous on all three owners).</li>
- *   <li><b>{@link #crossGroupAccessOnARealOwnerTripsThePerNodeNet()}</b> — the injected violation:
+ *       onto the correct owner, across N=3 owners concurrently, while a foreign safe-rider reads the
+ *       S-set ({@code role}/{@code leaderId}) and {@code monitorView()} off-owner. Zero fires, and
+ *       every owner makes real consensus progress (non-vacuous on all three owners).</li>
+ *   <li><b>{@link #crossGroupAccessOnARealOwnerTripsThePerNodeNet()}</b> - the injected violation:
  *       group 1's entry points (bound to owner[1]) are invoked on owner[0]'s thread (a real owner of
- *       groups 0,3). Each trips {@code raft_owner_thread}. A CONTROL shows the same entry points on
- *       group 1's correct owner do NOT fire — the guard is per-node, not "always-on".</li>
+ *       groups 0,3). Each trips {@code raft_owner_thread}. A control shows the same entry points on
+ *       group 1's correct owner do NOT fire - the guard is per-node, not "always-on".</li>
  * </ul>
  *
- * <p>Production stays single-group (group 0 on owner[0]); this multi-group surface is test-only until
- * Phase 1 sharding. See {@code docs/phase0-B-stage2/} and threading-contract §2/§4.2.
+ * <p>Production stays single-group (group 0 on owner[0]); this multi-group surface is test-only.
  */
 class OwnerIsolationMultiOwnerTest {
 
     private static final NodeId LOCAL = NodeId.of(1);
     private static final NodeId PHANTOM = NodeId.of(2); // benign foreign sender for handleMessage
 
-    /** No peers — single-node groups self-elect; transport is unused. */
+    /** No peers - single-node groups self-elect; transport is unused. */
     private static final class NoopTransport implements RaftTransport {
         @Override public void send(NodeId target, RaftMessage message) { }
     }
@@ -107,8 +104,8 @@ class OwnerIsolationMultiOwnerTest {
     }
 
     /**
-     * Builds a storage-backed single-node group, binds its owner as the FIRST task on
-     * {@code ownerExecutor(gid)} (H-6), then self-elects it to LEADER — all on the group's owner, so
+     * Builds a storage-backed single-node group, binds its owner as the first task on
+     * {@code ownerExecutor(gid)}, then self-elects it to LEADER - all on the group's owner, so
      * the bind/elect path is clean (no fire).
      */
     private static RaftNode newSingleNodeLeaderBoundToOwner(OwnerExecutorPool pool, int gid,
@@ -142,11 +139,11 @@ class OwnerIsolationMultiOwnerTest {
             driver.addGroup(gid, node);
             nodes.put(gid, node);
         }
-        // Setup ran entirely on the correct owners — the guard must be silent so far.
+        // Setup ran entirely on the correct owners - the guard must be silent so far.
         assertEquals(0, checker.ownerFires.get(), "bind/elect on the correct owners must not fire");
 
         // Non-vacuity BASELINE. After self-election each group has already committed its leader no-op
-        // (commitIndex == 1) — so "commitIndex > 0" alone would be satisfied by SETUP, not by the
+        // (commitIndex == 1) - so "commitIndex > 0" alone would be satisfied by SETUP, not by the
         // per-owner tick (a dead tickOwner() would still pass it). Capture the post-setup commitIndex
         // here so the end assertion can require GROWTH driven by the per-owner tick during the run.
         long[] baselineCommit = new long[n];
@@ -189,9 +186,9 @@ class OwnerIsolationMultiOwnerTest {
             });
         }
 
-        // SAFE-RIDER (S-class + H-3): read the volatile S-set and the owner-published monitorView()
-        // from a FOREIGN thread, concurrently with N owners mutating their groups. These are the only
-        // legal cross-owner reads (volatile / immutable snapshot) — they must NEVER trip the net.
+        // Read the volatile S-set and the owner-published monitorView() from a foreign thread,
+        // concurrently with N owners mutating their groups. These are the only legal cross-owner
+        // reads (volatile / immutable snapshot) - they must NEVER trip the net.
         producerPool.submit(() -> {
             try {
                 start.await();
@@ -230,8 +227,8 @@ class OwnerIsolationMultiOwnerTest {
 
         // Non-vacuity: real consensus work happened, and the per-owner tick ADVANCED consensus on
         // EVERY owner during the run (not just owner[0], and not merely satisfied by setup). The
-        // commitIndex must have GROWN past the post-setup baseline on a group bound to each owner —
-        // a dead/mis-filtered tickOwner() would leave it at the baseline (red-team Finding 1).
+        // commitIndex must have GROWN past the post-setup baseline on a group bound to each owner -
+        // a dead/mis-filtered tickOwner() would leave it at the baseline.
         assertTrue(accepted.get() > 0, "vacuous — no proposals were accepted across any owner");
         for (int owner = 0; owner < n; owner++) {
             int gid = owner; // group 'owner' is bound to owner[owner] (floorMod(owner, n) == owner for owner < n)
@@ -286,7 +283,7 @@ class OwnerIsolationMultiOwnerTest {
                         + "), was " + checker.ownerFires.get());
 
         // CONTROL (the catch is non-vacuous): the SAME entry points on group 1's CORRECT owner do NOT
-        // fire — proving the guard discriminates by node, not "always throws".
+        // fire - proving the guard discriminates by node, not "always throws".
         long before = checker.ownerFires.get();
         pool.ownerByIndex(1).submit(() -> {
             g1.tick();
@@ -301,14 +298,13 @@ class OwnerIsolationMultiOwnerTest {
     }
 
     /**
-     * Focused, deterministic proof that the per-owner tick FILTER is correct: tickOwner(i) /
+     * Focused, deterministic proof that the per-owner tick filter is correct: tickOwner(i) /
      * maybeCompactOwner(i) act on EXACTLY the groups bound to owner[i] and no others. Owners are NOT
      * bound here (the net is inert), so the filter is driven directly from the test thread without
-     * threading — isolating "does the filter select the right groups" from "does it run on the right
+     * threading - isolating "does the filter select the right groups" from "does it run on the right
      * thread" (the concurrent test above proves the latter). A single-node group becomes LEADER only
      * if it is actually ticked, so {@code role()} is the observable: ticking owner i must elect i's
-     * groups and leave the others FOLLOWER. (Red-team Finding 2: the filter previously had only the
-     * heavyweight concurrent test for coverage.)
+     * groups and leave the others FOLLOWER.
      */
     @Test
     @Timeout(30)
@@ -335,7 +331,7 @@ class OwnerIsolationMultiOwnerTest {
             assertEquals(RaftRole.FOLLOWER, nodes.get(1).role(), "group 1 (owner1) must NOT be ticked by tickOwner(0)");
             assertEquals(RaftRole.FOLLOWER, nodes.get(3).role(), "group 3 (owner1) must NOT be ticked by tickOwner(0)");
 
-            // Now tick owner[1]: its groups elect too — all four LEADER (each ticked by exactly its owner).
+            // Now tick owner[1]: its groups elect too - all four LEADER (each ticked by exactly its owner).
             for (int i = 0; i < 400; i++) driver.tickOwner(1);
             for (int gid : gids) {
                 assertEquals(RaftRole.LEADER, nodes.get(gid).role(),

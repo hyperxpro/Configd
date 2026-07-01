@@ -8,17 +8,16 @@ import java.util.Set;
 /**
  * Immutable configuration for a single {@link RaftNode}.
  *
- * <p><b>Timing units (RR-006).</b> The {@code ...Ms}-named fields are real
- * milliseconds. {@link RaftNode} is tick-driven and does not see wall-clock
- * time, so it converts each duration into a tick count via {@code tickPeriodMs}
- * (the period of one {@code RaftNode.tick()} call as scheduled by the caller).
- * Production schedules ticks every 10&nbsp;ms ({@code ConfigdServer.TICK_PERIOD_MS});
- * the deterministic simulation harness ticks every 1&nbsp;ms. Setting
- * {@code tickPeriodMs} to that period makes the documented millisecond values
- * the values actually realized at runtime. Before RR-006 the {@code ...Ms}
- * values were consumed directly as tick counts, inflating every interval by the
- * tick period (10&times; in production: a documented 150–300&nbsp;ms election
- * timeout became 1.5–3&nbsp;s).
+ * <p><b>Timing units.</b> The {@code ...Ms}-named fields are real milliseconds.
+ * {@link RaftNode} is tick-driven and does not see wall-clock time, so it
+ * converts each duration into a tick count via {@code tickPeriodMs} (the period
+ * of one {@code RaftNode.tick()} call as scheduled by the caller). Production
+ * schedules ticks every 10 ms ({@code ConfigdServer.TICK_PERIOD_MS}); the
+ * deterministic simulation harness ticks every 1 ms. Setting {@code tickPeriodMs}
+ * to that period makes the documented millisecond values the values actually
+ * realized at runtime. If the {@code ...Ms} values were consumed directly as tick
+ * counts, every interval would be inflated by the tick period (10x in production:
+ * a documented 150-300 ms election timeout becomes 1.5-3 s).
  *
  * @param nodeId              this node's unique identifier
  * @param peers               the set of peer node identifiers (excluding this node)
@@ -31,7 +30,7 @@ import java.util.Set;
  * @param maxInflightAppends   maximum in-flight AppendEntries RPCs per peer (default 10)
  * @param tickPeriodMs         milliseconds represented by one {@code RaftNode.tick()};
  *                             the divisor used to convert the {@code ...Ms} durations
- *                             into tick counts (production 10&nbsp;ms, simulation 1&nbsp;ms)
+ *                             into tick counts (production 10 ms, simulation 1 ms)
  */
 public record RaftConfig(
         NodeId nodeId,
@@ -67,14 +66,13 @@ public record RaftConfig(
         if (tickPeriodMs <= 0) {
             throw new IllegalArgumentException("tickPeriodMs must be positive: " + tickPeriodMs);
         }
-        // RR-006: validate the relationship that actually governs liveness — the
-        // *derived tick counts*, not the raw millisecond values. After rounding,
-        // the minimum election timeout must still be strictly more than the
-        // heartbeat interval by a safety factor so a leader can emit several
-        // heartbeats within one election window; otherwise followers time out
-        // before the leader can refresh them and the cluster live-locks in
-        // perpetual elections. Mirrors etcd/raft's election:heartbeat >= ~10
-        // guidance applied at the resolution the node actually runs at.
+        // Validate the relationship that actually governs liveness: the derived tick counts,
+        // not the raw millisecond values. After rounding, the minimum election timeout must
+        // still be strictly more than the heartbeat interval by a safety factor so a leader
+        // can emit several heartbeats within one election window; otherwise followers time out
+        // before the leader can refresh them and the cluster live-locks in perpetual elections.
+        // Mirrors etcd/raft's election:heartbeat >= ~10 guidance applied at the resolution the
+        // node actually runs at.
         int heartbeatTicks = Math.max(1, Math.round((float) heartbeatIntervalMs / tickPeriodMs));
         int electionMinTicks = Math.max(1, Math.round((float) electionTimeoutMinMs / tickPeriodMs));
         if (electionMinTicks < heartbeatTicks * MIN_ELECTION_HEARTBEAT_TICK_RATIO) {
@@ -103,8 +101,8 @@ public record RaftConfig(
      * Minimum ratio of the derived minimum-election-timeout tick count to the
      * derived heartbeat tick count. A leader must be able to emit several
      * heartbeats inside one election window; 3 is a conservative floor (the
-     * default 150&nbsp;ms/50&nbsp;ms gives exactly 3) below which the cluster is
-     * prone to election storms.
+     * default 150 ms/50 ms gives exactly 3) below which the cluster is prone
+     * to election storms.
      */
     static final int MIN_ELECTION_HEARTBEAT_TICK_RATIO = 3;
 
@@ -160,12 +158,12 @@ public record RaftConfig(
      * i.e. one tick == one millisecond.
      *
      * <p>This is the form used by the deterministic simulation harness and unit
-     * tests, which advance time one millisecond per {@code tick()}. With a 1&nbsp;ms
-     * tick the {@code ...Ms} durations map one-to-one onto tick counts (150&nbsp;ms
-     * &rarr; 150 ticks), exactly as before RR-006, so simulation schedules remain
-     * byte-identical. Production must instead use {@link #of(NodeId, Set, int)}
-     * with its real tick period (10&nbsp;ms) so the documented millisecond budgets
-     * are realized — see the type-level note.
+     * tests, which advance time one millisecond per {@code tick()}. With a 1 ms
+     * tick the {@code ...Ms} durations map one-to-one onto tick counts (150 ms
+     * -> 150 ticks), so simulation schedules remain byte-identical. Production
+     * must instead use {@link #of(NodeId, Set, int)} with its real tick period
+     * (10 ms) so the documented millisecond budgets are realized - see the
+     * type-level note.
      */
     public static RaftConfig of(NodeId nodeId, Set<NodeId> peers) {
         return of(nodeId, peers, 1);
@@ -173,9 +171,9 @@ public record RaftConfig(
 
     /**
      * Convenience builder with default durations and an explicit tick period.
-     * Production passes its scheduler period (e.g. 10&nbsp;ms) so the documented
-     * 150–300&nbsp;ms election timeout / 50&nbsp;ms heartbeat are the intervals
-     * actually realized at runtime (RR-006).
+     * Production passes its scheduler period (e.g. 10 ms) so the documented
+     * 150-300 ms election timeout / 50 ms heartbeat are the intervals actually
+     * realized at runtime.
      *
      * @param tickPeriodMs milliseconds per {@code RaftNode.tick()} (must be positive)
      */

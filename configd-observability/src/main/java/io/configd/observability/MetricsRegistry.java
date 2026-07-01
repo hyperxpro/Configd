@@ -16,7 +16,7 @@ import java.util.stream.Collectors;
  * <p>
  * Thread-safe via {@link ConcurrentHashMap} and lock-free atomic primitives
  * ({@link LongAdder}, {@link AtomicLong}). Designed to be replaced with
- * Micrometer in production deployments — the API surface is deliberately
+ * Micrometer in production deployments - the API surface is deliberately
  * minimal to make migration straightforward.
  * <p>
  * <b>Counter:</b> monotonically increasing count backed by {@link LongAdder}
@@ -27,7 +27,7 @@ import java.util.stream.Collectors;
  * <p>
  * <b>Histogram:</b> records {@code long} values into a fixed-size ring buffer.
  * Supports count, min, max, mean, and arbitrary percentile queries (p50, p99,
- * p999). The ring buffer provides an approximate sliding window — old values
+ * p999). The ring buffer provides an approximate sliding window - old values
  * are overwritten as new values arrive. This is intentionally simple; for
  * production use, swap in Micrometer's {@code DistributionSummary}.
  *
@@ -84,7 +84,7 @@ public final class MetricsRegistry {
      * Registers a gauge with the given name and value supplier.
      * <p>
      * If a gauge with the same name already exists, it is replaced.
-     * The supplier is invoked at snapshot time — it must be thread-safe
+     * The supplier is invoked at snapshot time - it must be thread-safe
      * and should not block.
      *
      * @param name     the metric name (non-null, non-blank)
@@ -134,16 +134,16 @@ public final class MetricsRegistry {
         long percentile(double p);
 
         /**
-         * F5 (Tier-1-METRIC-DRIFT) — returns the cumulative count of samples
-         * that fell at or below each cutoff in the supplied array. Used by
-         * {@link PrometheusExporter} to emit {@code _bucket{le="X"}} lines
-         * matching the SLO alert vocabulary. The returned array has the same
-         * length as {@code cutoffs}; element {@code i} is the number of
-         * recorded samples with {@code value <= cutoffs[i]}.
+         * Returns the cumulative count of samples that fell at or below each
+         * cutoff in the supplied array. Used by {@link PrometheusExporter} to
+         * emit {@code _bucket{le="X"}} lines matching the SLO alert vocabulary.
+         * The returned array has the same length as {@code cutoffs}; element
+         * {@code i} is the number of recorded samples with
+         * {@code value <= cutoffs[i]}.
          *
          * <p>Counts are taken from the ring-buffer window (same window used
          * for percentile computation) and are therefore approximate when the
-         * total recorded count exceeds the buffer capacity — this matches the
+         * total recorded count exceeds the buffer capacity - this matches the
          * documented behavior of {@link #percentile(double)}.
          *
          * @param cutoffs strictly-increasing cutoffs in sample units
@@ -261,7 +261,7 @@ public final class MetricsRegistry {
      * sliding window of the most recent {@code capacity} values.
      * <p>
      * Percentile computation copies the current buffer contents and sorts
-     * them — this is O(n log n) but only happens on explicit query, not on
+     * them - this is O(n log n) but only happens on explicit query, not on
      * the recording hot path.
      */
     private static final class DefaultHistogram implements Histogram {
@@ -297,7 +297,7 @@ public final class MetricsRegistry {
             totalCount.incrementAndGet();
             sum.add(value);
 
-            // Update min/max with simple spin — acceptable for monitoring
+            // Update min/max with simple spin - acceptable for monitoring
             updateMin(value);
             updateMax(value);
         }
@@ -379,10 +379,10 @@ public final class MetricsRegistry {
             long cursorVal = cursor.get();
 
             if (c <= capacity) {
-                // Buffer is not yet full — copy from start
+                // Buffer is not yet full - copy from start
                 System.arraycopy(buffer, 0, snapshot, 0, n);
             } else {
-                // Buffer has wrapped — copy from current write position
+                // Buffer has wrapped - copy from current write position
                 int start = (int) (cursorVal % capacity);
                 int tailLen = capacity - start;
                 System.arraycopy(buffer, start, snapshot, 0, tailLen);
