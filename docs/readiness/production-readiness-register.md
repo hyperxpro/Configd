@@ -28,6 +28,15 @@
 > been re-tallied for subsequent row updates — in particular the watch rows (§4.8/6.6, §11.8) were
 > upgraded 🟡/??? → ✅ (N=1, server-side) on 2026-06-29 (watch arc, PRs #28/#29/#30), so the live ✅/🟡
 > split is ~3 items better than shown. See the individual rows for current status.
+>
+> **⇒ Current reconciled status (authoritative): [`v1-go-no-go-2026-07-01.md`](v1-go-no-go-2026-07-01.md).**
+> The 2026-07-01 go/no-go review re-walked this register against `ce7d719` + both EC2 runs. The current
+> tally is **✅98 / 🟡25 / ❌2 / ⛔6 / 🔬1** (delta explained there). Several rows below are now stale
+> relative to that reconciliation — notably §2 items **2.6/2.7/2.9** (shown `❌ deferred`, but the
+> Multi-Raft Phase-1 server wiring has since **landed on main** and was exercised on metal), the §11.8
+> row text (says "→ v2"; authoritative status is ✅ N=1), and the 1.12/10.2 † "ADR-0030/0032 Proposed"
+> notes (both are now **Accepted**). A doc-reconciliation pass should refresh those rows; until then, the
+> go/no-go review is the current source of truth.
 
 | Status | Count | Meaning |
 |---|---:|---|
