@@ -1,6 +1,6 @@
-# Known Limitations — v0.1
+# Known Limitations — v1
 
-> **⚠️ Current v1 known limitations (updated 2026-06-27, pre-EC2 cleanup).** This section is the
+> **⚠️ Current v1 known limitations (updated 2026-06-27; §3–§4 reconciled to the two EC2 runs 2026-07-01).** This section is the
 > authoritative, current statement of what v1 does and does not do. The live, audited per-subsystem
 > status (132 items, ✅/🟡/❌/⛔/🔬) is `docs/readiness/production-readiness-register.md`; this section
 > surfaces the user- and operator-facing limitations. The dated **iter-3 note further below
@@ -75,31 +75,42 @@ legacy in-process `WatchService` is unrelated server-internal plumbing (register
   leader-served / long-poll-gateway named extensions (W10-2/4/7); the SUBSCRIBE-co-residence +
   reserved-prefix hardening; a conforming client driver + a shared conformance suite (the next arc).
 
-### 3. Sharding: v1 ships single-group (N=1); multi-shard is built but unmeasured (v2)
+### 3. Sharding: v1 ships single-group (N=1); multi-shard is built, server-wired, and metal-proven
 
-v1 runs a **single Raft group by design** (N=1; ADR-0030, ADR-0023). The multi-Raft sharding layer is
-built and sim-verified and the production server-wiring has landed, but the **N>1 aggregate throughput is
-UNMEASURED** — the EC2 N×knee measurement is the next, separately-gated step (register §2.11 🔬).
+v1 runs a **single Raft group by default** (N=1; ADR-0030, ADR-0023). The multi-Raft sharding layer is
+built, sim-verified, and **server-wired on main** (`StaticShardMap` + `shardFor` routing); at N=1 it is
+byte-identical to a non-sharded build. **Reconciled 2026-07-01:** the N>1 aggregate throughput is no
+longer unmeasured — it was **measured on real hardware** and is **near-linear ~2.45× on 3 machines**
+(656→1075→1607 committed w/s;
+`docs/measurement/ec2-horizontal-2026-07-01/02-scaling-curve.md`; register §2.11/§9.2 ✅).
 
 - **Measured v1 write throughput:** the single-group write knee is **~800 writes/s** (register §9.1 ✅,
-  measured on m6id.4xlarge; throughput collapses with elections at ~1000/s). This is **below the original
-  §0.1 10k/s baseline**.
-- The 10k/s baseline is intended to be met by the **sharded aggregate** (≈ 800/s × N shards), which is the
-  multi-Raft thesis the EC2 measurement will validate (`adr-throughput-target`, Proposed — deferred to the
-  multi-Raft go/no-go). Until measured, treat **~800/s single-group** as the v1 write-throughput envelope.
+  m6id.4xlarge; **leadership-churn-bound**, not CPU/disk). This is **below the original §0.1 10k/s baseline**.
+- The 10k/s baseline is a **sharded-aggregate** target (~535 w/s per leader-machine cross-machine ⇒
+  ~17–19 machines), now evidenced as a real near-linear path — **but contingent on the leadership-balancing
+  operability follow-up**: horizontal scale is **operator-managed** (one leader per box, not auto-balanced;
+  see [`deployer-must-know.md` item 5](deployer-must-know.md) + go/no-go §3.2). No literal sustained 10k/s
+  has been run (single-cluster max = 1607 w/s).
 
-### 4. Empirical validation deferred to production observation
+### 4. Empirical validation: validated on metal (2026-06-30 / 07-01), with bounded residuals
 
-- **No completed soak.** A 24 h soak launched (2026-06-14) and ran **leak-clean** (FD / threads / heap
-  flat) but only **~3.45 h of 24 h** before the OS OOM-killer stopped a node (box capacity, RR-112 — **not**
-  a Configd leak). No full 24 h / 72 h soak has completed (register §9.7 🟡).
-- **DR drills never executed.** The drill scripts are real (`gates/game-day-drill.sh`,
-  `gates/rr-002-blackhole-drill.sh`) and one in-process drill runs in gate-6, but **full multi-node DR
-  drills (restore-from-snapshot, leader-loss) have never been run** — `ops/dr-drills/` holds only a README
-  (register §7.5 🟡). Run at least restore-from-snapshot + leader-loss once on the release commit before any
-  operational-readiness claim.
-- Load / chaos / burn-in beyond the above remain production-observation items (see the historical iter-3
-  note below and the register §11 empirical-validation rows).
+**Reconciled 2026-07-01.** The empirical claims are no longer deferred — two paid EC2 runs measured them
+GREEN against a `main`-identical server (register §11.12 ✅). The honest residuals are precisely bounded:
+
+- **Soak — 6 h clean, NOT 24 h.** The clean-code soak reached the full **6 h** flat (FD 350→350, RSS 2.6 %
+  spread, heap floor stable, GC 0.92 %, 0 rejected; `docs/measurement/ec2-2026-06-30/04-soak.md`), past the
+  prior 3.45 h attempt that OOM'd on **box capacity** (RR-112 — **not** a Configd leak). **Residual:** no
+  full 24 h / 72 h soak has completed (register §9.7 ✅@6h). The first-30-days posture is the
+  [burn-in contract](burn-in-contract.md) (go/no-go condition **C4**).
+- **DR drills — executed on metal.** Leader-loss under load, WAL-replay restart, and wipe+InstallSnapshot
+  were run: **372 ms** failover (1 bounded election, no storm), **0/1000** committed-write loss across all
+  three modes, RTO **4.2 s** (WAL) / **5.9 s** (snapshot) (`docs/measurement/ec2-2026-06-30/02-dr-drills.md`;
+  register §7.5 ✅). **Caveat:** single-box 3-co-located topology — cross-machine failover adds network RTT,
+  but the correctness (no loss, bounded election) is topology-independent.
+- **Residuals** (burn-in / v2): no literal sustained **10 k/s** or **100 k burst** (single-cluster max
+  1607 w/s), no **cross-region / WAN** measurement (single-region by design), and the edge-staleness
+  distribution at scale (INV-S2) is still owed (`consistency-contract.md` §2). See the register §11
+  empirical-validation rows and the [burn-in contract](burn-in-contract.md).
 
 ---
 

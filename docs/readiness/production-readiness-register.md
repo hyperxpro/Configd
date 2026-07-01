@@ -31,12 +31,17 @@
 >
 > **⇒ Current reconciled status (authoritative): [`v1-go-no-go-2026-07-01.md`](v1-go-no-go-2026-07-01.md).**
 > The 2026-07-01 go/no-go review re-walked this register against `ce7d719` + both EC2 runs. The current
-> tally is **✅98 / 🟡25 / ❌2 / ⛔6 / 🔬1** (delta explained there). Several rows below are now stale
+> tally is **✅98 / 🟡25 / ❌2 / ⛔6 / 🔬1** (honest band **✅95–98**; three of the new ✅s — 9.7 soak is
+> 6 h≠24 h, 11.12 empirical is not exhaustive, 8.7 ACL is off-by-default — are judgment calls, go/no-go §2.1;
+> delta explained there). Several rows below are now stale
 > relative to that reconciliation — notably §2 items **2.6/2.7/2.9** (shown `❌ deferred`, but the
 > Multi-Raft Phase-1 server wiring has since **landed on main** and was exercised on metal), the §11.8
 > row text (says "→ v2"; authoritative status is ✅ N=1), and the 1.12/10.2 † "ADR-0030/0032 Proposed"
-> notes (both are now **Accepted**). A doc-reconciliation pass should refresh those rows; until then, the
-> go/no-go review is the current source of truth.
+> notes (both are now **Accepted**). **Reconciliation applied 2026-07-01 (this pass):** the individual
+> status rows below have been refreshed to that reality with dated per-row reconciliation notes citing the
+> go/no-go + the verifying artifact. **The counts table immediately below is left as the frozen 2026-06-26
+> audit snapshot** (a dated historical record, not re-tallied in place); the reconciled tally is the one in
+> this note. The go/no-go review remains the authoritative source of truth.
 
 | Status | Count | Meaning |
 |---|---:|---|
@@ -94,6 +99,20 @@ but unwired" traps.
 These are the auditor's judgments about which 🟡/❌/🔬 items genuinely block an **unqualified "v1
 production-ready"** claim, versus those that can ship as **documented v2 limitations**. This is a
 recommendation for the go/no-go, **not** a decision.
+
+> **Reconciled 2026-07-01 (go/no-go review, authoritative) — this frozen 2026-06-26 recommendation is
+> largely resolved.** **#2** (ADR-0030/0032 *Proposed*) — both **Accepted 2026-06-27**
+> (`docs/decisions/adr-0030-quicksilver-shaped-topology.md:5`, `adr-0032-linearizability-harness.md:5`).
+> **#4** (DR drills never executed) — **executed on metal** (372 ms failover, 0/1000 loss ×3, RTO 4.2/5.9 s;
+> `docs/measurement/ec2-2026-06-30/02-dr-drills.md`). **#1** (empirical validation deferred) —
+> **substantially discharged** (6 h soak, DR drills, near-linear N×knee measured); residuals only (no
+> 24 h/72 h soak, no literal 10 k/s, no WAN). **#3** (encryption at rest) — **decided accept-as-v2** (D-2).
+> **#5** (live-cluster linz not in cloud CI) — carried forward as go/no-go condition **C3**. Net: **no
+> absolute, deployment-independent blocker survives → GO-WITH-CONDITIONS.** Everything in §0.1 below (the
+> numbered blockers **and** the "documented v2 limitations" list — including its "sharding server wiring +
+> N×knee is v2/EC2" bullet, now **superseded**: the wiring landed on main and the N×knee is measured, see
+> §2.6–2.11) is the frozen 2026-06-26 auditor's snapshot; the reconciled per-row status is in §1–§11 and the
+> go/no-go holds the decision.
 
 ### Recommended **blockers** for an unqualified production claim
 
@@ -162,14 +181,14 @@ recommendation for the go/no-go, **not** a decision.
 | 1.9 Write-ack taxonomy (ADR-0033) | ✅ | `CommitOutcome.Kind{COMMITTED,LOST,INDETERMINATE_LOCALLY}` + `ProposeOutcome{NOT_LEADER,…,OVERLOADED}`; mapping `ConfigWriteService.java:299` + `ConfigdServer.java:1334`; **ADR-0033 Accepted**; `CommitOutcomeSeamTest` | Δ pre-fill named `HttpApiServer` — actual mapping is `ConfigWriteService`+`ConfigdServer` |
 | 1.10 Heartbeat coalescing (Phase 0 M3) | ✅ | `HeartbeatCoalescer`/`CoalescingRaftTransport`; `HeartbeatCoalescerTest`, `CoalescedHeartbeatLivenessTest`; gate-phase0 | — |
 | 1.11 TLA+ ConsensusSpec model-check | ✅ | `ConsensusSpec.tla` 10 invariants; `tlc-model-check` CI job | — |
-| 1.12 Strong-read fail-closed (ADR-0030 INV-1) | ✅ † | `StrongReadPolicy.java:11`; `StrongReadPolicyTest`, `EdgeStrongReadFailClosedTest`, `StrongReadKeyClassTest` | † governing **ADR-0030 is Proposed, not Accepted** (mechanism + tests are real) |
+| 1.12 Strong-read fail-closed (ADR-0030 INV-1) | ✅ | `StrongReadPolicy.java:11`; `StrongReadPolicyTest`, `EdgeStrongReadFailClosedTest`, `StrongReadKeyClassTest` | † **discharged 2026-07-01:** governing **ADR-0030 is now Accepted** (ratified 2026-06-27, pre-EC2 cleanup; `docs/decisions/adr-0030-quicksilver-shaped-topology.md:5`) — was *Proposed* at audit time. Mechanism + tests are real |
 
 ## §10. Correctness / verification
 
 | Item | Status | Evidence | Gap / note |
 |---|---|---|---|
 | 10.1 Deterministic simulation (ADR-0007 Accepted) | ✅ | `RaftSimulation` seeded PRNG; `SeedSweepTest` 10k seeds (build-and-test job) | — |
-| 10.2 **Linearizability (Porcupine)** | ✅ † | Real `github.com/anishathalye/porcupine v1.2.0` (the etcd checker, NOT hand-rolled); gate-1 step b builds + runs `CheckerSelfTest` **8/8**; gate-2 checks sim-history LINEARIZABLE (`SimHistoryCheck`); ADR-0032 | † the **live multi-process iptables-faulted matrix is `GATE2_FAULTED`-gated → skipped in cloud CI** (self-hosted/nightly only). ADR-0032 is **Proposed** |
+| 10.2 **Linearizability (Porcupine)** | ✅ † | Real `github.com/anishathalye/porcupine v1.2.0` (the etcd checker, NOT hand-rolled); gate-1 step b builds + runs `CheckerSelfTest` **8/8**; gate-2 checks sim-history LINEARIZABLE (`SimHistoryCheck`); ADR-0032 | † the **live multi-process iptables-faulted matrix is `GATE2_FAULTED`-gated → skipped in cloud CI** (self-hosted/nightly only) — carried forward as go/no-go condition **C3**. **ADR-0032 discharged 2026-07-01: now Accepted** (ratified 2026-06-27; `docs/decisions/adr-0032-linearizability-harness.md:5`) — was *Proposed* at audit time |
 | 10.3 TLA+ specs (Consensus/ReadIndex/SnapshotInstall) | ✅ | all three `.tla` in `spec/`; `tlc-model-check` job runs all; cross-check replayers | — |
 | 10.4 Invariant net / runtime assertions + twins | ✅ | `InvariantMonitor` + `RaftNode.InvariantChecker`; `AssertionTwinFiringTest:55` drives every twin to fire; gate-2 step (g) | — |
 | 10.5 jcstress concurrency (gate-2) | ✅ | configd-jcstress 10 tests; gate-2 step (f) uber-jar, no forbidden outcomes | — |
@@ -186,20 +205,27 @@ recommendation for the go/no-go, **not** a decision.
 > **Headline:** the sharding *logic* is fully sim-verified and CI-gated; the *production server wiring* is
 > **deliberately deferred** (charter hard-rule "stop clean beats finish dirty"). **v1 deploys single-group
 > (N=1), byte-identical to today.** N>1 is not deployable; the N×knee aggregate is unmeasured.
+>
+> **Reconciled 2026-07-01 (go/no-go §2.2, authoritative) — this headline is now STALE.** The server wiring
+> has since **landed on main and was exercised on metal**: `ConfigdServer` wires `StaticShardMap` + an
+> `addGroup` loop + `shardFor` routing (2.6/2.7/2.9 ✅ below), and the sharded aggregate N×knee is
+> **measured near-linear 2.45×/3 machines** (2.11/9.2 ✅). **v1 still defaults to N=1** (byte-identical);
+> **N>1 + the edge endpoint fail-closes** unless explicitly opted in (`ConfigdServer.java:247-259`), and
+> sustained N>1 additionally needs the leadership-balancing follow-up (go/no-go §3.2).
 
 | Item | Status | Evidence | Gap / note |
 |---|---|---|---|
 | 2.1 ShardMap + StaticShardMap (hash-within-scope) | ✅ | `StaticShardMap.java` FNV-1a+SplitMix64+`floorMod`, no `groupId==0` special-case; `StaticShardMapTest` 12/0 | — |
-| 2.2 N=1 default byte-identical | ✅ | `MultiShardSimTest.nEqualsOne_byteIdenticalToSingleGroup:226` vs single-group control + vacuity guard | Prod N=1 identity holds because the server never wires ShardMap at all |
+| 2.2 N=1 default byte-identical | ✅ | `MultiShardSimTest.nEqualsOne_byteIdenticalToSingleGroup:226` vs single-group control + vacuity guard | **Note corrected 2026-07-01:** the server **does** now wire `StaticShardMap` (2.6); prod N=1 identity holds because `new StaticShardMap(1)` maps every key to **group 0** (a degenerate one-shard map), **not** because ShardMap is absent |
 | 2.3 Multi-shard sim + 6 invariants (10k seeds) | ✅ (sim) | `MultiShardSimTest` 73/0; 10,033/0 at ≥10k seeds; 5/6 invariants have injected-RED non-vacuity proofs | 6th (cross-shard isolation) is **structural** (independent harnesses); non-vacuous shared-node proof deferred to EC2-prep |
 | 2.4 CrossShardWriteGuard (DISCLAIM) | ✅ | `CrossShardWriteGuard.java`; `CrossShardWriteGuardTest` 7/0; N=1 never rejects | — |
 | 2.5 Owner-executor pool / per-owner tick (Phase 0) | ✅ (prod-wired) | `OwnerExecutorPool`/`MultiRaftDriver`; live `ConfigdServer.java:389` + per-owner `tickOwner` `:877` | — |
-| 2.6 **Production server N-group wiring** | ❌ deferred | grep: **no ShardMap usage in configd-server**; `:361` single `new RaftNode`, `:367` single `addGroup(0)` | EC2-prep; server is still pure single-group |
-| 2.7 RaftTransportAdapter groupId routing fix | ❌ deferred/dormant | outbound stamps constant `0` (`:350`/adapter `:52`); inbound routes `routeMessage(0,…)` `:1217` | N>1-over-TCP would collapse all groups onto group 0 (no wire change needed to fix) |
-| 2.8 **Per-shard observability (C4)** | ❌ deferred | `ConfigdServer.java:883` + `:909` `if (owner == 0)` — metrics read only group 0 | Single-group-only; ties to 7.10 |
-| 2.9 CoalescedHeartbeat wire frame | ❌ deferred | `DL-P1-05`; N>1 sends un-coalesced per-group frames; needs `WIRE_VERSION 0x01→0x02` | wire-format break — operator-gated |
+| 2.6 **Production server N-group wiring** | ✅ (was ❌ deferred; reconciled 2026-07-01) | `ConfigdServer.java:261` `new StaticShardMap(shardCount)`, `:520-546` `addGroup(gid)` loop over `shardMap.shardIds()`, `:795`/`:836` `shardFor(scope,key)` routing (write + read); landed on main + exercised on metal (go/no-go §2.2) | v1 **defaults N=1**; **N>1 + edge fail-closes** (`:247-259`) unless `-Dconfigd.edge.allowPartialShardView=true`. The 2026-06-26 audit's "no ShardMap usage" is superseded |
+| 2.7 RaftTransportAdapter groupId routing fix | ✅ (was ❌ deferred; reconciled 2026-07-01) | `RaftTransportAdapter.java:56` stamps the per-frame `groupId` (`RaftMessageCodec.encode(message, groupId)`); `:111` routes inbound by `frame.groupId()` to that group's owner — **no wire-format change** (groupId already in the header). go/no-go §2.2 | groups no longer collapse onto 0; at N=1 every frame is group 0 ⇒ byte-identical |
+| 2.8 **Per-shard observability (C4)** | 🟡 (was ❌ deferred; reconciled 2026-07-01) | Seam E per-shard health gauges added — `ConfigdServer.java:610` `registerPerShardMetrics(...)` (per-group leader/term/commit-index/apply-lag + per-node leader count). go/no-go §2.2 | **Partial:** node-level apply-backlog gauge + election counter are **still group-0-only** (`:1063-1079` `if (owner == 0)`). Only material at N>1; ties to 7.10 |
+| 2.9 CoalescedHeartbeat wire frame | ✅ (was ❌ deferred; reconciled 2026-07-01) | `RaftMessageCodec.encodeCoalescedHeartbeat:227`; `FrameCodec.WIRE_VERSION=(byte)0x02` (`FrameCodec.java:74`) — the 0x02 wire is live on main. go/no-go §2.2 | **Not exercised at N=1** (a single group sends per-group frames); material only at N>1 |
 | 2.10 **Rehoming / dynamic resharding** | ⛔ dormant | `DL-P1-07`; `MultiRaftDriver` rehoming "DORMANT in production"; **D-016 re-verify-on-activation does NOT fire** | activation requires re-verification |
-| 2.11 **Sharded aggregate N×knee** | 🔬 | `handoff.md:9` "No EC2 provisioned"; `workstream-c-throughput.md §3` = MODELED (`~800 × N × 0.75`, N≈17) | genuinely UNMEASURED, not quietly claimed |
+| 2.11 **Sharded aggregate N×knee** | ✅ (was 🔬; reconciled 2026-07-01) | **Measured on metal:** `docs/measurement/ec2-horizontal-2026-07-01/02-scaling-curve.md` — 656→1075→1607 committed w/s at N=1/2/3 leader-machines, **2.45×/3 machines**, near-linear (~+475 w/s/machine), churn-bound (CPU ~62 %, NIC <1 %) | the `~800×N×0.75` *model* replaced by a *measured* curve (~535 w/s/group cross-machine). Sustained N>1 needs leadership balancing (go/no-go §3.2) |
 | 2.12 gate-phase1 CI-wired | ✅ | `ci.yml:511` `gate-phase1 needs: gate-B`; 200-seed PR / 10k nightly + non-vacuity assert | — |
 
 ## §3. Durability & storage
@@ -284,12 +310,12 @@ recommendation for the go/no-go, **not** a decision.
 | 7.2 SLO definitions + tracking | ✅ | `ProductionSloDefinitions`, `SloTracker`; gate-6 `MetricsWiringContractTest` | — |
 | 7.3 Burn-rate alerting (gate-6) | ✅ | `BurnRateAlertEvaluator`; `ops/alerts/configd-slo-alerts.yaml`+`.test.yaml` promtool fires/quiet in gate-6 | — |
 | 7.4 Runbooks | ✅ | **24 runbooks** (`ops/runbooks/` 15 + `docs/runbooks/` 9: disaster-recovery, control-plane-down, raft-saturation, restore-from-snapshot, leader-stuck…); gate-6 `GameDayDrillTest` maps alert→runbook→recovery | — |
-| 7.5 **DR drills / game-day** | 🟡 | scripts real (`game-day-drill.sh`→`e2e-compose-scenario.sh`; `rr-002-blackhole-drill.sh` iptables DROP); 1 in-process loop in gate-6 (`GameDayDrillTest`) | **full multi-node DR drills NEVER executed** — `ops/dr-drills/` has only a README ("no drills executed"), no `results/` |
+| 7.5 **DR drills / game-day** | ✅ (was 🟡; reconciled 2026-07-01) | **Executed on metal:** `docs/measurement/ec2-2026-06-30/02-dr-drills.md` — 3 fault modes: leader-kill under load (**372 ms** failover, 1 bounded election, **0/1000** write loss), WAL-replay restart (RTO **4.2 s**, 0 loss), wipe+InstallSnapshot (RTO **5.9 s**, 0 loss). Scripts + gate-6 `GameDayDrillTest` unchanged | Caveat: single-box 3-co-located topology (cross-machine adds RTT; correctness — no loss, bounded election — is topology-independent) |
 | 7.6 Health / readiness | ✅ | `HealthService.readiness()`; `AdminApiHandler:125/128` `GET /health/live` + `/ready`; raft-leader check `:618` | impl is `AdminApiHandler`/`HealthService`, not a `ReadinessHandler` (naming only) |
 | 7.7 Deployment | 🟡 | `docker/`, `deploy/compose/` (compose+secrets), `deploy/kubernetes/` (statefulset+bootstrap); gate-3 Compose E2E | `smoke-multinode.sh` is control-plane-only; **no real multi-host/production deploy** evidenced (single-runner Compose only) |
 | 7.8 On-call rotation (ADR-0025) | 🟡 | `adr-0025`; runsheet step 7 | operator-procured pre-req; no evidence rotation is active (not code) |
 | 7.9 Operator runsheet | ✅ | `docs/operator-runsheet.md` (341 lines; rollback triggers, on-call) | — |
-| 7.10 **Per-shard observability** | ❌ | `ConfigdServer.java:883`+`:909` `if (owner == 0)` — apply-backlog gauge, election counter, all riders to owner[0] only | single-group only; C4 deferred (Phase 1 EC2-prep); ties to 2.8 |
+| 7.10 **Per-shard observability** | 🟡 (was ❌; reconciled 2026-07-01) | Seam E per-shard health gauges added (`ConfigdServer.java:610` `registerPerShardMetrics`); mirrors 2.8. go/no-go §2.2 | **Partial:** node-level apply-backlog gauge + election counter still group-0-only (`:1063-1079` `if (owner == 0)`). Only material at N>1; ties to 2.8 |
 | 7.11 gate-6 operability CI-wired | ✅ | `ci.yml` `gate-6 needs: gate-5` + promtool; capture `session-6/captures/gate-6-local-green.txt` | checked-in capture labeled "local-green" (CI job is wired) |
 | 7.12 Alert thresholds (PROPOSED vs enforced) | 🟡 | `configd-slo-alerts.yaml` (concrete expr/for/severity) promtool fires/quiet-tested in gate-6 | rule mechanism CI-enforced; **threshold VALUES are design-set, not calibrated** against measured production SLO |
 
@@ -319,17 +345,22 @@ recommendation for the go/no-go, **not** a decision.
 > **MEASURED:** single-group knee ~800/s, admission 460→848/s, io_uring vs Epoll fan-out, edge-read
 > latency + alloc, m6i HTTP throughput. **MODELED only:** sharded N×knee aggregate. **UNMEASURED:**
 > cross-region/WAN, dedicated-host knee, true sustained 10k/s & 100k burst, full soak.
+>
+> **Reconciled 2026-07-01:** the two EC2 runs moved several of these — the sharded N×knee is now
+> **MEASURED** (2.45×/3 machines; 2.11/9.2), and the soak is **MEASURED to 6 h** (9.7). Still **UNMEASURED:**
+> cross-region/WAN (9.11), dedicated-host knee, literal sustained 10 k/s / 100 k burst (9.8), full 24 h/72 h
+> soak. go/no-go §3.
 
 | Item | Status | Evidence | Gap / note |
 |---|---|---|---|
 | 9.1 Single-group write knee ~800/s | ✅ | `multiraft/captures/wsC-ladder/primary/ladder.tsv`: 800→**799 achieved, 0 elections, stable**; 1000→637/15-elec collapse. m6id.4xlarge, c58ac1f | single-box 3-co-located; dedicated-host knee deferred (honest) |
-| 9.2 **Sharded aggregate N×knee** | 🔬 | `workstream-c-throughput.md §3` = MODELED (`~800×N×0.75`, N≈17); sharding dormant (N=1) | UNMEASURED, EC2-gated |
+| 9.2 **Sharded aggregate N×knee** | ✅ (was 🔬; reconciled 2026-07-01) | **Measured:** `docs/measurement/ec2-horizontal-2026-07-01/02-scaling-curve.md` — 656→1075→1607 w/s (N=1/2/3), **2.45×/3 machines**, near-linear, churn-bound. Mirrors 2.11 | model replaced by measured curve; sustained N>1 needs leadership balancing (go/no-go §3.2) |
 | 9.3 Edge read throughput/latency | ✅ | `getHitWithCursor` p50=50ns/p99=140ns (JMH, gate-5); m6i HTTP **53,616 req/s @64 conn** | **Δ 🟡→✅.** Unloaded JMH + benchmark-box HTTP (not production concurrent load) |
 | 9.4 Fan-out amplification (io_uring) | ✅ | `phase-v-io-uring.md §4`: io_uring 2.04M vs **epoll 4.02M notif/s @1024 subs** (~2× slower, ~8× worse tail); Epoll auto-default | — |
 | 9.5 GC ZGC (ADR-0041 Accepted) + JMH gc-check | ✅ | `jmh-gc-check.sh` <1 B/op on getMiss+getIntoHit (gate-5 step b); ZGC bake-off captures | — |
 | 9.6 Perf regression gate (gate-5) | ✅ | `gate-5.sh` (read p99<20µs, thrpt floor 50k, alloc<1B/op); `gate-5-real-ci-green.txt` (run 27489285072, 2026-06-14) | — |
-| 9.7 **24h soak** | 🟡 | `perf/results/soak-24h-20260614T045536Z/result.txt`: ran **~3.45h of 24h**, FD/threads/heap FLAT (leak-clean), then **OOM-killer** (box capacity RR-112, not a leak) | **Δ — full 24h did NOT complete**; known-limitations "72h not run" stale-but-true |
-| 9.8 **Sustained 10k/s + 100k burst** | 🔬 | `wsB-phase3-10k.txt`: 10k offered→**62/s committed** (646k bp-rejected); `wsB-phase4-100k.txt`→**110/s**; gate-5 header "ENV-BLOCKED on 2-vCPU box… NOT IN GATE-5" | captures are **saturation/shed characterization on a 2-vCPU box, NOT achieved throughput**; real measure EC2-gated |
+| 9.7 **24h soak** | ✅ (was 🟡; reconciled 2026-07-01) — **6 h, NOT literal 24 h** | **6 h clean on metal:** `docs/measurement/ec2-2026-06-30/04-soak.md` — 21,601 s / 691 samples, past the prior 3.45 h OOM; **FD flat 350→350**, RSS 2.6 % spread, heap floor stable, GC 0.92 %, **0 rejected** of 9,000 at 300 w/s; "GATE PASSED" | **Honest caveat: 6 h ≠ literal 24 h/72 h** — the leak/OOM *risk* is closed on clean code (`ce7d719`); a full 24 h/72 h soak has still not completed |
+| 9.8 **Sustained 10k/s + 100k burst** | 🟡 (was 🔬; reconciled 2026-07-01) | Characterized as a **horizontal-aggregate target** — the write path scales near-linearly in leader-machines (`docs/measurement/ec2-horizontal-2026-07-01/02-scaling-curve.md`), so 10 k/s is reachable as a sharded aggregate (~17–19 leader-machines at ~535 w/s each) | **Neither literal number ever run:** single-cluster max measured = **1607 w/s** (3 machines); the 2-vCPU 10k/100k captures were saturation/shed, not achieved throughput. go/no-go §3.1 |
 | 9.9 Admission control 460→848/s | ✅ | `wsC-ladder/admission/`: control 2000→460/27-elec collapse; maxInflight16 2000→**848/1-elec stable** (429 shed). `FlowController` maxInflightProposals=16 | — |
 | 9.10 Transport Epoll vs io_uring | ✅ | `phase-v-io-uring.md` (m6i, all 4 surfaces); io_uring no throughput win + regresses at fan-out; Epoll auto-default | — |
 | 9.11 **Cross-region / WAN latency** | 🔬 | `workstream-c-throughput.md §6` explicitly "not a cross-region absolute"; no WAN capture exists | UNMEASURED |
@@ -346,11 +377,11 @@ recommendation for the go/no-go, **not** a decision.
 | 11.5 Durability Level 0/1, no early-ack | ⛔ | `DL-P1-08` + `handoff.md:123`; grep finds **no early-ack path** in consensus/replication/server | — |
 | 11.6 Multi-region write topology deferred | ⛔ | **ADR-0024 Accepted**: "v0.1 supports exactly one DC per cluster" | — |
 | 11.7 BATCH API not wired (CM-033) | ❌ | `HttpApiServer` exposes only `GET\|PUT\|DELETE /v1/config/{key}` — no BATCH route; contract §1 "PLANNED, not yet wired" | absent; documented; guard + single-shard atomic-BATCH semantics designed |
-| 11.8 Watches scope decision | 🟡 → v2 | ADR-0006/0018 (Accepted) adopt event-driven push "replacing watches"; live `WatchService` is that push impl | **no ADR scopes a v1 client watch API**; confusing naming; ADR-0006/0018 near-duplicates. **DECIDED 2026-06-27: client-facing watches are v2** (operator) — v1 = polling / delta-apply only |
+| 11.8 Watches scope decision | ✅ (N=1; was "🟡 → v2"; reconciled 2026-07-01) | **Superseded 2026-06-29 (watch arc, PRs #28/#29/#30):** the RFC §2 client watch protocol is implemented server-side at N=1 — wire `0x02` + `WATCH_*` frames + per-shard cursor vector, whole-target authz gate, bounded revocation (see §4.8/6.6). `docs/rfc/driver-protocol/02-watches.md`. Matches the §0 watch note + go/no-go §2.2 | **N>1 multi-shard watch = v3** (fail-closed); no shipped client driver yet. The prior "watches are v2" call held only for the pre-watch-arc window |
 | 11.9 Snapshot 4 MiB cap / chunked deferred | 🟡 | `known-limitations.md:76`; `RaftMessageCodec.java:74` enforced | followers can't bootstrap from >4 MiB snapshot in v1 |
 | 11.10 Wire epoch field deferred (DL-P1-04) | 🟡 | in-memory `ShardMap.epoch()` returns 0; wire field deferred | **OPEN operator decision** (reserve-now vs v2 wire break) |
 | 11.11 Write-availability target renegotiated | ⛔ | **ADR-0031 Accepted, option (a)** (ratified by owner): keep 99.999% flat target; **sub-second auto region-failover = a GA BLOCKER** | declares an open GA blocker |
-| 11.12 Empirical-validation deferred to prod observation | 🟡 | `known-limitations.md` (2026-04-25): "code-level production-ready, not empirically production-ready … an empirically-unproven contract" | load/soak/chaos/burn-in unproven pre-GA by explicit user choice |
+| 11.12 Empirical-validation deferred to prod observation | ✅ (was 🟡; reconciled 2026-07-01) — **with residuals** | **Substantially discharged on metal** (two EC2 runs): DR drills (7.5), 6 h soak (9.7), near-linear N×knee (2.11/9.2). `docs/measurement/ec2-2026-06-30/05-go-no-go-summary.md` + `docs/measurement/ec2-horizontal-2026-07-01/04-verdict.md` | **Residuals (burn-in, precisely bounded):** no 24 h/72 h soak, no literal 10 k/s sustained, no WAN; DR on single-box topology. go/no-go §5.1 / condition C4 |
 
 ### §11-B. Open decision backlog (refreshed) — calls the readiness review must make
 
