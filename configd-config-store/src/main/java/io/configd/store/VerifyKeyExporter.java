@@ -6,21 +6,21 @@ import java.nio.file.Path;
 import java.security.GeneralSecurityException;
 
 /**
- * Exports the Ed25519 PUBLIC verify key from a {@link SigningKeyStore} file
- * ({@code signing-key.bin}) as X.509/SubjectPublicKeyInfo DER — the C2 verify-key
- * distribution path (C2 design §3.6): the control-plane operator runs this against the
- * leader's signing key file and ships the output to edges as {@code --verify-key}.
+ * Exports the Ed25519 public verify key from a {@link SigningKeyStore} file
+ * ({@code signing-key.bin}) as X.509/SubjectPublicKeyInfo DER. The control-plane operator
+ * runs this against the leader's signing key file and ships the output to edges as
+ * {@code --verify-key}.
  * <p>
  * The output is the JDK's {@code PublicKey.getEncoded()} form, interoperable with
  * standard tooling ({@code openssl pkey -pubin -inform DER -text}).
  * <p>
  * Usage (the signing key file format is Configd-private, so keytool/openssl cannot read
- * it directly — this utility is the supported path):
+ * it directly - this utility is the supported path):
  * <pre>
  *   java -cp configd-server.jar io.configd.store.VerifyKeyExporter \
  *       &lt;signing-key.bin&gt; &lt;verify-key.der&gt;
  * </pre>
- * Fails (exit 1) if the signing key file does not exist — exporting would otherwise
+ * Fails (exit 1) if the signing key file does not exist - exporting would otherwise
  * silently generate a FRESH key pair ({@link SigningKeyStore#loadOrCreate}), yielding a
  * verify key that matches nothing.
  */

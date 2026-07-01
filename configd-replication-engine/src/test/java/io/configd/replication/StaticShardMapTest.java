@@ -13,10 +13,10 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * Unit tests for {@link StaticShardMap} — the v1 hash-within-scope shard map. Proves the D-B invariants:
- * a stable function, opaque ids in {@code [0,N)} (no {@code 0} special-casing), {@code epoch()==0}, the
- * N=1 single-group equivalence, and a non-degenerate spread. The sim-level routing-correctness /
- * disjoint-ownership / N=1-equivalence proof against this impl lives in {@code MultiShardSimTest}.
+ * Unit tests for {@link StaticShardMap} - the v1 hash-within-scope shard map. Proves the routing
+ * invariants: a stable function, opaque ids in {@code [0,N)} (no {@code 0} special-casing),
+ * {@code epoch()==0}, the N=1 single-group equivalence, and a non-degenerate spread. The sim-level
+ * routing-correctness / disjoint-ownership / N=1-equivalence proof lives in {@code MultiShardSimTest}.
  */
 class StaticShardMapTest {
 
@@ -74,7 +74,7 @@ class StaticShardMapTest {
         }
     }
 
-    /** Opaque ids: shard 0 is a NORMAL output (not reserved/special-cased) — some keys hash to it. */
+    /** Opaque ids: shard 0 is a NORMAL output (not reserved/special-cased) - some keys hash to it. */
     @Test
     void shardZeroIsAnOrdinaryOutput() {
         StaticShardMap map = new StaticShardMap(4);
@@ -150,7 +150,7 @@ class StaticShardMapTest {
 
     @Test
     void differentNGivesDifferentRouting() {
-        // Sanity: the modulus actually participates — a key's shard generally changes with N.
+        // Sanity: the modulus actually participates - a key's shard generally changes with N.
         StaticShardMap m4 = new StaticShardMap(4);
         StaticShardMap m7 = new StaticShardMap(7);
         int differ = 0;

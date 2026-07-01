@@ -14,17 +14,17 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * Session 4 / Workstream B-rest — RR-005 (1): Raft-log compaction must be REACHABLE by a
+ * Raft-log compaction must be REACHABLE by a
  * size/interval trigger. Before the fix the only {@code triggerSnapshot()} caller was the
  * circular {@code sendInstallSnapshot}, so a running node never compacted and its WAL grew
  * for the life of the process (eventually crash-looping recovery at the 2 GiB
- * {@code FileStorage} read cap — RR-005 (2)). {@link RaftNode#maybeCompact(long)} is the
+ * {@code FileStorage} read cap). {@link RaftNode#maybeCompact(long)} is the
  * threshold trigger the server tick loop now calls.
  *
  * <p>Discriminator: a healthy applied span BELOW the threshold must NOT compact; ABOVE it
  * MUST compact (snapshotIndex advances, the retained applied span drops within the
- * threshold, the WAL prefix is truncated). Mutation (EXP-006): reverting
- * {@code maybeCompact} to a no-op leaves the WAL unbounded → the above-threshold case fails.
+ * threshold, the WAL prefix is truncated). Removing
+ * {@code maybeCompact} to a no-op leaves the WAL unbounded - the above-threshold case fails.
  */
 class RaftLogCompactionTriggerTest {
 
@@ -63,12 +63,12 @@ class RaftLogCompactionTriggerTest {
         assertTrue(appliedSpan >= 20, "single-node proposals must apply; span=" + appliedSpan);
         assertEquals(0, node.log().snapshotIndex(), "no compaction has happened yet (the bug: it never would)");
 
-        // BELOW threshold: compaction must NOT fire — the WAL is not yet large enough.
+        // BELOW threshold: compaction must NOT fire - the WAL is not yet large enough.
         long highThreshold = appliedSpan + 100;
         assertFalse(node.maybeCompact(highThreshold), "must NOT compact below the threshold");
         assertEquals(0, node.log().snapshotIndex(), "snapshotIndex must be unchanged below the threshold");
 
-        // ABOVE threshold: compaction MUST fire — snapshotIndex advances, retained span drops,
+        // ABOVE threshold: compaction MUST fire - snapshotIndex advances, retained span drops,
         // the WAL prefix is truncated (this is exactly what was unreachable in the wired server).
         long lowThreshold = 5;
         assertTrue(node.maybeCompact(lowThreshold), "must compact above the threshold");

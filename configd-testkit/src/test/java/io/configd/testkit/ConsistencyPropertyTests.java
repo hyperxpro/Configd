@@ -30,7 +30,7 @@ import static org.junit.jupiter.api.Assertions.*;
 class ConsistencyPropertyTests {
 
     // -----------------------------------------------------------------------
-    // Simulation harness — wires RaftNodes through SimulatedNetwork
+    // Simulation harness - wires RaftNodes through SimulatedNetwork
     // -----------------------------------------------------------------------
 
     /**
@@ -49,20 +49,20 @@ class ConsistencyPropertyTests {
         private final List<VersionedConfigStore> stores;
         /**
          * Stage 2 M3: one heartbeat coalescer per node (each node is a single group in this cross-node
-         * sim). Wiring the coalesce→drain pipeline here means the no-spurious-election sweeps exercise it
-         * every tick — a drain that drops or delays a heartbeat surfaces as a spurious election (the sweep
-         * goes RED). One group per node ⇒ each drain sends a plain AppendEntries (identical payload; the
+         * sim). Wiring the coalesce->drain pipeline here means the no-spurious-election sweeps exercise it
+         * every tick - a drain that drops or delays a heartbeat surfaces as a spurious election (the sweep
+         * goes RED). One group per node => each drain sends a plain AppendEntries (identical payload; the
          * per-seed schedule is a re-established M3 baseline, see drainHeartbeats).
          */
         private final List<HeartbeatCoalescer> coalescers;
         private final int nodeCount;
 
         /**
-         * Stage 2 M3 S3 — heartbeat-drain fault injection (test-the-tester). {@link #NONE} is the real
+         * Stage 2 M3 S3 - heartbeat-drain fault injection (test-the-tester). {@link #NONE} is the real
          * coalescing drain. {@link #DROP} models a broken coalescer that loses coalesced heartbeats (they
          * are drained from the buffer but never sent); {@link #DELAY} sends them {@code hbFaultDelayMs}
          * later (modelling a coalescing window that holds a heartbeat past the election timeout). Either
-         * fault MUST drive election churn — that is what proves the no-spurious-election sweep is
+         * fault MUST drive election churn - that is what proves the no-spurious-election sweep is
          * non-vacuous (a correct drain stays green; a broken one goes RED).
          */
         enum HeartbeatFault { NONE, DROP, DELAY }
@@ -71,11 +71,11 @@ class ConsistencyPropertyTests {
         /** When non-null with {@link HeartbeatFault#DROP}, drop heartbeats only to THIS peer (the single-
          *  peer / partial-aggregate starvation fault, red-team D); null drops to all peers. */
         private NodeId hbDropVictim = null;
-        /** Per-node count of PreVote requests sent — the starvation signal: a follower denied heartbeats
+        /** Per-node count of PreVote requests sent - the starvation signal: a follower denied heartbeats
          *  times out and churns PreVotes (which PreVote shields from becoming a spurious election). */
         private int[] preVotesSent;
 
-        /** R-01' owner binding is done once, on the first tick (the drive thread). */
+        /** Owner binding is done once, on the first tick (the drive thread). */
         private boolean ownersBound;
 
         ClusterHarness(long seed, int nodeCount) {
@@ -84,7 +84,7 @@ class ConsistencyPropertyTests {
 
         /**
          * Builds a cluster whose nodes report in-node invariant breaches to the
-         * supplied {@link RaftNode.InvariantChecker} (B4 adversarial sim, §3 seam A).
+         * supplied {@link RaftNode.InvariantChecker} (B4 adversarial sim, section 3 seam A).
          * The default 2-arg form passes {@link RaftNode.InvariantChecker#NOOP} to
          * preserve the historical behaviour of {@code ConsistencyPropertyTests} and
          * {@code SeedSweepTest}; the adversarial harness passes a throwing checker so
@@ -115,7 +115,7 @@ class ConsistencyPropertyTests {
 
                 // Stage 2 M3: route this node's sends through the coalescing decorator. With one group per
                 // node the drain emits a plain AppendEntries (the base path is byte-identical), but the
-                // record→drain pipeline is genuinely exercised every tick — a broken drain (drop/delay)
+                // record->drain pipeline is genuinely exercised every tick - a broken drain (drop/delay)
                 // would slip the election timeout and the no-spurious-election sweeps would go RED.
                 final int nodeIndex = i;
                 RaftTransport baseTransport = (target, message) -> {
@@ -127,9 +127,9 @@ class ConsistencyPropertyTests {
                 };
                 HeartbeatCoalescer coalescer = new HeartbeatCoalescer();
                 CoalescingRaftTransport transport = new CoalescingRaftTransport(baseTransport, 0);
-                transport.bindCoalescer(() -> coalescer); // one group per node ⇒ a constant resolver
+                transport.bindCoalescer(() -> coalescer); // one group per node => a constant resolver
 
-                // RR-010: derive the per-node election RNG from the master
+                // derive the per-node election RNG from the master
                 // simulation seed (not entropy) so the same seed reproduces the
                 // same execution schedule and a failing seed is replayable.
                 // The 7-arg ctor threads the InvariantChecker (NOOP by default);
@@ -169,7 +169,7 @@ class ConsistencyPropertyTests {
             sim.tick();
             for (int i = 0; i < nodes.size(); i++) {
                 // Stage 2 M3: open the coalescing window, tick, then drain this node's heartbeats EVEN IF
-                // tick() throws (H-2 — a dropped heartbeat would starve a follower into a spurious election).
+                // tick() throws (H-2 - a dropped heartbeat would starve a follower into a spurious election).
                 HeartbeatCoalescer hc = coalescers.get(i);
                 hc.beginTick();
                 try {
@@ -181,12 +181,12 @@ class ConsistencyPropertyTests {
         }
 
         /**
-         * Stage 2 M3: send node {@code i}'s coalesced heartbeats (one group per node ⇒ each drained peer
+         * Stage 2 M3: send node {@code i}'s coalesced heartbeats (one group per node => each drained peer
          * carries a single AppendEntries) via the same {@link SimulatedNetwork} path as a normal send, at
-         * the current clock — identical payload. (On a tick that mixes a buffered heartbeat with an
+         * the current clock - identical payload. (On a tick that mixes a buffered heartbeat with an
          * immediately-sent entry-carrying AppendEntries, the cross-tick PRNG draw order can shift since
-         * heartbeats drain after in-tick entry sends, so the M3 sweep is a re-established baseline — green
-         * on the new trajectory — not the identical prior schedule. D-020 review, finding 1.)
+         * heartbeats drain after in-tick entry sends, so the M3 sweep is a re-established baseline - green
+         * on the new trajectory - not the identical prior schedule. D-020 review, finding 1.)
          */
         private void drainHeartbeats(int i, HeartbeatCoalescer hc) {
             Map<NodeId, Map<Integer, AppendEntriesRequest>> drained = hc.drainAndEndTick();
@@ -215,7 +215,7 @@ class ConsistencyPropertyTests {
         }
 
         /** Stage 2 M3 S3 (red-team D): drop coalesced heartbeats only to {@code victim} (partial-aggregate
-         *  starvation), leaving every other peer served — the per-peer failure a real coalescer is most
+         *  starvation), leaving every other peer served - the per-peer failure a real coalescer is most
          *  likely to get wrong. */
         void dropHeartbeatsToPeer(NodeId victim) {
             this.hbFault = HeartbeatFault.DROP;
@@ -228,15 +228,15 @@ class ConsistencyPropertyTests {
         }
 
         /**
-         * R-01' bind rule made executable in the sim: bind every node's owner to the single drive
-         * thread as the first action on that thread — NOT during construction (the constructor runs
+         * Owner-thread bind rule made executable in the sim: bind every node's owner to the single drive
+         * thread as the first action on that thread - NOT during construction (the constructor runs
          * on the wiring thread and legitimately touches state). The simulation is single-threaded
-         * (R-01), so this thread owns every node; the {@code assertOwnerThread()} tripwire is now
+         * and thus this thread owns every node; the {@code assertOwnerThread()} tripwire is now
          * ACTIVE and routes any off-drive-thread {@link RaftNode} access through the wired
-         * {@link RaftNode.InvariantChecker} — a throwing checker (e.g. {@code SeedSweepTest}) fails
+         * {@link RaftNode.InvariantChecker} - a throwing checker (e.g. {@code SeedSweepTest}) fails
          * the seed, {@code NOOP} stays silent. This puts {@code raft_owner_thread} on the continuous
-         * per-tick invariant surface alongside the in-node checks (threading-contract §5.4). Nodes
-         * are never reconstructed mid-run, so a one-time bind is complete; Workstream B's
+         * per-tick invariant surface alongside the in-node checks (threading-contract section 5.4). Nodes
+         * are never reconstructed mid-run, so a one-time bind is complete; the coalesced-heartbeat work's
          * owner-executor pool extends this to genuinely distinct per-node owner threads.
          */
         private void bindOwnersIfNeeded() {
@@ -446,7 +446,7 @@ class ConsistencyPropertyTests {
 
         /**
          * Verifies that a ReadIndex issued before a write does NOT guarantee
-         * visibility of that write — the read reflects state at the moment
+         * visibility of that write - the read reflects state at the moment
          * the ReadIndex was issued (commit index at that time).
          */
         @Test
@@ -539,7 +539,7 @@ class ConsistencyPropertyTests {
 
         /**
          * Verifies that the StalenessTracker correctly transitions through CURRENT -> STALE
-         * -> DEGRADED -> DISCONNECTED — driven, per ADR-0039, by a TRUE STALL: withholding
+         * -> DEGRADED -> DISCONNECTED - driven by a TRUE STALL: withholding
          * BOTH deltas AND heartbeats, so the covered frontier freezes while wall-now marches
          * past it. Resets to CURRENT on a fresh update whose commit ts is wall-now.
          */
@@ -557,7 +557,7 @@ class ConsistencyPropertyTests {
             assertTrue(tracker.stalenessMs() < 500,
                     "INV-S1: staleness must be < 500ms immediately after update");
 
-            // TRUE STALL begins: no further deltas, no heartbeats — the frontier freezes.
+            // TRUE STALL begins: no further deltas, no heartbeats - the frontier freezes.
             // Advance 499ms -> still CURRENT
             clock.advanceMs(499);
             assertEquals(StalenessTracker.State.CURRENT, tracker.currentState());
@@ -581,9 +581,9 @@ class ConsistencyPropertyTests {
         }
 
         /**
-         * THE ADR-0039 REGRESSION TEST (CT-07). An idle-but-heartbeating edge
-         * ({@code latestSeq == cursor}) stays CURRENT across ≥250s of idle time — the exact
-         * defect ADR-0039 fixes. The pre-fix idle-time proxy would have walked this edge to
+         * STALENESS-FRONTIER REGRESSION TEST. An idle-but-heartbeating edge
+         * ({@code latestSeq == cursor}) stays CURRENT across >=250s of idle time - the exact
+         * the prior defect. The pre-fix idle-time proxy would have walked this edge to
          * DISCONNECTED (and triggered a needless re-bootstrap) despite it serving perfectly
          * fresh data. A heartbeat with {@code latestSeq > cursor} does NOT reset staleness
          * (the edge is genuinely behind).
@@ -1087,7 +1087,7 @@ class ConsistencyPropertyTests {
             assertTrue(readA.found(), "Edge A must serve read at cursor=3");
             assertEquals("v3", str(readA.value()));
 
-            // Edge B is up to date — client failover succeeds
+            // Edge B is up to date - client failover succeeds
             LocalConfigStore edgeB = new LocalConfigStore();
             edgeB.loadSnapshot(snap3);
 

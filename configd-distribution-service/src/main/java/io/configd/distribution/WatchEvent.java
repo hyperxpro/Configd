@@ -33,7 +33,7 @@ public record WatchEvent(List<ConfigMutation> mutations, long version, Set<Strin
 
     /**
      * Compact constructor with validation. Pre-computes the affected keys
-     * set at construction time — zero allocation on the dispatch hot path.
+     * set at construction time - zero allocation on the dispatch hot path.
      */
     public WatchEvent {
         Objects.requireNonNull(mutations, "mutations must not be null");

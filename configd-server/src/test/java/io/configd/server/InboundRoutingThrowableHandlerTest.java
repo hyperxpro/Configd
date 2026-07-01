@@ -37,17 +37,17 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * RR-008 (S4) regression — the inbound Raft routing task must SURFACE an escaping
+ * Regression - the inbound Raft routing task must SURFACE an escaping
  * Throwable (counter + structured SEVERE log) instead of letting the executor swallow it.
  * <p>
- * The H-009 fix covered only the tick lambda; the inbound-routing path
+ * The tick-loop fix covered only the tick lambda; the inbound-routing path
  * ({@code raftExecutor.execute(() -> driver.routeMessage(...))}) had no try/catch, so a
- * Throwable from message handling — e.g. a disk write failing during
- * {@code applyCommitted -> apply} on a follower — went to the executor's default uncaught
+ * Throwable from message handling - e.g. a disk write failing during
+ * {@code applyCommitted -> apply} on a follower - went to the executor's default uncaught
  * handler (stderr, invisible to log aggregation), with NO metric and NO ack: a mute zombie.
  * <p>
  * Two legs: the handler's observable side-effects (driven directly, like
- * {@code TickLoopThrowableHandlerTest}); and the wiring — a follower whose response
+ * {@code TickLoopThrowableHandlerTest}); and the wiring - a follower whose response
  * {@code transport.send} throws makes {@code routeMessage} throw, and the production
  * {@link ConfigdServer#raftInboundHandler} must catch + surface it while the executor
  * keeps serving subsequent messages.
@@ -103,7 +103,7 @@ class InboundRoutingThrowableHandlerTest {
                 "a SEVERE record must be emitted (not a stderr printStackTrace)");
     }
 
-    /** A transport that throws on send — models the follower's response path failing. */
+    /** A transport that throws on send - models the follower's response path failing. */
     private static final class ThrowingTransport implements RaftTransport {
         @Override public void send(NodeId target, RaftMessage message) {
             throw new RuntimeException("synthetic transport/IO failure on response");
@@ -139,7 +139,7 @@ class InboundRoutingThrowableHandlerTest {
             BiConsumer<NodeId, RaftMessage> inbound =
                     ConfigdServer.raftInboundHandler(driver, GROUP, exec, metrics);
 
-            // Poison message: the follower will try to send a response → transport throws.
+            // Poison message: the follower will try to send a response -> transport throws.
             inbound.accept(NodeId.of(2),
                     new AppendEntriesRequest(1L, NodeId.of(2), 0L, 0L, List.of(), 0L));
             // A following message must still be processed (executor not permanently dead).
@@ -151,7 +151,7 @@ class InboundRoutingThrowableHandlerTest {
             exec.execute(done::countDown);
             assertTrue(done.await(5, TimeUnit.SECONDS), "executor must keep serving tasks");
 
-            // The escaping Throwable was surfaced (pre-fix: swallowed → counter absent).
+            // The escaping Throwable was surfaced (pre-fix: swallowed -> counter absent).
             String label = SafeLog.cardinalityGuard("RuntimeException");
             String registryName = ConfigdMetrics.NAME_INBOUND_ROUTING_THROWABLE_BASE + "." + label;
             var counter = registry.snapshot().metrics().get(registryName);

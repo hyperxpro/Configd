@@ -11,8 +11,8 @@ import java.util.zip.CRC32C;
 
 /**
  * Definitively names what the encode-only {@code nettyBestSendPooled} 160 B/op is (the verdict had
- * two contradictory unverified guesses). Replicates that JMH leg exactly — pooled direct
- * {@code ByteBuf} per op, encode, read-back, release, single thread — under two CRC strategies so a
+ * two contradictory unverified guesses). Replicates that JMH leg exactly - pooled direct
+ * {@code ByteBuf} per op, encode, read-back, release, single thread - under two CRC strategies so a
  * JFR allocation profile can attribute the bytes:
  *   mode=nio       -> CRC via out.nioBuffer(...)         (what the JMH leg / NettyWireEncoders uses)
  *   mode=internal  -> CRC via out.internalNioBuffer(...) (the cached view the in-pipeline encoder uses)
@@ -70,7 +70,7 @@ public final class NettyEncodeOnlyProfileMain {
             buf.writeByte((byte) type.code());
             buf.writeInt(GROUP_ID);
             buf.writeLong(TERM);
-            buf.writeLong(0L); // v2/D1 reserved epoch — MBZ (dormant); byte-identical to FrameCodec.encode
+            buf.writeLong(0L); // reserved epoch (dormant, must be zero); byte-identical to FrameCodec.encode
             buf.writeBytes(pl);
             CRC32C crc = CRC.get();
             crc.reset();

@@ -10,22 +10,22 @@ import java.util.ArrayList;
 import java.util.List;
 
 /**
- * §4.4 bridge — checks a <b>simulation-produced</b> op-history with the same trusted
- * Porcupine checker the real-binary harness uses.
+ * Checks a <b>simulation-produced</b> op-history with the same trusted Porcupine
+ * checker the real-binary harness uses.
  *
  * <p>The adversarial deterministic sim (configd-testkit {@code AdversarialSim} +
- * {@code HistoryRecorder}, design §6) emits a checker-neutral JSON-Lines history
- * (fields {@code client_id, op_type, key, arg, ret, invoke_ts, response_ts, status,
+ * {@code HistoryRecorder}) emits a checker-neutral JSON-Lines history (fields
+ * {@code client_id, op_type, key, arg, ret, invoke_ts, response_ts, status,
  * consistency}). This adapter reads that {@code .jsonl}, maps each line to the linz
- * {@link Op} model, and runs it through the very same {@link PorcupineChecker} →
+ * {@link Op} model, and runs it through the very same {@link PorcupineChecker} ->
  * {@code porcupine-check} binary that gates the real-binary runs. So the cheap,
- * fully-replayable sim history is checked by the same trusted third-party checker
- * (ADR-0032), not a second hand-rolled one.
+ * fully-replayable sim history is checked by the same trusted third-party checker,
+ * not a second hand-rolled one.
  *
- * <p>Mapping (identical semantics to the real harness, sim-design §6):
+ * <p>Mapping (identical semantics to the real harness):
  * <ul>
- *   <li>{@code op_type} PUT/DELETE → write; READ → read.</li>
- *   <li>{@code status} ok→OK, info→INFO, fail→FAIL (the checker-neutral kinds).</li>
+ *   <li>{@code op_type} PUT/DELETE -> write; READ -> read.</li>
+ *   <li>{@code status} ok->OK, info->INFO, fail->FAIL (the checker-neutral kinds).</li>
  *   <li>a write's value is its {@code arg} token; a read's value is its {@code ret}
  *       (observed token, or {@code ""} for ⊥/absent).</li>
  *   <li>{@code invoke_ts}/{@code response_ts} are the real-time backbone

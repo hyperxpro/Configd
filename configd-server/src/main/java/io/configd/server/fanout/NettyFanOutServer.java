@@ -41,42 +41,41 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.logging.Logger;
 
 /**
- * The Netty edge fan-out endpoint (ADR-0043 M3) — the Netty transport over the SAME
+ * The Netty edge fan-out endpoint - the Netty transport over the SAME
  * transport-agnostic {@link FanOutConnectionDriver} + {@link FanOutSessionCore} the JDK
- * {@link FanOutServer} drives (DR-N11). Every fan-out control — mTLS admission, the slow-consumer
- * demotion→quarantine→disconnect policy, propagation/monotonicity — is therefore re-proven on this
+ * {@link FanOutServer} drives. Every fan-out control - mTLS admission, the slow-consumer
+ * demotion->quarantine->disconnect policy, propagation/monotonicity - is therefore re-proven on this
  * pipeline by the identical {@code FanOutServerContract} (JDK + Netty(auto) + Netty(forced-NIO)),
  * not re-implemented.
  *
  * <h2>Pipeline (per connection)</h2>
- * {@code [SslHandler? → ByteToEdgeFrameDecoder → EdgeFrameToByteEncoder → FanOutConnection]}.
+ * {@code [SslHandler? -> ByteToEdgeFrameDecoder -> EdgeFrameToByteEncoder -> FanOutConnection]}.
  * <ul>
- *   <li><b>mTLS (DR-N13):</b> when a {@link TlsManager} is present the first stage is an
+ *   <li><b>mTLS:</b> when a {@link TlsManager} is present the first stage is an
  *       {@link SslHandler} built from the SAME {@code SSLContext} the JDK server + Raft use, in
  *       server mode with {@code setNeedClientAuth(true)} and the {@link TlsConfig} TLSv1.3-only
  *       protocols + ciphers. The edge identity is the verified client-cert Subject DN read from the
  *       post-handshake {@code SSLSession.getPeerPrincipal()}; the wire {@code edgeId} is advisory.
- *       No {@code TlsManager} ⇒ plaintext (no {@code SslHandler}), matching the JDK server.</li>
+ *       No {@code TlsManager} => plaintext (no {@code SslHandler}), matching the JDK server.</li>
  *   <li><b>Codec:</b> {@link ByteToEdgeFrameDecoder} keeps the {@code peekLength}
  *       bounds-before-allocation discipline; {@link EdgeFrameToByteEncoder} does the single-pass
- *       in-pipeline pooled encode (the floor, DR-N10).</li>
+ *       in-pipeline pooled encode.</li>
  * </ul>
  *
- * <h2>Threading (DR-N12)</h2>
+ * <h2>Threading</h2>
  * The event loop owns the socket (TLS, decode, the outbound encode, write completion). One virtual
- * <b>session thread</b> per connection drives {@link FanOutConnectionDriver#runSessionLoop} — the
+ * <b>session thread</b> per connection drives {@link FanOutConnectionDriver#runSessionLoop} - the
  * same model as the JDK server (session work, incl. up-to-1 MiB snapshot serialization, never runs
  * on the event loop). Inbound frames are routed on the event loop into the driver (single-threaded
  * inbound, exactly like the JDK reader); the driver and session communicate through a concurrent
  * command queue. The {@link TransportSink#offer} writes to the channel and bounds in-flight
- * (written-not-flushed) frames at {@code transportQueueFrames} — byte-for-byte the JDK
- * {@code ArrayBlockingQueue(transportQueueFrames)} secondary backpressure.
+ * (written-not-flushed) frames at {@code transportQueueFrames}.
  */
 public final class NettyFanOutServer implements FanOutEndpoint {
 
     private static final Logger LOG = Logger.getLogger(NettyFanOutServer.class.getName());
 
-    /** Named config: per-connection outbound transport queue depth (frames). Design §4 (== JDK). */
+    /** Named config: per-connection outbound transport queue depth (frames). Design section 4 (== JDK). */
     public static final int DEFAULT_TRANSPORT_QUEUE_FRAMES = FanOutServer.DEFAULT_TRANSPORT_QUEUE_FRAMES;
 
     /** Named config {@code edge.fanout.transport.maxSessions} (== JDK; hard rule 4). */
@@ -95,8 +94,8 @@ public final class NettyFanOutServer implements FanOutEndpoint {
     private final int workerThreads;
 
     /**
-     * The RFC §2 watch-authorization gate (W7), or {@code null} when no watch capability is wired —
-     * the driver then fails CLOSED (every {@code WATCH_CREATE} → {@code NOT_AUTHORIZED}). The
+     * The watch-authorization gate, or {@code null} when no watch capability is wired -
+     * the driver then fails CLOSED (every {@code WATCH_CREATE} -> {@code NOT_AUTHORIZED}). The
      * pre-watch constructors pass {@code null}, so existing callers (the contract, the testkit main)
      * compile and behave unchanged; {@code ConfigdServer} threads a real authorizer.
      */
@@ -153,7 +152,7 @@ public final class NettyFanOutServer implements FanOutEndpoint {
     }
 
     /**
-     * Full constructor with the RFC §2 watch-authorization gate ({@code authorizer}, W7). A
+     * Full constructor with the watch-authorization gate ({@code authorizer}). A
      * {@code null} authorizer fails CLOSED (watches rejected {@code NOT_AUTHORIZED}); the legacy
      * SUBSCRIBE fan-out path is unaffected regardless. {@code ConfigdServer} threads the
      * {@code AclServiceWatchAuthorizer} here.
@@ -188,7 +187,7 @@ public final class NettyFanOutServer implements FanOutEndpoint {
         this.workerThreads = Integer.getInteger("configd.edge.netty.workerThreads",
                 Math.max(2, Runtime.getRuntime().availableProcessors()));
         this.transport = NettyTransport.select();
-        this.authorizer = authorizer; // nullable ⇒ no watch capability ⇒ driver fails closed
+        this.authorizer = authorizer; // nullable => no watch capability => driver fails closed
     }
 
     @Override
@@ -196,7 +195,7 @@ public final class NettyFanOutServer implements FanOutEndpoint {
         return governor;
     }
 
-    /** The active transport tier (io_uring / epoll / nio) — surfaced for logging + the CI proof. */
+    /** The active transport tier (io_uring / epoll / nio) - surfaced for logging + the CI proof. */
     public String transportTier() {
         return transport.tier();
     }
@@ -220,7 +219,7 @@ public final class NettyFanOutServer implements FanOutEndpoint {
                     @Override
                     protected void initChannel(Channel ch) {
                         // Construct the per-connection handler FIRST so the outbound encoder can read its
-                        // negotiated wire version (W1-3 / §6a): a watch connection (first WATCH_CREATE)
+                        // negotiated wire version: a watch connection (first WATCH_CREATE)
                         // flips conn.wireVersion to 0x02 and the encoder stamps it on every outbound frame.
                         FanOutConnection conn = new FanOutConnection();
                         if (tlsManager != null) {
@@ -241,7 +240,7 @@ public final class NettyFanOutServer implements FanOutEndpoint {
                 + (tlsManager != null ? " (mTLS)" : " (PLAINTEXT)") + " [tier=" + transport.tier() + "]");
     }
 
-    /** Builds the server-mode mTLS {@link SslHandler} — the SAME SSLContext/protocols/ciphers as the JDK server. */
+    /** Builds the server-mode mTLS {@link SslHandler} - the SAME SSLContext/protocols/ciphers as the JDK server. */
     private SslHandler newSslHandler() {
         SSLContext sslContext = tlsManager.currentContext();
         SSLEngine engine = sslContext.createSSLEngine();
@@ -296,7 +295,7 @@ public final class NettyFanOutServer implements FanOutEndpoint {
             implements TransportSink {
 
         private final AtomicBoolean alive = new AtomicBoolean(true);
-        /** In-flight (written, not yet flushed) frames — the JDK ArrayBlockingQueue(queueFrames) twin. */
+        /** In-flight (written, not yet flushed) frames. */
         private final AtomicInteger inFlight = new AtomicInteger();
 
         private volatile Channel channel;
@@ -306,14 +305,13 @@ public final class NettyFanOutServer implements FanOutEndpoint {
         private volatile boolean connectedCounted; // onSubscriberConnected fired (pairs with disconnect)
 
         /**
-         * Negotiated OUTBOUND edge wire version (W1-3 / §6a). Default {@code 0x01} (legacy); flipped to
+         * Negotiated OUTBOUND edge wire version. Default {@code 0x01} (legacy); flipped to
          * {@code 0x02} when this connection's FIRST inbound frame is a {@code WATCH_CREATE} (a watch
          * connection). The {@link EdgeFrameToByteEncoder} reads it (via the {@code initChannel} supplier
          * lambda) and stamps it on every outbound frame, so a {@code 0x02} client can decode the
-         * server's {@code WATCH_*} frames (W5-11). Written + read on the event loop; {@code volatile}
-         * for clarity and the cross-handler supplier read. A legacy connection never flips it ⇒ stays
-         * {@code 0x01} ⇒ byte-identical. (The INBOUND version pin is the {@link ByteToEdgeFrameDecoder}'s
-         * self-contained per-connection state.)
+         * server's {@code WATCH_*} frames. Written + read on the event loop; {@code volatile}
+         * for clarity and the cross-handler supplier read. A legacy connection never flips it -> stays
+         * {@code 0x01} -> byte-identical.
          */
         volatile byte wireVersion = EdgeFrameCodec.EDGE_WIRE_VERSION;
 
@@ -323,8 +321,8 @@ public final class NettyFanOutServer implements FanOutEndpoint {
         @Override
         public void channelActive(ChannelHandlerContext ctx) {
             this.channel = ctx.channel();
-            // Admission bound BEFORE the handshake (hard rule 4): half-open handshakes count, so a
-            // slowloris cannot exhaust fds/threads. Over the bound → refuse + close (the client sees EOF).
+            // Admission bound BEFORE the handshake: half-open handshakes count, so a
+            // slowloris cannot exhaust file descriptors and threads. Over the bound -> refuse + close (the client sees EOF).
             counted = true;
             if (liveConnections.incrementAndGet() > maxSessions) {
                 metrics.onSessionRefused();
@@ -349,7 +347,7 @@ public final class NettyFanOutServer implements FanOutEndpoint {
                         startSession(ctx, identity);
                     }
                 } else {
-                    // No cert / untrusted CA / expired / version-downgrade → the handshake failed.
+                    // No cert / untrusted CA / expired / version-downgrade -> the handshake failed.
                     rejectHandshake(ctx);
                 }
             }
@@ -393,11 +391,11 @@ public final class NettyFanOutServer implements FanOutEndpoint {
         protected void channelRead0(ChannelHandlerContext ctx, EdgeFrame frame) {
             if (!firstInboundSeen) {
                 firstInboundSeen = true;
-                // §6a outbound flip: a WATCH_CREATE-first connection is a 0x02 watch connection, so the
-                // encoder must stamp 0x02 for the client to decode the server's WATCH_* frames (W5-11).
+                // Outbound flip: a WATCH_CREATE-first connection is a 0x02 watch connection, so the
+                // encoder must stamp 0x02 for the client to decode the server's WATCH_* frames.
                 // A SUBSCRIBE-first legacy connection stays 0x01 (byte-identical). Flip BEFORE routing,
                 // so the flip happens-before any outbound watch frame the driver later produces. (A
-                // WATCH_CREATE is always 0x02-stamped — the codec forbids WATCH_* under 0x01 — and the
+                // WATCH_CREATE is always 0x02-stamped - the codec forbids WATCH_* under 0x01 - and the
                 // decoder has already pinned this connection's inbound version to 0x02 for the same
                 // reason, so the two version views agree for every real connection.)
                 if (frame instanceof EdgeFrame.WatchCreate) {
@@ -406,7 +404,7 @@ public final class NettyFanOutServer implements FanOutEndpoint {
             }
             FanOutConnectionDriver d = driver;
             if (d != null) {
-                d.onInboundFrame(frame); // routing is the driver's (SUBSCRIBE-first, CURSOR_ACK, …)
+                d.onInboundFrame(frame); // routing is the driver's (SUBSCRIBE-first, CURSOR_ACK, ...)
             }
         }
 
@@ -441,7 +439,7 @@ public final class NettyFanOutServer implements FanOutEndpoint {
                 return false;
             }
             // Bounded: never exceed transportQueueFrames written-not-flushed frames. A full transport
-            // is backpressure (the session demotes) — never an unbounded outbound buffer.
+            // is backpressure (the session demotes) - never an unbounded outbound buffer.
             if (inFlight.get() >= transportQueueFrames) {
                 return false;
             }
@@ -469,7 +467,7 @@ public final class NettyFanOutServer implements FanOutEndpoint {
                     && s != null && s.state() != FanOutSessionCore.SessionState.CLOSED;
             if (ch != null) {
                 if (wantBye) {
-                    // Best-effort final ERROR_CLOSE, then close — on the event loop.
+                    // Best-effort final ERROR_CLOSE, then close - on the event loop.
                     if (ch.eventLoop().inEventLoop()) {
                         writeByeThenClose(ch, code, message);
                     } else {

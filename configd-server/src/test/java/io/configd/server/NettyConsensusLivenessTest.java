@@ -44,41 +44,41 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * ADR-0043 M4 — THE load-bearing proof that the Netty consensus transport ({@link NettyRaftTransport})
+ * THE load-bearing proof that the Netty consensus transport ({@link NettyRaftTransport})
  * preserves coalesced-heartbeat delivery <em>timing</em> faithfully enough that NO spurious leader
  * election occurs. This is the real-wire analog of the deterministic simulation proof
  * {@code io.configd.testkit.CoalescedHeartbeatLivenessTest#noSpuriousElectionUnderSustainedLoad}: where
- * that test routes the coalesce → drain pipeline through an in-memory {@code SimulatedNetwork}, this one
+ * that test routes the coalesce -> drain pipeline through an in-memory {@code SimulatedNetwork}, this one
  * routes it over real localhost TCP sockets, with each node on its own owner thread (genuinely
- * concurrent — not the single-threaded sim) and real wall-clock election timers.
+ * concurrent - not the single-threaded sim) and real wall-clock election timers.
  *
  * <h2>Why this is the #1 migration risk</h2>
- * The coalesced heartbeat (Phase 0 M3) is the ONLY liveness signal an idle follower receives. A
+ * The coalesced heartbeat is the ONLY liveness signal an idle follower receives. A
  * transport that drops, delays, reorders, or mistimes one heartbeat lets a follower's election timer
- * fire → a spurious term bump → leadership churn (the RR-095/RR-103/RR-113 stall family). So the proof
+ * fire -> a spurious term bump -> leadership churn. So the proof
  * is: with the real Netty wire carrying coalesced heartbeats, a stable leader holds its term across a
  * sustained load window AND a sustained idle window (idle is where the coalesced heartbeat is the sole
  * liveness signal, so it bites hardest).
  *
  * <h2>Wiring (mirrors {@code ConsistencyPropertyTests.ClusterHarness} on the real wire)</h2>
- * Per node: {@link NettyRaftTransport} (plaintext — TLS delivery is separately proven by
- * {@code AbstractRaftTransportContract}; this proof isolates delivery TIMING) → wrapped by a
- * {@link RaftTransportAdapter} (consensus-core {@code RaftTransport} seam, encode/decode) → wrapped by a
- * {@link CoalescingRaftTransport} bound to a per-node {@link HeartbeatCoalescer} → driving a
- * {@link RaftNode}. Each tick: {@code beginTick() → node.tick() → drain the coalescer and send each
+ * Per node: {@link NettyRaftTransport} (plaintext - TLS delivery is separately proven by
+ * {@code AbstractRaftTransportContract}; this proof isolates delivery TIMING) -> wrapped by a
+ * {@link RaftTransportAdapter} (consensus-core {@code RaftTransport} seam, encode/decode) -> wrapped by a
+ * {@link CoalescingRaftTransport} bound to a per-node {@link HeartbeatCoalescer} -> driving a
+ * {@link RaftNode}. Each tick: {@code beginTick() -> node.tick() -> drain the coalescer and send each
  * drained heartbeat over the real adapter}. So COALESCING IS ACTIVE on the wire under test (the M3 path).
  *
- * <h2>R-01 owner threading</h2>
+ * <h2>Owner threading</h2>
  * Each node has its own single-thread {@link ScheduledExecutorService} (its owner). {@code bindOwnerThread()}
  * is the owner's FIRST task (before {@code transport.start()} publishes the inbound handler and before
  * ticks are scheduled). The inbound handler (arriving on a Netty event-loop thread) marshals
  * {@code handleMessage(...)} onto the owner; proposes and ticks run on the owner too. The ONLY off-owner
- * reads are via {@link RaftNode#monitorView()} — the volatile, never-torn {@code (role, currentTerm)}
+ * reads are via {@link RaftNode#monitorView()} - the volatile, never-torn {@code (role, currentTerm)}
  * snapshot published every tick ({@code currentTerm()} itself is owner-guarded and is never called here).
  *
- * <h2>Election budget (≥20× structural margin)</h2>
- * {@code tickPeriod=10ms}, {@code heartbeat=50ms (5 ticks)}, {@code election=1000–2000ms (100–200 ticks)}.
- * The derived election:heartbeat tick ratio is {@code 100/5 = 20} — a follower tolerates ~20–40 missed
+ * <h2>Election budget (>=20x structural margin)</h2>
+ * {@code tickPeriod=10ms}, {@code heartbeat=50ms (5 ticks)}, {@code election=1000-2000ms (100-200 ticks)}.
+ * The derived election:heartbeat tick ratio is {@code 100/5 = 20} - a follower tolerates ~20-40 missed
  * heartbeats before timing out, so 2-vCPU scheduling jitter cannot trip a spurious election while the
  * transport is delivering. Loopback delivery itself is sub-millisecond to single-digit-ms (measured by
  * {@link #heartbeatFramesArriveInOrderWithinDeliveryBudget}), a tiny fraction of the 1000ms election floor.
@@ -86,7 +86,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * <p>Ticks are driven with {@link ScheduledExecutorService#scheduleWithFixedDelay} (not the production
  * {@code scheduleAtFixedRate}) deliberately: on a throttled box {@code scheduleAtFixedRate} fires
  * catch-up bursts of overdue ticks after a stall, and a {@code ScheduledThreadPoolExecutor} runs those
- * past-due ticks <em>ahead</em> of freshly-submitted inbound tasks — a HARNESS artifact (the election
+ * past-due ticks <em>ahead</em> of freshly-submitted inbound tasks - a HARNESS artifact (the election
  * counter advancing before queued heartbeats are processed) that has nothing to do with transport
  * fidelity. {@code scheduleWithFixedDelay} stretches the period under load instead of bursting, isolating
  * the variable under test (transport delivery). It does NOT mask a real defect: the non-vacuity leg below
@@ -108,9 +108,9 @@ final class NettyConsensusLivenessTest {
 
     // ---- observation cadence / budgets ----
     private static final int POLL_MS = 25;
-    private static final int STABLE_OBSERVATIONS = 40;   // 40 × 25ms = 1s of stable single-leadership
+    private static final int STABLE_OBSERVATIONS = 40;   // 40 x 25ms = 1s of stable single-leadership
     private static final long STABILIZE_BUDGET_MS = 30_000;
-    private static final long CHURN_BUDGET_MS = 30_000;  // ≫ 2s election max; severing fires well inside this
+    private static final long CHURN_BUDGET_MS = 30_000;  // >> 2s election max; severing fires well inside this
     /** Each assertion phase (load, then idle) runs this long. Override with -Dconfigd.m4.windowMs. */
     private static final long WINDOW_MS = Long.getLong("configd.m4.windowMs", 6_000);
 
@@ -141,7 +141,7 @@ final class NettyConsensusLivenessTest {
     }
 
     // =======================================================================
-    // THE PROOF — no spurious election under sustained load AND while idle
+    // THE PROOF - no spurious election under sustained load AND while idle
     // =======================================================================
 
     @Test
@@ -154,16 +154,16 @@ final class NettyConsensusLivenessTest {
                 "a stable leader must be elected on the real Netty wire within " + STABILIZE_BUDGET_MS + "ms");
         long term0 = cluster.maxTerm();
 
-        // Phase A — SUSTAINED LOAD: propose every tick on the leader. Entry-carrying appends AND coalesced
+        // Phase A - SUSTAINED LOAD: propose every tick on the leader. Entry-carrying appends AND coalesced
         // heartbeats flow; the transport must deliver them faithfully enough that no follower times out.
         cluster.startLoad(leader);
         long loadObservations = assertNoChurn(leader, term0, WINDOW_MS,
                 "under sustained load");
         cluster.stopLoad();
 
-        // Phase B — SUSTAINED IDLE: no writes, so the COALESCED HEARTBEAT is the ONLY signal resetting a
+        // Phase B - SUSTAINED IDLE: no writes, so the COALESCED HEARTBEAT is the ONLY signal resetting a
         // follower's election timer. This is where a dropped/delayed/reordered coalesced heartbeat bites
-        // hardest — the sharpest test of the M3 path on the real wire.
+        // hardest - the sharpest test of the M3 path on the real wire.
         long idleObservations = assertNoChurn(leader, term0, WINDOW_MS, "while idle");
 
         // Coherent final check after both phases.
@@ -201,17 +201,17 @@ final class NettyConsensusLivenessTest {
     }
 
     // =======================================================================
-    // NON-VACUITY (test-the-tester) — severing heartbeats MUST cause churn
+    // NON-VACUITY (test-the-tester) - severing heartbeats MUST cause churn
     // =======================================================================
 
     /**
      * Mirrors the intent of {@code CoalescedHeartbeatLivenessTest}'s DROP/DELAY legs on the real wire: if
      * severing the leader's coalesced heartbeats did NOT destabilize leadership, the no-spurious-election
      * proof above would be vacuous (it would pass even with a broken drain). Elect a stable leader, go
-     * idle (so the heartbeat is the only liveness signal), then DROP the leader's drained heartbeats — they
+     * idle (so the heartbeat is the only liveness signal), then DROP the leader's drained heartbeats - they
      * are still drained from the coalescer every tick (closing the window) but never put on the wire. With
      * every follower starved, the PreVote shield opens for all of them, a follower wins a fresh election,
-     * and the cluster term rises. We assert that genuine term advance — proving the harness DETECTS
+     * and the cluster term rises. We assert that genuine term advance - proving the harness DETECTS
      * heartbeat starvation, so the proof is non-vacuous.
      */
     @Test
@@ -225,11 +225,11 @@ final class NettyConsensusLivenessTest {
                         + STABILIZE_BUDGET_MS + "ms)");
         long term0 = cluster.maxTerm();
 
-        // Idle + sever the leader's coalesced heartbeats. No proposes ⇒ no entry-carrying appends either,
+        // Idle + sever the leader's coalesced heartbeats. No proposes => no entry-carrying appends either,
         // so the leader goes completely silent toward its followers.
         cluster.severHeartbeats(leader);
 
-        // 1) Detect destabilization (term rise OR the leader stepping down — CheckQuorum is invisible to
+        // 1) Detect destabilization (term rise OR the leader stepping down - CheckQuorum is invisible to
         //    maxTerm alone), then 2) confirm a NEW term is actually established (a real election completed).
         boolean destabilized = awaitUntil(CHURN_BUDGET_MS,
                 () -> cluster.maxTerm() > term0 || cluster.role(leader) != RaftRole.LEADER);
@@ -251,11 +251,11 @@ final class NettyConsensusLivenessTest {
     }
 
     // =======================================================================
-    // COMPLEMENTARY — direct transport delivery fidelity (the empirical margin)
+    // COMPLEMENTARY - direct transport delivery fidelity (the empirical margin)
     // =======================================================================
 
     /**
-     * The empirical basis for "loopback delivery ≪ election budget": blast K heartbeat-sized frames over a
+     * The empirical basis for "loopback delivery << election budget": blast K heartbeat-sized frames over a
      * single established {@link NettyRaftTransport} connection and confirm they ALL arrive, IN ORDER
      * (per-peer FIFO), within a max latency that is a tiny fraction of the 1000ms election floor. The first
      * frame (which pays connect cost) is a warm-up; the measured K go over the live connection, reflecting
@@ -270,7 +270,7 @@ final class NettyConsensusLivenessTest {
         final int warmup = 1;
         final int k = 200;
         final int total = warmup + k;
-        final long deliveryBudgetMs = 500; // non-flaky ceiling, still ≪ ELECTION_MIN_MS (1000)
+        final long deliveryBudgetMs = 500; // non-flaky ceiling, still << ELECTION_MIN_MS (1000)
 
         int[] ports = reserveDistinctPorts(2);
         NodeId a = NodeId.of(1);
@@ -371,7 +371,7 @@ final class NettyConsensusLivenessTest {
     /**
      * Reserves {@code n} DISTINCT free localhost ports by opening {@code n} {@link ServerSocket}s at once
      * (so the OS hands out distinct ephemeral ports), reading their ports, then closing them all. The
-     * close→bind window is tiny on a dedicated box; the {@link NettyRaftTransport} ctor needs the full peer
+     * close->bind window is tiny on a dedicated box; the {@link NettyRaftTransport} ctor needs the full peer
      * map up front, so per-node ephemeral-then-discover is not an option for a fully-connected cluster.
      */
     private static int[] reserveDistinctPorts(int n) throws Exception {
@@ -394,7 +394,7 @@ final class NettyConsensusLivenessTest {
 
     /**
      * A genuinely-concurrent real-wire Raft cluster: N nodes, each on its own owner thread, each behind its
-     * own {@link NettyRaftTransport}, all wired through the {@link CoalescingRaftTransport} → drain pipeline
+     * own {@link NettyRaftTransport}, all wired through the {@link CoalescingRaftTransport} -> drain pipeline
      * (coalescing ACTIVE). Built and started in the constructor; {@link #close()} is idempotent and called
      * from {@code @AfterEach}.
      */
@@ -447,9 +447,9 @@ final class NettyConsensusLivenessTest {
                 coalescers[i] = new HeartbeatCoalescer();
                 CoalescingRaftTransport coalescing = new CoalescingRaftTransport(adapters[i], GROUP);
                 final int idx = i;
-                coalescing.bindCoalescer(() -> coalescers[idx]); // one group per node ⇒ a constant resolver
+                coalescing.bindCoalescer(() -> coalescers[idx]); // one group per node => a constant resolver
 
-                // Generous election budget: heartbeat 50ms (5 ticks) ≪ election 1000–2000ms (100–200 ticks),
+                // Generous election budget: heartbeat 50ms (5 ticks) << election 1000-2000ms (100-200 ticks),
                 // so the derived election:heartbeat tick ratio is 20 (well above the validated floor of 3).
                 RaftConfig config = new RaftConfig(ids[i], peerIds,
                         ELECTION_MIN_MS, ELECTION_MAX_MS, HEARTBEAT_MS,
@@ -467,7 +467,7 @@ final class NettyConsensusLivenessTest {
                 });
             }
 
-            // H-6: bindOwnerThread() is the owner's FIRST task — before start() (publishes the inbound
+            // H-6: bindOwnerThread() is the owner's FIRST task - before start() (publishes the inbound
             // handler) and before ticks are scheduled. Single-thread FIFO then guarantees every later
             // tick/handleMessage/propose runs after the bind, so assertOwnerThread() never trips.
             for (int i = 0; i < NODES; i++) {
@@ -475,7 +475,7 @@ final class NettyConsensusLivenessTest {
                 owners[i].execute(() -> nodes[idx].bindOwnerThread());
             }
 
-            // Inbound (arrives on a Netty event-loop thread) → marshal handleMessage onto the node's owner.
+            // Inbound (arrives on a Netty event-loop thread) - marshal handleMessage onto the node's owner.
             for (int i = 0; i < NODES; i++) {
                 final int idx = i;
                 adapters[i].registerInboundHandler((from, gid, msg) ->
@@ -487,7 +487,7 @@ final class NettyConsensusLivenessTest {
                 transports[i].start();
             }
 
-            // Drive real scheduled ticks per node on its own owner (fixed-delay — see class doc).
+            // Drive real scheduled ticks per node on its own owner (fixed-delay - see class doc).
             for (int i = 0; i < NODES; i++) {
                 final int idx = i;
                 tickFutures[i] = owners[i].scheduleWithFixedDelay(
@@ -507,7 +507,7 @@ final class NettyConsensusLivenessTest {
         }
 
         /**
-         * Sends node {@code i}'s coalesced heartbeats over the REAL adapter (the base transport — NOT the
+         * Sends node {@code i}'s coalesced heartbeats over the REAL adapter (the base transport - NOT the
          * coalescing decorator, which would re-buffer them). Mirrors {@code ClusterHarness.drainHeartbeats}.
          * Always closes the window via {@code drainAndEndTick()}; when severed, the heartbeats are drained
          * but never put on the wire (the real-wire analog of the sim's DROP fault).
@@ -520,7 +520,7 @@ final class NettyConsensusLivenessTest {
             for (Map.Entry<NodeId, Map<Integer, AppendEntriesRequest>> peerEntry : drained.entrySet()) {
                 NodeId peer = peerEntry.getKey();
                 for (AppendEntriesRequest hb : peerEntry.getValue().values()) {
-                    adapters[i].send(peer, hb); // encode → netty.send (non-blocking offer); on the owner thread
+                    adapters[i].send(peer, hb); // encode -> netty.send (non-blocking offer); on the owner thread
                 }
             }
         }
@@ -545,7 +545,7 @@ final class NettyConsensusLivenessTest {
             for (int i = 0; i < NODES; i++) {
                 if (nodes[i].monitorView().role() == RaftRole.LEADER) {
                     if (leader >= 0) {
-                        return -1; // two leaders observed (election transient) — not stable yet
+                        return -1; // two leaders observed (election transient) - not stable yet
                     }
                     leader = i;
                 }

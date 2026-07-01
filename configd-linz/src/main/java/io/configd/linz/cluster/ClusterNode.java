@@ -8,10 +8,9 @@ import java.util.List;
 import java.util.concurrent.TimeUnit;
 
 /**
- * One Configd node as a <b>separate OS process</b> — a real JVM launched from the
+ * One Configd node as a <b>separate OS process</b> - a real JVM launched from the
  * shaded {@code configd-server} jar, talking to peers over the real
- * {@code TcpRaftTransport}. This is the whole point of A3: the in-process
- * {@code SimulatedNetwork} (the R-01 blind spot) is never used.
+ * {@code TcpRaftTransport}. The in-process simulated network is never used.
  *
  * <p>Raft listens on {@code 127.0.0.1:raftPort} (a distinct port per node, so an
  * iptables {@code --dport} rule cleanly isolates exactly one node's inbound Raft
@@ -75,7 +74,7 @@ public final class ClusterNode {
     }
 
     /**
-     * Hard crash: {@code destroyForcibly()} is {@code SIGKILL} on Unix — untrappable,
+     * Hard crash: {@code destroyForcibly()} is {@code SIGKILL} on Unix - untrappable,
      * no shutdown hooks, no graceful flush. This is the "kill -9" the durability
      * faults require.
      */

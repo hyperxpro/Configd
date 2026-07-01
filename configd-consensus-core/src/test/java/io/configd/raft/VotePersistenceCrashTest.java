@@ -14,21 +14,21 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * RR-085 #2 / RR-086 — vote (and term) persistence across a CRASH-RESTART.
+ * Verifies vote (and term) persistence across a CRASH-RESTART.
  * <p>
- * Election Safety (Raft §5.2) requires that {@code votedFor} survive a process
+ * Election Safety (Raft section 5.2) requires that {@code votedFor} survive a process
  * restart: a node must never grant a second vote in the same term to a
  * <em>different</em> candidate. The grant path
  * ({@code RaftNode.handleRequestVote}) persists the vote via
  * {@code durableState.vote(candidate)} BEFORE updating the in-memory field. The
- * Session-1 PIT survivors are:
+ * gaps guarded here are:
  * <ul>
  *   <li>{@code handleRequestVote} "removed call to DurableRaftState::vote"
- *       (RR-085 #2) — the in-memory {@code votedFor} is still set, so a
+ *       A missing persistence call leaves the in-memory {@code votedFor} is still set, so a
  *       SAME-PROCESS double-vote is still rejected; the loss only shows up
  *       across a restart, where the recovered {@code votedFor} is null.</li>
  *   <li>{@code DurableRaftState.persistValues} "removed call to Storage::sync"
- *       (RR-086) — see the EQUIVALENT-mutant note in
+ *       See also the equivalent-behavior note in
  *       {@code docs/session-2/mutation-kill-list.md}: {@code Storage.put} is
  *       self-durable (temp+force+atomic-rename+dir-fsync in {@code FileStorage},
  *       modelled faithfully by {@code CrashStorage.put}), so the trailing
@@ -42,7 +42,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * {@code put}); a {@link CrashStorage#recoveredView()} boots a fresh node over
  * exactly the bytes that reached the platter. Removing the
  * {@code durableState.vote(...)} call makes the recovered {@code votedFor} null
- * and the post-restart double-vote SUCCEED — which this test catches.
+ * and the post-restart double-vote SUCCEED - which this test catches.
  */
 class VotePersistenceCrashTest {
 
@@ -102,7 +102,7 @@ class VotePersistenceCrashTest {
 
         // SELF (follower @ term 0) receives a RequestVote from candidate A at term
         // 5. term 5 > 0 so it advances the term and, with an at-least-as-up-to-date
-        // log, GRANTS — persisting (term=5, votedFor=A) via the production
+        // log, GRANTS - persisting (term=5, votedFor=A) via the production
         // durableState.vote(A) call on the grant path.
         node.handleMessage(voteFrom(CAND_A, 5));
         RequestVoteResponse granted = t1.lastVoteResponse();
@@ -117,7 +117,7 @@ class VotePersistenceCrashTest {
         RaftNode recovered = boot(storage.recoveredView(), t2);
 
         // The recovered node MUST have remembered (term=5, votedFor=A). If the
-        // production durableState.vote(A) call was removed (RR-085 #2 mutant), the
+        // production durableState.vote(A) call was removed, the
         // vote never reached durable storage and this is null/0.
         assertEquals(5, recovered.currentTerm(),
                 "RR-086: currentTerm must survive the restart (persisted before in-memory update)");

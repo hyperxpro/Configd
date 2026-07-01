@@ -11,10 +11,10 @@ import java.util.Objects;
  * <p>
  * Supports two read modes:
  * <ul>
- *   <li><b>Linearizable</b> — confirms leadership via ReadIndex before serving.
+ *   <li><b>Linearizable</b> - confirms leadership via ReadIndex before serving.
  *       Guarantees the read reflects all committed writes up to the moment
  *       the request was received.</li>
- *   <li><b>Stale</b> — reads directly from the local store without leadership
+ *   <li><b>Stale</b> - reads directly from the local store without leadership
  *       confirmation. Faster but may serve slightly stale data.</li>
  * </ul>
  * <p>
@@ -33,11 +33,11 @@ public final class ConfigReadService {
         long currentVersion();
 
         /**
-         * Wiring Increment 1: scope-aware point read. A sharded reader folds {@code scope} into
+         * Scope-aware point read. A sharded reader folds {@code scope} into
          * {@code shardFor(scope, key)} so the read resolves the SAME shard the write of
          * {@code (scope, key)} used (read-your-writes). The default ignores scope and delegates to
-         * {@link #get(String)} — correct for a single-store reader and byte-identical at {@code N=1}
-         * (every scope ⇒ group 0). Only a sharded reader overrides this.
+         * {@link #get(String)} - correct for a single-store reader and byte-identical at {@code N=1}
+         * (every scope -> group 0). Only a sharded reader overrides this.
          */
         default ReadResult get(ConfigScope scope, String key) {
             return get(key);
@@ -56,9 +56,9 @@ public final class ConfigReadService {
     public interface LeadershipConfirmer {
         /**
          * Confirms leadership of the Raft group that owns {@code (scope, key)} by verifying quorum
-         * contact (ReadIndex). Keyed AND scoped (Wiring Increment 1) so the confirmation runs on the
-         * shard that owns {@code (scope, key)} = {@code shardFor(scope, key)} — the SAME shard the write
-         * of {@code (scope, key)} used (a scopeless confirm would verify the wrong shard's leadership at
+         * contact (ReadIndex). Keyed and scoped so the confirmation runs on the shard that owns
+         * {@code (scope, key)} = {@code shardFor(scope, key)} - the SAME shard the write of
+         * {@code (scope, key)} used (a scopeless confirm would verify the wrong shard's leadership at
          * N&gt;1). At {@code N=1} every {@code (scope, key)} resolves to group 0.
          *
          * @param scope the read's configuration scope (folded into the shard hash)
@@ -68,7 +68,7 @@ public final class ConfigReadService {
         boolean confirmLeadership(ConfigScope scope, String key);
 
         /**
-         * Confirms leadership in the {@code GLOBAL} scope (A2-3 default for the legacy key-only path).
+         * Confirms leadership in the {@code GLOBAL} scope for the legacy key-only path.
          * Delegates to {@link #confirmLeadership(ConfigScope, String)}.
          */
         default boolean confirmLeadership(String key) {
@@ -91,9 +91,8 @@ public final class ConfigReadService {
     }
 
     /**
-     * Performs a linearizable read in the {@code GLOBAL} scope (A2-3 default for the legacy
-     * control-plane surface). Equivalent to {@link #linearizableRead(ConfigScope, String)} with
-     * {@link ConfigScope#GLOBAL}.
+     * Performs a linearizable read in the {@code GLOBAL} scope. Equivalent to
+     * {@link #linearizableRead(ConfigScope, String)} with {@link ConfigScope#GLOBAL}.
      *
      * @param key the config key
      * @return the read result, or null if leadership confirmation fails
@@ -120,13 +119,13 @@ public final class ConfigReadService {
 
         // Confirm leadership on the shard that OWNS (scope, key).
         if (leadershipConfirmer != null && !leadershipConfirmer.confirmLeadership(scope, key)) {
-            return null; // not leader — caller must distinguish from "key not found"
+            return null; // not leader - caller must distinguish from "key not found"
         }
         return reader.get(scope, key);
     }
 
     /**
-     * Performs a stale read in the {@code GLOBAL} scope (A2-3 default). Equivalent to
+     * Performs a stale read in the {@code GLOBAL} scope. Equivalent to
      * {@link #staleRead(ConfigScope, String)} with {@link ConfigScope#GLOBAL}.
      *
      * @param key the config key

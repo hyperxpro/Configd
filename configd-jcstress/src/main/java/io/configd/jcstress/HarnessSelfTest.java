@@ -16,8 +16,7 @@ import org.openjdk.jcstress.infra.results.II_Result;
  * worthless.
  *
  * <p>This is the jcstress analogue of the assertion-twin "OBSERVED firing"
- * discipline used elsewhere in Session 2: a detector you have never seen fire is
- * not a detector.
+ * discipline: a detector you have never seen fire is not a detector.
  */
 public final class HarnessSelfTest {
 

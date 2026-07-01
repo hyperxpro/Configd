@@ -12,11 +12,11 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * RR-085 — leader {@code nextIndex} walk-back arithmetic in
+ * Tests leader {@code nextIndex} walk-back arithmetic in
  * {@code RaftNode.handleAppendEntriesResponse} on a rejected AppendEntries:
- * {@code nextIndex.put(from, Math.max(1, ni - 1))} then retry (Raft §5.3). The
- * Session-1 PIT survivors were the arithmetic mutants here ({@code ni - 1} ->
- * {@code ni}, the {@code Math.max(1, ...)} floor, etc.). The existing
+ * {@code nextIndex.put(from, Math.max(1, ni - 1))} then retry (Raft section 5.3). The
+ * arithmetic mutants at this site ({@code ni - 1} -> {@code ni}, the
+ * {@code Math.max(1, ...)} floor) went untested because the existing
  * {@code RaftNodeTest.leaderDecrementsNextIndexOnRejection} asserts only
  * {@code commitIndex() > 0} and never forces a multi-step walk-back, so the
  * decrement could be wrong and the test still pass (the other follower carries

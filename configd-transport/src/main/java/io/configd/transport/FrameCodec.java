@@ -5,8 +5,7 @@ import java.util.Objects;
 import java.util.zip.CRC32C;
 
 /**
- * Encoder/decoder for the Configd wire protocol frame format
- * (ADR-0010 v0; ADR-0029 v1: version byte + CRC32C trailer).
+ * Encoder/decoder for the Configd wire protocol frame format.
  *
  * <p>Frame layout (v2):
  * <pre>
@@ -15,36 +14,35 @@ import java.util.zip.CRC32C;
  *   [Type: 1 byte]
  *   [GroupId: 4 bytes]
  *   [Term: 8 bytes]
- *   [Epoch: 8 bytes]    (v2 — RESERVED; MBZ on send, ignored on receive)
+ *   [Epoch: 8 bytes]    (v2 - RESERVED; MBZ on send, ignored on receive)
  *   [Payload: variable]
  *   [CRC32C: 4 bytes]
  * </pre>
  *
  * <ul>
- *   <li><b>Length</b> — total frame size in bytes, including length and
+ *   <li><b>Length</b> - total frame size in bytes, including length and
  *       trailer. Big-endian.</li>
- *   <li><b>Version</b> — wire-format major version. Decoder rejects any
+ *   <li><b>Version</b> - wire-format major version. Decoder rejects any
  *       value other than {@link #WIRE_VERSION} with
  *       {@link UnsupportedWireVersionException}. Required for any
  *       future N-1/N rolling upgrade.</li>
- *   <li><b>Type</b> — {@link MessageType} code.</li>
- *   <li><b>GroupId</b> — Raft group identifier, big-endian.</li>
- *   <li><b>Term</b> — Raft term, big-endian.</li>
- *   <li><b>Epoch</b> — v2 RESERVED field (Multi-Raft Phase 1, D1/DL-P1-04),
- *       big-endian. <em>Dormant</em>: the encoder writes zero (MBZ) and the
- *       decoder reads-but-ignores it, so a future v2.x sender that populates
- *       epoch is still decodable here — activating it needs no further wire
- *       bump. Not surfaced on {@link Frame} until it is used (DL-F-01).</li>
- *   <li><b>Payload</b> — message-specific bytes. May be empty.</li>
- *   <li><b>CRC32C</b> — Castagnoli polynomial checksum
+ *   <li><b>Type</b> - {@link MessageType} code.</li>
+ *   <li><b>GroupId</b> - Raft group identifier, big-endian.</li>
+ *   <li><b>Term</b> - Raft term, big-endian.</li>
+ *   <li><b>Epoch</b> - v2 RESERVED field, big-endian. <em>Dormant</em>: the encoder
+ *       writes zero (MBZ) and the decoder reads-but-ignores it, so a future v2.x
+ *       sender that populates epoch is still decodable here - activating it needs
+ *       no further wire bump. Not surfaced on {@link Frame} until it is used.</li>
+ *   <li><b>Payload</b> - message-specific bytes. May be empty.</li>
+ *   <li><b>CRC32C</b> - Castagnoli polynomial checksum
  *       ({@link java.util.zip.CRC32C}) over <em>all preceding
  *       bytes</em> (length through end of payload). Defense-in-depth
  *       against bit flips and bug-induced corruption inside a TLS
- *       session — TLS itself provides the cryptographic integrity
+ *       session - TLS itself provides the cryptographic integrity
  *       check at the connection layer.</li>
  * </ul>
  *
- * <p>This class is stateless — all methods are static. Decode allocates
+ * <p>This class is stateless - all methods are static. Decode allocates
  * exactly one {@code byte[]} for the payload and one {@link Frame}
  * record; the CRC computation uses an instance-local {@link CRC32C}
  * but does not allocate beyond it.
@@ -55,28 +53,22 @@ public final class FrameCodec {
 
     /**
      * Current wire-format major version. The decoder rejects any other
-     * value with {@link UnsupportedWireVersionException} — this is a
-     * strict tripwire, NOT a negotiation. The version byte exists so a
-     * future version can land with a peer-side Hello handshake (ADR-0030+)
-     * that accepts two adjacent versions during a rolling upgrade. Until
-     * that handshake exists, mixed-version traffic terminates the
-     * connection (so every node must run the same {@code WIRE_VERSION}).
+     * value with {@link UnsupportedWireVersionException} - this is a
+     * strict tripwire, not a negotiation. The version byte exists so a
+     * future version can land with a peer-side Hello handshake that
+     * accepts two adjacent versions during a rolling upgrade. Until that
+     * handshake exists, mixed-version traffic terminates the connection
+     * (every node must run the same {@code WIRE_VERSION}).
      *
      * <p>Bumping this constant is a controlled action governed by the
      * {@code wire-compat} CI job: any change to the {@code GoldenFixtures}
      * bytes without a corresponding {@code WIRE_VERSION} bump fails CI.
-     *
-     * <p>v1→v2 (Multi-Raft Phase 1, Seam F): reserved the 8-byte epoch
-     * header field (D1) and defined {@link MessageType#RAFT_COALESCED_HEARTBEAT}
-     * (D2). One bump for both; a clean cutover (no external v1 deployments —
-     * the strict tripwire above means v1 and v2 never interoperate).
      */
     public static final byte WIRE_VERSION = (byte) 0x02;
 
     /**
      * Fixed header size: 4 (length) + 1 (version) + 1 (type) +
-     * 4 (groupId) + 8 (term) + 8 (epoch) = 26 bytes (v2; was 18 at v1
-     * before the reserved epoch field).
+     * 4 (groupId) + 8 (term) + 8 (epoch reserved) = 26 bytes.
      */
     public static final int HEADER_SIZE = 26;
 
@@ -84,16 +76,15 @@ public final class FrameCodec {
     public static final int TRAILER_SIZE = 4;
 
     /**
-     * The value written into the reserved 8-byte epoch field (v2/D1). Zero
-     * = "no epoch" / MBZ. The field is dormant at static-N; this names the
-     * sentinel so the single place that activates epoch later is obvious.
+     * Value written into the reserved 8-byte epoch field. Zero = MBZ.
+     * Named here so the single place that activates epoch later is obvious.
      */
     private static final long RESERVED_EPOCH = 0L;
 
     /**
      * Hard upper bound on frame size, in bytes (16 MiB). Bounds any
      * peer's allocation on the read path AND any local encoder's
-     * allocation on the write path — the encoder rejects oversize
+     * allocation on the write path - the encoder rejects oversize
      * payloads symmetrically with the decoder, so the frame that
      * goes onto the wire is always one the receiver will accept.
      *
@@ -174,7 +165,7 @@ public final class FrameCodec {
         buf.put((byte) messageType.code());
         buf.putInt(groupId);
         buf.putLong(term);
-        buf.putLong(RESERVED_EPOCH); // v2/D1 reserved epoch — MBZ (dormant)
+        buf.putLong(RESERVED_EPOCH); // reserved epoch - MBZ (dormant)
         buf.put(payload);
 
         // CRC32C over [length, version, type, groupId, term, epoch, payload].
@@ -206,7 +197,7 @@ public final class FrameCodec {
         int totalLength = frameSize(payload.length);
         if (buf.remaining() < totalLength) {
             // Fail before any write so the destination buffer stays
-            // unmodified — partial writes (length prefix written, body
+            // unmodified - partial writes (length prefix written, body
             // half-written, no trailer) would corrupt the buffer for
             // any subsequent reader.
             throw new IllegalArgumentException(
@@ -220,7 +211,7 @@ public final class FrameCodec {
         buf.put((byte) messageType.code());
         buf.putInt(groupId);
         buf.putLong(term);
-        buf.putLong(RESERVED_EPOCH); // v2/D1 reserved epoch — MBZ (dormant)
+        buf.putLong(RESERVED_EPOCH); // reserved epoch - MBZ (dormant)
         buf.put(payload);
 
         // CRC32C over the bytes we just wrote, excluding the trailer.
@@ -240,22 +231,22 @@ public final class FrameCodec {
      * Decodes a frame from the given byte array. The array must
      * contain exactly one complete frame.
      *
-     * <p>Validation order (deliberate — distinct exceptions narrow
+     * <p>Validation order (deliberate - distinct exceptions narrow
      * the diagnostic question):
      * <ol>
-     *   <li>Array shorter than {@code HEADER_SIZE + TRAILER_SIZE}
-     *       → {@link IllegalArgumentException}.</li>
+     *   <li>Array shorter than {@code HEADER_SIZE + TRAILER_SIZE}:
+     *       {@link IllegalArgumentException}.</li>
      *   <li>Length prefix &lt; minimum or &gt; {@link #MAX_FRAME_SIZE}
-     *       or != {@code data.length}
-     *       → {@link IllegalArgumentException}.</li>
-     *   <li>CRC32C trailer mismatch → {@link IllegalArgumentException}
+     *       or != {@code data.length}:
+     *       {@link IllegalArgumentException}.</li>
+     *   <li>CRC32C trailer mismatch: {@link IllegalArgumentException}
      *       with prefix {@code "CRC32C mismatch"}. Verified BEFORE
      *       version / type / payload so a single bit-flip in any of
      *       those fields surfaces as "corruption" rather than a
      *       misleading "wire version mismatch" or "unknown type".</li>
-     *   <li>Version byte != {@link #WIRE_VERSION}
-     *       → {@link UnsupportedWireVersionException}.</li>
-     *   <li>Type code unknown → {@link IllegalArgumentException}
+     *   <li>Version byte != {@link #WIRE_VERSION}:
+     *       {@link UnsupportedWireVersionException}.</li>
+     *   <li>Type code unknown: {@link IllegalArgumentException}
      *       (delegated to {@link MessageType#fromCode(int)}).</li>
      * </ol>
      *
@@ -288,7 +279,7 @@ public final class FrameCodec {
         // Verify CRC32C BEFORE reading any other field. A bit-flip in
         // the version byte or type code must surface as "corruption"
         // rather than as a misleading "wire version mismatch" or
-        // "unknown type code" error — those would point operators at
+        // "unknown type code" error - those would point operators at
         // the wrong root cause (deployment misconfiguration vs.
         // hardware fault).
         int crcOffset = length - TRAILER_SIZE;
@@ -304,7 +295,7 @@ public final class FrameCodec {
                             + Integer.toHexString(trailer));
         }
 
-        // CRC has confirmed the bytes are intact — now version and
+        // CRC has confirmed the bytes are intact - now version and
         // type code are trustworthy.
         byte version = buf.get();
         if (version != WIRE_VERSION) {
@@ -315,7 +306,7 @@ public final class FrameCodec {
         MessageType type = MessageType.fromCode(typeCode);
         int groupId = buf.getInt();
         long term = buf.getLong();
-        buf.getLong(); // v2/D1 reserved epoch — decode-but-ignore (dormant; forward-compatible)
+        buf.getLong(); // reserved epoch - decode-but-ignore (dormant; forward-compatible)
 
         int payloadLen = data.length - HEADER_SIZE - TRAILER_SIZE;
         byte[] payload = new byte[payloadLen];
@@ -326,7 +317,7 @@ public final class FrameCodec {
 
     /**
      * Reads the frame length from the first 4 bytes without consuming
-     * further data. Useful for framing in a streaming decoder — the
+     * further data. Useful for framing in a streaming decoder - the
      * reader uses this to size its buffer before pulling the rest of
      * the frame off the socket.
      *

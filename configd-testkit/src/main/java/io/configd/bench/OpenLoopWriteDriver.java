@@ -22,31 +22,31 @@ import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
 
 /**
- * Session 5 / Workstream B — <b>open-loop, coordinated-omission-corrected</b> HTTP write
- * load driver against a live Configd control-plane cluster (methodology §3b + F4).
+ * <b>Open-loop, coordinated-omission-corrected</b> HTTP write
+ * load driver against a live Configd control-plane cluster (methodology section 3b).
  *
- * <h2>Coordinated omission handling (methodology §3b — open-loop intended-time scheduling)</h2>
+ * <h2>Coordinated omission handling (methodology section 3b - open-loop intended-time scheduling)</h2>
  * Each request {@code i} has a <b>scheduled send time</b> {@code t_i = startNanos + i / rate}.
  * A submitter releases request {@code i} at its scheduled slot <em>regardless of how many prior
- * requests are still in flight</em>. Latency is recorded as {@code completion − t_i} (the
+ * requests are still in flight</em>. Latency is recorded as {@code completion - t_i} (the
  * SCHEDULED time, not the actual send time). A stall therefore inflates the measured latency of
- * every request whose scheduled slot fell inside the stall — exactly the requests CO would drop.
+ * every request whose scheduled slot fell inside the stall - exactly the requests CO would drop.
  * This is NOT a naive closed-loop "send-next-after-previous-returns" generator (forbidden).
  *
- * <p>Because each {@code PUT /v1/config} BLOCKS until quorum commit (ADR-0033), the driver uses a
+ * <p>Because each {@code PUT /v1/config} BLOCKS until quorum commit, the driver uses a
  * bounded worker pool to carry concurrent in-flight requests; the SCHEDULE is owned by the main
  * submitter thread which does not wait on completions.
  *
  * <h2>Leader following (operational reality on the throttled box)</h2>
- * On a CPU-credit-throttled 2-vCPU box, Raft leadership churns (election timeout 150–300 ms can
+ * On a CPU-credit-throttled 2-vCPU box, Raft leadership churns (election timeout 150 - 300 ms can
  * fire faster than load settles). A write to a non-leader returns <b>503 with an
- * {@code X-Leader-Hint: &lt;nodeId&gt;}</b> header. The driver is given the full node-id → API-URL
+ * {@code X-Leader-Hint: &lt;nodeId&gt;}</b> header. The driver is given the full node-id -> API-URL
  * map and, on a 503 hint, retargets to the hinted leader. This is a legitimate client behaviour
  * (a real client follows the hint), and the driver <b>counts and reports</b> retargets +
  * per-status counts so churn is visible, never hidden. The CO clock still uses the scheduled send
  * time, so a churn stall inflates the recorded latency rather than dropping it.
  *
- * <h2>F4 self-calibration</h2>
+ * <h2>Self-calibration</h2>
  * Mode {@code calibrate} drives as fast as it can (closed loop, N workers) to find the ceiling
  * commit rate the harness+server sustain; an at-rate run must stay below that ceiling with
  * headroom or it is a generator/server-saturation finding, not a clean latency number.
@@ -76,7 +76,7 @@ public final class OpenLoopWriteDriver {
         }
     }
 
-    /** Parse "1=http://h:8181,2=http://h:8182,3=..." → ordered list of base URLs + id map. */
+    /** Parse "1=http://h:8181,2=http://h:8182,3=..." -> ordered list of base URLs + id map. */
     private static Map<Integer, String> parseNodeMap(String spec) {
         Map<Integer, String> m = new HashMap<>();
         for (String part : spec.split(",")) {
@@ -121,7 +121,7 @@ public final class OpenLoopWriteDriver {
     }
 
     // ------------------------------------------------------------------
-    // calibrate: closed-loop max sustainable commit rate (F4 precondition)
+    // calibrate: closed-loop max sustainable commit rate (precondition for at-rate runs)
     // ------------------------------------------------------------------
     private static void calibrate(String[] args) throws Exception {
         Map<Integer, String> nodes = parseNodeMap(args[1]);

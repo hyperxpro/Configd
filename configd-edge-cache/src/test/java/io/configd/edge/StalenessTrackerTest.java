@@ -11,23 +11,23 @@ import org.junit.jupiter.api.Test;
 import static org.junit.jupiter.api.Assertions.*;
 
 /**
- * Tests for {@link StalenessTracker} reworked against the ADR-0039 <b>covered frontier</b>:
- * {@code staleness = wall_now − frontier}, where
+ * Tests for {@link StalenessTracker} and its <b>covered-frontier</b> staleness model:
+ * {@code staleness = wall_now - frontier}, where
  * {@code frontier = max(commit_ts(last applied), server_now(last cursor-matched HEARTBEAT))}.
  *
- * <p>Key ADR-0039 properties pinned here (CT-07 + the defect's regression test):
+ * <p>Key properties pinned here:
  * <ul>
  *   <li>threshold transitions are driven by withholding BOTH deltas and heartbeats (a true
- *       stall — the frontier freezes and wall-now marches past it);</li>
+ *       stall - the frontier freezes and wall-now marches past it);</li>
  *   <li>an idle-but-heartbeating edge ({@code latestSeq == cursor}) stays CURRENT
- *       indefinitely — the exact defect ADR-0039 fixes (the pre-fix idle-time proxy would
- *       have walked it to DISCONNECTED);</li>
+ *       indefinitely (the pre-covered-frontier idle-time proxy would have walked it to
+ *       DISCONNECTED and triggered spurious re-bootstraps);</li>
  *   <li>a heartbeat with {@code latestSeq > cursor} does NOT advance the frontier (the edge
- *       is genuinely behind — data age is real lag);</li>
- *   <li>the implausibility tripwire (future-frontier / regression) counts + clamps (CT-08,
- *       see {@link StalenessSkewTripwireTest}).</li>
+ *       is genuinely behind - data age is real lag);</li>
+ *   <li>the implausibility tripwire (future-frontier / regression) counts + clamps
+ *       (see {@link StalenessSkewTripwireTest}).</li>
  * </ul>
- * Threshold table (500ms / 5s / 30s) and the state machine are UNCHANGED by ADR-0039.
+ * Threshold table (500ms / 5s / 30s) and the state machine are unchanged.
  */
 class StalenessTrackerTest {
 
@@ -58,7 +58,7 @@ class StalenessTrackerTest {
 
         @Test
         void initialStateIsDisconnected() {
-            // No frontier known yet — the edge has covered nothing.
+            // No frontier known yet - the edge has covered nothing.
             assertEquals(StalenessTracker.State.DISCONNECTED, tracker.currentState());
         }
 
@@ -84,7 +84,7 @@ class StalenessTrackerTest {
         @Test
         void stillCurrentAfter499msWithoutAnyUpdateOrHeartbeat() {
             tracker.recordUpdate(1, 10_000);
-            clock.advance(499); // withhold BOTH deltas and heartbeats — a true stall
+            clock.advance(499); // withhold BOTH deltas and heartbeats - a true stall
             assertEquals(StalenessTracker.State.CURRENT, tracker.currentState());
         }
 
@@ -156,17 +156,17 @@ class StalenessTrackerTest {
     }
 
     // -----------------------------------------------------------------------
-    // ADR-0039 frontier via HEARTBEAT — the defect's regression tests
+    // Covered-frontier via HEARTBEAT - regression tests
     // -----------------------------------------------------------------------
 
     @Nested
     class HeartbeatFrontier {
 
         /**
-         * THE ADR-0039 REGRESSION TEST. An idle-but-heartbeating edge ({@code latestSeq ==
-         * cursor}) stays CURRENT indefinitely. The pre-fix idle-time proxy would have walked
-         * this edge CURRENT → STALE → DEGRADED → DISCONNECTED and triggered a needless
-         * re-bootstrap storm — the precise defect this ADR exists to fix.
+         * Regression test: an idle-but-heartbeating edge ({@code latestSeq == cursor}) stays
+         * CURRENT indefinitely. The pre-covered-frontier idle-time proxy would have walked this
+         * edge CURRENT to STALE to DEGRADED to DISCONNECTED and triggered a needless
+         * re-bootstrap storm.
          */
         @Test
         void idleButHeartbeatingEdgeStaysCurrentIndefinitely() {
@@ -183,7 +183,7 @@ class StalenessTrackerTest {
                 assertEquals(StalenessTracker.State.CURRENT, tracker.currentState(),
                         "an idle-but-heartbeating edge must stay CURRENT (ADR-0039)");
             }
-            // 1000 × 250ms = 250s of idle time, yet CURRENT throughout.
+            // 1000 x 250ms = 250s of idle time, yet CURRENT throughout.
         }
 
         @Test
@@ -192,7 +192,7 @@ class StalenessTrackerTest {
             tracker.recordUpdate(cursor, 10_000);
             clock.advance(600); // would be STALE without a frontier advance
 
-            // Server says latestSeq=7 > cursor=5 — the edge is genuinely behind (2 seqs).
+            // Server says latestSeq=7 > cursor=5 - the edge is genuinely behind (2 seqs).
             boolean advanced = tracker.recordFrontier(7, cursor, clock.currentTimeMillis());
             assertFalse(advanced, "latestSeq > cursor must NOT advance the frontier");
             assertEquals(StalenessTracker.State.STALE, tracker.currentState(),
@@ -206,7 +206,7 @@ class StalenessTrackerTest {
             // frontier must not regress.
             clock.timeMs = 11_000;
             tracker.recordUpdate(3, 11_000); // frontier = 11_000
-            // A cursor-matched heartbeat with an EARLIER serverNow — refused as a regression.
+            // A cursor-matched heartbeat with an EARLIER serverNow - refused as a regression.
             tracker.recordFrontier(3, 3, 10_900);
             assertEquals(0, tracker.stalenessMs(),
                     "frontier must hold at 11_000 (the heartbeat regression is refused)");
@@ -248,7 +248,7 @@ class StalenessTrackerTest {
         void stalenessNeverNegative() {
             // A frontier slightly ahead of wall-now (within skew allowance) clamps to 0.
             clock.timeMs = 10_000;
-            tracker.recordUpdate(1, 10_030); // 30ms ahead — within the 50ms skew allowance
+            tracker.recordUpdate(1, 10_030); // 30ms ahead - within the 50ms skew allowance
             assertEquals(0, tracker.stalenessMs());
         }
     }
@@ -278,7 +278,7 @@ class StalenessTrackerTest {
     }
 
     // -----------------------------------------------------------------------
-    // Boundary values (thresholds unchanged by ADR-0039)
+    // Boundary values
     // -----------------------------------------------------------------------
 
     @Nested
@@ -287,7 +287,7 @@ class StalenessTrackerTest {
         @Test
         void exactlyAtStaleThresholdIsCurrent() {
             tracker.recordUpdate(1, 10_000);
-            clock.advance(500); // threshold is "> 500ms" → still CURRENT
+            clock.advance(500); // threshold is "> 500ms" -> still CURRENT
             assertEquals(StalenessTracker.State.CURRENT, tracker.currentState());
         }
 
@@ -307,7 +307,7 @@ class StalenessTrackerTest {
     }
 
     // -----------------------------------------------------------------------
-    // F-0073: InvariantMonitor wiring for INV-S1 staleness_bound (unchanged seam)
+    // InvariantMonitor wiring for INV-S1 staleness_bound
     // -----------------------------------------------------------------------
 
     @Nested

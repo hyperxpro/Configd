@@ -15,7 +15,7 @@ import java.util.List;
  *   <li>{@link #flush()} is called explicitly.</li>
  * </ol>
  * <p>
- * This implements the 200us batching window from ADR-0010. The pipeline
+ * This implements the 200us batching window. The pipeline
  * is designed for single-threaded access from the Raft I/O thread.
  * No synchronization is used.
  * <p>

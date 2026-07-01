@@ -40,7 +40,7 @@ import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.api.io.TempDir;
 
 /**
- * Multi-Raft Phase 1 — Seam G3: the INTEGRATED N&gt;1 sweep — the proof that the production pieces COMPOSE.
+ * The INTEGRATED N&gt;1 sweep - the proof that the production pieces COMPOSE.
  * The component proofs each cover one surface ({@code MultiGroupBringupTest} = real bring-up + per-shard
  * store isolation; {@code ShardedFanOutTest} = the sharded fan-out on synthetic runtimes;
  * {@code SharedNodeFaultIsolationLiveTest} = cross-shard fault isolation). This closes the integration
@@ -49,18 +49,18 @@ import org.junit.jupiter.api.io.TempDir;
  * ({@link ConfigdServer#registerShardedFanOut}) over those runtimes, and proves they work together:
  *
  * <ul>
- *   <li><b>Per-shard store isolation (S2/S4)</b> — a committed write to shard k lands in shard k's store
+ *   <li><b>Per-shard store isolation (S2/S4)</b> - a committed write to shard k lands in shard k's store
  *       ONLY; siblings never see it.</li>
- *   <li><b>G1 fan-out, integrated</b> — each shard's committed write also lands in THAT shard's fan-out
+ *   <li><b>G1 fan-out, integrated</b> - each shard's committed write also lands in THAT shard's fan-out
  *       buffer (per-shard seq, monotone), and in NO other shard's buffer (cross-shard fan-out
  *       isolation).</li>
- *   <li><b>Shared-owner fidelity</b> — N=4 groups on P=2 owners (owner0={0,2}, owner1={1,3}), the
+ *   <li><b>Shared-owner fidelity</b> - N=4 groups on P=2 owners (owner0={0,2}, owner1={1,3}), the
  *       production shape where groups co-own threads.</li>
  * </ul>
  *
  * <p>The thread-safety net non-vacuity (missed-hop + starvation) is proven by
  * {@code OwnerIsolationMultiOwnerTest} + {@code SharedNodeFaultIsolationLiveTest}; the coalesced-heartbeat
- * flat-in-N property by {@code HeartbeatCoalescingTest}. The gate-phase1 {@code wiring-g} block runs all of
+ * flat-in-N property by {@code HeartbeatCoalescingTest}. The {@code wiring-g} block runs all of
  * them as the cumulative "N&gt;1 is correct" sweep that GATES the boot-guard removal (G4). N&gt;1 is still
  * boot-refused here; this is the proof that lifting the guard is justified.
  */
@@ -81,7 +81,7 @@ class MultiShardIntegratedSweepTest {
     void realBringUpComposedWithShardedFanOut_perShardIsolationInBothStoreAndFanOut(@TempDir Path dataDir)
             throws Exception {
         final int n = 4;
-        final int p = 2; // P<N: owner0={0,2}, owner1={1,3} — groups share owner threads (production shape)
+        final int p = 2; // P<N: owner0={0,2}, owner1={1,3} - groups share owner threads (production shape)
         pool = new OwnerExecutorPool(p);
         MultiRaftDriver driver = new MultiRaftDriver(NODE, Clock.system());
         driver.setOwnerPool(pool);
@@ -92,12 +92,12 @@ class MultiShardIntegratedSweepTest {
         for (int gid = 0; gid < n; gid++) {
             runtimes.add(bringUpLeader(driver, n, gid, dataDir, nodeStorage));
         }
-        // Distinct per-shard storage (N>1) — the bring-up really sharded.
+        // Distinct per-shard storage (N>1) - the bring-up really sharded.
         for (int gid = 0; gid < n; gid++) {
             assertEquals(RaftRole.LEADER, runtimes.get(gid).raftNode().role(), "group " + gid + " is LEADER");
         }
 
-        // (2) REAL sharded fan-out wired over the real runtimes (Seam G1).
+        // (2) REAL sharded fan-out wired over the real runtimes.
         ConfigdServer.ShardedFanOut fan = ConfigdServer.registerShardedFanOut(
                 runtimes, Clock.system(), new MetricsRegistry().counter("fanout.buffer.dropped"), 10_000);
         assertEquals(n, fan.buffers().size(), "one fan-out buffer per shard");
@@ -121,7 +121,7 @@ class MultiShardIntegratedSweepTest {
         }
 
         // (4b) Per-shard FAN-OUT isolation (G1 integrated): each shard's buffer has exactly its own commit,
-        // at per-shard seq 1, carrying its own key — and NO other shard's key.
+        // at per-shard seq 1, carrying its own key - and NO other shard's key.
         for (int gid = 0; gid < n; gid++) {
             List<CommitNotification> out = drain(fan.buffers().get(gid));
             assertEquals(1, out.size(), "shard " + gid + " fan-out buffer holds exactly its own commit");

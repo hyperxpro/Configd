@@ -24,8 +24,8 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 
 /**
  * Charter hard-rule 5 for the edge-read surface: the strongest-Netty {@link NettyEdgeReadServer}
- * must serve the read path <b>equivalently</b> to the production JDK {@link EdgeHttpServer} — same
- * status, same body bytes, same {@code X-Configd-*} headers — across hit / not-subscribed /
+ * must serve the read path <b>equivalently</b> to the production JDK {@link EdgeHttpServer} - same
+ * status, same body bytes, same {@code X-Configd-*} headers - across hit / not-subscribed /
  * strong-read / cursor-behind. A Netty server that is faster but serves a different (or wrong)
  * response is disqualified, so this gates the edge-read benchmark.
  */
@@ -83,7 +83,7 @@ class NettyEdgeReadServerCorrectnessTest {
             String[] paths = {
                     "/v1/config/config/svc-0",   // hit
                     "/v1/config/config/svc-7",   // hit
-                    "/v1/config/config/nope",    // not-subscribed → 404 + X-Configd-Refused
+                    "/v1/config/config/nope",    // not-subscribed -> 404 + X-Configd-Refused
             };
             for (String path : paths) {
                 HttpResponse<byte[]> rj = get(client, jdk.port(), path);

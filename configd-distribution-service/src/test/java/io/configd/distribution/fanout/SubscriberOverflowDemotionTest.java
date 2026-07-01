@@ -26,11 +26,11 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * CT-26 (charter §4 C1; ADR-0037). On outbound overflow the session is DEMOTED from
- * streaming to catch-up (snapshot) mode — never an unbounded queue, never a silent drop.
- * Every demotion carries cursor evidence (a {@link DemotionEvent}), fires a metric, and
- * is recoverable: the subsequent snapshot transfer plus resumed tail loses no committed
- * effect (the edge observes every mutation's effect across the demotion boundary).
+ * On outbound overflow the session is DEMOTED from streaming to catch-up (snapshot) mode -
+ * never an unbounded queue, never a silent drop. Every demotion carries cursor evidence (a
+ * {@link DemotionEvent}), fires a metric, and is recoverable: the subsequent snapshot
+ * transfer plus resumed tail loses no committed effect (the edge observes every mutation's
+ * effect across the demotion boundary).
  */
 class SubscriberOverflowDemotionTest {
 

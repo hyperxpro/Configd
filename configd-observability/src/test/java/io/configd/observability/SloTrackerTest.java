@@ -10,7 +10,7 @@ import java.util.Map;
 import static org.junit.jupiter.api.Assertions.*;
 
 /**
- * Tests for {@link SloTracker} — SLO/SLI tracking with sliding windows.
+ * Tests for {@link SloTracker} - SLO/SLI tracking with sliding windows.
  */
 class SloTrackerTest {
 
@@ -90,7 +90,7 @@ class SloTrackerTest {
     }
 
     // -----------------------------------------------------------------------
-    // Compliance — basic
+    // Compliance - basic
     // -----------------------------------------------------------------------
 
     @Nested

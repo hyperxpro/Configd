@@ -14,7 +14,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
  * install wholesale-replaces the store with no per-mutation {@link ConfigStateMachine.ConfigChangeListener}
  * notification, so this hook is how the config-policy loader learns of {@code _acl/} changes delivered via
  * InstallSnapshot (follower catch-up / runtime restore). The hook must fire on a SUCCESSFUL restore, NOT
- * fire on a failed restore, and be empty-default (no listener ⇒ unchanged behavior — covered by the
+ * fire on a failed restore, and be empty-default (no listener means unchanged behavior - covered by the
  * existing {@code SnapshotAndRestore} suite).
  */
 class ConfigStateMachineSnapshotListenerTest {
@@ -53,7 +53,7 @@ class ConfigStateMachineSnapshotListenerTest {
         AtomicInteger fires = new AtomicInteger();
         sm.addSnapshotListener(fires::incrementAndGet);
 
-        // A truncated payload (4 bytes — too short for the 8-byte sequence header) fails before any
+        // A truncated payload (4 bytes - too short for the 8-byte sequence header) fails before any
         // store replacement; the listener must NOT fire (notify only on success).
         assertThrows(RuntimeException.class, () -> sm.restoreSnapshot(new byte[]{0, 0, 0, 0}));
 

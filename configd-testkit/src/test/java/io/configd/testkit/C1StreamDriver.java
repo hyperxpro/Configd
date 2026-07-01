@@ -23,9 +23,9 @@ import java.util.Set;
 import java.util.function.LongConsumer;
 
 /**
- * The REAL C1 {@link StreamDriver}: drives the production
- * {@link io.configd.distribution.fanout.FanOutSessionCore} — the same code the live
- * {@code FanOutServer} (part b) runs — once per subscribed edge each sim tick. This is
+ * The REAL stream driver ({@link StreamDriver}): drives the production
+ * {@link io.configd.distribution.fanout.FanOutSessionCore} - the same code the live
+ * {@code FanOutServer} runs - once per subscribed edge each sim tick. This is
  * what replaces {@link StreamDriver#NONE}: with it, committed mutations actually reach the
  * edges over the simulated edge network, so {@link EdgePropagationBacklogTest} converges
  * and the 507-seed gate exercises the live drain logic.
@@ -33,23 +33,23 @@ import java.util.function.LongConsumer;
  * <h2>Wiring (per edge)</h2>
  * Each edge gets one {@link FanOutSessionCore} bound to its subscribed CP node's
  * {@link CommitNotificationSource} / {@link ReplaySource} (the sim's per-node FanOutBuffer
- * and SnapshotReplaySource — the ADR-0034 seams). A {@link SimSink} maps the session's
+ * and SnapshotReplaySource - the commit-notification handoff seams). A {@link SimSink} maps the session's
  * {@link EdgeFrame}s onto {@link EdgeStream} messages over the edge {@link AdversarialNetwork}:
  * <ul>
- *   <li>{@code NOTIFY} → {@link EdgeStream.NotifyBatch} (verbatim chain, ADR-0038);</li>
- *   <li>{@code SNAPSHOT_BEGIN} / {@code SNAPSHOT_CHUNK} / {@code SNAPSHOT_END} → reassembled
+ *   <li>{@code NOTIFY} -> {@link EdgeStream.NotifyBatch} (verbatim chain, batched frame format);</li>
+ *   <li>{@code SNAPSHOT_BEGIN} / {@code SNAPSHOT_CHUNK} / {@code SNAPSHOT_END} -> reassembled
  *       <b>driver-side</b> into one
- *       {@link EdgeStream.Snapshot} (so {@link EdgeActor} stays simple — it applies one
- *       wholesale snapshot, as it did under the V1 DirectInjectionDriver);</li>
- *   <li>{@code HEARTBEAT} → {@link EdgeStream.Heartbeat};</li>
+ *       {@link EdgeStream.Snapshot} (so {@link EdgeActor} stays simple - it applies one
+ *       wholesale snapshot, as it did under the DirectInjectionDriver);</li>
+ *   <li>{@code HEARTBEAT} -> {@link EdgeStream.Heartbeat};</li>
  *   <li>{@code SUBSCRIBE_OK} and the {@code DEMOTED_TO_CATCHUP} notice are consumed by the
  *       driver (server-internal); a fatal {@code ERROR_CLOSE} (e.g. GAP_UNRECOVERABLE) is
  *       recorded so a test can see it.</li>
  * </ul>
- * The edge→server {@code CURSOR_ACK} is routed back synchronously by wiring
+ * The edge-to-server {@code CURSOR_ACK} is routed back synchronously by wiring
  * {@link EdgeActor#setCursorAckSink} to {@code session.onCursorAck} (the sim has no return
  * channel latency model for acks; the design treats the ack as the edge's applied-cursor
- * signal, delivered when the edge applies — deterministic and sufficient for the V1
+ * signal, delivered when the edge applies - deterministic and sufficient for the
  * mechanism check).
  *
  * <h2>Determinism</h2>
@@ -63,12 +63,12 @@ final class C1StreamDriver implements StreamDriver {
     private final Clock clock;
 
     /**
-     * OPT-IN C4 slow-consumer governor. Null (the default and the gate path) preserves the
+     * OPT-IN slow-consumer governor. Null (the default and the gate path) preserves the
      * historical behavior byte-for-byte: no admission, no demotion feed, no policy
      * disconnects. With a governor: each session's demotions feed it, queue-pressure edges
      * and ack progress are reported per tick, a QUARANTINED/UNHEALTHY verdict kicks the
-     * connection (dead sink + on-wire {@link EdgeStream.ErrorClose} code 8 — the real edge
-     * core reaction runs), and every (re)subscribe routes through {@code admit} — refusals
+     * connection (dead sink + on-wire {@link EdgeStream.ErrorClose} code 8 - the real edge
+     * core reaction runs), and every (re)subscribe routes through {@code admit} - refusals
      * are retried each tick, modelling the production edge's bounded reconnect loop.
      */
     private final SlowConsumerGovernor governor;
@@ -77,16 +77,16 @@ final class C1StreamDriver implements StreamDriver {
     private final Map<Integer, FanOutSessionCore> sessions = new LinkedHashMap<>();
     private final Map<Integer, SimSink> sinks = new LinkedHashMap<>();
 
-    /** Fatal close events observed (e.g. GAP_UNRECOVERABLE) — exposed for tests. */
+    /** Fatal close events observed (e.g. GAP_UNRECOVERABLE) - exposed for tests. */
     private final List<String> fatalCloses = new ArrayList<>();
 
-    /** C3 recovery resubscribes performed (per test assertions). */
+    /** Reconnect recovery resubscribes performed (per test assertions). */
     private int resubscribes;
 
-    /** C4: (re)subscribes refused by admission, retried each tick (deterministic order). */
+    /** (re)subscribes refused by admission, retried each tick (deterministic order). */
     private final Map<Integer, PendingResubscribe> pendingResubscribes = new LinkedHashMap<>();
 
-    /** C4: edges whose queue is currently at/above the warn threshold (edge detection). */
+    /** Edges whose queue is currently at/above the warn threshold (edge detection). */
     private final Set<Integer> aboveWarnEdges = new HashSet<>();
 
     /** The nowMs of the current/most recent drive tick (the governor's time source). */
@@ -98,7 +98,7 @@ final class C1StreamDriver implements StreamDriver {
      * Sim-tuned config. The production {@link FanOutConfig#defaults()} ack-lag threshold is
      * 8192 seqs (tuned for 10k writes/s); the sim commits only tens of seqs per run, so a
      * production threshold would never trigger ack-lag demotion. We scale the ack-lag and
-     * queue thresholds DOWN so the demotion→snapshot→recovery path actually exercises at sim
+     * queue thresholds DOWN so the demotion->snapshot->recovery path actually exercises at sim
      * scale (the design's named thresholds are exactly the right knob): when the edge network
      * reorders/drops a delta the edge stops acking forward, the server's ack-lag fires, and a
      * snapshot heals the edge. Everything else stays at production defaults.
@@ -109,10 +109,10 @@ final class C1StreamDriver implements StreamDriver {
                 80,        // queueWarnPct
                 64,        // batchMaxNotifications
                 262_144,   // batchMaxBytes
-                2L,        // ackLagDemoteSeqs — sim-scaled (prod 8192). The sim commits only
+                2L,        // ackLagDemoteSeqs - sim-scaled (prod 8192). The sim commits only
                            // tens of seqs per run, so the threshold must be SMALL relative to
                            // the workload or a behind edge never accrues enough lag to trigger
-                           // the demotion→snapshot recovery and is stranded (incl. the common
+                           // the demotion->snapshot recovery and is stranded (incl. the common
                            // case of an edge that gapped on the final one or two deltas of the
                            // stream). 2 heals those while staying above the single-tick steady-
                            // state lag of one in-flight batch (the snapshot recovery is
@@ -130,7 +130,7 @@ final class C1StreamDriver implements StreamDriver {
         this(config, null);
     }
 
-    /** C4: a driver with the slow-consumer governor live (opt-in; null = historical). */
+    /** A driver with the slow-consumer governor live (opt-in; null = historical). */
     C1StreamDriver(FanOutConfig config, SlowConsumerGovernor governor) {
         this.config = config;
         this.governor = governor;
@@ -160,7 +160,7 @@ final class C1StreamDriver implements StreamDriver {
                 }
             }
             session.tick(now);
-            // C4: queue-pressure edges + the time-driven SLOW evaluation (skipped if the
+            // Governor: queue-pressure edges + the time-driven SLOW evaluation (skipped if the
             // demotion listener kicked this session during the tick).
             if (governor != null && sessions.get(edge.edgeId()) == session) {
                 feedQueuePressure(edge, session, now);
@@ -171,7 +171,7 @@ final class C1StreamDriver implements StreamDriver {
     /**
      * Lazily creates + subscribes a session for {@code edge} on first sight. With the C4
      * governor live the subscribe routes through admission (a refusal goes to the per-tick
-     * retry loop and this returns null) — the sim analogue of the production server
+     * retry loop and this returns null) - the sim analogue of the production server
      * refusing the SUBSCRIBE and the edge's connect loop retrying.
      */
     private FanOutSessionCore subscribe(Context ctx, EdgeActor edge) {
@@ -195,8 +195,8 @@ final class C1StreamDriver implements StreamDriver {
                     pendingResubscribes.put(edge.edgeId(), new PendingResubscribe(edge, cursor));
                     return null;
                 }
-                // Forced re-bootstrap: cursor rebound to 0 so the C3 decideMode cursor-0
-                // rule yields SNAPSHOT_FIRST — exactly the FanOutServer admission rewrite.
+                // Forced re-bootstrap: cursor rebound to 0 so the decideMode cursor-0
+                // rule yields SNAPSHOT_FIRST - exactly the FanOutServer admission rewrite.
                 case ALLOW_FORCE_SNAPSHOT -> cursor = 0L;
                 case ALLOW -> { /* admit as requested */ }
             }
@@ -248,15 +248,15 @@ final class C1StreamDriver implements StreamDriver {
         return List.copyOf(fatalCloses);
     }
 
-    /** C3 recovery resubscribes performed via {@link #resubscribe}. */
+    /** Reconnect recovery resubscribes performed via {@link #resubscribe}. */
     int resubscribes() {
         return resubscribes;
     }
 
     /**
-     * C3 recovery seam: re-subscribes {@code edge} at {@code resumeCursor} — the sim
+     * C3 recovery seam: re-subscribes {@code edge} at {@code resumeCursor} - the sim
      * analogue of the edge process tearing down its connection and re-SUBSCRIBE-ing. The
-     * OLD session is neutralized (its sink goes dead — frames from a torn-down connection
+     * OLD session is neutralized (its sink goes dead - frames from a torn-down connection
      * never reach the edge) and a FRESH {@link FanOutSessionCore} runs the server's
      * already-tested TAIL/SNAPSHOT_FIRST decision for the carried cursor (screen C3-1: the
      * recovery path IS the subscription path; zero new wire surface). Deterministic:
@@ -277,7 +277,7 @@ final class C1StreamDriver implements StreamDriver {
 
     /**
      * Demotion-listener seam (mirrors the FanOutServer connection): every demotion feeds
-     * the governor; a QUARANTINED/UNHEALTHY verdict disconnects the subscriber — the dead
+     * the governor; a QUARANTINED/UNHEALTHY verdict disconnects the subscriber - the dead
      * sink models the closed socket, and the on-wire {@link EdgeStream.ErrorClose}
      * ({@code ErrorCode.QUARANTINED}, code 8) reaches the edge so the REAL core reaction
      * (the reconnect directive) runs.
@@ -324,7 +324,7 @@ final class C1StreamDriver implements StreamDriver {
     }
 
     /**
-     * Retries admission-refused (re)subscribes once per tick — the sim analogue of the
+     * Retries admission-refused (re)subscribes once per tick - the sim analogue of the
      * production edge's bounded reconnect loop hitting the SUBSCRIBE refusal until the
      * cooldown readmits (each refusal is counted on
      * {@code edge_fanout_reconnects_refused_total}).
@@ -406,7 +406,7 @@ final class C1StreamDriver implements StreamDriver {
                     // DEMOTED_TO_CATCHUP is a non-fatal server-internal notice (the snapshot
                     // flow follows); the edge does not need a separate wire message for it.
                 }
-                // CursorAck / Subscribe are edge→server (never offered by the session here).
+                // CursorAck / Subscribe are edge->server (never offered by the session here).
                 default -> { /* unreachable for server-emitted frames */ }
             }
             return true; // the sim transport never blocks (latency/drops are the network's job)

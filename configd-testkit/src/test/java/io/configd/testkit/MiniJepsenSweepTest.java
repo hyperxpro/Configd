@@ -12,19 +12,19 @@ import java.util.random.RandomGeneratorFactory;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * Session 4 / Workstream E — sustained mini-Jepsen against the FULLY-FIXED system (charter §6 step
+ * Sustained mini-Jepsen against the FULLY-FIXED system (charter section 6 step
  * 5). A long-horizon randomized MIXED-fault run on the 5-node control plane: random partitions,
  * heals, packet loss, latency spikes, and continuous writes, with the consistency-contract SAFETY
  * oracle asserted EVERY tick (single-leader-per-term + no divergent commit + no committed-entry
- * loss). After the storm a final heal must converge the whole cluster — proving the mixed-fault
+ * loss). After the storm a final heal must converge the whole cluster - proving the mixed-fault
  * history left the cluster recoverable, not wedged.
  *
  * <p>This complements the existing adversarial sweeps re-run against the fixed system: the 10k
  * control-plane {@code SeedSweepTest} (build-and-test job) and the 10k integrated edge
- * {@code EdgeIntegratedNightlySweepTest} (gate-4 nightly) — both 0 safety violations post-fix. It is
+ * {@code EdgeIntegratedNightlySweepTest} (nightly sweep) - both 0 safety violations post-fix. It is
  * NIGHTLY, not in the CI gate: default a small horizon/seed count; the nightly run overrides
  * {@code -Dconfigd.minijepsen.seeds} / {@code -Dconfigd.minijepsen.horizon} for a sustained sweep.
- * fault-matrix §E.
+ * fault-matrix section E.
  */
 class MiniJepsenSweepTest {
 
@@ -71,7 +71,7 @@ class MiniJepsenSweepTest {
                                 }
                             }
                         }
-                        case 2 -> c.net.setDropRate(0.10 + 0.30 * r.nextDouble()); // 10–40% loss
+                        case 2 -> c.net.setDropRate(0.10 + 0.30 * r.nextDouble()); // 10 - 40% loss
                         case 3 -> { // a latency spike on a random directed edge
                             int a = r.nextInt(N), b = r.nextInt(N);
                             if (a != b) {
@@ -87,7 +87,7 @@ class MiniJepsenSweepTest {
                 }
             }
 
-            // Final heal → the whole cluster must converge (the mixed-fault history left it
+            // Final heal -> the whole cluster must converge (the mixed-fault history left it
             // recoverable, never wedged). A committed write must propagate to ALL N nodes.
             c.net.healAll();
             c.net.setDropRate(0.0);

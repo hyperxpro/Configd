@@ -18,7 +18,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * Strict-grammar + fail-closed tests for {@link PolicySerializer} (O-6 Seam 2a). Covers the round-trip,
+ * Strict-grammar + fail-closed tests for {@link PolicySerializer}. Covers the round-trip,
  * the full reject matrix (any malformed input rejects the WHOLE load), whitespace/CRLF/comment handling,
  * empty/spaced prefixes, multi-key assembly, and the load-bearing distinction between a structurally
  * malformed policy (REJECT) and a well-formed-but-incomplete one (ACCEPT, inert) that lets the loader's
@@ -81,7 +81,7 @@ class PolicySerializerTest {
 
     @Test
     void emptyPrefixMatchesEverything() {
-        // "allow READ" with no third field ⇒ empty prefix (startsWith("") matches all keys).
+        // "allow READ" with no third field -> empty prefix (startsWith("") matches all keys).
         ConfigPolicy p = PolicySerializer.parse(subtree("_acl/roles/global", "allow READ"));
         PolicyRule r = onlyRule(p, "global");
         assertEquals("", r.prefix());
@@ -130,13 +130,13 @@ class PolicySerializerTest {
 
     @Test
     void roleWithNoRulesParses() {
-        // An empty role value (only comments/blanks) is a defined role with zero rules — inert, not an error.
+        // An empty role value (only comments/blanks) is a defined role with zero rules - inert, not an error.
         ConfigPolicy p = PolicySerializer.parse(subtree("_acl/roles/empty", "# nothing here\n\n"));
         assertTrue(p.roles().containsKey("empty"));
         assertTrue(p.roles().get("empty").rules().isEmpty());
     }
 
-    // ---------------- reject matrix (fail-closed: any malformed input → PolicyParseException) ----------------
+    // ---------------- reject matrix (fail-closed: any malformed input -> PolicyParseException) ----------------
 
     @Test
     void rejectUnknownAclKeyShape() {
@@ -172,12 +172,12 @@ class PolicySerializerTest {
 
     @Test
     void rejectEmptyOrMalformedCapList() {
-        // double comma / trailing comma / leading comma → empty token
+        // double comma / trailing comma / leading comma -> empty token
         assertThrows(PolicyParseException.class,
                 () -> PolicySerializer.parse(subtree("_acl/roles/r", "allow READ,,LIST a.")));
         assertThrows(PolicyParseException.class,
-                () -> PolicySerializer.parse(subtree("_acl/roles/r", "allow READ, a.")));   // space ⇒ token "READ,"
-        // double space after effect ⇒ empty caps token
+                () -> PolicySerializer.parse(subtree("_acl/roles/r", "allow READ, a.")));   // space -> token "READ,"
+        // double space after effect -> empty caps token
         assertThrows(PolicyParseException.class,
                 () -> PolicySerializer.parse(subtree("_acl/roles/r", "allow  READ a.")));
     }

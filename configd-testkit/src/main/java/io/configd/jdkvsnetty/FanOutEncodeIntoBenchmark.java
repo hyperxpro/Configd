@@ -22,28 +22,28 @@ import java.util.concurrent.TimeUnit;
 import java.util.zip.CRC32C;
 
 /**
- * M3 floor proof — the <b>production</b> single-pass {@link EdgeFrameCodec#encodeInto} against the
- * pre-M3 multi-pass baseline, on the batch-64 signed NOTIFY (the head-to-head Surface-3 shape).
+ * Single-pass encode baseline - the <b>production</b> single-pass {@link EdgeFrameCodec#encodeInto} against the
+ * original multi-pass baseline, on the batch-64 signed NOTIFY (the head-to-head Surface-3 shape).
  * Run with {@code -prof gc} (B/op, CPU-count-independent on the 2-vCPU box).
  *
  * <p>This differs from {@code FanOutWireH2HBenchmark} (which raced two <em>testkit</em> encoders,
  * {@code H2HCodecs} / {@code NettyWireEncoders}, pre-migration) by measuring the encoder that
  * actually shipped:
  * <ul>
- *   <li>{@code legacyMultiPassEncode} — a verbatim copy of the pre-M3 {@code EdgeFrameCodec.encode}
+ *   <li>{@code legacyMultiPassEncode} - a verbatim copy of the {@code EdgeFrameCodec.encode}
  *       (intermediate {@code List<byte[]>}, per-notification + payload + out arrays). The 69,492
  *       B/op baseline, kept here so the A/B is reproducible in one run.</li>
- *   <li>{@code prodEncodeIntoHeapReused} — {@link EdgeFrameCodec#encodeInto} into a reused
- *       {@link HeapFrameSink} (the JDK fan-out writer's per-connection buffer). Expected ≈ 25,520
+ *   <li>{@code prodEncodeIntoHeapReused} - {@link EdgeFrameCodec#encodeInto} into a reused
+ *       {@link HeapFrameSink} (the JDK fan-out writer's per-connection buffer). Expected ~ 25,520
  *       (the message-building floor).</li>
- *   <li>{@code prodEncodeIntoByteBufPooled} — {@link EdgeFrameCodec#encodeInto} into a pooled,
- *       reference-counted Netty {@code ByteBuf} (the in-pipeline encoder). Expected ≈ 25,776
+ *   <li>{@code prodEncodeIntoByteBufPooled} - {@link EdgeFrameCodec#encodeInto} into a pooled,
+ *       reference-counted Netty {@code ByteBuf} (the in-pipeline encoder). Expected ~ 25,776
  *       (floor + the pooled-{@code ByteBuf} holder bookkeeping).</li>
- *   <li>{@code messageBuildingFloor} — the irreducible floor reference (encodeBatch + sig/nonce
+ *   <li>{@code messageBuildingFloor} - the irreducible floor reference (encodeBatch + sig/nonce
  *       clones) that NEITHER backend removes.</li>
  * </ul>
- * If the two {@code encodeInto} legs ≈ {@code messageBuildingFloor} ≪ {@code legacyMultiPassEncode},
- * the single-pass rewrite shipped the win and Netty does not regress the floor (charter §2.3).
+ * If the two {@code encodeInto} legs ~ {@code messageBuildingFloor} << {@code legacyMultiPassEncode},
+ * the single-pass rewrite shipped the win and Netty does not regress the floor (charter section 2.3).
  */
 @BenchmarkMode(Mode.AverageTime)
 @OutputTimeUnit(TimeUnit.NANOSECONDS)
@@ -95,7 +95,7 @@ public class FanOutEncodeIntoBenchmark {
         EdgeFrameCodec.encodeInto(notifyFrame, reuseHeapSink);
     }
 
-    /** BASELINE: the pre-M3 multi-pass encode (all intermediate churn). */
+    /** BASELINE: the original multi-pass encode (all intermediate churn). */
     @Benchmark
     public byte[] legacyMultiPassEncode() {
         return legacyEncode(notifyFrame);
@@ -133,7 +133,7 @@ public class FanOutEncodeIntoBenchmark {
     }
 
     // ---------------------------------------------------------------------
-    // A bench-local Netty ByteBuf FrameSink — shape-identical to the production
+    // A bench-local Netty ByteBuf FrameSink - shape-identical to the production
     // io.configd.server.fanout.ByteBufFrameSink (which configd-testkit does not depend on). The
     // contract proves the production sink byte-identical; this proves the floor on a pooled ByteBuf.
     // ---------------------------------------------------------------------
@@ -156,7 +156,7 @@ public class FanOutEncodeIntoBenchmark {
     }
 
     // ---------------------------------------------------------------------
-    // Verbatim copy of the pre-M3 multi-pass EdgeFrameCodec.encode (NOTIFY path) — the baseline.
+    // Verbatim copy of the original multi-pass EdgeFrameCodec.encode (NOTIFY path) - the baseline.
     // ---------------------------------------------------------------------
     private static byte[] legacyEncode(EdgeFrame.Notify frame) {
         byte[] payload = legacyEncodeNotify(frame);

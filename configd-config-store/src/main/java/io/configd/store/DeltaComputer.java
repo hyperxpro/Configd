@@ -16,7 +16,7 @@ import java.util.Set;
  *   <li>Keys present in both but with different values (updated puts)</li>
  *   <li>Keys present in {@code from} but absent in {@code to} (deletes)</li>
  * </ul>
- * This is a utility class with no state — all methods are static.
+ * This is a utility class with no state - all methods are static.
  */
 public final class DeltaComputer {
 

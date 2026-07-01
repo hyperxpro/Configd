@@ -9,16 +9,16 @@ import io.netty.handler.codec.MessageToByteEncoder;
 import java.util.zip.CRC32C;
 
 /**
- * The <b>genuinely idiomatic</b> Netty consensus encoder — a {@link MessageToByteEncoder} that
+ * The <b>genuinely idiomatic</b> Netty consensus encoder - a {@link MessageToByteEncoder} that
  * runs <b>inside the pipeline, on the event-loop thread</b>. This is how a real Netty transport
  * encodes, and it fixes the two harness artifacts the JFR profile exposed in the manual
  * (main-thread alloc + {@code writeAndFlush}) path:
  *
  * <ul>
  *   <li>The framework allocates {@code out} and releases it after the write <b>on the same
- *       event-loop thread</b> → the pooled-{@code ByteBuf} Recycler fast path works (no
+ *       event-loop thread</b> -> the pooled-{@code ByteBuf} Recycler fast path works (no
  *       cross-thread {@code PooledDirectByteBuf} churn).</li>
- *   <li>CRC32C uses {@link ByteBuf#internalNioBuffer} — the buffer's <b>cached</b> view — instead
+ *   <li>CRC32C uses {@link ByteBuf#internalNioBuffer} - the buffer's <b>cached</b> view - instead
  *       of {@code nioBuffer()}, so there is no per-message {@code DirectByteBuffer} view
  *       allocation.</li>
  *   <li>A reused thread-local {@link CRC32C} (event-loop-confined).</li>
@@ -38,8 +38,8 @@ final class NettyConsensusFrameEncoder extends MessageToByteEncoder<FrameMsg> {
     /**
      * Size the {@code out} buffer to the exact frame up front. Without this, {@code
      * MessageToByteEncoder} allocates a default 256-byte buffer and {@code writeBytes} grows it by
-     * reallocation+copy for any larger frame (e.g. a 4 KB AppendEntries: 256→512→…→8192), churning
-     * a {@code DirectByteBuffer} per growth — a harness artifact, not a real Netty cost. With the
+     * reallocation+copy for any larger frame (e.g. a 4 KB AppendEntries: 256->512->...->8192), churning
+     * a {@code DirectByteBuffer} per growth - a harness artifact, not a real Netty cost. With the
      * exact size there is no reallocation.
      */
     @Override
@@ -58,7 +58,7 @@ final class NettyConsensusFrameEncoder extends MessageToByteEncoder<FrameMsg> {
         out.writeByte((byte) m.type().code());
         out.writeInt(m.groupId());
         out.writeLong(m.term());
-        out.writeLong(0L); // v2/D1 reserved epoch — MBZ (dormant); byte-identical to FrameCodec.encode
+        out.writeLong(0L); // reserved epoch (dormant, must be zero); byte-identical to FrameCodec.encode
         out.writeBytes(m.payload());
         CRC32C crc = CRC.get();
         crc.reset();

@@ -38,15 +38,14 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.fail;
 
 /**
- * Adversarial hardening for {@link NettyEdgeHttpServer} (M1, charter §3) — the controls the
- * head-to-head read-only prototype lacked, proven by the negative test that proves the attack fails:
+ * Adversarial hardening for {@link NettyEdgeHttpServer}, proven by negative tests:
  * <ul>
- *   <li>oversize request line/headers → 400 + closed (bounded {@code HttpServerCodec});</li>
- *   <li>oversize body → rejected, never buffered (the request-size ceiling);</li>
- *   <li>slowloris (a request that never completes) → connection closed at the request deadline;</li>
+ *   <li>oversize request line/headers - 400 + closed (bounded {@code HttpServerCodec});</li>
+ *   <li>oversize body - rejected, never buffered (the request-size ceiling);</li>
+ *   <li>slowloris (a request that never completes) - connection closed at the request deadline;</li>
  *   <li>no {@code ByteBuf} leaks at {@code ResourceLeakDetector.Level.PARANOID}.</li>
  * </ul>
- * The timeouts/limits are forced low via system properties (read by the server constructor) so the
+ * Timeouts/limits are forced low via system properties (read by the server constructor) so the
  * adversarial paths fire deterministically and fast.
  */
 @Timeout(60)
@@ -102,9 +101,7 @@ class NettyEdgeHttpServerHardeningTest {
         return server.port();
     }
 
-    // -----------------------------------------------------------------------
-    // Oversize request line / headers → 400 (bounded HttpServerCodec, never unbounded buffering)
-    // -----------------------------------------------------------------------
+    // Oversize request line / headers -> 400 (bounded HttpServerCodec, never unbounded buffering)
 
     @Test
     void oversizeHeaderBlockIsRejectedWith4xx() throws Exception {
@@ -128,9 +125,7 @@ class NettyEdgeHttpServerHardeningTest {
         }
     }
 
-    // -----------------------------------------------------------------------
-    // Oversize body → rejected (the request-size ceiling), never accumulated
-    // -----------------------------------------------------------------------
+    // Oversize body -> rejected (the request-size ceiling), never accumulated
 
     @Test
     void oversizeBodyIsRejectedNotBuffered() throws Exception {
@@ -139,7 +134,7 @@ class NettyEdgeHttpServerHardeningTest {
             s.connect(new InetSocketAddress("127.0.0.1", port()), 2000);
             s.setSoTimeout(5000);
             OutputStream os = s.getOutputStream();
-            int bodyLen = 64 * 1024; // 64 KiB ≫ ceiling
+            int bodyLen = 64 * 1024; // 64 KiB >> ceiling
             String head = "POST /v1/config/svc/a HTTP/1.1\r\nHost: x\r\nContent-Length: "
                     + bodyLen + "\r\n\r\n";
             String status = null;
@@ -161,16 +156,14 @@ class NettyEdgeHttpServerHardeningTest {
         }
     }
 
-    // -----------------------------------------------------------------------
     // Slowloris: a request that never completes is closed at the request deadline
-    // -----------------------------------------------------------------------
 
     @Test
     void slowlorisIncompleteRequestIsClosedAtDeadline() throws Exception {
         startServerWith(400, 60_000, 1 << 20); // 400 ms request-completion deadline
         try (Socket s = new Socket()) {
             s.connect(new InetSocketAddress("127.0.0.1", port()), 2000);
-            s.setSoTimeout(5000); // ≫ the 400 ms deadline; the server must close first
+            s.setSoTimeout(5000); // >> the 400 ms deadline; the server must close first
             OutputStream os = s.getOutputStream();
             // A partial request: headers begun, never terminated (no final CRLF) — never completes.
             os.write("GET /v1/config/svc/a HTTP/1.1\r\nHost: x\r\n".getBytes(StandardCharsets.US_ASCII));
@@ -199,18 +192,16 @@ class NettyEdgeHttpServerHardeningTest {
         org.junit.jupiter.api.Assertions.assertEquals("v1", resp.body());
     }
 
-    // -----------------------------------------------------------------------
     // Leak-freedom at PARANOID across all buffer paths (hits/misses/refusals/errors)
-    // -----------------------------------------------------------------------
 
     @Test
     void noByteBufLeaksUnderSustainedTraffic() throws Exception {
-        // PARANOID is the logging backstop (prints LEAK: on any GC of an unreleased buffer). The HARD
-        // assertion exploits the leak/cache distinction: a per-request buffer LEAK grows the pooled
-        // allocator's active-allocation count in proportion to load, whereas a warm thread-local pool
-        // CACHE (released-but-retained buffers, which also count as "active") stabilizes. So we run two
-        // equal batches: after batch 1 warms the cache, batch 2 must add ~0 net active allocations —
-        // a real leak would add ~one per request. Deterministic, no special JVM args, shared-JVM-safe.
+        // PARANOID logs "LEAK:" on any GC of an unreleased buffer. The hard assertion exploits the
+        // leak/cache distinction: a per-request LEAK grows the pooled allocator's active-allocation
+        // count in proportion to load, whereas a warm thread-local pool CACHE (released-but-retained
+        // buffers, which also count as "active") stabilizes. Two equal batches: after batch 1 warms
+        // the cache, batch 2 must add ~0 net active allocations — a real leak adds ~one per request.
+        // Deterministic, no special JVM args, shared-JVM-safe.
         ResourceLeakDetector.Level savedLevel = ResourceLeakDetector.getLevel();
         ResourceLeakDetector.setLevel(ResourceLeakDetector.Level.PARANOID);
         try {

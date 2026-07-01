@@ -23,10 +23,10 @@ import java.util.concurrent.TimeUnit;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 
 /**
- * RR-004 / ADR-0033: proves {@code ConfigdServer.raftProposer} is
+ * Proves {@code ConfigdServer.raftProposer} is
  * <b>commit-confirmed</b> and produces the distinguishable failure taxonomy a
- * client needs — an uncommitted write is reported as something OTHER than success
- * and OTHER than a permanent failure (charter §3: "the error a client receives
+ * client needs - an uncommitted write is reported as something OTHER than success
+ * and OTHER than a permanent failure ("the error a client receives
  * for an uncommitted write is distinguishable from success and from permanent
  * failure"). Complements the deterministic-simulator discriminator
  * {@code AckEqualsCommitTest} with a direct test of the production seam that
@@ -101,7 +101,7 @@ class RaftProposerCommitConfirmTest {
     void followerReturnsNotLeaderPreAppend() throws Exception {
         ScheduledExecutorService exec = raftExecutor();
         try {
-            // Multi-node config, no election driven → node stays FOLLOWER.
+            // Multi-node config, no election driven -> node stays FOLLOWER.
             RaftConfig config = RaftConfig.of(NodeId.of(1), Set.of(NodeId.of(2), NodeId.of(3)));
             RaftNode follower = new RaftNode(config, new RaftLog(),
                     (target, message) -> { }, new SeqStateMachine(), new java.util.Random(7));
@@ -123,7 +123,7 @@ class RaftProposerCommitConfirmTest {
             RaftNode node = singleNodeLeader(exec);
             // 1ms end-to-end deadline. We then saturate the single tick executor so
             // the marshalled propose+register task cannot run before the deadline
-            // expires — the canonical "outcome unknown within deadline" case (quorum
+            // expires - the canonical "outcome unknown within deadline" case (quorum
             // slow / tick queue stalled). The proposer must report Indeterminate,
             // distinct from both success (Committed) and definite failure
             // (NotLeader/Lost), and then dispatch the cleanup that cancels the
@@ -148,7 +148,7 @@ class RaftProposerCommitConfirmTest {
     /**
      * The load-bearing "200 only on commit" property: a leader that APPENDS but
      * cannot COMMIT (its followers are severed, so quorum never forms) must NOT be
-     * acknowledged as Committed — the proposer blocks past the local append and
+     * acknowledged as Committed - the proposer blocks past the local append and
      * returns Indeterminate at the deadline. This kills the mutant that acks on
      * local append (the pre-fix defect): under that mutant this returns Committed.
      */
@@ -157,7 +157,7 @@ class RaftProposerCommitConfirmTest {
         ScheduledExecutorService exec = raftExecutor();
         try {
             // 3-node cluster wired through a controllable in-memory bus, all driven
-            // on the single raft executor (R-01).
+            // on the single raft executor.
             Bus bus = new Bus();
             RaftNode n1 = busNode(1, Set.of(NodeId.of(2), NodeId.of(3)), bus);
             RaftNode n2 = busNode(2, Set.of(NodeId.of(1), NodeId.of(3)), bus);
@@ -183,7 +183,7 @@ class RaftProposerCommitConfirmTest {
             MultiRaftDriver driver = new MultiRaftDriver(NodeId.of(1), Clock.system());
             driver.addGroup(GROUP, n1);
             // Real, modest deadline so the proposer genuinely waits for a commit
-            // that will never come — and keep the leader ticking so it is not the
+            // that will never come - and keep the leader ticking so it is not the
             // executor-saturation case but a true no-quorum case.
             ConfigWriteService.RaftProposer proposer =
                     ConfigdServer.raftProposer(driver, GROUP, exec, 200 /* ms */);

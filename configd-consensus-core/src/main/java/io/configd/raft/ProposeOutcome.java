@@ -3,11 +3,11 @@ package io.configd.raft;
 /**
  * The outcome of a {@link RaftNode#propose(byte[])} attempt.
  * <p>
- * RR-004 / ADR-0033: {@code propose} no longer returns a bare
+ * {@code propose} no longer returns a bare
  * {@link ProposalResult}. On acceptance it now also carries the assigned log
  * position {@code (index, term)} so the caller can register a commit-outcome
  * callback ({@link RaftNode#whenCommitOutcome}) against the exact entry it just
- * appended. The rejection reasons are unchanged — {@link #result} still carries
+ * appended. The rejection reasons are unchanged  -  {@link #result} still carries
  * the {@link ProposalResult} ({@code NOT_LEADER}, {@code TRANSFER_IN_PROGRESS},
  * {@code OVERLOADED}); for those, {@code index} and {@code term} are {@code -1}.
  *

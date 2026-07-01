@@ -15,29 +15,27 @@ import org.openjdk.jcstress.infra.results.I_Result;
 import java.util.List;
 
 /**
- * RR-066 — {@link FanOutBuffer#readSince} Lamport verify-after-read vs concurrent
- * eviction. Single writer (the Raft apply thread, modelled by one {@code publish}
- * actor) races one lock-free reader at every interesting ring occupancy,
- * including the exactly-full wrap-around boundary.
+ * Verifies {@link FanOutBuffer#readSince} under concurrent eviction. A single
+ * writer (modelling the Raft apply thread) races one lock-free reader at every
+ * interesting ring occupancy, including the exactly-full wrap-around boundary.
  *
- * <p><b>The invariant under test (B8 / RR-066 verbatim):</b> a {@code readSince}
- * that races an eviction must return EITHER a clean contiguous ascending run of
- * notifications with {@code seq > cursor} (no duplicate, no skip, no torn/null
- * slot) OR a GAP signal. It must NEVER hand back a torn read: a duplicated seq, a
- * non-ascending run, a null/wrong-typed slot, or a run that silently skips an
- * evicted notification.
+ * <p><b>Invariant under test:</b> a {@code readSince} that races an eviction must
+ * return EITHER a clean contiguous ascending run of notifications with
+ * {@code seq > cursor} (no duplicate, no skip, no torn/null slot) OR a GAP signal.
+ * It must NEVER hand back a torn read: a duplicated seq, a non-ascending run, a
+ * null/wrong-typed slot, or a run that silently skips an evicted notification.
  *
  * <p>The reader classifies its own result into an {@link I_Result} code; the only
  * FORBIDDEN codes are the torn-read classes. Modelling exactly ONE writer matches
- * the documented single-writer precondition — testing two concurrent writers
+ * the documented single-writer precondition - testing two concurrent writers
  * would exercise an unsupported contract.
  *
  * <h2>Result codes</h2>
  * <ul>
- *   <li>{@code 0} GAP — acceptable (consumer replays).</li>
- *   <li>{@code 1} OK, clean ascending run, all {@code seq > cursor} — acceptable.</li>
- *   <li>{@code 2} OK, empty run — acceptable (reader saw nothing new yet).</li>
- *   <li>{@code 9} TORN — duplicate seq, non-ascending, null slot, or a seq
+ *   <li>{@code 0} GAP - acceptable (consumer replays).</li>
+ *   <li>{@code 1} OK, clean ascending run, all {@code seq > cursor} - acceptable.</li>
+ *   <li>{@code 2} OK, empty run - acceptable (reader saw nothing new yet).</li>
+ *   <li>{@code 9} TORN - duplicate seq, non-ascending, null slot, or a seq
  *       {@code <= cursor} leaked into an OK run. FORBIDDEN.</li>
  * </ul>
  */
@@ -74,7 +72,7 @@ public final class FanOutBufferReadSinceTest {
                 return TORN;               // a notification that should have been filtered
             }
             if (s <= prev) {
-                return TORN;               // duplicate or non-ascending — the RR-066 bug shape
+                return TORN;               // duplicate or non-ascending
             }
             prev = s;
         }
@@ -105,16 +103,14 @@ public final class FanOutBufferReadSinceTest {
         final void writerPublish() {
             // Two appends so the ring laps when it is at/near full: this is the
             // window where a reader scanning [tail, head) can observe a slot being
-            // overwritten in place — the exact verify-after-read hazard.
+            // overwritten in place - the exact verify-after-read hazard.
             buf.publish(Notifications.of(firstNewSeq));
             buf.publish(Notifications.of(firstNewSeq + 1));
         }
     }
 
-    // ------------------------------------------------------------------
     // Variant 1: ring NOT yet full (head < capacity). No eviction during
     // the race window, but head advances under the reader.
-    // ------------------------------------------------------------------
     @JCStressTest
     @State
     @Description("readSince vs publish, ring partially full (no eviction) — torn read forbidden")
@@ -138,11 +134,9 @@ public final class FanOutBufferReadSinceTest {
         }
     }
 
-    // ------------------------------------------------------------------
-    // Variant 2: ring EXACTLY full (head == capacity). The next publish
-    // evicts slot 0 and wraps — the head-vs-tail publish-order window the
-    // verify-after-read closes. This is the load-bearing wrap-around case.
-    // ------------------------------------------------------------------
+    // Variant 2: ring EXACTLY full (head == capacity). The next publish evicts slot 0
+    // and wraps - the head-vs-tail publish-order window the verify-after-read closes.
+    // This is the load-bearing wrap-around case.
     @JCStressTest
     @State
     @Description("readSince vs publish, ring exactly full → wrap+evict — torn read forbidden")
@@ -166,13 +160,11 @@ public final class FanOutBufferReadSinceTest {
         }
     }
 
-    // ------------------------------------------------------------------
     // Variant 3: ring already past one full lap (head > capacity, tail > 0).
-    // The reader's cursor sits below the live window, so a correct buffer must
-    // return GAP (via watermark) — but the race is between the watermark publish
-    // and the slot copy. A torn read here would be the most dangerous: serving a
+    // The reader's cursor sits below the live window so a correct buffer must
+    // return GAP (via watermark) - the race is between the watermark publish and
+    // the slot copy. A torn read here would be the most dangerous: serving a
     // truncated run that silently drops the evicted prefix.
-    // ------------------------------------------------------------------
     @JCStressTest
     @State
     @Description("readSince(cursor below window) vs evicting publish — GAP-or-clean, never silent skip")
@@ -182,7 +174,7 @@ public final class FanOutBufferReadSinceTest {
     @Outcome(id = "9", expect = Expect.FORBIDDEN, desc = "TORN: silent skip/duplicate/null")
     public static class LappedCursorBelowWindow extends Base {
         public LappedCursorBelowWindow() {
-            // capacity 4, pre-seed 6 → tail=2, window holds seq [2..5]; cursor 0
+            // capacity 4, pre-seed 6 -> tail=2, window holds seq [2..5]; cursor 0
             // is already below the window, so the watermark must drive GAP unless a
             // clean run above 0 is genuinely retained.
             super(4, 6, 0);
@@ -199,12 +191,9 @@ public final class FanOutBufferReadSinceTest {
         }
     }
 
-    // ------------------------------------------------------------------
-    // Variant 4: two concurrent readers + one writer. Readers must never
-    // disagree in a way that proves a torn slot (each independently must see a
-    // clean run or GAP). Encodes both readers into one III_Result-free pair via
-    // the same classifier; FORBIDDEN if EITHER reader tears.
-    // ------------------------------------------------------------------
+    // Variant 4: two concurrent readers + one writer. Readers must never disagree
+    // in a way that proves a torn slot (each independently must see a clean run or
+    // GAP). FORBIDDEN if EITHER reader tears.
     @JCStressTest
     @State
     @Description("two readers vs one evicting writer — neither reader may tear")

@@ -18,21 +18,20 @@ import java.util.Objects;
  * {@code rate(<name>_bucket{le="0.150"}[5m]) / rate(<name>_count[5m])} have
  * concrete time series to query.
  * <p>
- * Thread safety: safe for concurrent use — reads an immutable snapshot.
+ * Thread safety: safe for concurrent use - reads an immutable snapshot.
  */
 public final class PrometheusExporter {
 
     /**
      * Per-histogram cumulative-bucket schedule. Each entry maps a Prometheus
      * {@code le="X"} label (rendered verbatim into the output) to its cutoff
-     * in the same units as the histogram samples — for the SLO histograms
+     * in the same units as the histogram samples - for the SLO histograms
      * (write-commit, edge-read, propagation) that is nanoseconds.
      *
-     * <p>F5 (Tier-1-METRIC-DRIFT, H-009 iter-2 sibling) — without an explicit
-     * schedule, the exporter only emits quantile lines, but
-     * {@code ops/alerts/configd-slo-alerts.yaml} queries {@code _bucket{le="X"}}
-     * series. Registering a schedule keeps the alert vocabulary and the
-     * exposition vocabulary in lock-step.
+     * <p>Without an explicit schedule the exporter only emits quantile lines,
+     * but {@code ops/alerts/configd-slo-alerts.yaml} queries
+     * {@code _bucket{le="X"}} series. Registering a schedule keeps the alert
+     * vocabulary and the exposition vocabulary in lock-step.
      */
     public static final class BucketSchedule {
         private final List<String> labels;
@@ -53,7 +52,7 @@ public final class PrometheusExporter {
         }
 
         /**
-         * Builds a schedule from an ordered map of {@code le} label → cutoff.
+         * Builds a schedule from an ordered map of le-label to cutoff value.
          * Iteration order of the supplied map is preserved.
          */
         public static BucketSchedule of(Map<String, Long> labelsToCutoffs) {
@@ -118,9 +117,8 @@ public final class PrometheusExporter {
                     BucketSchedule schedule = schedules.get(name);
                     MetricsRegistry.Histogram hist = registry.histogram(name);
                     if (schedule != null) {
-                        // F5 (Tier-1-METRIC-DRIFT) — emit cumulative bucket
-                        // lines so SLO alert expressions querying
-                        // {le="X"} have actual time series to read.
+                        // Emit cumulative bucket lines so SLO alert expressions
+                        // querying {le="X"} have actual time series to read.
                         sb.append("# TYPE ").append(promName).append(" histogram\n");
                         long[] cutoffs = new long[schedule.size()];
                         for (int i = 0; i < cutoffs.length; i++) cutoffs[i] = schedule.cutoffAt(i);

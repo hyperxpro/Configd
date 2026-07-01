@@ -32,14 +32,13 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.fail;
 
 /**
- * The ADR-0040 §2 read-refusal taxonomy on a PREFIX-SUBSCRIBED edge (CT-32's
- * negative-caching descope premise; C3 design §3): within the subscribed slice a store
- * miss IS authoritative non-existence (plain 404, no refusal header — the lock-free HAMT
- * miss path is the "negative cache"); outside the slice the edge holds no authoritative
- * answer and refuses DISTINCTLY ({@code 404 + X-Configd-Refused: not-subscribed},
- * {@code edge_read_refusals_not_subscribed_total}) — never an ambiguous miss a client
- * could mistake for non-existence. Strong-read keys keep their own fail-close (503,
- * CT-37) with precedence over the subscription check.
+ * Read-refusal taxonomy on a PREFIX-SUBSCRIBED edge: within the subscribed slice a store miss IS
+ * authoritative non-existence (plain 404, no refusal header — the lock-free HAMT miss path is the
+ * "negative cache"); outside the slice the edge holds no authoritative answer and refuses
+ * DISTINCTLY ({@code 404 + X-Configd-Refused: not-subscribed},
+ * {@code edge_read_refusals_not_subscribed_total}) — never an ambiguous miss a client could
+ * mistake for non-existence. Strong-read keys keep their own fail-close (503) with precedence
+ * over the subscription check.
  */
 @Timeout(120)
 class NotSubscribedReadTest {
@@ -75,7 +74,7 @@ class NotSubscribedReadTest {
         Path verifyKey = tempDir.resolve("verify-key.der");
         VerifyKeyExporter.export(signingKey, verifyKey);
 
-        // Edge subscribed to svc/ ONLY (the ADR-0038 storage filter).
+        // Edge subscribed to svc/ ONLY (storage filter applies at the server).
         edge = EdgeNodeMain.start(new EdgeNodeConfig(
                 "edge-notsub",
                 List.of(InetSocketAddress.createUnresolved(
@@ -99,7 +98,7 @@ class NotSubscribedReadTest {
         assertEquals("in-slice", hit.body());
 
         // (2) In-slice MISS is authoritative non-existence: plain 404, NO refusal header
-        //     — the negative-caching descope's load-bearing premise (ADR-0040 §2).
+        //     — the edge has the full slice so an absence is genuine non-existence.
         HttpResponse<String> miss = get(edgeBase + "/v1/config/svc/absent");
         assertEquals(404, miss.statusCode());
         assertTrue(miss.headers().firstValue(EdgeHttpServer.HDR_REFUSED).isEmpty(),
@@ -112,8 +111,8 @@ class NotSubscribedReadTest {
         assertEquals("not-subscribed",
                 refused.headers().firstValue(EdgeHttpServer.HDR_REFUSED).orElse("missing"));
 
-        // (4) Strong-read keys keep the 503 fail-close (CT-37) with PRECEDENCE — secure/
-        //     is outside svc/ but must never surface as a mere not-subscribed 404.
+        // (4) Strong-read keys keep the 503 fail-close with PRECEDENCE — secure/ is outside
+        //     svc/ but must never surface as a mere not-subscribed 404.
         HttpResponse<String> strong = get(edgeBase + "/v1/config/secure/killswitch");
         assertEquals(503, strong.statusCode());
         assertEquals("strong-read",
@@ -129,7 +128,7 @@ class NotSubscribedReadTest {
                                 .reduce("", (a, b) -> a + b + "\n"));
     }
 
-    // --- helpers (the EdgeNodeIntegrationTest deadline-polling discipline) ---
+    // Helpers (deadline-polling; no sleep-as-sync)
 
     private void await(String what, BooleanSupplier condition) {
         long deadline = System.nanoTime() + DEADLINE.toNanos();

@@ -11,13 +11,13 @@ import java.nio.ByteBuffer;
 import java.util.concurrent.TimeUnit;
 
 /**
- * JDK-vs-Netty head-to-head — <b>surface 4: inter-node consensus wire</b>.
+ * JDK-vs-Netty head-to-head - <b>surface 4: inter-node consensus wire</b>.
  *
- * <p>Phase R measured the <em>current</em> (unoptimized) JDK send path and reasoned about
- * Netty. This benchmark races the <b>best JDK</b> form against the <b>best Netty</b> form of
+ * <p>The prior baseline measured the <em>current</em> (unoptimized) JDK send path and reasoned
+ * about Netty. This benchmark races the <b>best JDK</b> form against the <b>best Netty</b> form of
  * the same send, apples-to-apples (identical payloads, warmup, measurement), so the verdict
  * rests on measurement, not a prior. Run with {@code -prof gc} (metric
- * {@code gc.alloc.rate.norm}, B/op — CPU-count-independent, so trustworthy on the 2-vCPU box).
+ * {@code gc.alloc.rate.norm}, B/op - CPU-count-independent, so trustworthy on the 2-vCPU box).
  *
  * <h2>The on-wire bytes (must be byte-identical across all legs)</h2>
  * Production {@code TcpRaftTransport.encodeWire} emits {@code [4B big-endian senderId] ||
@@ -26,12 +26,12 @@ import java.util.concurrent.TimeUnit;
  *
  * <h2>Legs</h2>
  * <ul>
- *   <li>{@code jdkStatusQuoSend} — what {@code encodeWire} allocates TODAY: the codec frame
- *       array PLUS a second {@code byte[4+frame]} sender-id wrap (≈2× the frame).</li>
- *   <li>{@code jdkBestSendInto} — BEST JDK: the sender id and the codec's existing
+ *   <li>{@code jdkStatusQuoSend} - what {@code encodeWire} allocates TODAY: the codec frame
+ *       array PLUS a second {@code byte[4+frame]} sender-id wrap (~2x the frame).</li>
+ *   <li>{@code jdkBestSendInto} - BEST JDK: the sender id and the codec's existing
  *       {@code encode(ByteBuffer)} into-variant written into ONE reused heap buffer. No new
- *       dependency. Expected ≈ 0 B/op steady state.</li>
- *   <li>{@code nettyBestSendPooled} — BEST Netty: the same bytes written into a pooled,
+ *       dependency. Expected ~ 0 B/op steady state.</li>
+ *   <li>{@code nettyBestSendPooled} - BEST Netty: the same bytes written into a pooled,
  *       reference-counted {@code ByteBuf} from {@code PooledByteBufAllocator}, released back to
  *       the pool each op (steady-state pooled behaviour). Added in
  *       {@code ConsensusWireNettyH2HBenchmark} once the Netty dependency is wired; kept in a
@@ -54,7 +54,7 @@ import java.util.concurrent.TimeUnit;
         "-Dio.netty.allocator.numDirectArenas=2"})     // pin arenas to the 2-vCPU box (reproducible)
 public class ConsensusWireH2HBenchmark {
 
-    /** Payload size: 0 = coalesced heartbeat (M3 hot path), 256 = small append, 4096 = batch. */
+    /** Payload size: 0 = coalesced heartbeat (hot path), 256 = small append, 4096 = batch. */
     @Param({"0", "256", "4096"})
     int payloadBytes;
 
@@ -124,7 +124,7 @@ public class ConsensusWireH2HBenchmark {
     @Benchmark
     public int jdkBestSendInto() {
         reuseBuf.clear();
-        reuseBuf.putInt(senderId); // ByteBuffer is big-endian by default → identical bytes
+        reuseBuf.putInt(senderId); // ByteBuffer is big-endian by default -> identical bytes
         FrameCodec.encode(reuseBuf, type, groupId, term, payload);
         return reuseBuf.getInt(4); // frame length prefix sits right after the 4-byte sender id
     }
@@ -134,7 +134,7 @@ public class ConsensusWireH2HBenchmark {
      * from {@code PooledByteBufAllocator.DEFAULT}, released back to the pool each op (steady-state
      * pooled behaviour). Reads the frame length prefix back so the writes cannot be DCE'd. The
      * pooled buffer is off-heap, so {@code -prof gc} (heap B/op) shows only the per-op heap cost
-     * Netty cannot pool away (the {@code ByteBuf} holder bookkeeping) — the honest comparison
+     * Netty cannot pool away (the {@code ByteBuf} holder bookkeeping) - the honest comparison
      * against the reused JDK buffer.
      */
     @Benchmark
@@ -152,7 +152,7 @@ public class ConsensusWireH2HBenchmark {
      * DIAGNOSTIC (not a production-valid Netty pattern): reuse ONE pooled direct {@code ByteBuf}
      * across every op, no per-op allocate/release. This isolates whether the 160 B/op of
      * {@code nettyBestSendPooled} is the per-op pool acquire/release or the encode/CRC itself.
-     * NOTE: a real async Netty pipeline CANNOT do this — once {@code ctx.write(buf)} is issued the
+     * NOTE: a real async Netty pipeline CANNOT do this - once {@code ctx.write(buf)} is issued the
      * buffer is owned by the pipeline until the socket flush completes, so it can't be reused for
      * the next message without serializing writes (killing the async benefit). This leg measures
      * attribution only; its number is NOT an achievable production-Netty figure.

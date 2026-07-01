@@ -22,23 +22,23 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * Phase 0 — Workstream B — H-3 macro proof (the monitoring-read hazard).
+ * Validates the monitoring-read hazard: concurrently reading monitoring state is safe and never blocks.
  *
- * <p>The A net deliberately does NOT cover the read-only monitoring accessors; H-3 closes them with
+ * <p>The A net deliberately does NOT cover the read-only monitoring accessors; this test closes them with
  * an owner-published immutable snapshot ({@link RaftNode#monitorView()}). This test is the macro
  * complement to the {@code configd-jcstress} {@code RaftMonitorViewPublicationTest} (which pins the
  * JMM no-tear primitive). It proves, against a REAL {@link RaftNode} bound to an owner executor:
  *
  * <ol>
- *   <li><b>{@link #monitorViewIsCoherentAndNeverBlocksUnderConcurrentPublish()}</b> — while the owner
+ *   <li><b>{@link #monitorViewIsCoherentAndNeverBlocksUnderConcurrentPublish()}</b> - while the owner
  *       thread advances consensus state (propose+tick, republishing the view every tick), a FOREIGN
  *       thread spins on {@code monitorView()} and every observed snapshot is non-null, internally
  *       coherent ({@code snapshotIndex <= lastApplied <= commitIndex <= lastLogIndex}) and monotonic
  *       across reads (term and commitIndex never go backwards). No tear, no partial structure, no
  *       block, no throw. Non-vacuous: commitIndex demonstrably advances and the reader observes many
  *       distinct snapshots while racing the publisher.</li>
- *   <li><b>{@link #h3AccessorsTripOffOwnerWhileMonitorViewAndSSetStaySafe()}</b> — the net extension:
- *       the five formerly-unguarded H-3 accessors (currentTerm/votedFor/log/transferTarget/
+ *   <li><b>{@link #h3AccessorsTripOffOwnerWhileMonitorViewAndSSetStaySafe()}</b> - the net extension:
+ *       the five formerly-unguarded monitoring accessors (currentTerm/votedFor/log/transferTarget/
  *       clusterConfig) now TRIP {@code raft_owner_thread} when called off-owner, while the published
  *       {@code monitorView()} and the volatile S-set (role/leaderId/nodeId) stay safe. This is the
  *       former blind spot converted into net-covered surface.</li>
@@ -71,7 +71,7 @@ class RaftMonitorViewConcurrencyTest {
         }
     }
 
-    /** Single-node node, owner bound, driven to LEADER — all on the owner thread. */
+    /** Single-node node, owner bound, driven to LEADER - all on the owner thread. */
     private static RaftNode newSingleNodeLeaderBoundTo(ExecutorService owner, RaftNode.InvariantChecker checker)
             throws Exception {
         RaftConfig config = RaftConfig.of(N1, Set.of());
@@ -102,11 +102,11 @@ class RaftMonitorViewConcurrencyTest {
             long lastCommit = -1;
             try {
                 while (running.get() && failure.get() == null) {
-                    RaftMetrics v = node.monitorView();          // single volatile load — must never block/throw
+                    RaftMetrics v = node.monitorView();          // single volatile load - must never block/throw
                     assertNotNull(v, "monitorView() must never be null (seeded in the constructor)");
                     assertNotNull(v.role(), "snapshot role must be non-null");
                     assertEquals(N1, v.nodeId(), "snapshot nodeId must be stable");
-                    // Structural coherence of a single immutable snapshot — can only fail on a torn read.
+                    // Structural coherence of a single immutable snapshot - can only fail on a torn read.
                     assertTrue(v.snapshotIndex() <= v.lastApplied(),
                             "snapshotIndex>" + v.snapshotIndex() + " > lastApplied=" + v.lastApplied());
                     assertTrue(v.lastApplied() <= v.commitIndex(),
@@ -167,7 +167,7 @@ class RaftMonitorViewConcurrencyTest {
             ThrowingChecker checker = new ThrowingChecker();
             RaftNode node = newSingleNodeLeaderBoundTo(owner, checker);
 
-            // Net extension: the five formerly-unguarded H-3 accessors now trip off-owner (this thread != owner).
+            // Net extension: the five formerly-unguarded monitoring accessors now trip off-owner (this thread != owner).
             assertTripsOffOwner(() -> node.currentTerm(), "currentTerm");
             assertTripsOffOwner(() -> node.votedFor(), "votedFor");
             assertTripsOffOwner(() -> node.log(), "log");
@@ -190,13 +190,13 @@ class RaftMonitorViewConcurrencyTest {
     }
 
     /**
-     * C1 (adversarial-review test-durability guard). The H-3 no-tear proof rests on TWO structural
+     * Test-durability guard. The no-tear proof rests on TWO structural
      * facts the concurrency/jcstress proofs cannot themselves protect (a single owner builds each
      * snapshot atomically, so they pass even if these regress): {@code monitorView} is a {@code volatile}
      * reference, and {@link RaftMetrics} is a deeply-immutable carrier. These assertions fail the instant
-     * either is lost — e.g. a refactor that drops {@code volatile} (an off-owner reader could then miss
+     * either is lost - e.g. a refactor that drops {@code volatile} (an off-owner reader could then miss
      * the publication) or adds a mutable/aliasable field to the snapshot (a monitor could observe
-     * post-publish mutation). See docs/phase0-B/h3-monitor-view-design.md and the adversarial review C1.
+     * post-publish mutation). See docs/phase0-B/h3-monitor-view-design.md.
      */
     @Test
     void monitorViewFieldStaysVolatile_elseTheNoTearProofIsVoid() throws Exception {

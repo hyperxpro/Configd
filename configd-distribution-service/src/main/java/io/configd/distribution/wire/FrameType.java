@@ -1,15 +1,14 @@
 package io.configd.distribution.wire;
 
 /**
- * The on-wire type byte for each {@link EdgeFrame} variant (C1 design §3; ADR-0037
- * "type byte"). The numeric {@link #code()} is pinned by the
- * {@code EdgeFrameCodecGoldenFixtureTest} golden fixture — changing any code is a
- * wire-format change and MUST bump {@link EdgeFrameCodec#EDGE_WIRE_VERSION}.
+ * The on-wire type byte for each {@link EdgeFrame} variant. The numeric {@link #code()} is
+ * pinned by the {@code EdgeFrameCodecGoldenFixtureTest} golden fixture - changing any code is
+ * a wire-format change and MUST bump {@link EdgeFrameCodec#EDGE_WIRE_VERSION}.
  *
- * <p><b>Codes {@code 0x01..0x09}</b> are the built connection-level fan-out vocabulary
- * (legal on a {@code 0x01} or a {@code 0x02} connection). <b>Codes {@code 0x0A..0x12}</b>
- * are the RFC §2 client-facing <b>watch</b> frames (W5-1); they are legal <b>only</b> on a
- * {@code 0x02} connection ({@link EdgeFrameCodec#EDGE_WIRE_VERSION_V2}) — a watch type on a
+ * <p><b>Codes {@code 0x01..0x09}</b> are the connection-level fan-out vocabulary (legal on
+ * a {@code 0x01} or a {@code 0x02} connection). <b>Codes {@code 0x0A..0x12}</b> are the
+ * client-facing <b>watch</b> frames (W5-1); they are legal <b>only</b> on a {@code 0x02}
+ * connection ({@link EdgeFrameCodec#EDGE_WIRE_VERSION_V2}) - a watch type on a
  * {@code 0x01}-stamped frame decodes as {@link ErrorCode#FRAME_CORRUPT} (W5-11).
  */
 public enum FrameType {
@@ -24,24 +23,24 @@ public enum FrameType {
     HEARTBEAT(0x08),
     ERROR_CLOSE(0x09),
 
-    // ---- RFC §2 watch frames (W5-1); 0x02-only ----
-    /** Client→server: create/resume a watch (target + cursor vector + flags). */
+    // ---- Watch frames (W5-1); 0x02-only ----
+    /** Client-to-server: create/resume a watch (target + cursor vector + flags). */
     WATCH_CREATE(0x0A),
-    /** Client→server: cancel a watch by {@code watch_id}. */
+    /** Client-to-server: cancel a watch by {@code watch_id}. */
     WATCH_CANCEL(0x0B),
-    /** Server→client: acknowledge a created watch; per-shard initial mode vector. */
+    /** Server-to-client: acknowledge a created watch; per-shard initial mode vector. */
     WATCH_CREATED(0x0C),
-    /** Server→client: a per-shard change batch, tagged {@code (gid, S)}. */
+    /** Server-to-client: a per-shard change batch, tagged {@code (gid, S)}. */
     WATCH_EVENT(0x0D),
-    /** Server→client: bookmark — advance idle cursor components, no events. */
+    /** Server-to-client: bookmark - advance idle cursor components, no events. */
     WATCH_PROGRESS(0x0E),
-    /** Server→client: terminal per-watch close (authz reject, gap-unrecoverable, …). */
+    /** Server-to-client: terminal per-watch close (authz reject, gap-unrecoverable, etc.). */
     WATCH_CANCELED(0x0F),
-    /** Server→client: per-{@code (watch_id, gid)} catch-up snapshot header. */
+    /** Server-to-client: per-{@code (watch_id, gid)} catch-up snapshot header. */
     WATCH_SNAPSHOT_BEGIN(0x10),
-    /** Server→client: per-{@code (watch_id, gid)} catch-up snapshot chunk. */
+    /** Server-to-client: per-{@code (watch_id, gid)} catch-up snapshot chunk. */
     WATCH_SNAPSHOT_CHUNK(0x11),
-    /** Server→client: per-{@code (watch_id, gid)} catch-up snapshot trailer. */
+    /** Server-to-client: per-{@code (watch_id, gid)} catch-up snapshot trailer. */
     WATCH_SNAPSHOT_END(0x12);
 
     private final int code;

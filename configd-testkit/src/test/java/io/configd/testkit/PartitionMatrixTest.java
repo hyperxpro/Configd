@@ -29,30 +29,30 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * Session 4 / Workstream C — the partition & WAN chaos matrix (control plane), executed
- * deterministically in-sim over {@link AdversarialNetwork}. Covers the architecture §12 scenarios:
- * single-region isolation (minority/majority), leader isolation, asymmetric partition (A→B cut,
- * B→A intact), partial partition (a subset of links), and gray failure (elevated latency short of a
- * full cut). Each scenario asserts — CONTINUOUSLY, every step — the consistency-contract SAFETY
+ * The partition & WAN chaos matrix (control plane), executed
+ * deterministically in-sim over {@link AdversarialNetwork}. Covers the architecture section 12 scenarios:
+ * single-region isolation (minority/majority), leader isolation, asymmetric partition (A->B cut,
+ * B->A intact), partial partition (a subset of links), and gray failure (elevated latency short of a
+ * full cut). Each scenario asserts - CONTINUOUSLY, every step - the consistency-contract SAFETY
  * oracles, and measures bounded recovery after heal.
  *
  * <p><b>Oracles (the linearizability-relevant safety properties, asserted deterministically):</b>
  * <ul>
- *   <li><b>single-leader-per-term</b> — no two nodes are LEADER in the same term at any instant
+ *   <li><b>single-leader-per-term</b> - no two nodes are LEADER in the same term at any instant
  *       (an isolated stale leader at an OLD term is permitted; it cannot commit);</li>
- *   <li><b>no divergent commit</b> — any index committed on two nodes carries the SAME term on
+ *   <li><b>no divergent commit</b> - any index committed on two nodes carries the SAME term on
  *       both (Raft log-matching; a split-brain commit would violate it);</li>
- *   <li><b>no committed-entry loss</b> — the pre-partition committed prefix survives the
+ *   <li><b>no committed-entry loss</b> - the pre-partition committed prefix survives the
  *       partition+heal on the surviving majority and, after heal, on all nodes;</li>
- *   <li><b>minority makes no progress</b> — an isolated sub-quorum's commitIndex does not advance;
- *       <b>majority continues</b> — the quorum side elects and commits.</li>
+ *   <li><b>minority makes no progress</b> - an isolated sub-quorum's commitIndex does not advance;
+ *       <b>majority continues</b> - the quorum side elects and commits.</li>
  * </ul>
  * The full Porcupine linearizability check over a recorded history runs in the {@code configd-linz}
  * harness (env-gated on {@code PORCUPINE_BIN}, the {@code CheckerSelfTest} discipline); these
  * always-on invariants are the deterministic in-sim oracle the CI subset enforces.
  *
  * <p>Recovery times are printed as {@code PARTITION-RECOVERY:} lines feeding {@code recovery-bounds.md}.
- * fault-matrix §C.
+ * fault-matrix section C.
  */
 class PartitionMatrixTest {
 
@@ -158,7 +158,7 @@ class PartitionMatrixTest {
             return nodes.get(node).propose(CommandCodec.encodePut(key, val.getBytes())).accepted();
         }
 
-        /** The committed (index→term) prefix of a node — used to assert no committed-entry loss. */
+        /** The committed (index->term) prefix of a node - used to assert no committed-entry loss. */
         Map<Long, Long> committedPrefix(int node) {
             Map<Long, Long> out = new HashMap<>();
             RaftLog log = logs.get(node);
@@ -231,7 +231,7 @@ class PartitionMatrixTest {
     }
 
     // ------------------------------------------------------------------------
-    // C-1: single-region isolation — majority continues, minority stalls, heal converges
+    // C-1: single-region isolation - majority continues, minority stalls, heal converges
     // ------------------------------------------------------------------------
     @Test
     void singleRegionIsolation_majorityContinues_minorityStalls_healConverges() {
@@ -283,7 +283,7 @@ class PartitionMatrixTest {
                         ctx + ": minority node " + m + " committed during isolation (no-quorum violation)");
             }
 
-            // Heal → whole cluster converges; baseline survives everywhere.
+            // Heal -> whole cluster converges; baseline survives everywhere.
             long preHeal = c.maxCommitIndex();
             c.net.healAll();
             c.net.setDropRate(0.0);
@@ -304,7 +304,7 @@ class PartitionMatrixTest {
     }
 
     // ------------------------------------------------------------------------
-    // C-2: leader isolation — old leader steps down, majority re-elects, no split-brain commit
+    // C-2: leader isolation - old leader steps down, majority re-elects, no split-brain commit
     // ------------------------------------------------------------------------
     @Test
     void leaderIsolation_oldLeaderStepsDown_majorityReElects_noSplitBrain() {
@@ -341,7 +341,7 @@ class PartitionMatrixTest {
             assertTrue(c.commitOf(leader0) <= oldLeaderCommit + 1,
                     ctx + ": the isolated old leader kept committing (CheckQuorum failed)");
 
-            // Heal → no divergent commit; baseline preserved.
+            // Heal -> no divergent commit; baseline preserved.
             c.net.healAll();
             c.net.setDropRate(0.0);
             long preHeal = c.maxCommitIndex();
@@ -361,7 +361,7 @@ class PartitionMatrixTest {
     }
 
     // ------------------------------------------------------------------------
-    // C-3: asymmetric partition (A→B cut, B→A intact) — no split-brain, heal converges
+    // C-3: asymmetric partition (A->B cut, B->A intact) - no split-brain, heal converges
     // ------------------------------------------------------------------------
     @Test
     void asymmetricPartition_noSplitBrainCommit_healConverges() {
@@ -372,19 +372,19 @@ class PartitionMatrixTest {
             Map<Long, Long> baseline = c.committedPrefix(leader0);
 
             // One-way cut from the leader to every other node (the leader can hear acks but cannot
-            // send AppendEntries) — the classic asymmetric Raft-killer. PreVote + CheckQuorum must
+            // send AppendEntries) - the classic asymmetric Raft-killer. PreVote + CheckQuorum must
             // prevent both a disruptive term-inflation and a split-brain commit.
             for (int y = 0; y < N; y++) {
                 if (y != leader0) {
                     c.net.addPartition(NodeId.of(leader0), NodeId.of(y));
                 }
             }
-            // Soak the asymmetric cut — safety asserted every step.
+            // Soak the asymmetric cut - safety asserted every step.
             c.stepChecked(800, ctx);
             // A leader must still exist somewhere and safety must hold (no two leaders same term).
             // (The partition may resolve to a new leader among the reachable majority.)
 
-            // Heal both directions → converge, no divergent commit, baseline preserved.
+            // Heal both directions -> converge, no divergent commit, baseline preserved.
             c.net.healAll();
             c.net.setDropRate(0.0);
             long preHeal = c.maxCommitIndex();
@@ -413,8 +413,8 @@ class PartitionMatrixTest {
             int leader0 = bootstrap(c, seed, ctx);
             Map<Long, Long> baseline = c.committedPrefix(leader0);
 
-            // Cut SOME links only: isolate node 0 from {1,2} but leave 0↔3, 0↔4, and 1..4 fully
-            // meshed. No node is fully isolated; there is still a connected ≥3 component.
+            // Cut SOME links only: isolate node 0 from {1,2} but leave 0<->3, 0<->4, and 1..4 fully
+            // meshed. No node is fully isolated; there is still a connected >=3 component.
             c.net.isolate(NodeId.of(0), NodeId.of(1));
             c.net.isolate(NodeId.of(0), NodeId.of(2));
 
@@ -444,24 +444,24 @@ class PartitionMatrixTest {
     }
 
     // ------------------------------------------------------------------------
-    // C-6: clock skew — consensus SAFETY does not depend on synchronized wall clocks (charter §6).
+    // C-6: clock skew - consensus SAFETY does not depend on synchronized wall clocks (charter section 6).
     // ------------------------------------------------------------------------
     @Test
     void clockSkew_consensusSafetyAndLivenessHoldUnderUnsynchronizedClocks() {
-        // Each node's state-machine wall clock is skewed by a DIFFERENT, large offset (±~hours) —
+        // Each node's state-machine wall clock is skewed by a DIFFERENT, large offset (+/-~hours) - 
         // far beyond any NTP bound. Raft is tick-driven (elections/heartbeats use logical ticks,
         // not the wall clock), so safety must be wholly independent of clock synchronization. We
         // run a full isolate+heal cycle under maximal skew and assert the same safety oracles plus
         // bounded liveness (a leader is still elected and writes still commit cluster-wide).
         for (long seed = 0; seed < SEEDS; seed++) {
             String ctx = "C-6[seed=" + seed + "]";
-            // Distinct per-node skews: −2h, −37min, +0, +53min, +3h (wildly unsynchronized).
+            // Distinct per-node skews: -2h, -37min, +0, +53min, +3h (wildly unsynchronized).
             long[] skews = {-7_200_000L, -2_220_000L, 0L, 3_180_000L, 10_800_000L};
             Cluster c = new Cluster(seed, skews);
-            int leader0 = bootstrap(c, seed, ctx); // elects + commits despite skew → liveness under skew
+            int leader0 = bootstrap(c, seed, ctx); // elects + commits despite skew -> liveness under skew
             Map<Long, Long> baseline = c.committedPrefix(leader0);
 
-            // Isolate leader + a mate, force a re-election on the majority, soak, heal — all the
+            // Isolate leader + a mate, force a re-election on the majority, soak, heal - all the
             // partition safety checks, but now under maximal clock skew.
             RandomGenerator r = RandomGeneratorFactory.of("L64X128MixRandom")
                     .create(AdversarialSchedule.mixSeed(seed, 9_001));
@@ -503,7 +503,7 @@ class PartitionMatrixTest {
     }
 
     // ------------------------------------------------------------------------
-    // C-5: gray failure (elevated latency, no drops) — safety holds, no excessive leadership flap
+    // C-5: gray failure (elevated latency, no drops) - safety holds, no excessive leadership flap
     // ------------------------------------------------------------------------
     @Test
     void grayFailure_latencySpike_safetyHolds_noExcessiveFlap() {
@@ -518,7 +518,7 @@ class PartitionMatrixTest {
             for (int x = 0; x < N; x++) {
                 for (int y = 0; y < N; y++) {
                     if (x != y) {
-                        c.net.beginDelaySpike(x, y, 40); // +40ms — within the election-timeout envelope
+                        c.net.beginDelaySpike(x, y, 40); // +40ms - within the election-timeout envelope
                     }
                 }
             }

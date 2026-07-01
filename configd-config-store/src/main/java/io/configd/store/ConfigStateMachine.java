@@ -49,11 +49,11 @@ public final class ConfigStateMachine implements StateMachine {
     private final VersionedConfigStore store;
     private final Clock clock;
     private final List<ConfigChangeListener> listeners = new CopyOnWriteArrayList<>();
-    // O-6 Seam 2a: listeners notified AFTER a successful snapshot install (restoreSnapshot). A snapshot
-    // install wholesale-replaces the store WITHOUT any per-mutation apply notification, so a consumer that
+    // Listeners notified AFTER a successful snapshot install (restoreSnapshot). A snapshot install
+    // wholesale-replaces the store WITHOUT any per-mutation apply notification, so a consumer that
     // only watches apply() (e.g. the config-policy loader) would MISS `_acl/` keys delivered via
-    // InstallSnapshot (follower catch-up / runtime restore). EMPTY by default ⇒ no behavioral change ⇒
-    // byte-identical. Like apply listeners, invoked on the apply/owner thread; must be fast + non-blocking.
+    // InstallSnapshot (follower catch-up / runtime restore). Invoked on the apply/owner thread;
+    // must be fast and non-blocking.
     private final List<Runnable> snapshotListeners = new CopyOnWriteArrayList<>();
 
     /**
@@ -78,21 +78,19 @@ public final class ConfigStateMachine implements StateMachine {
     private byte[] lastSignature;
 
     /**
-     * F-0052: monotonic epoch counter assigned to each signed delta. Starts
-     * at 0 (no delta yet) and increments <em>before</em> each sign call so
-     * every successful signature carries a unique epoch.
+     * Monotonic epoch counter assigned to each signed delta. Starts at 0 (no delta yet) and
+     * increments before each sign call so every successful signature carries a unique epoch.
      */
     private long signingEpoch;
 
     /**
-     * F-0052: 8-byte random nonce bound into the last signed payload,
-     * or null if no signed delta has been produced yet.
+     * 8-byte random nonce bound into the last signed payload, or null if no signed delta has
+     * been produced yet.
      */
     private byte[] lastNonce;
 
     /**
-     * F-0052: epoch attached to the last signed delta, or 0 if no signed
-     * delta has been produced yet.
+     * Epoch attached to the last signed delta, or 0 if no signed delta has been produced yet.
      */
     private long lastEpoch;
 
@@ -100,9 +98,8 @@ public final class ConfigStateMachine implements StateMachine {
     private final SecureRandom secureRandom = new SecureRandom();
 
     /**
-     * F5 (Tier-1-METRIC-DRIFT, iter-2): observability sink for write-commit
-     * and snapshot-install outcomes. Defaults to {@link StateMachineMetrics#NOOP}
-     * so existing constructors stay byte-equivalent.
+     * Observability sink for write-commit and snapshot-install outcomes. Defaults to
+     * {@link StateMachineMetrics#NOOP} so existing constructors stay byte-equivalent.
      */
     private final StateMachineMetrics metrics;
 
@@ -113,11 +110,10 @@ public final class ConfigStateMachine implements StateMachine {
     private long sequenceCounter;
 
     /**
-     * RR-029 / W-1: the thread bound on first {@link #apply}. All subsequent
-     * applies must run on this same thread (the Raft apply / tick thread). Lazily
-     * bound (not via constructor) because the owning thread is created after the
-     * state machine. Written and read only from the apply path; the single-writer
-     * invariant this field guards is exactly what makes that safe.
+     * The thread bound on first {@link #apply}. All subsequent applies must run on this same
+     * thread (the Raft apply / tick thread). Lazily bound (not via constructor) because the
+     * owning thread is created after the state machine. Written and read only from the apply
+     * path; the single-writer invariant this field guards is exactly what makes that safe.
      */
     private Thread applyOwnerThread;
 
@@ -136,10 +132,9 @@ public final class ConfigStateMachine implements StateMachine {
     }
 
     /**
-     * F5 (Tier-1-METRIC-DRIFT, iter-2): full constructor — accepts a
-     * {@link StateMachineMetrics} sink so {@code configd_write_commit_*} and
-     * {@code configd_snapshot_install_failed_total} get values. All previous
-     * constructors delegate here with {@link StateMachineMetrics#NOOP}.
+     * Full constructor - accepts a {@link StateMachineMetrics} sink so
+     * {@code configd_write_commit_*} and {@code configd_snapshot_install_failed_total} get values.
+     * All other constructors delegate here with {@link StateMachineMetrics#NOOP}.
      */
     public ConfigStateMachine(VersionedConfigStore store, Clock clock,
                               InvariantChecker invariantChecker, ConfigSigner signer,
@@ -200,7 +195,7 @@ public final class ConfigStateMachine implements StateMachine {
      * no-op for testing.
      * <p>
      * This is a functional interface to avoid a hard dependency from
-     * config-store → observability.
+     * config-store to observability.
      */
     @FunctionalInterface
     public interface InvariantChecker {
@@ -218,28 +213,22 @@ public final class ConfigStateMachine implements StateMachine {
         InvariantChecker NOOP = (name, condition, message) -> {};
     }
 
-    // -----------------------------------------------------------------------
-    // StateMachine implementation
-    // -----------------------------------------------------------------------
-
     /**
      * Applies a committed Raft log entry to the config store.
      * <p>
      * Empty commands (no-op entries committed for leader election) are
-     * silently ignored — the sequence counter is not incremented.
+     * silently ignored - the sequence counter is not incremented.
      * <p>
      * After a successful mutation, all registered {@link ConfigChangeListener}s
      * are notified with the list of applied mutations and the new version.
      * <p>
-     * RR-004 / ADR-0033: returns the applied-mutation sequence assigned to a
-     * mutating entry (the client's commit-sequence / read cursor), or
-     * {@link StateMachine#NON_MUTATING} ({@code -1}) for a no-op.
+     * Returns the applied-mutation sequence assigned to a mutating entry (the client's
+     * commit-sequence / read cursor), or {@link StateMachine#NON_MUTATING} ({@code -1}) for a
+     * no-op.
      * <p>
-     * RR-029 / W-1: the first apply binds this state machine to the calling
-     * (Raft apply / tick) thread; every later apply asserts it runs on that same
-     * owner thread. A violation throws in test/sim (via the invariant checker)
-     * and increments a violation metric in production — closing the unguarded
-     * single-writer precondition on the store/state-machine apply path.
+     * The first apply binds this state machine to the calling (Raft apply / tick) thread; every
+     * later apply asserts it runs on that same owner thread. A violation throws in test/sim (via
+     * the invariant checker) and increments a violation metric in production.
      *
      * @param index   the log index of the committed entry
      * @param term    the term of the committed entry
@@ -269,10 +258,9 @@ public final class ConfigStateMachine implements StateMachine {
     }
 
     /**
-     * RR-029 / W-1 owner-thread tripwire. The single-writer precondition on the
-     * apply path was documented but unenforced; this binds the owner thread on
-     * first apply and asserts it on every subsequent apply. In test/sim the
-     * invariant checker throws on violation; in production it records a metric.
+     * Owner-thread tripwire. Binds the owner thread on first apply and asserts it on every
+     * subsequent apply. In test/sim the invariant checker throws on violation; in production it
+     * records a metric.
      */
     private void assertOwnerThread() {
         Thread current = Thread.currentThread();
@@ -292,30 +280,25 @@ public final class ConfigStateMachine implements StateMachine {
     }
 
     /**
-     * F5 (iter-2): apply switch extracted so the metrics try/catch in
-     * {@link #apply} is the only entry point that decides
-     * success-vs-failure for {@code configd_write_commit_*}.
+     * Apply switch extracted so the metrics try/catch in {@link #apply} is the only entry point
+     * that decides success-vs-failure for {@code configd_write_commit_*}.
      */
     private void applySwitch(CommandCodec.DecodedCommand decoded, byte[] command) {
         switch (decoded) {
             case CommandCodec.DecodedCommand.Noop _ -> {
-                // No-op entry — nothing to apply
+                // No-op entry - nothing to apply
             }
             case CommandCodec.DecodedCommand.Put put -> {
                 long prevSeq = sequenceCounter;
                 long seq = prevSeq + 1;
-                // SEC-018 (iter-2): sign BEFORE mutating so a sign failure
-                // leaves the store untouched. The signing payload is
-                // computed from the input command — no post-mutation state
-                // is needed — so this re-ordering is byte-equivalent on the
-                // happy path.
+                // Sign BEFORE mutating so a sign failure leaves the store untouched. The signing
+                // payload is computed from the input command - no post-mutation state is needed -
+                // so this ordering is byte-equivalent on the happy path.
                 signCommand(command);
-                // R-05c (A2): removed the former sequence_monotonic / sequence_gap_free checks here.
-                // With seq := prevSeq + 1 they were LOCALLY VACUOUS — `seq > prevSeq` and
-                // `seq == prevSeq + 1` are tautologies that can never fire ("don't wire a checker
-                // that asserts nothing"). Global apply-order is enforced by RaftNode's
-                // version_monotonicity / state_machine_safety; per-key order is the real check below.
-                // INV-W1: per_key_order — new version for key must exceed existing
+                // sequence_monotonic / sequence_gap_free checks were removed here: with
+                // seq := prevSeq + 1 they are locally vacuous (tautologies that can never fire).
+                // Global apply-order is enforced by RaftNode; per-key order is the real check below.
+                // per_key_order: new version for key must exceed existing
                 ReadResult existing = store.get(put.key());
                 if (existing.found()) {
                     invariantChecker.check("per_key_order", seq > existing.version(),
@@ -330,7 +313,7 @@ public final class ConfigStateMachine implements StateMachine {
                 long prevSeq = sequenceCounter;
                 long seq = prevSeq + 1;
                 signCommand(command);
-                // R-05c (A2): removed locally-vacuous sequence_monotonic/sequence_gap_free (see Put).
+                // sequence_monotonic/sequence_gap_free removed here - locally vacuous (see Put case).
                 sequenceCounter = seq;
                 store.delete(del.key(), seq);
                 notifyListeners(List.of(new ConfigMutation.Delete(del.key())), seq);
@@ -339,7 +322,7 @@ public final class ConfigStateMachine implements StateMachine {
                 long prevSeq = sequenceCounter;
                 long seq = prevSeq + 1;
                 signCommand(command);
-                // R-05c (A2): removed locally-vacuous sequence_monotonic/sequence_gap_free (see Put).
+                // sequence_monotonic/sequence_gap_free removed here - locally vacuous (see Put case).
                 sequenceCounter = seq;
                 store.applyBatch(batch.mutations(), seq);
                 notifyListeners(batch.mutations(), seq);
@@ -372,13 +355,11 @@ public final class ConfigStateMachine implements StateMachine {
             values.add(vv.valueUnsafe());
         });
 
-        // F-0013 fix: Use 4-byte int for key length instead of 2-byte short.
-        // Short truncates keys > 65535 bytes silently. While config keys are
-        // typically short paths, the snapshot format must be safe for all inputs.
-        // R-002 (iter-2): write a TLV trailer carrying signingEpoch so the
-        // post-D-004 monotonic-epoch carry-forward survives snapshot install,
-        // and so future fields (nonceCounter, bridgeWatermark, ...) can be
-        // appended without breaking older readers.
+        // Use 4-byte int for key length instead of 2-byte short. Short truncates keys > 65535
+        // bytes silently; the snapshot format must be safe for all valid inputs.
+        // Write a TLV trailer carrying signingEpoch so the monotonic-epoch carry-forward
+        // survives snapshot install, and so future fields can be appended without breaking
+        // older readers.
         int trailerPayloadLen = 8; // signingEpoch (long) only, today
         int size = 8 + 4 + 4 + 4 + trailerPayloadLen;
         for (int i = 0; i < keys.size(); i++) {
@@ -424,12 +405,12 @@ public final class ConfigStateMachine implements StateMachine {
             metrics.onSnapshotInstallFailed();
             throw e;
         }
-        // O-6 Seam 2a: a snapshot install changed the store contents wholesale with no per-mutation
-        // notification — let snapshot listeners (e.g. the config-policy loader) re-derive. Fired only after
-        // a SUCCESSFUL, fully-accounted install (OUTSIDE the try) so a misbehaving listener can neither be
-        // mis-counted as an install failure nor abort a restore that already replaced the store; each
-        // listener is additionally isolated (see notifySnapshotListeners) so it cannot break this
-        // Raft-critical path.
+        // A snapshot install changed the store contents wholesale with no per-mutation notification -
+        // let snapshot listeners (e.g. the config-policy loader) re-derive. Fired only after a
+        // SUCCESSFUL, fully-accounted install (outside the try) so a misbehaving listener can
+        // neither be mis-counted as an install failure nor abort a restore that already replaced
+        // the store; each listener is additionally isolated (see notifySnapshotListeners) so it
+        // cannot break this Raft-critical path.
         notifySnapshotListeners();
     }
 
@@ -438,10 +419,9 @@ public final class ConfigStateMachine implements StateMachine {
         long restoredSequence = buf.getLong();
         int entryCount = buf.getInt();
 
-        // F-0053 fix: bound-check envelope fields BEFORE allocating. Without
-        // these checks, a malicious or corrupted InstallSnapshot payload
-        // could trigger OOM (huge positive length) or NegativeArraySizeException
-        // on the receiving node during a critical recovery path.
+        // Bound-check envelope fields BEFORE allocating. Without these checks, a malicious or
+        // corrupted InstallSnapshot payload could trigger OOM (huge positive length) or
+        // NegativeArraySizeException on the receiving node during a critical recovery path.
         if (entryCount < 0 || entryCount > MAX_SNAPSHOT_ENTRIES) {
             throw new IllegalArgumentException(
                     "Snapshot entryCount out of range: " + entryCount
@@ -495,15 +475,14 @@ public final class ConfigStateMachine implements StateMachine {
     }
 
     /**
-     * R-002 (iter-2): dispatch across snapshot trailer forms.
-     * Order matters — empty first (legacy pre-D-004), then magic-prefixed TLV
-     * (canonical), then raw 8-byte epoch (iter-1 transitional). Anything else
-     * is malformed and rejected.
+     * Dispatches across snapshot trailer forms. Order matters: empty first (legacy snapshots with
+     * no trailer), then magic-prefixed TLV (canonical), then raw 8-byte epoch (transitional form).
+     * Anything else is malformed and rejected.
      */
     private void decodeTrailer(ByteBuffer buf) {
         int remaining = buf.remaining();
         if (remaining == 0) {
-            return; // legacy pre-D-004 snapshot — no trailer
+            return; // legacy snapshot - no trailer
         }
         if (remaining >= 8 && buf.getInt(buf.position()) == SNAPSHOT_TRAILER_MAGIC) {
             buf.getInt(); // consume magic
@@ -520,8 +499,8 @@ public final class ConfigStateMachine implements StateMachine {
             }
             if (trailerLen >= Long.BYTES) {
                 long restoredEpoch = buf.getLong();
-                // D-004 (iter-1) carry-forward semantics: take the higher epoch
-                // so a leader's stale snapshot can never roll the follower back.
+                // Carry-forward semantics: take the higher epoch so a leader's stale snapshot
+                // can never roll the follower back.
                 if (restoredEpoch > this.signingEpoch) {
                     this.signingEpoch = restoredEpoch;
                 }
@@ -535,7 +514,7 @@ public final class ConfigStateMachine implements StateMachine {
             return;
         }
         if (remaining == Long.BYTES) {
-            // iter-1 transitional raw 8-byte epoch trailer
+            // raw 8-byte epoch trailer (backward-compatible form)
             long restoredEpoch = buf.getLong();
             if (restoredEpoch > this.signingEpoch) {
                 this.signingEpoch = restoredEpoch;
@@ -548,48 +527,42 @@ public final class ConfigStateMachine implements StateMachine {
     }
 
     /**
-     * Maximum entry count accepted from an InstallSnapshot payload. Matches
-     * the typical cluster capacity headroom and bounds allocation for
-     * malicious / corrupted peers (F-0053).
+     * Maximum entry count accepted from an InstallSnapshot payload. Bounds allocation against
+     * malicious or corrupted peers.
      */
     private static final int MAX_SNAPSHOT_ENTRIES = 100_000_000;
 
     /**
-     * Maximum key length accepted from an InstallSnapshot payload (F-0053).
-     * Bounded at 1 MiB to reject adversarial sizes while still permitting
-     * the long-key snapshot round-trip guaranteed by the F-0013 fix (which
-     * lifted the short-based 65535 cap from the write path).
+     * Maximum key length accepted from an InstallSnapshot payload. Bounded at 1 MiB to reject
+     * adversarial sizes while still permitting long-key snapshot round-trips (the 4-byte key
+     * length field lifted the previous short-based 65535 cap).
      */
     private static final int MAX_SNAPSHOT_KEY_LEN = 1_048_576;
 
     /**
-     * Maximum value length accepted from an InstallSnapshot payload (F-0053).
-     * Matches {@code CommandCodec.MAX_VALUE_SIZE} (1 MiB).
+     * Maximum value length accepted from an InstallSnapshot payload. Matches
+     * {@code CommandCodec.MAX_VALUE_SIZE} (1 MiB).
      */
     private static final int MAX_SNAPSHOT_VALUE_LEN = 1_048_576;
 
     /**
-     * R-002 (iter-2): magic value identifying a TLV-formatted snapshot trailer.
-     * The decoder dispatches across three forms in order:
+     * Magic value identifying a TLV-formatted snapshot trailer. The decoder dispatches across
+     * three forms in order:
      * <ol>
-     *   <li>Empty trailer — pre-D-004 (legacy) snapshots.</li>
-     *   <li>Magic-prefixed TLV: [4B magic][4B length][payload bytes] — canonical.</li>
-     *   <li>Raw 8-byte signingEpoch — iter-1 D-004 transitional form.</li>
+     *   <li>Empty trailer - legacy snapshots with no trailer.</li>
+     *   <li>Magic-prefixed TLV: [4B magic][4B length][payload bytes] - canonical.</li>
+     *   <li>Raw 8-byte signingEpoch - transitional form for older snapshots.</li>
      * </ol>
-     * Chosen to be statistically distinct from any plausible {@code signingEpoch}
-     * upper int (HLC physical-millis epochs stay ≤ 0x000001FF for the next 70 years).
+     * Chosen to be statistically distinct from any plausible {@code signingEpoch} upper int
+     * (HLC physical-millis epochs stay <= 0x000001FF for the next 70 years).
      */
     private static final int SNAPSHOT_TRAILER_MAGIC = 0xC0FD7A11;
 
     /**
-     * R-002: hard cap on TLV trailer payload length to bound allocation
-     * if the magic happens to be matched by a corrupted peer.
+     * Hard cap on TLV trailer payload length to bound allocation if the magic happens to be
+     * matched by a corrupted peer.
      */
     private static final int MAX_SNAPSHOT_TRAILER_LEN = 65_536;
-
-    // -----------------------------------------------------------------------
-    // Listener management
-    // -----------------------------------------------------------------------
 
     /**
      * Registers a listener that will be notified after each successful mutation.
@@ -613,14 +586,13 @@ public final class ConfigStateMachine implements StateMachine {
     }
 
     /**
-     * Registers a listener invoked AFTER a successful {@link #restoreSnapshot} (snapshot install). Because a
-     * snapshot install wholesale-replaces the store without per-mutation {@link ConfigChangeListener}
-     * notifications, this is how a consumer (e.g. the config-policy loader, O-6 Seam 2a) learns the store
-     * contents changed via InstallSnapshot (follower catch-up / runtime restore) and can re-derive its
-     * view. Invoked on the snapshot-install/restore thread (expected to be the group owner thread, the same
-     * thread as {@link #apply}, though — unlike {@code apply} — {@link #restoreSnapshot} does not itself
-     * assert the owner thread) in registration order; implementations must be fast + non-blocking, and a
-     * throwing listener is isolated and logged rather than allowed to fail the install.
+     * Registers a listener invoked AFTER a successful {@link #restoreSnapshot}. Because a snapshot
+     * install wholesale-replaces the store without per-mutation {@link ConfigChangeListener}
+     * notifications, this is how a consumer (e.g. the config-policy loader) learns the store
+     * contents changed via InstallSnapshot (follower catch-up / runtime restore) and can re-derive
+     * its view. Invoked on the snapshot-install/restore thread in registration order; implementations
+     * must be fast and non-blocking. A throwing listener is isolated and logged rather than allowed
+     * to fail the install.
      *
      * @param listener the snapshot-install callback (non-null)
      */
@@ -628,10 +600,6 @@ public final class ConfigStateMachine implements StateMachine {
         Objects.requireNonNull(listener, "listener must not be null");
         snapshotListeners.add(listener);
     }
-
-    // -----------------------------------------------------------------------
-    // Signing
-    // -----------------------------------------------------------------------
 
     /**
      * Signs the given command bytes using the configured signer, caching
@@ -651,22 +619,19 @@ public final class ConfigStateMachine implements StateMachine {
         if (signer == null) {
             return;
         }
-        // SEC-018 (iter-2): a sign failure must propagate so the caller
-        // (apply()) aborts BEFORE mutating the store. Silently swallowing
-        // the exception (the historical behavior) caused signed writes to
-        // be broadcast unsigned to the edge, which then rejected them and
-        // wedged into a permanent gap. Throwing here also ensures the
-        // sign-then-mutate ordering's "leave store untouched on signing
-        // failure" guarantee actually holds.
+        // A sign failure must propagate so the caller (apply()) aborts BEFORE mutating the store.
+        // Silently swallowing the exception caused signed writes to be broadcast unsigned to the
+        // edge, which then rejected them and wedged into a permanent gap. Throwing here ensures
+        // the sign-then-mutate ordering's "leave store untouched on signing failure" guarantee
+        // actually holds.
         long epoch = signingEpoch + 1;
         byte[] nonce = new byte[ConfigDelta.NONCE_LEN];
         secureRandom.nextBytes(nonce);
         try {
-            // F-0052: bind epoch + nonce into the signed payload so replays
-            // under a rolled-back edge are rejected. The payload layout
-            // matches ConfigDelta.signingPayload(). The canonical form is
-            // computed from the input command — no post-mutation state is
-            // referenced — so this can run before store.put / applyBatch.
+            // Bind epoch + nonce into the signed payload so replays under a rolled-back edge are
+            // rejected. The payload layout matches ConfigDelta.signingPayload(). The canonical
+            // form is computed from the input command - no post-mutation state is referenced -
+            // so this can run before store.put / applyBatch.
             byte[] canonical = canonicalize(command);
             ByteBuffer buf = ByteBuffer.allocate(canonical.length + Long.BYTES + nonce.length);
             buf.put(canonical);
@@ -675,7 +640,7 @@ public final class ConfigStateMachine implements StateMachine {
             byte[] sig = signer.sign(buf.array());
             // Commit only after a successful sign. The previous code mutated
             // signingEpoch / lastEpoch / lastNonce inside the try-block and
-            // partially "reset" them on catch — that left the field cluster
+            // partially "reset" them on catch - that left the field cluster
             // in an inconsistent state if the next call also failed.
             lastSignature = sig;
             lastEpoch = epoch;
@@ -687,10 +652,9 @@ public final class ConfigStateMachine implements StateMachine {
             throw new IllegalStateException(
                     "Failed to sign applied command — fail-close abort (epoch=" + epoch + ")", e);
         } catch (IllegalStateException e) {
-            // F5 / SEC-018: a verify-only signer (or any signer that throws
-            // IllegalStateException directly — e.g., misconfigured key) must
-            // also abort apply via the same fail-close path; let the caller
-            // observe a consistent message and onWriteCommitFailure metric.
+            // A verify-only signer (or any signer that throws IllegalStateException directly,
+            // e.g. misconfigured key) must also abort apply via the same fail-close path; let
+            // the caller observe a consistent message and onWriteCommitFailure metric.
             LOG.log(Level.SEVERE,
                     "Signer threw IllegalStateException — aborting apply (fail-close) to keep store consistent", e);
             throw new IllegalStateException(
@@ -734,34 +698,29 @@ public final class ConfigStateMachine implements StateMachine {
     }
 
     /**
-     * Returns the monotonic epoch attached to the last signed delta
-     * (F-0052). Returns 0 if no signed delta has been produced.
+     * Returns the monotonic epoch attached to the last signed delta. Returns 0 if no signed
+     * delta has been produced.
      */
     public long lastEpoch() {
         return lastEpoch;
     }
 
     /**
-     * Returns the 8-byte nonce bound into the last signed delta (F-0052),
-     * or null if no signed delta has been produced. Defensive copy.
+     * Returns the 8-byte nonce bound into the last signed delta, or null if no signed delta has
+     * been produced. Defensive copy.
      */
     public byte[] lastNonce() {
         return lastNonce != null ? lastNonce.clone() : null;
     }
 
     /**
-     * R-002 (iter-2): returns the monotonic signing epoch — the current
-     * floor that future signed deltas will start from. After
-     * {@link #restoreSnapshot} this reflects the epoch carried in the
-     * snapshot trailer (D-004 carry-forward semantics).
+     * Returns the monotonic signing epoch - the current floor that future signed deltas will
+     * start from. After {@link #restoreSnapshot} this reflects the epoch carried in the snapshot
+     * trailer (carry-forward semantics: never rolled back below the restored value).
      */
     public long signingEpoch() {
         return signingEpoch;
     }
-
-    // -----------------------------------------------------------------------
-    // Accessors
-    // -----------------------------------------------------------------------
 
     /** Returns the current monotonic sequence counter. */
     public long sequenceCounter() {
@@ -772,10 +731,6 @@ public final class ConfigStateMachine implements StateMachine {
     public VersionedConfigStore store() {
         return store;
     }
-
-    // -----------------------------------------------------------------------
-    // Listener notification
-    // -----------------------------------------------------------------------
 
     private void notifyListeners(List<ConfigMutation> mutations, long version) {
         for (ConfigChangeListener listener : listeners) {
@@ -797,16 +752,12 @@ public final class ConfigStateMachine implements StateMachine {
         }
     }
 
-    // -----------------------------------------------------------------------
-    // ConfigChangeListener
-    // -----------------------------------------------------------------------
-
     /**
      * Callback interface for receiving notifications when config mutations
      * are applied to the store.
      * <p>
      * Implementations are invoked on the Raft apply thread. They must be
-     * fast and non-blocking — any expensive work should be dispatched to
+     * fast and non-blocking - any expensive work should be dispatched to
      * a separate thread.
      */
     @FunctionalInterface

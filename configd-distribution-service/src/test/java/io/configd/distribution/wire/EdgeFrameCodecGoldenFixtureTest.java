@@ -15,15 +15,14 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.fail;
 
 /**
- * CT-41 edge wire-compat golden fixture. Encodes one frame of EVERY {@link FrameType}
- * (including each {@link ErrorCode}), the empty-NOTIFY edge case, and a 1 MiB at-cap
- * snapshot chunk, then asserts byte-equality against the pinned hex in
- * {@link EdgeFrameGoldenBytes}. This is the day-one wire-compat guard ADR-0037 / CT-41
- * require: it keeps the edge protocol's bytes from drifting silently and keeps the edge
- * codec off the Raft fixture gate (a separate codec + version byte).
+ * Edge wire-compat golden fixture. Encodes one frame of EVERY {@link FrameType} (including
+ * each {@link ErrorCode}), the empty-NOTIFY edge case, and a 1 MiB at-cap snapshot chunk,
+ * then asserts byte-equality against the pinned hex in {@link EdgeFrameGoldenBytes}. This is
+ * the wire-compat guard that keeps the edge protocol's bytes from drifting silently and keeps
+ * the edge codec off the Raft fixture gate (a separate codec + version byte).
  *
- * <p><b>Rebaseline rule.</b> A failure here means the encoded bytes changed. Revert, or —
- * for an intentional protocol change — bump {@link EdgeFrameCodec#EDGE_WIRE_VERSION} and
+ * <p><b>Rebaseline rule.</b> A failure here means the encoded bytes changed. Revert, or -
+ * for an intentional protocol change - bump {@link EdgeFrameCodec#EDGE_WIRE_VERSION} and
  * regenerate {@link EdgeFrameGoldenBytes} via {@code EdgeFrameGoldenBytesGenerator}. See
  * {@link EdgeFrameGoldenBytes}'s class Javadoc.
  */
@@ -88,10 +87,10 @@ class EdgeFrameCodecGoldenFixtureTest {
 
     /**
      * The fixture set covers every frame type, every error code, the empty-NOTIFY edge
-     * case, and the at-cap chunk — a coverage tripwire so a future type/code addition
+     * case, and the at-cap chunk - a coverage tripwire so a future type/code addition
      * cannot land without a golden entry. Coverage is taken across BOTH the v1 fixtures
      * ({@link EdgeFrameFixtures#build()}) and the v2 fixtures
-     * ({@link EdgeFrameFixtures#buildV2()}): the RFC §2 watch frame types and the
+     * ({@link EdgeFrameFixtures#buildV2()}): the watch frame types and the
      * {@link ErrorCode#NOT_AUTHORIZED} code are 0x02-era additions covered in the v2 set.
      */
     @Test
@@ -106,7 +105,7 @@ class EdgeFrameCodecGoldenFixtureTest {
                 fail("no golden fixture covers frame type " + ft);
             }
         }
-        // Every ErrorCode present (as an ErrorClose or a WatchCanceled — both carry the code).
+        // Every ErrorCode present (as an ErrorClose or a WatchCanceled - both carry the code).
         for (ErrorCode ec : ErrorCode.values()) {
             boolean present = all.stream().anyMatch(f ->
                     (f instanceof EdgeFrame.ErrorClose close && close.code() == ec)

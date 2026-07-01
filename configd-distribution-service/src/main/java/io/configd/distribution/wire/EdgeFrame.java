@@ -6,31 +6,26 @@ import java.util.List;
 import java.util.Objects;
 
 /**
- * The protocol-v1 frame model for the edge streaming path (C1 design §3; ADR-0037
- * wire discipline, ADR-0038 verbatim-signed-chain delivery). A sealed family of
- * immutable records — one per frame type in the §3 table — that {@link EdgeFrameCodec}
- * encodes to / decodes from the length-prefixed CRC32C-checked wire format.
+ * The frame model for the edge streaming path. A sealed family of immutable records - one
+ * per frame type - that {@link EdgeFrameCodec} encodes to / decodes from the
+ * length-prefixed CRC32C-checked wire format.
  *
  * <p><b>Transport-free by construction.</b> No {@code java.net}, socket, or TLS type
- * appears anywhere in this hierarchy or in {@link EdgeFrameCodec}; the only boundary
- * to the transport is the session core's {@code TransportSink} (ADR-0037
- * TransportSink-seam contingency). This keeps the protocol model fully unit- and
- * golden-fixture-testable without a network.
+ * appears anywhere in this hierarchy or in {@link EdgeFrameCodec}; the only boundary to
+ * the transport is the session core's {@code TransportSink}. This keeps the protocol model
+ * fully unit- and golden-fixture-testable without a network.
  *
- * <p><b>Direction</b> (per §3): {@link Subscribe} and {@link CursorAck} are edge→server;
+ * <p><b>Direction:</b> {@link Subscribe} and {@link CursorAck} are edge->server;
  * {@link SubscribeOk}, {@link Notify}, {@link SnapshotBegin}, {@link SnapshotChunk},
- * {@link SnapshotEnd}, {@link Heartbeat} are server→edge; {@link ErrorClose} is either.
+ * {@link SnapshotEnd}, {@link Heartbeat} are server->edge; {@link ErrorClose} is either.
  *
- * <p><b>RFC §2 watch frames (0x02 only).</b> {@link WatchCreate} and {@link WatchCancel}
- * are client→server; {@link WatchCreated}, {@link WatchEvent}, {@link WatchProgress},
+ * <p><b>Watch frames (0x02 only).</b> {@link WatchCreate} and {@link WatchCancel} are
+ * client->server; {@link WatchCreated}, {@link WatchEvent}, {@link WatchProgress},
  * {@link WatchCanceled}, {@link WatchSnapshotBegin}, {@link WatchSnapshotChunk}, and
- * {@link WatchSnapshotEnd} are server→client. They form the client-facing watch surface
+ * {@link WatchSnapshotEnd} are server->client. They form the client-facing watch surface
  * (multiplex / filter veneer over the connection-level fan-out) and are encodable/decodable
- * <b>only</b> under {@link EdgeFrameCodec#EDGE_WIRE_VERSION_V2} (W1-3 / W5-11). Their wire
- * layouts are normative (RFC §5.2–5.8); they carry the per-shard {@link WatchCursor} vector
- * (never a scalar, even at {@code N = 1}; W1-1). This family is <b>driven by the watch veneer</b> — the
- * N = 1 client-facing watch surface (multiplex / filter over the connection-level fan-out), wired in the
- * RFC §2 watch-veneer increments.
+ * <b>only</b> under {@link EdgeFrameCodec#EDGE_WIRE_VERSION_V2} (W1-3 / W5-11). They carry
+ * the per-shard {@link WatchCursor} vector (never a scalar, even at {@code N = 1}; W1-1).
  */
 public sealed interface EdgeFrame
         permits EdgeFrame.Subscribe, EdgeFrame.SubscribeOk, EdgeFrame.Notify,
@@ -44,9 +39,9 @@ public sealed interface EdgeFrame
     FrameType type();
 
     // ---------------------------------------------------------------------------
-    // RFC §2 watch-frame constants (W5-2 / W5-4a). The wire carries raw u8 fields with
-    // these named values; the semantic enums (target kind, scope, mutation kind) live in
-    // the later veneer layer, keeping this wire model dependency-free.
+    // Watch-frame constants (W5-2 / W5-4a). The wire carries raw u8 fields with these
+    // named values; the semantic enums (target kind, scope, mutation kind) live in the
+    // veneer layer, keeping this wire model dependency-free.
     // ---------------------------------------------------------------------------
 
     /** {@link WatchCreate} flag bit0: full_chain_verify (untrusted-edge verbatim mode; W8-4). */
@@ -69,22 +64,20 @@ public sealed interface EdgeFrame
     int CHANGE_KIND_DELETE = 1;
 
     /**
-     * Edge→server subscription request (one per connection, §3). The subscription is
-     * either prefix-scoped or full-store; per ADR-0038 the prefix set is echoed to the
-     * edge as a storage/serving filter only — the server always streams the full signed
-     * chain regardless of prefixes.
+     * Edge->server subscription request (one per connection). The subscription is either
+     * prefix-scoped or full-store; the prefix set is echoed to the edge as a storage/serving
+     * filter only - the server always streams the full signed chain regardless of prefixes.
      *
-     * @param fullStore            true ⇒ subscribe to the whole store; when true
+     * @param fullStore            true means subscribe to the whole store; when true
      *                             {@code prefixes} must be empty
      * @param prefixes             the subscribed key prefixes (empty when {@code fullStore})
      * @param resumeCursor         the applied-mutation seq S the edge has already applied
      *                             (0 = fresh subscriber)
-     * @param failoverResumeCursor RESERVED (§3): the cursor obtained from a PREVIOUS
-     *                             fan-out endpoint, for the contract §3 edge-failover
-     *                             clause. C2 populates it; v1 servers treat it as the
-     *                             resume cursor when it exceeds {@code resumeCursor}.
-     *                             {@code -1} means "not present".
-     * @param edgeId               the edge identity (bound to the mTLS cert identity at C2)
+     * @param failoverResumeCursor RESERVED: the cursor obtained from a PREVIOUS fan-out
+     *                             endpoint, for the edge-failover clause. The edge populates
+     *                             it; v1 servers treat it as the resume cursor when it exceeds
+     *                             {@code resumeCursor}. {@code -1} means "not present".
+     * @param edgeId               the edge identity (bound to the mTLS cert identity)
      */
     record Subscribe(
             boolean fullStore,
@@ -113,8 +106,8 @@ public sealed interface EdgeFrame
 
         /**
          * The effective resume cursor a v1 server tails from: the larger of
-         * {@code resumeCursor} and {@code failoverResumeCursor} (the latter ignored
-         * when absent, i.e. {@code -1}). See the §3 failover-resume reserved field note.
+         * {@code resumeCursor} and {@code failoverResumeCursor} (the latter ignored when
+         * absent, i.e. {@code -1}).
          */
         public long effectiveResumeCursor() {
             return Math.max(resumeCursor, failoverResumeCursor);
@@ -126,7 +119,7 @@ public sealed interface EdgeFrame
         }
     }
 
-    /** The subscribe-time mode the server chose for a session (§3). */
+    /** The subscribe-time mode the server chose for a session. */
     enum Mode {
         /** The edge's cursor is recoverable from the tail; stream forward immediately. */
         TAIL,
@@ -135,7 +128,7 @@ public sealed interface EdgeFrame
     }
 
     /**
-     * Server→edge subscription acknowledgement (§3).
+     * Server->edge subscription acknowledgement.
      *
      * @param latestSeq the highest applied-mutation seq S the server currently holds
      * @param mode      {@link Mode#TAIL} or {@link Mode#SNAPSHOT_FIRST}
@@ -153,10 +146,10 @@ public sealed interface EdgeFrame
     }
 
     /**
-     * Server→edge notification batch (§3; ADR-0038). One {@code NOTIFY} frame carries
-     * N <b>consecutive, verbatim</b> {@link CommitNotification}s — the leader-signed
-     * delta chain, never merged or coalesced. The batch is bounded at encode by
-     * {@code batchMaxNotifications} / {@code batchMaxBytes} (CT-17).
+     * Server->edge notification batch. One {@code NOTIFY} frame carries N
+     * <b>consecutive, verbatim</b> {@link CommitNotification}s - the leader-signed delta
+     * chain, never merged or coalesced. The batch is bounded at encode by
+     * {@code batchMaxNotifications} / {@code batchMaxBytes}.
      *
      * @param notifications the consecutive notifications, in ascending seq order (non-empty
      *                      in practice; the empty batch is a valid encoded edge case the
@@ -176,8 +169,8 @@ public sealed interface EdgeFrame
     }
 
     /**
-     * Server→edge snapshot-transfer header (§3): a chunked snapshot follows
-     * (RR-019 lesson — chunked from day one).
+     * Server->edge snapshot-transfer header: a chunked snapshot follows. Chunked from
+     * day one to bound per-frame memory allocation.
      *
      * @param snapshotSeq the applied-mutation seq S the snapshot encodes
      * @param chunkCount  the number of {@link SnapshotChunk} frames that follow
@@ -204,11 +197,11 @@ public sealed interface EdgeFrame
     }
 
     /**
-     * Server→edge snapshot chunk (§3). Each chunk's payload is bounded at
+     * Server->edge snapshot chunk. Each chunk's payload is bounded at
      * {@code MAX_SNAPSHOT_CHUNK_BYTES} (1 MiB) and CRC-protected by the frame trailer.
      *
      * @param index the 0-based chunk index
-     * @param bytes the chunk payload (a slice of the ADR-0028 snapshot bytes)
+     * @param bytes the chunk payload (a slice of the snapshot bytes)
      */
     record SnapshotChunk(int index, byte[] bytes) implements EdgeFrame {
 
@@ -255,7 +248,7 @@ public sealed interface EdgeFrame
     }
 
     /**
-     * Server→edge snapshot-transfer trailer (§3): the edge sets cursor =
+     * Server->edge snapshot-transfer trailer: the edge sets its cursor to
      * {@code snapshotSeq} and resumes tailing.
      *
      * @param snapshotSeq the applied-mutation seq S the completed snapshot encodes
@@ -275,9 +268,9 @@ public sealed interface EdgeFrame
     }
 
     /**
-     * Edge→server cursor acknowledgement (§3): the highest applied-mutation seq S the
-     * edge has applied. Drives outbound flow-control / ack-lag accounting (CT-26) and is
-     * the C4 slow-consumer signal.
+     * Edge->server cursor acknowledgement: the highest applied-mutation seq S the edge has
+     * applied. Drives outbound flow-control / ack-lag accounting and is the slow-consumer
+     * signal.
      *
      * @param seq the highest applied seq S
      */
@@ -296,13 +289,11 @@ public sealed interface EdgeFrame
     }
 
     /**
-     * Server→edge heartbeat (§3). C1 ships this as a <b>carrier only</b> — the
-     * idle-staleness frontier measure it feeds is deferred to C2 behind ADR-0039 (design
-     * review B-1). It carries the server's latest seq and wall clock so the edge can
-     * later compute a covered-frontier staleness.
+     * Server->edge heartbeat. Carries the server's latest seq and wall clock so the edge
+     * can compute a covered-frontier staleness.
      *
-     * @param latestSeq        the server's highest applied-mutation seq S at emit time
-     * @param serverNowMillis  the server's wall clock at emit time
+     * @param latestSeq       the server's highest applied-mutation seq S at emit time
+     * @param serverNowMillis the server's wall clock at emit time
      */
     record Heartbeat(long latestSeq, long serverNowMillis) implements EdgeFrame {
 
@@ -319,9 +310,9 @@ public sealed interface EdgeFrame
     }
 
     /**
-     * Either-direction error / close frame (§3). The {@code code} is the fixed
+     * Either-direction error / close frame. The {@code code} is the fixed
      * {@link ErrorCode} taxonomy; {@code message} is diagnostic only (never a structured
-     * cause).
+     * cause on the wire).
      *
      * @param code    the taxonomy code
      * @param message a human-readable diagnostic (never null; may be empty)
@@ -340,28 +331,28 @@ public sealed interface EdgeFrame
     }
 
     // =======================================================================
-    // RFC §2 watch frames (0x02 only). Payload byte layouts are normative
-    // (RFC §5.2–5.8); see EdgeFrameCodec for the encode/decode discipline.
+    // Watch frames (0x02 only). Payload byte layouts are normative (sections
+    // 5.2-5.8 of the RFC); see EdgeFrameCodec for the encode/decode discipline.
     // =======================================================================
 
     /**
-     * Client→server create/resume of a watch (RFC §5.2). Wire payload:
+     * Client->server create/resume of a watch. Wire payload:
      * {@code [watchId u64][scope u8][targetKind u8][pathLen u32][path][cursor][flags u8]}.
      *
      * <p>A resume is just a {@code WatchCreate} carrying the saved {@link WatchCursor}
-     * (W5-4); there is no separate resume frame. {@code path} is the UTF-8 canonical §1 path
+     * (W5-4); there is no separate resume frame. {@code path} is the UTF-8 canonical path
      * for a KEY/PREFIX target and MUST be empty for a {@link #WATCH_TARGET_FULL} target
-     * (W5-4 — the load-bearing structural invariant enforced here, mirroring
+     * (W5-4 - the load-bearing structural invariant enforced here, mirroring
      * {@link Subscribe}'s full-store/prefixes rule; KEY/PREFIX path-grammar validation is a
      * session-layer concern surfaced as {@code BAD_SUBSCRIBE}, not a codec concern).
      *
      * @param watchId    client-assigned multiplex id, unique per connection (W2-8); an
      *                   opaque {@code uint64} (no sign constraint)
-     * @param scope      the {@code ConfigScope} as a {@code u8} (0..255; §1 A2-1)
+     * @param scope      the {@code ConfigScope} as a {@code u8} (0..255)
      * @param targetKind {@link #WATCH_TARGET_KEY}/{@link #WATCH_TARGET_PREFIX}/{@link #WATCH_TARGET_FULL}
      *                   as a {@code u8}
      * @param path       UTF-8 canonical path bytes (empty iff {@code targetKind == FULL})
-     * @param cursor     the resume {@link WatchCursor} vector (empty ⇒ "from now per shard")
+     * @param cursor     the resume {@link WatchCursor} vector (empty means "from now per shard")
      * @param flags      the {@code u8} flag bits ({@link #WATCH_FLAG_FULL_CHAIN_VERIFY} etc.)
      */
     record WatchCreate(long watchId, int scope, int targetKind, byte[] path,
@@ -448,8 +439,8 @@ public sealed interface EdgeFrame
     }
 
     /**
-     * Client→server cancel of a watch by {@code watch_id} (RFC §5.6). The id is NOT reused
-     * (W2-8). Wire payload: {@code [watchId u64]}.
+     * Client->server cancel of a watch by {@code watch_id}. The id is NOT reused (W2-8).
+     * Wire payload: {@code [watchId u64]}.
      *
      * @param watchId the watch to cancel (opaque {@code uint64})
      */
@@ -462,8 +453,8 @@ public sealed interface EdgeFrame
     }
 
     /**
-     * Server→client acknowledgement of an authorized watch (RFC §5.3) — the FIRST frame for
-     * a {@code watch_id} (W5-5). Wire payload:
+     * Server->client acknowledgement of an authorized watch - the FIRST frame for a
+     * {@code watch_id} (W5-5). Wire payload:
      * {@code [watchId u64][shardCount u32]( gid u32  latestSeq u64  mode u8 )*shardCount}.
      *
      * @param watchId the acknowledged watch
@@ -484,16 +475,16 @@ public sealed interface EdgeFrame
     }
 
     /**
-     * Server→client per-shard change batch, tagged {@code (gid, S)} (RFC §5.4). Carries the
-     * matching changes of <b>exactly one shard-commit</b> (W5-6 — never split, never
-     * coalesced). Wire payload:
+     * Server->client per-shard change batch, tagged {@code (gid, S)}. Carries the matching
+     * changes of <b>exactly one shard-commit</b> (W5-6 - never split, never coalesced).
+     * Wire payload:
      * {@code [watchId u64][gid u32][S u64][commitTs u64][changeCount u32]( change )*}.
      *
      * @param watchId  the watch this event belongs to
      * @param gid      the shard group id (a {@code uint32}; raw bits in this {@code int})
      * @param s        the shard's applied-mutation seq for this commit (the cursor advance;
      *                 non-negative)
-     * @param commitTs the leader commit wall-clock millis — freshness only, NOT a cursor
+     * @param commitTs the leader commit wall-clock millis - freshness only, NOT a cursor
      *                 (W3-3); non-negative
      * @param changes  the matching {@link WatchChange}s of this commit (PUT/DELETE)
      */
@@ -518,8 +509,8 @@ public sealed interface EdgeFrame
     }
 
     /**
-     * Server→client bookmark — advances idle cursor components with no events (RFC §5.5,
-     * the etcd {@code progress_notify} analog; W5-7). Wire payload:
+     * Server->client bookmark - advances idle cursor components with no events (W5-7; the
+     * etcd {@code progress_notify} analog). Wire payload:
      * {@code [watchId u64][cursor][serverNowMillis u64]}.
      *
      * @param watchId         the watch
@@ -542,8 +533,8 @@ public sealed interface EdgeFrame
     }
 
     /**
-     * Server→client terminal per-watch close (RFC §5.7) — terminates ONE watch, not the
-     * connection (W5-9). Wire payload:
+     * Server->client terminal per-watch close - terminates ONE watch, not the connection
+     * (W5-9). Wire payload:
      * {@code [watchId u64][code u8][hasOldest u8][cursor (iff hasOldest==1)][msgLen u32][msg]}.
      *
      * @param watchId the closed watch
@@ -573,8 +564,9 @@ public sealed interface EdgeFrame
     }
 
     /**
-     * Server→client per-{@code (watch_id, gid)} catch-up snapshot header (RFC §5.8; reuses
-     * the RR-102 chunked, backpressure-paced, cutover-after-END mechanism). Wire payload:
+     * Server->client per-{@code (watch_id, gid)} catch-up snapshot header. Uses the same
+     * chunked, backpressure-paced, cutover-after-END mechanism as the connection-level
+     * snapshot. Wire payload:
      * {@code [watchId u64][gid u32][snapshotSeq u64][chunkCount u32][totalBytes u64]}.
      *
      * @param watchId     the watch
@@ -605,15 +597,15 @@ public sealed interface EdgeFrame
     }
 
     /**
-     * Server→client per-{@code (watch_id, gid)} catch-up snapshot chunk (RFC §5.8). Wire
-     * payload: {@code [watchId u64][gid u32][index u32][bytes]}, where {@code bytes} is the
-     * rest of the frame and is capped at {@link EdgeFrameCodec#MAX_SNAPSHOT_CHUNK_BYTES}
-     * (enforced by the codec, mirroring {@link SnapshotChunk}).
+     * Server->client per-{@code (watch_id, gid)} catch-up snapshot chunk. Wire payload:
+     * {@code [watchId u64][gid u32][index u32][bytes]}, where {@code bytes} is the rest of
+     * the frame, capped at {@link EdgeFrameCodec#MAX_SNAPSHOT_CHUNK_BYTES} (enforced by the
+     * codec, mirroring {@link SnapshotChunk}).
      *
      * @param watchId the watch
      * @param gid     the shard group id
      * @param index   the 0-based chunk index
-     * @param bytes   the chunk payload (a slice of the ADR-0028 snapshot bytes)
+     * @param bytes   the chunk payload (a slice of the snapshot bytes)
      */
     record WatchSnapshotChunk(long watchId, int gid, int index, byte[] bytes) implements EdgeFrame {
 
@@ -667,9 +659,9 @@ public sealed interface EdgeFrame
     }
 
     /**
-     * Server→client per-{@code (watch_id, gid)} catch-up snapshot trailer (RFC §5.8); on
-     * receipt the driver sets {@code cursor[gid] = snapshotSeq} and resumes tailing (W5-10).
-     * Wire payload: {@code [watchId u64][gid u32][snapshotSeq u64]}.
+     * Server->client per-{@code (watch_id, gid)} catch-up snapshot trailer; on receipt the
+     * driver sets {@code cursor[gid] = snapshotSeq} and resumes tailing (W5-10). Wire
+     * payload: {@code [watchId u64][gid u32][snapshotSeq u64]}.
      *
      * @param watchId     the watch
      * @param gid         the shard group id
@@ -690,7 +682,7 @@ public sealed interface EdgeFrame
     }
 
     /**
-     * One per-shard entry in a {@link WatchCreated} initial-mode vector (RFC §5.3, W5-5).
+     * One per-shard entry in a {@link WatchCreated} initial-mode vector (W5-5).
      *
      * @param gid       the shard group id (a {@code uint32}; raw bits in this {@code int})
      * @param latestSeq the shard's current applied-mutation seq (non-negative)
@@ -708,14 +700,14 @@ public sealed interface EdgeFrame
     }
 
     /**
-     * One change entry in a {@link WatchEvent} (RFC §5.4). A PUT carries a (possibly empty)
-     * value; a DELETE carries no value. On the wire the entry is
+     * One change entry in a {@link WatchEvent}. A PUT carries a (possibly empty) value; a
+     * DELETE carries no value. On the wire the entry is
      * {@code [keyLen u32][key][kind u8][valLen i32][val]}, where {@code valLen} is the
-     * <b>sole signed</b> length width among the §2 watch frames (W5-6):
-     * {@code valLen >= 0} ⇒ value present ({@code 0} = empty value present); {@code valLen
-     * == -1} ⇒ no value (a DELETE). This record couples {@code kind} and {@code value} so
-     * the two are always consistent: a PUT MUST carry a non-null value, a DELETE MUST carry
-     * a null value — a mismatched wire combination decodes as
+     * <b>sole signed</b> length width among the watch frames (W5-6):
+     * {@code valLen >= 0} means value present ({@code 0} = empty value present);
+     * {@code valLen == -1} means no value (a DELETE). This record couples {@code kind} and
+     * {@code value} so the two are always consistent: a PUT MUST carry a non-null value, a
+     * DELETE MUST carry a null value - a mismatched wire combination decodes as
      * {@link ErrorCode#FRAME_CORRUPT}.
      *
      * @param key   the changed key (UTF-8 on the wire; never null)

@@ -7,37 +7,37 @@ import java.util.random.RandomGeneratorFactory;
 
 /**
  * Seed-derived, fully replayable edge-fault schedule for {@link EdgeFanOutSim}
- * (Phase V1) — the edge-plane analogue of {@link AdversarialSchedule}, kept
+ * - the edge-plane analogue of {@link AdversarialSchedule}, kept
  * <b>entirely separate</b> from it. It draws from its <em>own</em>
  * {@code mixSeed} sub-stream ({@link #TAG_EDGE_FAULT}) so it never perturbs the CP
  * schedule's fault/workload streams: every historical CP seed (the 507-seed gate,
  * {@code SeedSweepTest}) stays byte-identical.
  *
- * <h2>New mixSeed tag registry (Phase V1)</h2>
+ * <h2>New mixSeed tag registry</h2>
  * All edge tags are {@code >= 1_010} and collide with no existing tag (CP tags:
  * 1_001 fault, 1_002 workload, 2_001 net, 3_001 skew, 3_002 netcfg; per-node
  * election streams use the small node id). They live in {@link EdgeFanOutSim} /
  * here:
  * <ul>
- *   <li>{@code 1_010} — CP→edge network seed ({@code EdgeFanOutSim.TAG_EDGE_NET})</li>
- *   <li>{@code 1_011} — edge network config: dup/drop base rates
+ *   <li>{@code 1_010} - CP->edge network seed ({@code EdgeFanOutSim.TAG_EDGE_NET})</li>
+ *   <li>{@code 1_011} - edge network config: dup/drop base rates
  *       ({@code EdgeFanOutSim.TAG_EDGE_NETCFG})</li>
- *   <li>{@code 1_012} — this edge-fault schedule ({@link #TAG_EDGE_FAULT})</li>
+ *   <li>{@code 1_012} - this edge-fault schedule ({@link #TAG_EDGE_FAULT})</li>
  * </ul>
  *
- * <p>Edge fault families (do NOT reuse {@link AdversarialSchedule.FaultKind} —
- * the CP grammar is untouched): edge partition add/remove (CP↔edge channel),
+ * <p>Edge fault families (do NOT reuse {@link AdversarialSchedule.FaultKind} - 
+ * the CP grammar is untouched): edge partition add/remove (CP<->edge channel),
  * edge crash + restart, and lag begin/end.
  */
 final class EdgeFaultSchedule {
 
-    /** Edge-fault sub-stream tag (Phase V1; distinct from all CP tags). */
+    /** Edge-fault sub-stream tag (distinct from all CP tags). */
     static final int TAG_EDGE_FAULT = 1_012;
 
     enum EdgeFaultKind {
-        /** Partition the CP→edge channel for one edge (it stops receiving). */
+        /** Partition the CP->edge channel for one edge (it stops receiving). */
         EDGE_PARTITION_ADD,
-        /** Heal a previously-partitioned CP→edge channel. */
+        /** Heal a previously-partitioned CP->edge channel. */
         EDGE_PARTITION_REMOVE,
         /** Crash an edge (drop all cache state, bump incarnation). */
         EDGE_CRASH,
@@ -58,7 +58,7 @@ final class EdgeFaultSchedule {
      * @param seed       master seed (same as the CP sim's)
      * @param edgeCount  number of edges
      * @param totalTicks total run length
-     * @param faultCount number of edge faults to schedule (0 ⇒ a no-fault run)
+     * @param faultCount number of edge faults to schedule (0 => a no-fault run)
      */
     EdgeFaultSchedule(long seed, int edgeCount, int totalTicks, int faultCount) {
         this.faults = expand(seed, edgeCount, totalTicks, faultCount);

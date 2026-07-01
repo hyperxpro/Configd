@@ -5,11 +5,11 @@ import io.configd.distribution.fanout.SlowConsumerGovernor;
 import java.io.IOException;
 
 /**
- * The edge fan-out endpoint contract (ADR-0043 M3, DR-N14): the lifecycle + governor surface shared
+ * The edge fan-out endpoint contract: the lifecycle + governor surface shared
  * by the JDK {@link FanOutServer} and the Netty {@code NettyFanOutServer}. {@code ConfigdServer}
  * holds the endpoint behind this interface, so the production cutover from the JDK transport to the
  * Netty transport is a single construction-line change (and its {@code git revert} the documented
- * fast-revert); the S7 / behaviour contract builds either implementation behind the same factory.
+ * fast-revert); the contract builds either implementation behind the same factory.
  */
 public interface FanOutEndpoint {
 
@@ -22,6 +22,6 @@ public interface FanOutEndpoint {
     /** Stops the endpoint: unblocks accept, closes all live connections, drains threads. */
     void close();
 
-    /** The slow-consumer governor this endpoint enforces (C4; for tests / diagnostics). */
+    /** The slow-consumer governor this endpoint enforces (for tests and diagnostics). */
     SlowConsumerGovernor governor();
 }

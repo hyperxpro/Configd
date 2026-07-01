@@ -9,7 +9,7 @@ import static org.junit.jupiter.api.Assertions.*;
 
 /**
  * D-1 (P1) fail-closed: the cluster signing key must not be co-located inside the data directory it
- * protects (PA-2021 — the at-rest integrity key is derived from it; a storage-tampering adversary who
+ * protects (PA-2021 - the at-rest integrity key is derived from it; a storage-tampering adversary who
  * can read the co-located key forges a valid MAC). Default behavior is to REFUSE TO START; the
  * {@code configd.security.allowColocatedSigningKey} opt-out downgrades to a warning for dev/test.
  * <p>
@@ -60,7 +60,7 @@ class D1FailClosedTest {
                 () -> ConfigdServer.enforceSigningKeyNotColocated(separate, dataDir, false));
     }
 
-    // ---- end-to-end: startup is REFUSED with a co-located key (the §2 deliverable) ----
+    // ---- end-to-end: startup is REFUSED with a co-located key (the section 2 deliverable) ----
 
     @Test
     void serverStartupRefusedWithCoLocatedKey() {
@@ -71,7 +71,7 @@ class D1FailClosedTest {
                     "--node-id", "0", "--data-dir", tempDir.resolve("boot").toString(),
                     "--peers", "1,2", "--api-port", "0"
             });
-            // co-located default key (dataDir/signing-key.bin) → start() must refuse
+            // co-located default key (dataDir/signing-key.bin) -> start() must refuse
             SecurityException ex = assertThrows(SecurityException.class,
                     () -> ConfigdServer.start(config));
             assertTrue(ex.getMessage().contains("D-1")

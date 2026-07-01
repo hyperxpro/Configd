@@ -11,10 +11,9 @@ import java.util.Map;
 import java.util.function.Consumer;
 
 /**
- * The {@link AbstractRaftTransportContract} bound to the JDK {@link TcpRaftTransport} (the incumbent
- * consensus transport). Proves the contract harness faithfully encodes the JDK baseline that the
- * Netty subclasses must match — if any folded leg fails here, the transcription is wrong, not the
- * assertion.
+ * The {@link AbstractRaftTransportContract} bound to the JDK {@link TcpRaftTransport}.
+ * Proves the contract harness faithfully encodes the JDK baseline that the Netty subclasses
+ * must match - if any folded leg fails here, the transcription is wrong, not the assertion.
  */
 class JdkRaftTransportContractTest extends AbstractRaftTransportContract {
 

@@ -12,17 +12,12 @@ import java.util.concurrent.TimeUnit;
  * production {@code DefaultHistogram} (ring buffer + LongAdder sum +
  * synchronized min/max CAS).
  *
- * <p>Gap-closure O5 (PA-5008/9/10) targets this class for a lock-free
- * rewrite. The histogram is on the recording hot path of every metric in
- * the system — its tail latency directly bounds how fine-grained the
- * observability signal can be without backpressuring the workload.
- *
  * <p>Two scenarios:
  * <ul>
- *   <li><b>recordSingleThreaded</b> — uncontended baseline. The current
+ *   <li><b>recordSingleThreaded</b> - uncontended baseline. The current
  *       implementation should be cheap here; the synchronized min/max CAS
  *       only pays cost on actual updates.</li>
- *   <li><b>recordContended</b> — many threads racing on the same
+ *   <li><b>recordContended</b> - many threads racing on the same
  *       histogram. Surfaces the synchronized-block scaling cliff that O5
  *       is meant to remove.</li>
  * </ul>
@@ -74,7 +69,7 @@ public class HistogramBenchmark {
 
     /**
      * Contended record path. {@code @Threads(8)} forces JMH to spawn
-     * eight worker threads racing on the same shared histogram — this is
+     * eight worker threads racing on the same shared histogram - this is
      * the workload that should expose the synchronized min/max CAS cost
      * on multi-socket machines.
      */

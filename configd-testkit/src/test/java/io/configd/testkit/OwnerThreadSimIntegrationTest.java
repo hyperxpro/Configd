@@ -15,21 +15,21 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * Phase 0 — Workstream A: the R-01' owner-thread tripwire integrated into the deterministic
+ * The owner-thread tripwire integrated into the deterministic
  * simulation. The macro stress harness ({@code RaftNodeConcurrencyStressTest}) and the jcstress
  * micro-race prove the guard on a single node in isolation; this proves it on the <em>full sim
- * surface</em> — many nodes driven through a randomized schedule with the tripwire wired into the
+ * surface</em> - many nodes driven through a randomized schedule with the tripwire wired into the
  * same throwing {@link RaftNode.InvariantChecker} that already carries the in-node safety invariants
- * (threading-contract §5.4).
+ * (threading-contract section 5.4).
  *
  * <p>Two halves, mirroring the macro harness:
  * <ul>
- *   <li><b>{@link #boundSimRunsGreenAndNonVacuous()}</b> — with owners bound to the single drive
+ *   <li><b>{@link #boundSimRunsGreenAndNonVacuous()}</b> - with owners bound to the single drive
  *       thread, a real cluster elects a leader and commits (non-vacuous) while {@code
  *       raft_owner_thread} is continuously asserted alongside the in-node checks, and nothing trips.
  *       This is the "the correctly-marshalled path stays clean" half: binding does not cause a
  *       spurious fire on the legitimate single-thread access pattern.</li>
- *   <li><b>{@link #offDriveThreadAccessFailsTheSeed()}</b> — the injected race: once the sim has
+ *   <li><b>{@link #offDriveThreadAccessFailsTheSeed()}</b> - the injected race: once the sim has
  *       bound its owners, a {@code RaftNode} touched from a FOREIGN thread trips the tripwire, which
  *       the sim's throwing checker turns into a hard failure. This proves the sim's net actually
  *       catches an off-owner access; a net never shown to catch one is unproven (the S1
@@ -38,7 +38,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  */
 class OwnerThreadSimIntegrationTest {
 
-    /** A throwing in-node checker — the sim discipline: any breach (including the owner tripwire) fails. */
+    /** A throwing in-node checker - the sim discipline: any breach (including the owner tripwire) fails. */
     private static RaftNode.InvariantChecker throwingChecker(AtomicInteger fireCount) {
         return (name, condition, message) -> {
             if (!condition) {
@@ -55,7 +55,7 @@ class OwnerThreadSimIntegrationTest {
                 new ConsistencyPropertyTests.ClusterHarness(20260621L, 3, throwingChecker(fires));
 
         // Driving the cluster binds each node's owner to THIS (the drive) thread on the first tick,
-        // then exercises tick / handleMessage / propose entirely on it — the correct R-01' path.
+        // then exercises tick / handleMessage / propose entirely on it - the correct owner-thread path.
         int leader = cluster.electLeader(5_000);
         assertTrue(leader >= 0, "expected a stable leader (non-vacuous: the bound sim made progress)");
 
@@ -63,7 +63,7 @@ class OwnerThreadSimIntegrationTest {
         assertTrue(version > 0, "expected a committed proposal (non-vacuous consensus work)");
 
         // The owner-thread tripwire (and every in-node invariant) was asserted after every tick and
-        // at every guarded entry point, and never fired — the legitimate single-thread access is clean.
+        // at every guarded entry point, and never fired - the legitimate single-thread access is clean.
         assertTrue(fires.get() == 0, "owner-thread tripwire (or an in-node invariant) fired on the correct path");
     }
 

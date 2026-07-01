@@ -23,19 +23,19 @@ import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.Test;
 
 /**
- * Wiring Increment 1 — the edge contract for scope-through-the-API + the superset key-validation gate,
+ * The edge contract for scope-through-the-API + the superset key-validation gate,
  * driven through the transport-agnostic {@link AdminApiHandler} decision core (both the JDK and Netty
  * HTTP adapters delegate to it, so this is the single source of truth). Proves:
  *
  * <ul>
- *   <li><b>Superset key validation</b> (DL-W1-01): a corpus of currently-valid keys all pass; only
- *       blank / &gt;1024-byte keys are rejected 400 — no currently-valid key becomes invalid. The strict
- *       RFC §1 A3 grammar (absolute, seg-char, canonical) would reject several corpus keys ({@code db.host}
+ *   <li><b>Superset key validation</b>: a corpus of currently-valid keys all pass; only
+ *       blank / &gt;1024-byte keys are rejected 400 - no currently-valid key becomes invalid. The strict
+ *       RFC section 1 A3 grammar (absolute, seg-char, canonical) would reject several corpus keys ({@code db.host}
  *       not absolute, {@code a//b} empty segment, {@code secure/../killswitch} dot-dot, {@code :}/{@code @}),
  *       which is exactly why it is NOT applied to this legacy flat-key surface.</li>
- *   <li><b>Scope parsing</b> (DL-W1-02): {@code ?scope=} is parsed case-insensitively and threaded to the
- *       write path (PUT/DELETE) and the read path (GET); absent ⇒ {@code GLOBAL} (A2-3 default, byte
- *       identical); an unknown value ⇒ 400 and NEVER routes (fail-closed, no silent mis-route).</li>
+ *   <li><b>Scope parsing</b>: {@code ?scope=} is parsed case-insensitively and threaded to the
+ *       write path (PUT/DELETE) and the read path (GET); absent => {@code GLOBAL} (A2-3 default, byte
+ *       identical); an unknown value => 400 and NEVER routes (fail-closed, no silent mis-route).</li>
  * </ul>
  *
  * <p>See {@code ShardedRoutingTest} for the read-your-writes-per-scope proof over the REAL routing seams,
@@ -105,13 +105,13 @@ class ScopeAndPathValidationTest {
         AdminApiHandler h = handler(new Recorder());
         String boundary = "x".repeat(1024); // exactly the deployed 1024-byte limit (A3-5)
         List<String> valid = List.of(
-                "db.host",                 // legacy dotted key (not absolute → A3 would reject)
-                "app/feature",             // slashed (not absolute → A3 would reject)
-                "secure/../killswitch",    // dot-dot — strong-read suite depends on this passing
+                "db.host",                 // legacy dotted key (not absolute -> A3 would reject)
+                "app/feature",             // slashed (not absolute -> A3 would reject)
+                "secure/../killswitch",    // dot-dot - strong-read suite depends on this passing
                 "a//b",                    // empty segment (A3 would reject)
                 "key_with-mixed.chars",
-                "service:port",            // colon (not a seg-char → A3 would reject)
-                "team@payments",           // at (not a seg-char → A3 would reject)
+                "service:port",            // colon (not a seg-char -> A3 would reject)
+                "team@payments",           // at (not a seg-char -> A3 would reject)
                 "naïve-café",   // multi-byte UTF-8
                 "/leading-slash",
                 boundary);
@@ -140,11 +140,11 @@ class ScopeAndPathValidationTest {
             assertTrue(new String(over.body(), StandardCharsets.UTF_8).contains("1024"),
                     method + " over-length 400 must cite the 1024-byte limit");
         }
-        // The boundary (exactly 1024 bytes) is accepted — the rejection is strictly > 1024.
+        // The boundary (exactly 1024 bytes) is accepted - the rejection is strictly > 1024.
         assertNotEquals(400, h.handle(req("PUT", "x".repeat(1024), null, "b".getBytes(StandardCharsets.UTF_8))).status());
     }
 
-    // ---- scope parsing (DL-W1-02) -------------------------------------------------------------
+    // ---- scope parsing -------------------------------------------------------------
 
     @Test
     void scopeQueryParamIsThreadedToWriteAndReadPaths() throws Exception {
@@ -157,7 +157,7 @@ class ScopeAndPathValidationTest {
         assertEquals(200, h.handle(req("PUT", "k", "scope=local", "b".getBytes(StandardCharsets.UTF_8))).status());
         assertEquals(ConfigScope.LOCAL, rec.writeScope.get(), "scope value parse is case-insensitive");
 
-        // Absent scope ⇒ GLOBAL (A2-3 default — byte-identical to the prior surface).
+        // Absent scope => GLOBAL (A2-3 default - byte-identical to the prior surface).
         assertEquals(200, h.handle(req("PUT", "k", null, "b".getBytes(StandardCharsets.UTF_8))).status());
         assertEquals(ConfigScope.GLOBAL, rec.writeScope.get());
 
@@ -196,9 +196,9 @@ class ScopeAndPathValidationTest {
 
     @Test
     void read503LeaderHintIsResolvedForTheRequestScope() throws Exception {
-        // A confirmer that NEVER confirms ⇒ a linearizable read 503s. The hint ENCODES the scope it is
+        // A confirmer that NEVER confirms => a linearizable read 503s. The hint ENCODES the scope it is
         // called with (NodeId id == scope.ordinal()), so the emitted X-Leader-Hint proves which scope the
-        // hint was resolved for — it must be the REQUEST scope, not a pinned GLOBAL (else a non-GLOBAL
+        // hint was resolved for - it must be the REQUEST scope, not a pinned GLOBAL (else a non-GLOBAL
         // retry loops to the wrong shard's leader at N>1).
         ConfigReadService.ConfigReader reader = new ConfigReadService.ConfigReader() {
             @Override public ReadResult get(String key) { return ReadResult.NOT_FOUND; }
@@ -213,7 +213,7 @@ class ScopeAndPathValidationTest {
                 readService, /* auth */ null, /* acl */ null, StrongReadPolicy.defaultPolicy(),
                 (scope, key) -> NodeId.of(scope.ordinal()), /* auditLog */ null, /* replayGuard */ null);
 
-        // Ordinary key + explicit linearizable + unconfirmable ⇒ 503 with a scope-aware hint.
+        // Ordinary key + explicit linearizable + unconfirmable => 503 with a scope-aware hint.
         AdminApiHandler.AdminResponse regional =
                 h.handle(req("GET", "k", "consistency=linearizable&scope=REGIONAL", new byte[0]));
         assertEquals(503, regional.status());
@@ -226,7 +226,7 @@ class ScopeAndPathValidationTest {
         assertEquals(String.valueOf(ConfigScope.GLOBAL.ordinal()), global.headers().get("X-Leader-Hint"),
                 "absent scope ⇒ GLOBAL hint");
 
-        // The strong-read fail-closed path (RR-020) is scope-aware too: X-Fail-Closed + scoped hint.
+        // The strong-read fail-closed path is scope-aware too: X-Fail-Closed + scoped hint.
         AdminApiHandler.AdminResponse strong =
                 h.handle(req("GET", "secure/killswitch", "scope=LOCAL", new byte[0]));
         assertEquals(503, strong.status());

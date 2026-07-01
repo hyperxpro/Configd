@@ -31,8 +31,8 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * the sibling {@link WatchSnapshotAuthzRegressionTest} covers. The watch veneer drives the core
  * with a full-store subscribe, so a connection-level DEMOTION re-snapshot is, like the first
  * snapshot, the whole store unless filtered. Both triggers funnel through the single
- * {@link FanOutSessionCore#performSnapshotTransfer} → {@link ReplaySource#replayFromSnapshot}
- * chokepoint, which is the {@link FilteringReplaySource} bound to the drain-owner's target — so a
+ * {@link FanOutSessionCore#performSnapshotTransfer} to {@link ReplaySource#replayFromSnapshot}
+ * chokepoint, which is the {@link FilteringReplaySource} bound to the drain-owner's target - so a
  * narrow watch that DEMOTES must receive a target-filtered re-snapshot, never the whole store
  * (W5-10 / W7-4). This test forces a {@code TRANSPORT_BLOCK} demotion on a narrow KEY owner and
  * asserts the re-snapshot carries only the authorized key.
@@ -48,7 +48,7 @@ class WatchDemotionSnapshotAuthzTest {
     private FanOutConnectionDriver driver;
 
     private FanOutConnectionDriver newDriver(ReplaySource replay) {
-        buffer.publish(commit(1L, "/k/a")); // non-empty source ⇒ a from-now watch positions at seq 1
+        buffer.publish(commit(1L, "/k/a")); // non-empty source => a from-now watch positions at seq 1
         SlowConsumerGovernor gov =
                 new SlowConsumerGovernor(SlowConsumerPolicyConfig.defaults(), FanOutSessionMetrics.NOOP);
         return new FanOutConnectionDriver(buffer, replay, out, FanOutConfig.defaults(),
@@ -65,7 +65,7 @@ class WatchDemotionSnapshotAuthzTest {
     void demotionResnapshotIsFilteredToTheNarrowOwnerNotWholeStore() {
         driver = newDriver(snapshot(1L, "/k/a", "public", "/secret/x", "TOPSECRET-cross-tenant"));
 
-        // A from-now KEY watch on /k/a TAILs (no initial snapshot) — but setTarget(KEY /k/a) is still
+        // A from-now KEY watch on /k/a TAILs (no initial snapshot) - but setTarget(KEY /k/a) is still
         // armed on the FilteringReplaySource for any LATER connection-level snapshot.
         feed(new EdgeFrame.WatchCreate(1L, 0, EdgeFrame.WATCH_TARGET_KEY,
                 "/k/a".getBytes(StandardCharsets.UTF_8), WatchCursor.fromNow(), 0));
@@ -75,13 +75,13 @@ class WatchDemotionSnapshotAuthzTest {
 
         // Publish a new commit, then refuse its WATCH_EVENT offer so the core demotes to CATCHUP.
         buffer.publish(commit(2L, "/k/a"));
-        out.blockNextOffers(1);                 // block the WATCH_EVENT once → TRANSPORT_BLOCK demote
+        out.blockNextOffers(1);                 // block the WATCH_EVENT once -> TRANSPORT_BLOCK demote
         driver.session().tick(clock.now());
         assertEquals(FanOutSessionCore.SessionState.CATCHUP, driver.session().state(),
                 "the refused WATCH_EVENT demoted the session (slow-consumer ladder)");
 
         out.clear();                            // isolate the re-snapshot frames
-        driver.session().tick(clock.now());     // performSnapshotTransfer → FILTERED re-snapshot
+        driver.session().tick(clock.now());     // performSnapshotTransfer -> FILTERED re-snapshot
 
         List<EdgeFrame.WatchSnapshotChunk> chunks = out.sentOfType(EdgeFrame.WatchSnapshotChunk.class);
         assertFalse(chunks.isEmpty(), "the demotion produced a re-snapshot substream");

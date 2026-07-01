@@ -13,7 +13,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
  *
  * <p>Independent third-party verification: {@link WireCompatGoldenBytesTest}
  * compares live encoder output against checked-in fixtures, but both
- * ends are produced by the same {@link FrameCodec#encode} call — a
+ * ends are produced by the same {@link FrameCodec#encode} call - a
  * bug that produced the wrong-but-deterministic CRC would be baked
  * into the fixture and remain undetected.
  *
@@ -27,8 +27,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
  * <p>The reference vector is the canonical v2 {@code heartbeat.bin}
  * fixture (length=30, version=0x02, type=HEARTBEAT, groupId=0x01020304,
  * term=0x0A0B0C0D0E0F1011, reserved epoch=0, no payload), CRC32C trailer
- * 0xC7774A8C. (v1 was length=22/version=0x01/CRC 0x5AA34AE5, before the
- * Seam-F reserved epoch field bumped the wire to v2.)
+ * 0xC7774A8C.
  */
 class FrameCodecCrcVectorTest {
 

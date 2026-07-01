@@ -7,13 +7,13 @@ import java.util.function.Predicate;
 import static org.junit.jupiter.api.Assertions.*;
 
 /**
- * Verifies the ddmin schedule minimizer (design §5): given a failing schedule and a
+ * Verifies the ddmin schedule minimizer (design section 5): given a failing schedule and a
  * failure predicate, it reduces to a strictly smaller, 1-minimal schedule that still
  * fails, and emits a standalone replayable artifact.
  * <p>
  * There is (happily) no real failing seed in the current system, so the failure
  * predicate is synthetic but representative: "fails iff a {@code PARTITION_ADD}
- * event is present" — the kind of single-fault root cause ddmin must isolate from a
+ * event is present" - the kind of single-fault root cause ddmin must isolate from a
  * busy schedule. ddmin must shrink to exactly the events/ops required to keep the
  * predicate true (here: one PARTITION_ADD, zero ops).
  */

@@ -4,8 +4,7 @@ import java.util.List;
 import java.util.Objects;
 
 /**
- * A named role: a bundle of {@link Policy policies} a principal can hold (RFC §01 A5-3 — "a role bundles
- * policies; a principal holds roles").
+ * A named role: a bundle of {@link Policy policies} a principal can hold.
  * <p>
  * This is the production realization of the docs-only
  * {@code docs/design/namespace-model/sketch/.../} role concept, deliberately <b>without</b> the sketch's
@@ -17,7 +16,7 @@ public record Role(String name, List<Policy> policies) {
 
     /**
      * @param name     the role name (non-null)
-     * @param policies the policies this role bundles (non-null; copied — must contain no null element)
+     * @param policies the policies this role bundles (non-null; copied, must contain no null element)
      */
     public Role {
         Objects.requireNonNull(name, "name must not be null");

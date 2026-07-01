@@ -18,43 +18,43 @@ import java.util.function.IntPredicate;
  * after every {@code EdgeFanOutSim} tick; a <b>safety</b> breach throws
  * {@link SimInvariants.SafetyViolation} (fails the seed with replay context).
  * <b>Liveness</b> (eventual delivery) is recorded into {@link EdgeActivity}, never
- * thrown (RR-095 philosophy).
+ * thrown.
  *
  * <h2>Safety invariants (throw)</h2>
  * <ul>
- *   <li><b>(a) Per-edge version monotonicity (contract §3 INV-M1 / §8
+ *   <li><b>(a) Per-edge version monotonicity (contract section 3 INV-M1 / section 8
  *       {@code monotonic_read}).</b> Within an edge incarnation,
  *       {@link EdgeActor#currentVersion()} never decreases tick-to-tick. The
- *       read-side half — a cursor-bound read never returning a version below the
- *       cursor — is enforced by the test-mode {@code InvariantMonitor} wired into
+ *       read-side half - a cursor-bound read never returning a version below the
+ *       cursor - is enforced by the test-mode {@code InvariantMonitor} wired into
  *       the edge's read {@code LocalConfigStore} (it throws inside
  *       {@link EdgeActor#get}). A crash resets the incarnation, after which a
  *       version drop to 0 is expected and not a violation.</li>
- *   <li><b>(b) No stale overwrite (contract §5 INV-W1 / §8 {@code per_key_order}).</b>
+ *   <li><b>(b) No stale overwrite (contract section 5 INV-W1 / section 8 {@code per_key_order}).</b>
  *       Per edge, per key, the applied {@link VersionedValue#version()} never
  *       decreases across ticks within an incarnation (full-store diff per tick).</li>
- *   <li><b>(c) Snapshot–delta convergence (contract §1 INV-L1 / §4).</b> An
+ *   <li><b>(c) Snapshot - delta convergence (contract section 1 INV-L1 / section 4).</b> An
  *       end-of-run check ({@link #finalCheck}): after a heal-all + drain window,
- *       every live edge's store content (key → value bytes + version) byte-equals
+ *       every live edge's store content (key -> value bytes + version) byte-equals
  *       the CP leader's authoritative store.</li>
  * </ul>
  *
  * <h2>Liveness (record, never throw)</h2>
  * <ul>
- *   <li><b>(d) Eventual delivery bound (contract §2 INV-S2).</b> For every
+ *   <li><b>(d) Eventual delivery bound (contract section 2 INV-S2).</b> For every
  *       {@link io.configd.distribution.CommitNotification} published at an edge's
  *       subscribed CP node at sim time T, a live + connected + non-lagging edge must
- *       observe it (cursor ≥ seq) by {@code T + BOUND_MS}. A miss is recorded into
+ *       observe it (cursor >= seq) by {@code T + BOUND_MS}. A miss is recorded into
  *       {@link EdgeActivity} with (seed, seq, edgeId, lateness). With
- *       {@link StreamDriver#NONE} every publication violates — the executable
+ *       {@link StreamDriver#NONE} every publication violates - the executable
  *       backlog.</li>
  * </ul>
  *
- * <p>Not thread-safe; single sim thread (R-01).
+ * <p>Not thread-safe; single sim thread.
  */
 final class EdgeInvariants {
 
-    /** Default eventual-delivery bound (contract §2 p99 propagation budget). */
+    /** Default eventual-delivery bound (contract section 2 p99 propagation budget). */
     static final long BOUND_MS = 500;
 
     private final long seed;
@@ -110,7 +110,7 @@ final class EdgeInvariants {
      */
     void recordPublication(long seq, int cpNode, long publishedAtMs, List<Integer> subscribedEdgeIds) {
         if (subscribedEdgeIds.isEmpty()) {
-            return; // nobody to deliver to — no liveness obligation
+            return; // nobody to deliver to - no liveness obligation
         }
         Outstanding o = new Outstanding(seq, cpNode, publishedAtMs);
         o.owingEdgeIds.addAll(subscribedEdgeIds);
@@ -128,7 +128,7 @@ final class EdgeInvariants {
     void checkAll(List<EdgeActor> edges, long nowMs, IntPredicate connected) {
         checkPerEdgeVersionMonotonicity(edges); // (a)
         checkNoStaleOverwrite(edges);           // (b)
-        checkEventualDelivery(edges, nowMs, connected); // (d) — recorded, never thrown
+        checkEventualDelivery(edges, nowMs, connected); // (d) - recorded, never thrown
     }
 
     // ---- (a) per-edge version monotonicity ---------------------------------
@@ -183,7 +183,7 @@ final class EdgeInvariants {
     // ---- (d) eventual delivery bound (recorded liveness) -------------------
 
     private void checkEventualDelivery(List<EdgeActor> edges, long nowMs, IntPredicate connected) {
-        // Index edges by id for O(1) lookup (deterministic — read-only).
+        // Index edges by id for O(1) lookup (deterministic - read-only).
         Map<Integer, EdgeActor> byId = new HashMap<>();
         for (EdgeActor e : edges) {
             byId.put(e.edgeId(), e);
@@ -213,9 +213,9 @@ final class EdgeInvariants {
                     if (eligible) {
                         activity.recordDeliveryViolation(o.seq, edgeId, o.publishedAtMs, lateness);
                     } else {
-                        // NOTE-1 (design review §C): an edge ineligible (crashed / lagging /
+                        // NOTE-1 (design review section C): an edge ineligible (crashed / lagging /
                         // partitioned) EXACTLY at the deadline tick is excused for this seq.
-                        // Count it so excused-vs-delivered is observable — this keeps the
+                        // Count it so excused-vs-delivered is observable - this keeps the
                         // liveness checker honest (a high excused count under a should-deliver
                         // schedule flags a possible fan-out bug) without making it throw.
                         activity.recordExcusedAtDeadline();
@@ -230,7 +230,7 @@ final class EdgeInvariants {
         }
     }
 
-    // ---- (c) convergence — end-of-run only ---------------------------------
+    // ---- (c) convergence - end-of-run only ---------------------------------
 
     /**
      * End-of-run convergence (invariant c): after the harness heals all faults and
@@ -241,24 +241,24 @@ final class EdgeInvariants {
      * <h2>Convergence is over EFFECT (value bytes + store version), not per-key version
      * provenance</h2>
      * Convergence is asserted on the <b>effect</b> the contract guarantees: the same key
-     * set, the same value bytes per key, and the same store version (ADR-0034 §4:
-     * "exactly-once over <em>effect</em>" — the edge observes every mutation's effect on the
+     * set, the same value bytes per key, and the same store version (section 4:
+     * "exactly-once over <em>effect</em>" - the edge observes every mutation's effect on the
      * store). It deliberately does NOT require per-key {@link VersionedValue#version()}
      * equality. Reason: a snapshot-recovered edge legitimately carries different per-key
-     * version stamps. The C1 catch-up snapshot is the ADR-0028 byte format, which carries no
+     * version stamps. The catch-up snapshot byte format carries no
      * per-key versions; {@code ConfigStateMachine.restoreSnapshot} (and the edge's
      * {@code EdgeSnapshotCodec}) therefore stamp every restored entry with the snapshot seq,
      * exactly as a Raft {@code InstallSnapshot} does on a follower. So a key the leader last
      * wrote at version 18, delivered to a snapshot-recovered edge inside a snapshot at seq
-     * 30, has per-key version 30 on the edge and 18 on the leader — identical value bytes,
+     * 30, has per-key version 30 on the edge and 18 on the leader - identical value bytes,
      * identical store version, different provenance stamp. That divergence is inherent to
      * snapshot recovery and is NOT a data error; requiring per-key version equality would
-     * make the invariant assert something the system (by ADR-0028/0034 design) does not
+     * make the invariant assert something the system (by design) does not
      * guarantee across a snapshot boundary. Per-key version MONOTONICITY (no decrease within
      * an incarnation) is a separate invariant (b) and is unaffected.
      *
      * <p>As a guard against masking a real bug behind this relaxation, the edge's per-key
-     * version must still be ≤ the edge's store version (no impossible future stamp).
+     * version must still be <= the edge's store version (no impossible future stamp).
      *
      * @param edges            live edge roster
      * @param authoritative    the CP leader's authoritative snapshot (the convergence target)
@@ -293,7 +293,7 @@ final class EdgeInvariants {
      * Returns a precise, deterministic description of the first key where the two views
      * differ in EFFECT (key set, value bytes, or store version), or {@code null} if they
      * converge. Per-key version stamps are NOT required to match (see {@link #finalCheck}'s
-     * Javadoc) — only that the edge's stamp is a sane value ≤ its own store version.
+     * Javadoc) - only that the edge's stamp is a sane value <= its own store version.
      */
     private static String diff(Map<String, VersionedValue> leader,
                                Map<String, VersionedValue> edge,
@@ -316,7 +316,7 @@ final class EdgeInvariants {
             }
             // Sanity: the edge's per-key stamp must not exceed its store version (no
             // impossible future write); a snapshot stamps to the snapshot seq, deltas to
-            // their seq — both are ≤ the store version.
+            // their seq - both are <= the store version.
             if (ev.version() > edgeVersion) {
                 return "key '" + key + "' has an impossible future version " + ev.version()
                         + " > edge store version " + edgeVersion;

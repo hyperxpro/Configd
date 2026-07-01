@@ -14,7 +14,7 @@ import java.util.random.RandomGeneratorFactory;
  * time advancement and network fault injection.
  *
  * Inspired by FoundationDB's deterministic simulation.
- * Uses a seeded PRNG for full reproducibility — same seed = same execution.
+ * Uses a seeded PRNG for full reproducibility - same seed = same execution.
  */
 public final class RaftSimulation {
 
@@ -53,11 +53,11 @@ public final class RaftSimulation {
     /**
      * Returns a deterministic per-node {@link RandomGenerator} for driving a
      * node's election timeout, seeded purely from the master simulation seed
-     * and the node id. This closes RR-010: previously the harness constructed
+     * and the node id. Previously the harness constructed
      * the election RNG entropy-seeded ({@code RandomGenerator.of(name)}), so a
      * fixed seed produced divergent election schedules and failing seeds were
      * unreplayable. Threading the seed here makes "same seed = same execution"
-     * actually hold for the election RNG too — the master seed is the single
+     * actually hold for the election RNG too - the master seed is the single
      * source of all simulated randomness.
      * <p>
      * Production seeding is unaffected: this lives in the test simulation
@@ -109,7 +109,7 @@ public final class RaftSimulation {
     public void advanceToNextEvent() {
         long nextDelivery = network.nextDeliveryTime();
         if (nextDelivery == Long.MAX_VALUE) {
-            // No pending messages — advance by one election timeout
+            // No pending messages - advance by one election timeout
             clock.advanceMs(300);
         } else {
             clock.setTimeMs(nextDelivery);

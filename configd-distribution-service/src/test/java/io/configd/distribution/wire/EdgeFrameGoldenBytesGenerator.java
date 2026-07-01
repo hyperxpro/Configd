@@ -7,8 +7,8 @@ import java.util.Map;
 import java.util.zip.CRC32C;
 
 /**
- * Prints fresh golden hex for every edge fixture (CT-41 rebaseline tool). NOT an
- * assertion test — it is the regeneration path referenced by {@link EdgeFrameGoldenBytes}'s
+ * Prints fresh golden hex for every edge fixture (rebaseline tool). NOT an assertion test
+ * - it is the regeneration path referenced by {@link EdgeFrameGoldenBytes}'s
  * rebaseline rule. Run it (e.g. {@code -Dtest=EdgeFrameGoldenBytesGenerator}) after an
  * intentional, version-bumped wire change and paste the printed hex into
  * {@link EdgeFrameGoldenBytes}. Disabled-by-output: it always passes; it only prints.
@@ -32,7 +32,7 @@ class EdgeFrameGoldenBytesGenerator {
             byte[] wire = EdgeFrameCodec.encode(e.getValue());
             System.out.println("HEX " + name + " = " + hf.formatHex(wire));
         }
-        // 0x02 (EDGE_WIRE_VERSION_V2) fixtures — the RFC §2 watch frames + reused NOTIFY.
+        // 0x02 (EDGE_WIRE_VERSION_V2) fixtures - the watch frames + reused NOTIFY.
         for (Map.Entry<String, EdgeFrame> e : EdgeFrameFixtures.buildV2().entrySet()) {
             String name = e.getKey();
             byte[] wire = EdgeFrameCodec.encode(e.getValue(), EdgeFrameCodec.EDGE_WIRE_VERSION_V2);

@@ -27,10 +27,10 @@ import java.util.stream.Collectors;
  * @param authToken       simple bearer token for API auth, or null if auth disabled
  * @param peerAddresses   map of peer NodeId to network address, or null if not configured
  * @param strongReadPrefixes key prefixes whose GETs MUST be served fail-closed
- *                        linearizable (ADR-0030 INV-1 / RR-020); defaults to
+ *                        linearizable; defaults to
  *                        {@code secure/}. Empty disables strong-read enforcement.
  * @param edgePort        the C1 fan-out endpoint port (ADR-0037), or {@code null} to
- *                        disable the edge data-plane endpoint (the default — current
+ *                        disable the edge data-plane endpoint (the default - current
  *                        behavior is unchanged when {@code --edge-port} is absent). When
  *                        present, the endpoint reuses the same {@link io.configd.transport.TlsManager}
  *                        as Raft (REQUIRED mTLS when TLS is configured; plaintext otherwise).
@@ -68,7 +68,7 @@ public record ServerConfig(
      *   --tls-trust-store path to TLS trust store (optional)
      *   --auth-token      bearer token for API auth (optional)
      *   --strong-read-prefixes comma-separated key prefixes served fail-closed
-     *                     linearizable (ADR-0030 INV-1 / RR-020); default "secure/"
+     *                     linearizable; default "secure/"
      *   --edge-port       C1 fan-out edge endpoint port (ADR-0037); absent = endpoint
      *                     disabled (default). Reuses the Raft TlsManager (mTLS) when configured.
      * </pre>
@@ -90,11 +90,9 @@ public record ServerConfig(
         String authToken = null;
         String peerAddressesStr = null;
         String signingKeyFile = null;
-        // RR-020 / ADR-0030 INV-1: a fail-closed default. If the operator does
-        // not configure prefixes, "secure/" is still protected so security keys
-        // are never silently served stale just because the flag was omitted.
+        // Defaults to 'secure/' to protect security keys even when the flag is omitted.
         String strongReadPrefixesStr = null;
-        Integer edgePort = null; // C1 fan-out endpoint; absent = disabled (default)
+        Integer edgePort = null; // fan-out endpoint; absent = disabled (default)
 
         for (int i = 0; i < args.length; i++) {
             switch (args[i]) {
@@ -251,7 +249,7 @@ public record ServerConfig(
     }
 
     /**
-     * Parses the strong-read prefix list (RR-020 / ADR-0030 INV-1).
+     * Parses the strong-read prefix list.
      * <ul>
      *   <li>flag omitted ({@code null}) &rarr; the safe default {@code secure/}
      *       (security keys stay protected even if the operator forgot the flag);</li>

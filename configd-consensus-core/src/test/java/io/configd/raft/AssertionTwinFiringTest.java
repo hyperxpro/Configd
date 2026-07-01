@@ -12,26 +12,26 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.fail;
 
 /**
- * §4.5 assertion-twin firing harness (RR-030) — consensus-core half.
+ * Assertion-twin firing harness - consensus-core half.
  * <p>
- * §4.5 rule of record: <em>an assertion never observed firing is unverified.</em>
+ * Rule of record: <em>an assertion never observed firing is unverified.</em>
  * This test programmatically drives EVERY {@code RaftNode}-side invariant twin to
  * fire at least once and asserts the wired {@link RaftNode.InvariantChecker} actually
  * observed each one. A twin that cannot be made to fire fails this test (it would be a
  * net that asserts nothing).
  * <p>
- * gate-2 step (g) runs this class together with the config-store half
+ * The CI gate runs this class together with the config-store half
  * ({@code io.configd.store.AssertionTwinFiringTest}, which fires per_key_order and the
  * apply_owner_thread W-1 tripwire).
  * <p>
  * Firing mechanism per twin (full table in {@code docs/session-2/assertion-verification.md}):
  * <ul>
- *   <li><b>Real protocol path, poisoned state</b> — {@code leader_completeness} (poison
+ *   <li><b>Real protocol path, poisoned state</b> - {@code leader_completeness} (poison
  *       commitIndex above lastIndex, then elect: the production {@code becomeLeader} check
  *       trips) and {@code durable_prefix_no_gap} (snapshot boundary with no recoverable
  *       bytes drives the production ctor recovery check; also proven independently by
  *       {@code SnapshotCrashRecoveryTest.gapDetectionFiresWhenSnapshotBlobUnrecoverable}).</li>
- *   <li><b>Extracted production check, poisoned input</b> — the ReadIndexSpec twins
+ *   <li><b>Extracted production check, poisoned input</b> - the ReadIndexSpec twins
  *       ({@code read_freshness}, {@code no_stale_leader_serve}, {@code read_index_bounded})
  *       via {@code assertReadServeInvariants}; the SnapshotInstallSpec twins
  *       ({@code snapshot_no_commit_revert}, {@code snapshot_matching}) via
@@ -39,16 +39,16 @@ import static org.junit.jupiter.api.Assertions.fail;
  *       {@code checkSnapshotSendTwin}, and {@code snapshot_bounded} via the production
  *       {@code triggerSnapshot} local-snapshot path with lastApplied poisoned past
  *       commitIndex.</li>
- *   <li><b>Structurally-guarded defence-in-depth, forced condition</b> —
+ *   <li><b>Structurally-guarded defence-in-depth, forced condition</b> -
  *       {@code election_safety}, {@code log_matching}, {@code version_monotonicity},
  *       {@code state_machine_safety}, and the three reconfig twins
  *       ({@code single_server_invariant}, {@code no_op_before_reconfig},
  *       {@code reconfig_safety}). Their production call sites sit behind guards that
  *       early-return whenever the checked condition would be false, so they cannot trip via
  *       the protocol. They are fired through the IDENTICAL production
- *       {@code invariantChecker.check(name, false, …)} call shape (seam
+ *       {@code invariantChecker.check(name, false, ...)} call shape (seam
  *       {@code fireInNodeTwinForTest}). The check EXPRESSION is production code; only the
- *       violating condition is supplied by the test — exactly the
+ *       violating condition is supplied by the test - exactly the
  *       {@code InvariantNetMetricTest} pattern.</li>
  * </ul>
  */
@@ -115,7 +115,7 @@ class AssertionTwinFiringTest {
     void everyRaftNodeTwinIsObservedFiring() {
         RecordingChecker checker = new RecordingChecker();
 
-        // ---- ReadIndexSpec twins via the production assertReadServeInvariants. ----
+        // ReadIndexSpec twins via the production assertReadServeInvariants.
         {
             RaftLog log = new RaftLog();
             RaftNode node = singleNodeLeader(checker, log);
@@ -126,7 +126,7 @@ class AssertionTwinFiringTest {
             checker.expectFires("read_freshness", () -> node.assertReadServeInvariants(badFresh));
 
             // read_index_bounded: lastApplied bumped above commitIndex so the freshness
-            // gate passes, but readIndex is above commitIndex → the bound twin fires.
+            // gate passes, but readIndex is above commitIndex - the bound twin fires.
             log.setLastApplied(log.commitIndex() + 5);
             long bound = node.injectPendingReadForTest(log.commitIndex() + 3, term);
             checker.expectFires("read_index_bounded", () -> node.assertReadServeInvariants(bound));
@@ -136,7 +136,7 @@ class AssertionTwinFiringTest {
             checker.expectFires("no_stale_leader_serve", () -> node.assertReadServeInvariants(staleTerm));
         }
 
-        // ---- SnapshotInstallSpec receive twins via checkSnapshotInstallTwins. ----
+        // SnapshotInstallSpec receive twins via checkSnapshotInstallTwins.
         {
             RaftLog log = new RaftLog();
             RaftNode node = singleNodeLeader(checker, log);
@@ -150,7 +150,7 @@ class AssertionTwinFiringTest {
                     () -> node.checkSnapshotInstallTwins(10, 9));
         }
 
-        // ---- snapshot_bounded via the production triggerSnapshot local path. ----
+        // snapshot_bounded via the production triggerSnapshot local path.
         {
             RaftLog log = new RaftLog();
             RaftNode node = singleNodeLeader(checker, log);
@@ -158,7 +158,7 @@ class AssertionTwinFiringTest {
             // The single-node leader already committed its term no-op at index 1
             // (commitIndex==lastApplied==1). Append a further (uncommitted) entry at the
             // next index and set lastApplied past commitIndex, so triggerSnapshot would
-            // snapshot at an index ABOVE commitIndex — the INV-SI-1 violation. termAt at
+            // snapshot at an index ABOVE commitIndex - the INV-SI-1 violation. termAt at
             // that index must be valid (entry present) for triggerSnapshot to proceed.
             long next = log.lastIndex() + 1;
             log.append(new LogEntry(next, term, new byte[]{9}));
@@ -167,7 +167,7 @@ class AssertionTwinFiringTest {
             checker.expectFires("snapshot_bounded", node::triggerSnapshot);
         }
 
-        // ---- snapshot_term_consistent via checkSnapshotSendTwin. ----
+        // snapshot_term_consistent via checkSnapshotSendTwin.
         {
             RaftLog log = new RaftLog();
             RaftNode node = singleNodeLeader(checker, log);
@@ -177,14 +177,14 @@ class AssertionTwinFiringTest {
                     () -> node.checkSnapshotSendTwin(7, 9));
         }
 
-        // ---- Structurally-guarded in-node twins via the identical production check shape.
+        // Structurally-guarded in-node twins via the identical production check shape.
         //      All eight sit behind guards (or inside private apply/election paths) that
-        //      make the checked condition true by construction, OR — for leader_completeness
-        //      — RaftLog.setCommitIndex clamps commitIndex to lastIndex(), so commitIndex can
+        //      make the checked condition true by construction, OR - for leader_completeness
+        //      - RaftLog.setCommitIndex clamps commitIndex to lastIndex(), so commitIndex can
         //      never exceed lastIndex on the real path. They are defence-in-depth; fired here
         //      through the identical production check expression with the condition forced
         //      false. (durable_prefix_no_gap ALSO fires on the real recovery path in
-        //      SnapshotCrashRecoveryTest.gapDetectionFiresWhenSnapshotBlobUnrecoverable.) ----
+        //      SnapshotCrashRecoveryTest.gapDetectionFiresWhenSnapshotBlobUnrecoverable.)
         {
             RaftLog log = new RaftLog();
             RaftNode node = singleNodeLeader(checker, log);
@@ -196,7 +196,7 @@ class AssertionTwinFiringTest {
             }
         }
 
-        // ---- Final gate: every twin must have been observed firing. ----
+        // Final gate: every twin must have been observed firing.
         List<String> missing = new ArrayList<>();
         for (String twin : RAFTNODE_TWINS) {
             if (!checker.fired.contains(twin)) {

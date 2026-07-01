@@ -30,31 +30,29 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * Allocation proof for the production {@link NettyConsensusFrameEncoder}: the idiomatic in-pipeline,
- * event-loop-driven encode allocates <b>~0 B/op</b> — it is on the cheap side of the cliff, NOT the
- * "160 B/op" the head-to-head's naive microbench reported
- * ([verdict.md](../../../../../docs/jdk-vs-netty/verdict.md) §Surface 4).
+ * event-loop-driven encode allocates <b>~0 B/op</b>.
  *
  * <h2>What the 160 actually was (the surprise this test pins)</h2>
- * The naive "Netty loses at 160 B/op" number is the per-op {@code io.netty.buffer.PooledDirectByteBuf}
- * <b>holder</b> (verified by JFR attribution in {@code docs/jdk-vs-netty/raw/encode-only-attr.txt}).
- * Crucially, the discriminator is <b>not</b> pipeline-vs-manual — it is the <b>thread type</b>. Netty's
+ * A naive off-loop microbench shows ~160 B/op: the per-op {@code io.netty.buffer.PooledDirectByteBuf}
+ * <b>holder</b>. Crucially, the discriminator is <b>not</b> pipeline-vs-manual - it is the <b>thread
+ * type</b>. Netty's
  * pooled-{@code ByteBuf} holder {@code Recycler} and {@code PoolThreadCache} only engage on a
  * {@link FastThreadLocalThread} (an event-loop thread). The head-to-head's 160 was measured on a plain
  * JMH worker thread, off any event loop; the production encoder runs in {@code NettyRaftTransport}'s
  * {@code drain()} <b>on the event loop</b>, so the holder is recycled and the encode allocates ~0. This
- * test measures the full 2×2 to prove exactly that: on the event loop both the manual loop AND the
+ * test measures the full 2x2 to prove exactly that: on the event loop both the manual loop AND the
  * production encoder are ~0; off it, both are ~160.
  *
  * <h2>Method</h2>
  * Per-op heap allocation via {@link ThreadMXBean#getThreadAllocatedBytes(long)} on the encoding thread
- * (the trustworthy, CPU-count-independent axis on this 2-vCPU box — the same axis
+ * (the trustworthy, CPU-count-independent axis on this 2-vCPU box - the same axis
  * {@code NettyEncodeOnlyProfileMain} used to attribute the 160). One {@link FrameCodec.Frame} is reused
  * across all ops so the only per-op heap allocation is the encoder's. Heavy warmup drives JIT + the
  * pool/recycler to steady state; every produced {@link ByteBuf} is released.
  *
  * <p>This is a JUnit measurement, not JMH (JMH would need the testkit/shade plumbing); the thresholds
  * are deliberately generous because the point is which <em>side of the cliff</em> the production path is
- * on, and allocation is deterministic (the 3×-stability is documented in the proof doc).
+ * on, and allocation is deterministic (the 3x-stability is documented in the proof doc).
  */
 @Timeout(300)
 class NettyConsensusFrameEncoderAllocationTest {
@@ -66,7 +64,7 @@ class NettyConsensusFrameEncoderAllocationTest {
 
     private static final ThreadMXBean TB = (ThreadMXBean) ManagementFactory.getThreadMXBean();
     private static final ThreadLocal<CRC32C> CRC = ThreadLocal.withInitial(CRC32C::new);
-    private static final ByteBufAllocator ALLOC = PooledByteBufAllocator.DEFAULT; // == production (DR-N17)
+    private static final ByteBufAllocator ALLOC = PooledByteBufAllocator.DEFAULT; // matches production
 
     private static final int SENDER_ID = 3;
     private static final int WARMUP = 100_000;
@@ -158,7 +156,7 @@ class NettyConsensusFrameEncoderAllocationTest {
 
     /** Idiomatic/production: drive the real {@link NettyConsensusFrameEncoder} in a pipeline, writes
      *  originating on {@code exec}'s thread (a ReleaseSink frees the encoded buffer on that same
-     *  thread — the production lifecycle: alloc in the encoder, release after the write, both on the
+     *  thread - the production lifecycle: alloc in the encoder, release after the write, both on the
      *  event loop). The encoder allocates a pooled DIRECT buffer; only the heap holder shows here. */
     private long measureIdiomatic(ExecutorService exec, FrameCodec.Frame frame) throws Exception {
         return exec.submit(() -> {
@@ -194,7 +192,7 @@ class NettyConsensusFrameEncoderAllocationTest {
                     buf.writeByte((byte) frame.messageType().code());
                     buf.writeInt(frame.groupId());
                     buf.writeLong(frame.term());
-                    buf.writeLong(0L); // v2/D1 reserved epoch — keep the SAME field writes as production
+                    buf.writeLong(0L); // reserved epoch - keep the SAME field writes as production
                     buf.writeBytes(frame.payload());
                     CRC32C crc = CRC.get();
                     crc.reset();
@@ -227,7 +225,7 @@ class NettyConsensusFrameEncoderAllocationTest {
     }
 
     /** Terminal outbound handler: frees the encoded buffer on the encoding thread, completing the
-     *  alloc→release cycle the production socket write performs (so the holder Recycler engages). */
+     *  alloc-to-release cycle the production socket write performs (so the holder Recycler engages). */
     @ChannelHandler.Sharable
     static final class ReleaseSink extends ChannelOutboundHandlerAdapter {
         @Override

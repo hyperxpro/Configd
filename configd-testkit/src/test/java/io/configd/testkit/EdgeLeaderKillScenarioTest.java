@@ -11,11 +11,11 @@ import java.util.Map;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * Targeted deterministic scenario (design §7 sim plan): the CP leader is killed
+ * Targeted deterministic scenario (design section 7 sim plan): the CP leader is killed
  * <b>mid-stream</b> while edges tail with the real {@link C1StreamDriver}, and we assert
  * (1) no edge version ever decreases across the leadership change, and (2) the edges
  * eventually converge to the (new leader's) authoritative store after re-election +
- * heal+drain. No sleeps — the whole scenario is tick-driven and seed-deterministic.
+ * heal+drain. No sleeps - the whole scenario is tick-driven and seed-deterministic.
  *
  * <p>"Kill the leader" is modelled by fully isolating the current leader CP node from every
  * peer on the CP {@link AdversarialNetwork} (a clean network partition the surviving
@@ -34,7 +34,7 @@ class EdgeLeaderKillScenarioTest {
 
     @Test
     void leaderKilledMidStreamNoVersionDecreaseAndEventuallyConverges() {
-        // No edge faults so the only disruption is the deliberate leader kill — keeps the
+        // No edge faults so the only disruption is the deliberate leader kill - keeps the
         // scenario crisp (the 507-seed sweep covers the fault-interaction space).
         EdgeFanOutSim sim = new EdgeFanOutSim(SEED, CP_NODES, EDGES, TICKS,
                 /* edgeFaults */ false, new C1StreamDriver(),
@@ -64,7 +64,7 @@ class EdgeLeaderKillScenarioTest {
         int oldLeader = sim.cpSim().findLeader();
         assertTrue(oldLeader >= 0, "leader present at kill time");
 
-        // Phase 2: KILL the leader — isolate it from every peer on the CP network.
+        // Phase 2: KILL the leader - isolate it from every peer on the CP network.
         killLeader(sim, oldLeader);
 
         // Phase 3: keep ticking through re-election; versions must never decrease.
@@ -86,7 +86,7 @@ class EdgeLeaderKillScenarioTest {
                         || sim.cpSim().findLeader() != oldLeader,
                 "the killed leader must no longer be the cluster's serving leader");
 
-        // Phase 4: heal everything and drain — the edges must converge to the authoritative
+        // Phase 4: heal everything and drain - the edges must converge to the authoritative
         // store. finalCheck throws on divergence (here it must NOT throw).
         sim.finalCheck();
 

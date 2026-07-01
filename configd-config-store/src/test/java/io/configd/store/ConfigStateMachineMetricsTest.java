@@ -14,14 +14,13 @@ import java.util.concurrent.atomic.AtomicLong;
 import static org.junit.jupiter.api.Assertions.*;
 
 /**
- * F5 (Tier-1-METRIC-DRIFT) — verifies that {@link ConfigStateMachine}
- * fires the {@link StateMachineMetrics} callbacks at the correct points
- * so {@code configd_write_commit_*} and
+ * Verifies that {@link ConfigStateMachine} fires the {@link StateMachineMetrics}
+ * callbacks at the correct points so {@code configd_write_commit_*} and
  * {@code configd_snapshot_install_failed_total} get values.
  *
- * <p>Tests use a recording {@link StateMachineMetrics} (not a Mockito
- * mock) per the codebase's testing convention: state machines, registries,
- * and trackers are exercised through their real APIs.
+ * <p>Tests use a recording {@link StateMachineMetrics} (not a Mockito mock) per
+ * the codebase's testing convention: state machines, registries, and trackers are
+ * exercised through their real APIs.
  */
 class ConfigStateMachineMetricsTest {
 
@@ -60,7 +59,7 @@ class ConfigStateMachineMetricsTest {
 
     @Test
     void noopApplyDoesNotIncrementCommitMetrics() {
-        // CommandCodec.NOOP_BYTES — empty command. Apply with empty array.
+        // CommandCodec.NOOP_BYTES - empty command. Apply with empty array.
         stateMachine.apply(1, 1, new byte[0]);
         assertEquals(0, metrics.successCount.get(),
                 "Noop apply must NOT fire success");
@@ -70,10 +69,9 @@ class ConfigStateMachineMetricsTest {
 
     @Test
     void signingFailureFiresFailureCounterAndRethrows() throws Exception {
-        // Construct a verify-only ConfigSigner (no private key) — its
+        // Construct a verify-only ConfigSigner (no private key) - its
         // sign() throws IllegalStateException, which the state machine
-        // catches and converts to the fail-close path documented in
-        // S3 / PA-1004.
+        // catches and converts to the fail-close path.
         KeyPair kp = KeyPairGenerator.getInstance("Ed25519").generateKeyPair();
         ConfigSigner verifyOnly = new ConfigSigner(kp.getPublic());
         ConfigStateMachine sm = new ConfigStateMachine(
@@ -108,11 +106,11 @@ class ConfigStateMachineMetricsTest {
     @Test
     void restoreSnapshotFailureIncrementsInstallFailed() {
         // Craft a malformed envelope with a negative entry count so the
-        // F-0053 bound check throws IllegalArgumentException, hitting the
-        // F5 onSnapshotInstallFailed branch.
+        // bounds check throws IllegalArgumentException, hitting the
+        // onSnapshotInstallFailed branch.
         ByteBuffer buf = ByteBuffer.allocate(12);
         buf.putLong(0L);    // sequence counter
-        buf.putInt(-1);     // entry count — invalid
+        buf.putInt(-1);     // entry count - invalid
         byte[] malformed = buf.array();
 
         assertThrows(IllegalArgumentException.class,
@@ -122,7 +120,7 @@ class ConfigStateMachineMetricsTest {
         assertEquals(0, metrics.snapshotRebuildCount.get());
     }
 
-    /** Real (non-mock) recording sink — same testing style as the other
+    /** Real (non-mock) recording sink - same testing style as the other
      *  config-store tests use for InvariantChecker. */
     private static final class RecordingMetrics implements StateMachineMetrics {
         final AtomicInteger successCount = new AtomicInteger();

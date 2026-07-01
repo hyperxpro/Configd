@@ -12,7 +12,7 @@ import java.util.Set;
 import static org.junit.jupiter.api.Assertions.*;
 
 /**
- * Tests for the M3 payload-carrying {@link HeartbeatCoalescer}: the tick window, latest-wins per
+ * Tests for the payload-carrying {@link HeartbeatCoalescer}: the tick window, latest-wins per
  * (peer, group), per-peer coalescing across groups (the flat-in-N property at the data-structure level),
  * and the drain.
  */
@@ -29,7 +29,7 @@ class HeartbeatCoalescerTest {
         coalescer = new HeartbeatCoalescer();
     }
 
-    /** An empty AppendEntries — a heartbeat — with the given commit index (to tell records apart). */
+    /** An empty AppendEntries (a heartbeat) with the given commit index (to tell records apart). */
     private static AppendEntriesRequest heartbeat(long leaderCommit) {
         return new AppendEntriesRequest(1L, LEADER, 0L, 0L, List.of(), leaderCommit);
     }
@@ -39,7 +39,7 @@ class HeartbeatCoalescerTest {
 
         @Test
         void recordOutsideWindowIsRejected() {
-            // No beginTick() → not collecting → record refused so the caller sends immediately (H-1).
+            // No beginTick() - not collecting - record refused so the caller sends immediately.
             assertFalse(coalescer.isCollecting());
             assertFalse(coalescer.recordIfCollecting(PEER_A, 1, heartbeat(0)));
             assertTrue(coalescer.pendingPeers().isEmpty());
@@ -94,7 +94,7 @@ class HeartbeatCoalescerTest {
             AppendEntriesRequest stale = heartbeat(10);
             AppendEntriesRequest fresh = heartbeat(99);
             coalescer.recordIfCollecting(PEER_A, 1, stale);
-            coalescer.recordIfCollecting(PEER_A, 1, fresh); // same (peer, group) → overwrite
+            coalescer.recordIfCollecting(PEER_A, 1, fresh); // same (peer, group) - overwrite
 
             Map<NodeId, Map<Integer, AppendEntriesRequest>> drained = coalescer.drainAndEndTick();
             assertEquals(1, drained.get(PEER_A).size());
@@ -133,7 +133,7 @@ class HeartbeatCoalescerTest {
         @Test
         void manyGroupsCoalesceToOneEntryPerPeer() {
             // The flat-in-N property at the data-structure level: 100 groups each heartbeating two peers
-            // produce exactly TWO drain entries (one per peer), not 200 — each carrying all 100 groups.
+            // produce exactly TWO drain entries (one per peer), not 200 - each carrying all 100 groups.
             coalescer.beginTick();
             for (int groupId = 0; groupId < 100; groupId++) {
                 coalescer.recordIfCollecting(PEER_A, groupId, heartbeat(groupId));
@@ -147,7 +147,7 @@ class HeartbeatCoalescerTest {
 
         @Test
         void drainSinglePeerSingleGroupIsTheNormalCase() {
-            // The N=1 production case: one group → one peer → one entry with one group (sent as a plain
+            // The N=1 production case: one group -> one peer -> one entry with one group (sent as a plain
             // AppendEntries, wire unchanged).
             coalescer.beginTick();
             coalescer.recordIfCollecting(PEER_A, 0, heartbeat(7));

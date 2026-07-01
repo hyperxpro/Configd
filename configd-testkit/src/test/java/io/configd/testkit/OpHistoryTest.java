@@ -8,7 +8,7 @@ import java.nio.file.Path;
 import static org.junit.jupiter.api.Assertions.*;
 
 /**
- * §4.4 / design §6: the adversarial sim emits a checker-neutral invoke/ok/fail/info
+ * section 4.4 / design section 6: the adversarial sim emits a checker-neutral invoke/ok/fail/info
  * op-history in the exact format the configd-linz Porcupine checker already
  * consumes from the real-binary harness, so the B5 linz round can check sim
  * histories without re-instrumenting. This test runs one sim with a
@@ -40,7 +40,7 @@ class OpHistoryTest {
             // Real-time backbone present and ordered (invoke <= response).
             assertTrue(e.responseTs() >= e.invokeTs(), "response_ts >= invoke_ts");
             if (e.opType().equals("PUT") || e.opType().equals("DELETE")) {
-                // Ack semantics: an accepted write is :info (ack != commit, RR-004).
+                // Ack semantics: an accepted write is :info (ack != commit).
                 assertTrue(e.status().equals("info") || e.status().equals("fail"),
                         "writes are info (accepted) or fail (rejected), got " + e.status());
                 sawWrite = true;

@@ -32,13 +32,12 @@ class TcpRaftTransportTest {
 
     private final List<TcpRaftTransport> transports = new ArrayList<>();
 
-    // RR-094: keytool subprocess spawning (3 per TLS test) is the dominant
-    // cost and starves under CPU-credit throttling, blowing the per-test
-    // budget. Generate the F-0051 keystore/truststore/cert exactly ONCE for
-    // the whole class in @BeforeAll and reuse the cached paths from the timed
-    // test body. The class-level @Timeout(10) still guards the many fast,
-    // plaintext tests; the keytool-driven find0051 carries its own generous
-    // hang-detection budget via a method-level @Timeout override.
+    // Keytool subprocess spawning (3 per TLS test) is the dominant cost and
+    // starves under CPU-credit throttling. Generate the keystore/truststore/cert
+    // exactly ONCE for the whole class in @BeforeAll and reuse the cached paths
+    // from the timed test body. The class-level @Timeout(10) still guards the
+    // many fast plaintext tests; the keytool-driven find0051 carries its own
+    // generous hang-detection budget via a method-level @Timeout override.
     private static Path tlsFixtureDir;
     private static Path keyStorePath;
     private static Path trustStorePath;
@@ -449,29 +448,16 @@ class TcpRaftTransportTest {
         assertEquals(0, receivedMessages.getFirst().frame().payload().length);
     }
 
-    // ========================================================================
-    // F-0051 regression: hostname verification must be enforced on the client
-    // side. If the server certificate's SAN does not cover the hostname that
-    // the client supplied, the TLS handshake must FAIL — even when the cert
-    // is otherwise signed by a CA in the trust store. Without
-    // SSLParameters.setEndpointIdentificationAlgorithm("HTTPS"), any cert
-    // signed by the trust store is accepted, defeating peer pinning.
-    // ========================================================================
-
-    // RR-094: a generous hang-detection budget (120s), not a performance
-    // assertion. The expensive keytool keystore generation is hoisted to
-    // @BeforeAll, so the timed body here is only socket setup plus a few
-    // bounded send attempts and a fixed negative-observation window. The
-    // class-level @Timeout(10) is overridden for this single keytool-adjacent
-    // test so CPU-credit throttling cannot flake it while still catching a
-    // genuine handshake hang.
+    // Hostname verification regression: if the server cert's SAN does not cover the client's
+    // target hostname, the TLS handshake must FAIL - even when the cert is otherwise signed by a
+    // CA in the trust store. Without SSLParameters.setEndpointIdentificationAlgorithm("HTTPS"),
+    // any cert signed by the trust store is accepted, defeating peer pinning.
     @Test
     @Timeout(120)
     void find0051_clientHandshakeRejectsCertWithWrongHostname() throws Exception {
-        // The cached fixture holds a self-signed cert whose SAN only covers
-        // "localhost", but the client will target "127.0.0.2". The cert is
-        // otherwise present in the client's trust store, so the *only* reason
-        // the handshake should fail is hostname verification.
+        // The cached fixture holds a self-signed cert whose SAN only covers "localhost", but the
+        // client will target "127.0.0.2". The cert is otherwise present in the client's trust
+        // store, so the only reason the handshake should fail is hostname verification.
         TlsConfig tlsConfig = new TlsConfig(certFile, keyStorePath, trustStorePath,
                 true, java.util.List.of("TLS_AES_256_GCM_SHA384"),
                 java.util.List.of("TLSv1.3"), "changeit".toCharArray());
@@ -493,7 +479,7 @@ class TcpRaftTransportTest {
         transportB.start();
         int portB = transportB.localPort();
 
-        // Client targets 127.0.0.2 — the hostname must not be covered by
+        // Client targets 127.0.0.2 - the hostname must not be covered by
         // the SAN, so the handshake must fail.
         TcpRaftTransport transportA = new TcpRaftTransport(
                 nodeA,

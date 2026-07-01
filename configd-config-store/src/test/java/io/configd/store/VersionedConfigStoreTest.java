@@ -94,17 +94,14 @@ class VersionedConfigStoreTest {
         }
     }
 
-    // -----------------------------------------------------------------------
-    // RR-092: the MVCC sequence-monotonicity guard must hold on ALL write paths.
+    // MVCC sequence-monotonicity guard must hold on ALL write paths.
     //
-    // Session-1 PIT survivors: VersionedConfigStore.delete and .applyBatch each
-    // carry `if (sequence <= currentSnapshot.version()) throw ...`, but only
-    // `put`'s guard was regression-tested (nonMonotonicSequenceThrows above), so
-    // the RemoveConditional ORDER_ELSE mutant on delete/applyBatch SURVIVED. A
-    // replayed/duplicate delete or batch at a STALE sequence would otherwise be
-    // applied, silently REGRESSING the store version (the version-regression bug
-    // an at-least-once apply must reject). These tests pin both guards.
-    // -----------------------------------------------------------------------
+    // VersionedConfigStore.delete and .applyBatch each carry
+    // `if (sequence <= currentSnapshot.version()) throw ...`, but only `put`'s guard
+    // was regression-tested, so the RemoveConditional mutant on delete/applyBatch
+    // survived. A replayed/duplicate delete or batch at a stale sequence would
+    // otherwise be applied, silently regressing the store version (the version-
+    // regression bug an at-least-once apply must reject). These tests pin both guards.
 
     @Nested
     class SequenceMonotonicityGuard {
@@ -269,7 +266,7 @@ class VersionedConfigStoreTest {
             // version is the store version of the SAME snapshot the scan observed
             assertEquals(store.currentVersion(), scan.version());
             assertEquals(3, scan.version());
-            // entries are exactly the prefix matches — identical to getPrefix
+            // entries are exactly the prefix matches - identical to getPrefix
             assertEquals(2, scan.entries().size());
             assertTrue(scan.entries().containsKey("db.host"));
             assertTrue(scan.entries().containsKey("db.port"));
@@ -322,7 +319,7 @@ class VersionedConfigStoreTest {
                             // (another write may have happened)
                             if (snap.version() < version) {
                                 // This can happen if currentVersion() and snapshot()
-                                // read different volatile values. That's fine — the
+                                // read different volatile values. That's fine - the
                                 // snapshot is self-consistent.
                             }
 

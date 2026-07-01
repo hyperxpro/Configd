@@ -14,12 +14,11 @@ import java.util.List;
 import static org.junit.jupiter.api.Assertions.*;
 
 /**
- * CT-25 (C2 half) — the ADR-0038 edge-side prefix STORAGE filter
+ * Tests the edge-side prefix STORAGE filter
  * ({@link EdgeConfigClient#applyDelta} / {@link EdgeConfigClient#filterForStorage}).
  *
- * <p>Contract clause (architecture §7 / charter §4 C1; re-anchored by ADR-0038):
- * prefix subscription is an edge-side <b>storage/serving</b> filter, not a transport filter
- * — the full signed chain is delivered; the edge stores only the subscribed slice (plus
+ * <p>Prefix subscription is an edge-side <b>storage/serving</b> filter, not a transport filter:
+ * the full signed chain is delivered; the edge stores only the subscribed slice (plus
  * strong-read keys, always), and the chain version still advances for filtered-out mutations
  * so gap detection is unaffected.
  *
@@ -68,7 +67,7 @@ class EdgePrefixStorageFilterTest {
 
         @Test
         void emptySubscriptionStoresEveryKey() {
-            // No addSubscription() calls → empty prefix set → full store.
+            // No addSubscription() calls -> empty prefix set -> full store.
             client.applyDelta(put(0, 1, "svc/a", "1", "other/b", "2", "misc/c", "3"), clock.currentTimeMillis());
 
             assertEquals(1, client.currentVersion());
@@ -101,7 +100,7 @@ class EdgePrefixStorageFilterTest {
         void nonMatchingKeyIsNotStoredButVersionAdvances() {
             client.applyDelta(put(0, 1, "other/b", "2"), clock.currentTimeMillis());
 
-            // Not stored — outside the subscription, no payload kept.
+            // Not stored - outside the subscription, no payload kept.
             assertFalse(client.get("other/b").found());
             // But the chain version STILL advanced (gap detection unaffected).
             assertEquals(1, client.currentVersion());
@@ -119,7 +118,7 @@ class EdgePrefixStorageFilterTest {
 
         @Test
         void allNonMatchingBatchStillAdvancesVersion() {
-            // Every mutation filtered out → an empty filtered delta — version still advances.
+            // Every mutation filtered out -> an empty filtered delta - version still advances.
             client.applyDelta(put(0, 1, "other/b", "2", "misc/c", "3"), clock.currentTimeMillis());
             assertEquals(1, client.currentVersion());
             assertFalse(client.get("other/b").found());
@@ -139,7 +138,7 @@ class EdgePrefixStorageFilterTest {
             client.addSubscription("svc/"); // does NOT cover secure/
             client.applyDelta(put(0, 1, "secure/killswitch", "ON", "other/x", "y"), clock.currentTimeMillis());
 
-            // secure/ is a strong-read key — ALWAYS stored regardless of subscription.
+            // secure/ is a strong-read key - ALWAYS stored regardless of subscription.
             assertTrue(client.get("secure/killswitch").found(),
                     "secure/ keys must be stored regardless of subscription (CT-37)");
             // The non-matching, non-secure key is still filtered out.
@@ -165,9 +164,9 @@ class EdgePrefixStorageFilterTest {
         @Test
         void sequentialFilteredDeltasAdvanceTheChain() {
             client.addSubscription("svc/");
-            client.applyDelta(put(0, 1, "other/a", "1"), clock.currentTimeMillis()); // filtered out, v→1
-            client.applyDelta(put(1, 2, "svc/b", "2"), clock.currentTimeMillis());   // stored, v→2
-            client.applyDelta(put(2, 3, "other/c", "3"), clock.currentTimeMillis()); // filtered out, v→3
+            client.applyDelta(put(0, 1, "other/a", "1"), clock.currentTimeMillis()); // filtered out, v->1
+            client.applyDelta(put(1, 2, "svc/b", "2"), clock.currentTimeMillis());   // stored, v->2
+            client.applyDelta(put(2, 3, "other/c", "3"), clock.currentTimeMillis()); // filtered out, v->3
 
             assertEquals(3, client.currentVersion());
             assertTrue(client.get("svc/b").found());
@@ -179,7 +178,7 @@ class EdgePrefixStorageFilterTest {
         void filteredDeltaWithWrongFromVersionStillThrowsGap() {
             client.addSubscription("svc/");
             client.applyDelta(put(0, 1, "svc/a", "1"), clock.currentTimeMillis());
-            // fromVersion 5 != current 1 — the store's gap guard fires even though the
+            // fromVersion 5 != current 1 - the store's gap guard fires even though the
             // mutation is in-subscription (filtering preserves from/to versions).
             assertThrows(IllegalArgumentException.class,
                     () -> client.applyDelta(put(5, 6, "svc/b", "2"), clock.currentTimeMillis()));
@@ -189,7 +188,7 @@ class EdgePrefixStorageFilterTest {
         void filterPreservesFromAndToVersions() {
             client.addSubscription("svc/");
             // Even when every mutation is dropped, from/to are preserved so the store
-            // advances exactly from 7→8 (here we bootstrap to 7 first via a full snapshot).
+            // advances exactly from 7->8 (here we bootstrap to 7 first via a full snapshot).
             client.loadSnapshot(new io.configd.store.ConfigSnapshot(
                     io.configd.store.HamtMap.empty(), 7, 7));
             client.applyDelta(put(7, 8, "other/x", "y"), clock.currentTimeMillis());

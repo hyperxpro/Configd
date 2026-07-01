@@ -25,9 +25,9 @@ import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * Unit matrix for {@link FanOutSessionCore} (design §2/§4): SUBSCRIBE_OK mode decision,
- * drain/batch boundaries, Gap→snapshot→resume cursor continuity, heartbeat cadence, and
- * ack accounting. Uses a real {@link FanOutBuffer} + {@link SnapshotReplaySource} and a
+ * Unit matrix for {@link FanOutSessionCore}: SUBSCRIBE_OK mode decision, drain/batch
+ * boundaries, Gap->snapshot->resume cursor continuity, heartbeat cadence, and ack
+ * accounting. Uses a real {@link FanOutBuffer} + {@link SnapshotReplaySource} and a
  * controllable {@link RecordingTransportSink} / {@link FakeClock} (no threads, no
  * wall-clock).
  */
@@ -79,7 +79,7 @@ class FanOutSessionCoreTest {
         for (long i = 1; i <= 5; i++) {
             buffer.publish(put(i, "k" + i, "v"));
         }
-        // cursor at the latest seq — nothing pending — TAIL.
+        // cursor at the latest seq - nothing pending - TAIL.
         FanOutSessionCore s = session(buffer, snapshotAt(5), FanOutConfig.defaults());
         s.onSubscribe(subscribe(5));
         assertEquals(EdgeFrame.Mode.TAIL, sink.sentOfType(EdgeFrame.SubscribeOk.class).get(0).mode());
@@ -117,9 +117,9 @@ class FanOutSessionCoreTest {
 
     @Test
     void tickDrainsNotificationsInVerbatimAscendingOrder() {
-        // Subscribe on the EMPTY buffer (TAIL), then publish: C3's decideMode snapshots
-        // any cursor-0 subscriber once data exists, so streaming-mechanics fixtures
-        // subscribe first (the live-tail shape this test pins is unchanged).
+        // Subscribe on the EMPTY buffer (TAIL), then publish. Note: decideMode promotes a
+        // cursor-0 subscriber to SNAPSHOT_FIRST once data exists, so streaming-mechanics
+        // fixtures subscribe first (the live-tail shape this test pins is unchanged).
         FanOutBuffer buffer = new FanOutBuffer(64);
         FanOutSessionCore s = session(buffer, snapshotAt(5), FanOutConfig.defaults());
         s.onSubscribe(subscribe(0));
@@ -144,7 +144,7 @@ class FanOutSessionCoreTest {
         FanOutBuffer buffer = new FanOutBuffer(64);
         FanOutConfig cfg = new FanOutConfig(64, 80, 3 /* batchMax=3 */, 262_144, 8_192L, 250L, 5L, 1_048_576);
         FanOutSessionCore s = session(buffer, snapshotAt(10), cfg);
-        s.onSubscribe(subscribe(0)); // on the empty buffer: TAIL (C3 decideMode)
+        s.onSubscribe(subscribe(0)); // on the empty buffer: TAIL (empty => decideMode returns TAIL)
         for (long i = 1; i <= 10; i++) {
             buffer.publish(put(i, "k" + i, "v"));
         }
@@ -254,7 +254,7 @@ class FanOutSessionCoreTest {
         FanOutBuffer buffer = new FanOutBuffer(256);
         FanOutConfig cfg = new FanOutConfig(8, 80, 1, 262_144, 8_192L, 250L, 5L, 1_048_576);
         FanOutSessionCore s = session(buffer, snapshotAt(3), cfg);
-        s.onSubscribe(subscribe(0)); // on the empty buffer: TAIL (C3 decideMode)
+        s.onSubscribe(subscribe(0)); // on the empty buffer: TAIL (empty => decideMode returns TAIL)
         for (long i = 1; i <= 3; i++) {
             buffer.publish(put(i, "k" + i, "v"));
         }
@@ -285,15 +285,14 @@ class FanOutSessionCoreTest {
         assertEquals(DemotionEvent.REASON_ACK_LAG, s.lastDemotion().reason());
     }
 
-    // ---- A3-2: prod-threshold ack-lag demotion (8192) ----------------------
-    // S4 Workstream A3 leg 2 (S3 handoff §1): the E2E/integrated sim can only ever
-    // reach the tuned-down ackLagDemoteSeqs=2 (above: ackLagBreachDemotes). Chaos
-    // exercises the PRODUCTION threshold (FanOutConfig.defaults()=8192) directly, and
-    // pins the strict-'>' boundary so an off-by-one (>=) is caught. Construction note:
-    // ack-lag is checked once at the TOP of drainStreaming, while queue-overflow is
-    // checked per-frame inside the drain loop — so to make ACK_LAG (not
-    // QUEUE_OVERFLOW) the gate, the frame count at the breach must stay < queueFrames.
-    // 8193 seqs / batch 64 = 129 frames < 256 queueFrames: ack-lag wins. fault-matrix §A3-1[sic A3-2].
+    // ---- prod-threshold ack-lag demotion (8192) ----------------------------
+    // The integrated sim can only reach ackLagDemoteSeqs=2 (above: ackLagBreachDemotes).
+    // This test exercises the PRODUCTION threshold (FanOutConfig.defaults()=8192) directly,
+    // and pins the strict-'>' boundary so an off-by-one (>=) is caught. Construction note:
+    // ack-lag is checked once at the TOP of drainStreaming, while queue-overflow is checked
+    // per-frame inside the drain loop - so to make ACK_LAG (not QUEUE_OVERFLOW) fire, the
+    // frame count at the breach must stay < queueFrames.
+    // 8193 seqs / batch 64 = 129 frames < 256 queueFrames: ack-lag wins.
 
     @Test
     void prodThresholdAckLagOverThresholdDemotes() {
@@ -344,11 +343,11 @@ class FanOutSessionCoreTest {
         assertEquals(null, s.lastDemotion(), "no demotion event at the threshold");
     }
 
-    // ---- A3-3: wedged-but-open transport during a paced snapshot transfer --
-    // S4 Workstream A3 leg 3 (S3 handoff §1): the RR-102 would-block pause path when the
-    // transport never drains (wedged-but-open, not dead). Characterizes the SAFE degradation
-    // and the resume-as-one-envelope guarantee, and records the observability proxy (there is
-    // no dedicated stalled-transfer signal — c5-signoff F2 / S6). fault-matrix §A3-3.
+    // ---- wedged-but-open transport during a paced snapshot transfer --------
+    // The would-block pause path when the transport never drains (wedged-but-open, not dead).
+    // Characterizes the SAFE degradation and the resume-as-one-envelope guarantee. The only
+    // detection proxy today is "stuck in CATCHUP + no SnapshotEnd + queue pinned" - no
+    // dedicated stalled-transfer signal is emitted.
 
     @Test
     void wedgedTransportDuringSnapshotPausesSafelyThenResumesAsOneEnvelope() {
@@ -373,7 +372,7 @@ class FanOutSessionCoreTest {
 
         // WEDGE the transport: every offer would-block. (performSnapshotTransfer offers
         // snapshot frames directly, treating refusal as would-block, NOT transport death,
-        // so the session is NOT torn down — RR-102.)
+        // so the session is NOT torn down.)
         sink.blockNextOffers(10_000);
         for (int tick = 0; tick < 20; tick++) {
             s.tick(clock.now());
@@ -388,13 +387,12 @@ class FanOutSessionCoreTest {
                 "no snapshot frame is delivered while wedged");
         assertTrue(sink.sentOfType(EdgeFrame.SnapshotEnd.class).isEmpty(),
                 "the transfer never completes (no cutover) while wedged");
-        // OBSERVABILITY (charter §8.9): the only detection proxy today is "stuck in CATCHUP +
-        // no SnapshotEnd / no snapshot_transfers_total increment + queue pinned". There is NO
-        // dedicated stalled-transfer signal (c5-signoff F2 → S6). Detection IS possible via the
-        // proxy, so no new metric is emitted here; the clean-attribution signal stays an S6 item.
+        // The only detection proxy today is "stuck in CATCHUP + no SnapshotEnd / no
+        // snapshot_transfers_total increment + queue pinned". Detection IS possible via the
+        // proxy, so no new metric is emitted here.
 
         // UNWEDGE: the transport drains. The transfer resumes the SAME paused envelope and
-        // completes — exactly one BEGIN + one END (not a restarted/torn envelope), then cutover.
+        // completes - exactly one BEGIN + one END (not a restarted/torn envelope), then cutover.
         sink.blockNextOffers(0);
         s.tick(clock.now());
         assertEquals(SessionState.streaming(), s.state(), "resumes STREAMING after the transfer completes");

@@ -14,21 +14,21 @@ import java.util.Set;
 import java.util.random.RandomGenerator;
 
 /**
- * Reusable in-memory Raft cluster for Session 5 / Workstream B performance drivers
+ * Reusable in-memory Raft cluster for performance drivers
  * (the real-state-machine analogue of the inline harness in
  * {@code RaftCommitBenchmark}). Wires {@code clusterSize} {@link RaftNode}s with a
  * directly-routing in-memory transport, elects a leader by ticking, and exposes
- * {@link #driveToCommit(long)} to push a proposed entry through replicate→commit→apply.
+ * {@link #driveToCommit(long)} to push a proposed entry through replicate->commit->apply.
  *
  * <p>{@link #realStateMachines(int)} attaches a real {@link ConfigStateMachine} over a
  * {@link VersionedConfigStore} to every node, so a committed entry actually decodes its
- * command and applies a HAMT {@code put} — the realistic allocating write profile the GC
+ * command and applies a HAMT {@code put} - the realistic allocating write profile the GC
  * bake-off and the local commit-latency microbench need (vs. a no-op state machine, which
  * under-prices allocation).
  *
  * <p><b>Scope honesty:</b> the transport and storage are in-memory; there is NO network
  * and NO fsync. The latency measured against this cluster is the in-process consensus CPU
- * cost — the {@code local_commit_component} of methodology §2, never the cross-region total.
+ * cost - the {@code local_commit_component} of methodology section 2, never the cross-region total.
  */
 public final class InMemoryRaftCluster {
 

@@ -12,9 +12,9 @@ import java.util.concurrent.TimeUnit;
  * <p>
  * Validates two properties:
  * <ol>
- *   <li><b>O(log32 N) lookup</b> — throughput should degrade very gradually
+ *   <li><b>O(log32 N) lookup</b> - throughput should degrade very gradually
  *       as N grows from 1K to 1M (at most ~4 trie levels at 1M).</li>
- *   <li><b>Zero allocation on the read path</b> — run with {@code -prof gc}
+ *   <li><b>Zero allocation on the read path</b> - run with {@code -prof gc}
  *       to verify {@code gc.alloc.rate.norm == 0 B/op}.</li>
  * </ol>
  * <p>
@@ -69,7 +69,7 @@ public class HamtReadBenchmark {
 
     @Benchmark
     public void getMiss(Blackhole bh) {
-        // Lookup a key that does not exist — verifies zero-alloc on miss path
+        // Lookup a key that does not exist - verifies zero-alloc on miss path
         bh.consume(map.get("nonexistent/key/path"));
     }
 }

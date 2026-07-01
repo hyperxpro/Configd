@@ -24,22 +24,18 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * The C3 replay-horizon boundary matrix (charter §4 C3: "including the horizon-boundary
- * case, under concurrent writes"; CT-31; screen condition C3-1).
+ * Replay-horizon boundary matrix: cursor exactly-at / one-below / one-above the ring's
+ * oldest-retained sequence, plus the lapped-after-TAIL-decision race.
  *
- * <p>The replay horizon IS the boundary ring's retention (design §1 item 2): a subscriber
- * cursor at {@code oldestRetainedSeq − 1} is exactly recoverable from the tail; one below
- * is beyond the horizon (GAP → snapshot re-bootstrap). The matrix pins cursor =
- * exactly-at / one-below / one-above against a real {@link FanOutBuffer}, and — the C3-1
- * condition — the <b>lapped-after-TAIL-decision race</b>: the server decides TAIL, a
- * concurrent writer laps the cursor BETWEEN the decision and the first {@code readSince}
- * drain, and the session self-heals (GAP → demote → snapshot → contiguous resume) with no
- * committed effect lost. The interleaving is forced deterministically (single-threaded
- * publish between protocol steps — the only honest way to pin an exact interleaving).
+ * <p>The replay horizon is the ring's retention: a subscriber cursor at
+ * {@code oldestRetainedSeq - 1} is exactly recoverable from the tail; one below is beyond
+ * the horizon (GAP -> snapshot re-bootstrap). The interleaving is forced deterministically
+ * (single-threaded publish between protocol steps - the only honest way to pin an exact
+ * interleaving).
  *
  * <p>Writes keep flowing through every phase (decision, lap, snapshot, resume) and the
- * final edge-model state must byte-equal the authoritative cumulative state — the
- * ADR-0034 "exactly-once over effect" judge.
+ * final edge-model state must byte-equal the authoritative cumulative state - the
+ * exactly-once-over-effect judge.
  */
 class ReplayHorizonBoundaryTest {
 
@@ -59,7 +55,7 @@ class ReplayHorizonBoundaryTest {
                 new ConfigDelta(seq - 1, seq, List.of(new ConfigMutation.Put(key, bytes(val))))));
     }
 
-    /** The ADR-0034 replay seam: snapshot-equivalent CURRENT state at the current seq. */
+    /** Snapshot-equivalent CURRENT state at the current seq (the replay seam). */
     private ReplaySource liveReplaySource() {
         return new SnapshotReplaySource(() -> new ConfigSnapshot(auth, version, 0L));
     }
@@ -131,7 +127,7 @@ class ReplayHorizonBoundaryTest {
         return new EdgeFrame.Subscribe(true, List.of(), resume, -1L, "edge-h");
     }
 
-    /** Capacity 8; seqs 1..20 published → oldest retained 13; horizon edge cursor = 12. */
+    /** Capacity 8; seqs 1..20 published -> oldest retained 13; horizon edge cursor = 12. */
     private FanOutBuffer bufferLappedTo20() {
         FanOutBuffer buffer = new FanOutBuffer(8);
         for (int i = 1; i <= 20; i++) {
@@ -149,7 +145,7 @@ class ReplayHorizonBoundaryTest {
     void cursorOneBelowHorizonIsBeyondReplayAndGetsSnapshotFirst() {
         FanOutBuffer buffer = bufferLappedTo20();
         FanOutSessionCore s = session(buffer, C1StreamDriverLikeConfig.config());
-        s.onSubscribe(subscribe(11)); // horizon edge is 12; 11 is one below → beyond horizon
+        s.onSubscribe(subscribe(11)); // horizon edge is 12; 11 is one below -> beyond horizon
 
         assertEquals(EdgeFrame.Mode.SNAPSHOT_FIRST,
                 sink.sentOfType(EdgeFrame.SubscribeOk.class).get(0).mode());
@@ -176,7 +172,7 @@ class ReplayHorizonBoundaryTest {
         seedEdgeAt(edge, 12);
 
         // First drain BEFORE any further write: the at-edge cursor is recoverable only
-        // while nothing more is evicted — one more commit into the FULL ring would lap it
+        // while nothing more is evicted - one more commit into the FULL ring would lap it
         // (exactly the lapped-after-TAIL race, pinned separately below).
         sink.clear();
         clock.advance(10);
@@ -185,7 +181,7 @@ class ReplayHorizonBoundaryTest {
         assertEquals(20, edge.version, "the whole retained tail replays in the first drain");
 
         // Concurrent writes RESUME during the replay phase; the edge tails them with no
-        // snapshot — replay territory throughout.
+        // snapshot - replay territory throughout.
         commit(buffer, "late", "L1");
         runToConvergence(s, buffer, edge);
         assertEquals(0, edge.snapshotsApplied,
@@ -223,13 +219,13 @@ class ReplayHorizonBoundaryTest {
                 sink.sentOfType(EdgeFrame.SubscribeOk.class).get(0).mode());
 
         // Step 2: the concurrent writer LAPS the cursor between the decision and the first
-        // drain — 10 more commits into the capacity-8 ring evict everything ≤ 22 > 12.
+        // drain - 10 more commits into the capacity-8 ring evict everything <= 22 > 12.
         for (int i = 21; i <= 30; i++) {
             commit(buffer, "k" + (i % 5), "v" + i);
         }
         assertTrue(buffer.oldestSeq() > 13, "fixture: the ring genuinely lapped the cursor");
 
-        // Step 3: the first drain hits the GAP and demotes — the deterministic forcing of
+        // Step 3: the first drain hits the GAP and demotes - the deterministic forcing of
         // exactly the race the screen names.
         sink.clear();
         s.tick(clock.now());
@@ -241,7 +237,7 @@ class ReplayHorizonBoundaryTest {
                 "no NOTIFY may leak across the gap");
 
         // Step 4: writes keep flowing through the snapshot + resume; the edge converges on
-        // the cumulative effect (exactly-once over effect — no hole, no double apply).
+        // the cumulative effect (exactly-once over effect - no hole, no double apply).
         EdgeModel edge = new EdgeModel();
         seedEdgeAt(edge, 12);
         commit(buffer, "during-snapshot", "S1");
@@ -254,9 +250,9 @@ class ReplayHorizonBoundaryTest {
     // helpers
     // -----------------------------------------------------------------------
 
-    /** Seeds the edge model as if it had applied the authoritative prefix ≤ seq. */
+    /** Seeds the edge model as if it had applied the authoritative prefix at or before seq. */
     private void seedEdgeAt(EdgeModel edge, long seq) {
-        // Rebuild the prefix deterministically: keys k0..k4 hold v_i for the largest i ≤ seq
+        // Rebuild the prefix deterministically: keys k0..k4 hold v_i for the largest i <= seq
         // with i % 5 == key index (the commit pattern above).
         for (int k = 0; k < 5; k++) {
             long best = -1;
@@ -273,8 +269,8 @@ class ReplayHorizonBoundaryTest {
     }
 
     /**
-     * Drives the session (tick → edge applies → CURSOR_ACK) until the edge reaches the
-     * authoritative version, with a hard bound (no sleeps — pure logical stepping).
+     * Drives the session (tick -> edge applies -> CURSOR_ACK) until the edge reaches the
+     * authoritative version, with a hard bound (no sleeps - pure logical stepping).
      */
     private void runToConvergence(FanOutSessionCore s, FanOutBuffer buffer, EdgeModel edge) {
         for (int step = 0; step < 50 && edge.version < version; step++) {
@@ -313,7 +309,7 @@ class ReplayHorizonBoundaryTest {
     }
 
     // -----------------------------------------------------------------------
-    // The C3 decision metric (charter §6 rule 8): exact mode + horizon distance
+    // Decision metric: exact mode + horizon distance
     // -----------------------------------------------------------------------
 
     /** Captures the subscribe-time decision the session reports. */
@@ -352,7 +348,7 @@ class ReplayHorizonBoundaryTest {
         assertEquals(6L, empty.horizonDistance,
                 "empty ring reports cursor + 1 (trivially recoverable)");
 
-        // Lapped ring, oldest retained 13 → horizon edge is cursor 12.
+        // Lapped ring, oldest retained 13 -> horizon edge is cursor 12.
         ModeCapture below = subscribeAndCapture(bufferLappedTo20(), 11);
         assertEquals(true, below.snapshotFirst, "one below the edge ⇒ re-bootstrap");
         assertEquals(-1L, below.horizonDistance, "11 − (13 − 1) = −1: beyond the horizon");

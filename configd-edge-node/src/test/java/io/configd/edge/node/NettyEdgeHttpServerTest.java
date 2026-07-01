@@ -5,12 +5,12 @@ import io.configd.edge.StrongReadKeyClass;
 import io.configd.observability.PrometheusExporter;
 
 /**
- * The edge read-serving contract on the Netty {@link NettyEdgeHttpServer} transport (M1, ADR-0043).
- * Runs the <b>identical</b> {@link AbstractEdgeReadServerContract} matrix the JDK transport passes
- * ({@link EdgeHttpServerTest}) — re-proving every read-governance + S7 control (cursor/staleness,
- * strong-read fail-close, not-subscribed/cursor-behind refusal, {@code /metrics} Bearer gate, method
- * validation, INV-M1 seam) on the migrated pipeline. The transport auto-selects Epoll→NIO (io_uring opt-in, Phase V);
- * CI forces the fallback tiers (the configd-netty {@code NettyTransportTest} + the gate).
+ * The edge read-serving contract on the {@link NettyEdgeHttpServer} transport. Runs the identical
+ * {@link AbstractEdgeReadServerContract} matrix the JDK transport passes ({@link EdgeHttpServerTest})
+ * — re-proving every read-governance control (cursor/staleness, strong-read fail-close,
+ * not-subscribed/cursor-behind refusal, {@code /metrics} Bearer gate, method validation, monotonic
+ * read) on the Netty pipeline. The transport auto-selects Epoll then NIO (io_uring is opt-in via
+ * system property); CI forces the fallback tier via {@link NettyEdgeHttpServerNioFallbackTest}.
  */
 class NettyEdgeHttpServerTest extends AbstractEdgeReadServerContract {
 

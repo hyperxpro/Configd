@@ -15,13 +15,11 @@ import java.util.Objects;
  * was produced by a leader node that has a {@link ConfigSigner} configured.
  * Edge nodes use the signature to verify delta authenticity before applying.
  * <p>
- * <b>F-0052: replay protection.</b> Each signed delta carries a monotonic
- * {@code epoch} (long, strictly increasing per signer) and an 8-byte
- * {@code nonce} (random per delta). Both fields are bound into the signature
- * payload so an attacker cannot replay a captured delta after the receiver
- * has rolled back. Older delta records — produced before F-0052 — use
- * {@code epoch == 0} and an empty nonce, which the verifier interprets as
- * an unversioned / legacy delta.
+ * <b>Replay protection.</b> Each signed delta carries a monotonic {@code epoch} (long, strictly
+ * increasing per signer) and an 8-byte {@code nonce} (random per delta). Both fields are bound
+ * into the signature payload so an attacker cannot replay a captured delta after the receiver
+ * has rolled back. Older delta records use {@code epoch == 0} and an empty nonce, which the
+ * verifier interprets as an unversioned / legacy delta.
  *
  * @param fromVersion source snapshot version
  * @param toVersion   target snapshot version
@@ -39,7 +37,7 @@ public record ConfigDelta(
         byte[] nonce
 ) {
 
-    /** Standard nonce length in bytes (F-0052). */
+    /** Standard nonce length in bytes. */
     public static final int NONCE_LEN = 8;
 
     public ConfigDelta {
@@ -116,10 +114,10 @@ public record ConfigDelta(
      * Builds the canonical byte payload that must be signed and verified.
      * <p>
      * For legacy deltas ({@code epoch == 0} and empty nonce) the payload is
-     * the plain batch-encoded mutations — byte-identical to the pre-F-0052
+     * the plain batch-encoded mutations - byte-identical to the pre-signing
      * format, preserving existing signatures.
      * <p>
-     * For F-0052 deltas (non-zero epoch) the payload binds the mutation
+     * For signed deltas with a non-zero epoch, the payload binds the mutation
      * set together with the epoch and nonce, so a replayed delta re-signed
      * under a fresh epoch cannot be substituted:
      * {@code encodeBatch(mutations) || BE(epoch, 8) || nonce}.
@@ -129,7 +127,7 @@ public record ConfigDelta(
     public byte[] signingPayload() {
         byte[] batch = CommandCodec.encodeBatch(mutations);
         if (epoch == 0L && nonce.length == 0) {
-            return batch; // legacy form — keeps old signatures valid
+            return batch; // legacy form - keeps old signatures valid
         }
         ByteBuffer buf = ByteBuffer.allocate(batch.length + Long.BYTES + nonce.length);
         buf.put(batch);

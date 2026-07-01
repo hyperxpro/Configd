@@ -13,15 +13,15 @@ import java.util.List;
 import static org.junit.jupiter.api.Assertions.*;
 
 /**
- * Gate seed sweep (design §5, gate tier): runs the full adversarial configuration
+ * Gate seed sweep (design section 5, gate tier): runs the full adversarial configuration
  * (all fault classes + concurrent workload) over a <b>fixed, committed</b> set of
- * ≥500 seeds with continuous invariant checking after every tick. This is the
- * gate-2 step — fast, deterministic, no flake. A safety violation on any gate seed
- * fails the build naming that seed (replayable forever; the RR-010 lesson).
+ * >=500 seeds with continuous invariant checking after every tick. This is the
+ * Fast, deterministic, no-flake safety sweep. A safety violation on any seed
+ * fails the build naming that seed (replayable forever).
  * <p>
- * Runs as a single surefire invocation (one {@code @Test}). Runtime target ≤2 min
+ * Runs as a single surefire invocation (one {@code @Test}). Runtime target <=2 min
  * on the 2-vCPU box; the committed gate set is sized accordingly. The seed manifest
- * is {@code src/test/resources/gate/adversarial-gate-seeds.txt} — append any
+ * is {@code src/test/resources/gate/adversarial-gate-seeds.txt} - append any
  * historically-failing seed there, never remove.
  */
 class AdversarialGateSeedSweepTest {
@@ -50,7 +50,7 @@ class AdversarialGateSeedSweepTest {
             }
         }
 
-        // Vacuity guard (RR-012 discipline applied to the gate): the gate must do
+        // Vacuity guard: the sweep must do
         // real work. Faults fire on essentially every seed; most must still elect.
         assertEquals(seeds.size(), faultsExercised,
                 "every gate seed must exercise faults (else the gate is vacuous)");

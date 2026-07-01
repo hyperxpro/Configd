@@ -26,7 +26,7 @@ public record LogEntry(long index, long term, byte[] command) {
 
     /**
      * Convenience factory for no-op entries (used by leader to commit
-     * entries from prior terms per Raft §5.4.2).
+     * entries from prior terms per Raft section 5.4.2).
      */
     public static LogEntry noop(long index, long term) {
         return new LogEntry(index, term, new byte[0]);

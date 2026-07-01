@@ -13,28 +13,28 @@ import java.nio.charset.StandardCharsets;
 import java.util.concurrent.ThreadLocalRandom;
 
 /**
- * Session 5 / Workstream B — write-path bake-off and <b>local quorum-commit
+ * Write-path bake-off and <b>local quorum-commit
  * latency</b> driver, on a real in-memory 3-node (or 5-node) Raft cluster wired with
  * {@link InMemoryRaftCluster}. Each node runs a real {@code ConfigStateMachine} over a
  * {@code VersionedConfigStore}, so a committed write actually decodes the command
- * ({@link CommandCodec}) and applies a HAMT {@code put} — the realistic ~2–5 KB/op
+ * ({@link CommandCodec}) and applies a HAMT {@code put} - the realistic ~2 - 5 KB/op
  * allocation profile of the production write path (not a no-op state machine).
  *
  * <h2>Two modes (subcommand = arg[0])</h2>
  * <ul>
- *   <li><b>{@code bakeoff}</b> — drive the cluster as fast as the CPU allows for a fixed
+ *   <li><b>{@code bakeoff}</b> - drive the cluster as fast as the CPU allows for a fixed
  *       wall-clock duration; print achieved ops + ops/s + total bytes proposed. This is
  *       a <em>closed-loop allocation generator</em>: it is run UNDER {@code -Xlog:gc*}
  *       and the JVM's own GC accounting so the comparison is allocation-rate / GC-pause
  *       distribution / throughput per collector. Closed-loop is correct here because we
- *       are NOT reporting a latency percentile — only allocation/GC/throughput, for which
- *       coordinated omission does not apply (methodology §3b: "A closed-loop driver MAY be
+ *       are NOT reporting a latency percentile - only allocation/GC/throughput, for which
+ *       coordinated omission does not apply (methodology section 3b: "A closed-loop driver MAY be
  *       used to find the saturation throughput").</li>
- *   <li><b>{@code commit-latency}</b> — measure the per-commit CPU cost of the local
- *       quorum (propose → append → in-memory replicate → commit → apply) as an HdrHistogram
+ *   <li><b>{@code commit-latency}</b> - measure the per-commit CPU cost of the local
+ *       quorum (propose -> append -> in-memory replicate -> commit -> apply) as an HdrHistogram
  *       SampleTime-style distribution. This is the {@code local_commit_component} of
- *       methodology §2's cross-region model. <b>No real network, no fsync</b> (in-memory
- *       transport + in-memory storage) — the number is the in-process consensus CPU cost,
+ *       methodology section 2's cross-region model. <b>No real network, no fsync</b> (in-memory
+ *       transport + in-memory storage) - the number is the in-process consensus CPU cost,
  *       stated as such (LOCAL-VERIFIED for the local component only).</li>
  * </ul>
  *
@@ -42,13 +42,13 @@ import java.util.concurrent.ThreadLocalRandom;
  * {@link RaftCommitBenchmark} ticks a fixed number of times per op and uses a no-op state
  * machine; it is ideal for the GC pause character but under-drives allocation (few GCs per
  * fork). This driver runs a real apply and a tight real-time loop, so allocation accumulates
- * and the GC log carries a populated pause distribution — the methodology's "no
+ * and the GC log carries a populated pause distribution - the methodology's "no
  * ZGC-because-low-pause without the pause histogram" requirement.
  *
  * <h2>Cross-region note</h2>
  * This driver measures ONLY the local component. The cross-region total is
- * {@code local_commit_component + RTT(quorum)} per methodology §2 and is computed in the
- * result doc, labelled {@code ENV-BLOCKED (M-1)} / {@code PENDING real-hardware confirmation}.
+ * {@code local_commit_component + RTT(quorum)} per methodology section 2 and is computed in the
+ * result doc, labelled {@code PENDING real-hardware confirmation}.
  *
  * <h2>Invocation</h2>
  * <pre>
@@ -143,7 +143,7 @@ public final class WriteCommitDriver {
         byte[] value = new byte[valueBytes];
         ThreadLocalRandom.current().nextBytes(value);
 
-        // Warmup (JIT + steady-state log growth) — not recorded.
+        // Warmup (JIT + steady-state log growth) - not recorded.
         for (int i = 0; i < warmupOps; i++) {
             driveOneCommit(cluster, leader, key(i), value);
         }
@@ -194,7 +194,7 @@ public final class WriteCommitDriver {
                 h.getValueAtPercentile(99.99) / 1000.0,
                 h.getMaxValue() / 1000.0,
                 h.getMean() / 1000.0);
-        // Tail-bin sample counts (methodology §3a F1: a thin tail is low-confidence).
+        // Tail-bin sample counts (methodology section 3a: a thin tail is low-confidence).
         long n = h.getTotalCount();
         long above999 = countAbovePercentile(h, 99.9);
         long above9999 = countAbovePercentile(h, 99.99);

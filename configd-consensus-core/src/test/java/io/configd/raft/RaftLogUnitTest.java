@@ -12,16 +12,16 @@ import static org.junit.jupiter.api.Assertions.*;
  * Direct, discriminating unit tests for {@link RaftLog}'s query, mutation,
  * boundary-arithmetic, and recovery logic.
  * <p>
- * S2/mutation-gap (RR-085): {@code RaftLog} carried ~42 SURVIVED + ~15
- * NO_COVERAGE mutants concentrated in {@code entriesFrom}/{@code entriesBatch}/
+ * {@code RaftLog}'s index arithmetic and range-clamp boundaries in
+ * {@code entriesFrom}/{@code entriesBatch}/
  * {@code termAt}/{@code compact}/{@code appendEntries}/{@code truncateFrom}/
  * {@code setCommitIndex}/{@code setLastApplied}/{@code isAtLeastAsUpToDate}/the
- * recovery constructor. The forensic report noted there was no dedicated
- * {@code RaftLogTest} — these methods were only exercised indirectly through
- * RaftNode scenarios, so their index arithmetic and range-clamp boundaries
- * went unpinned. Every test here asserts the exact behavior a specific mutant
- * would change (a flipped boundary, a removed conditional, a replaced
- * arithmetic op), so it fails iff that mutant is applied. No sleeps; all
+ * recovery constructor had no dedicated
+ * {@code RaftLogTest} - these methods were only exercised indirectly through
+ * RaftNode scenarios, so those boundaries
+ * went unpinned. Every test here asserts the exact behavior a flipped
+ * boundary, a removed conditional, or a replaced
+ * arithmetic op would change. No sleeps; all
  * in-process and deterministic.
  */
 class RaftLogUnitTest {
@@ -38,9 +38,7 @@ class RaftLogUnitTest {
         return log;
     }
 
-    // ====================================================================
-    // termAt — sentinel, snapshot boundary, in-range, out-of-range
-    // ====================================================================
+    // termAt: sentinel, snapshot boundary, in-range, out-of-range
 
     @Nested
     class TermAt {
@@ -107,9 +105,7 @@ class RaftLogUnitTest {
         }
     }
 
-    // ====================================================================
-    // lastTerm — empty vs non-empty
-    // ====================================================================
+    // lastTerm: empty vs non-empty
 
     @Nested
     class LastTerm {
@@ -131,9 +127,7 @@ class RaftLogUnitTest {
         }
     }
 
-    // ====================================================================
-    // entriesFrom — range guard, clamps, offset arithmetic
-    // ====================================================================
+    // entriesFrom: range guard, clamps, offset arithmetic
 
     @Nested
     class EntriesFrom {
@@ -209,9 +203,7 @@ class RaftLogUnitTest {
         }
     }
 
-    // ====================================================================
-    // entriesBatch — count/byte limits, snapshot/last guards
-    // ====================================================================
+    // entriesBatch: count/byte limits, snapshot/last guards
 
     @Nested
     class EntriesBatch {
@@ -260,9 +252,7 @@ class RaftLogUnitTest {
         }
     }
 
-    // ====================================================================
-    // append — sequential-index guard
-    // ====================================================================
+    // append: sequential-index guard
 
     @Nested
     class Append {
@@ -290,9 +280,7 @@ class RaftLogUnitTest {
         }
     }
 
-    // ====================================================================
-    // appendEntries — log-matching, conflict truncation, idempotency
-    // ====================================================================
+    // appendEntries: log-matching, conflict truncation, idempotency
 
     @Nested
     class AppendEntriesMatching {
@@ -331,7 +319,7 @@ class RaftLogUnitTest {
         void duplicateMatchingEntryIsIdempotent() {
             RaftLog log = logWith(1, 1, 1);
             // Re-sending index 2 term 1 (already present, same term) must NOT append
-            // or truncate — size unchanged. Kills the L366 snapshot-skip / L370/374
+            // or truncate - size unchanged. Kills the L366 snapshot-skip / L370/374
             // term-equality branches that distinguish skip from append.
             boolean ok = log.appendEntries(1, 1, List.of(entry(2, 1)));
             assertTrue(ok);
@@ -353,9 +341,7 @@ class RaftLogUnitTest {
         }
     }
 
-    // ====================================================================
-    // truncateFrom — guards and effect
-    // ====================================================================
+    // truncateFrom: guards and effect
 
     @Nested
     class TruncateFrom {
@@ -405,9 +391,7 @@ class RaftLogUnitTest {
         }
     }
 
-    // ====================================================================
-    // setCommitIndex / setLastApplied — monotonic, clamped
-    // ====================================================================
+    // setCommitIndex / setLastApplied: monotonic, clamped
 
     @Nested
     class CommitAndApply {
@@ -467,9 +451,7 @@ class RaftLogUnitTest {
         }
     }
 
-    // ====================================================================
-    // compact — boundary guards, entry removal
-    // ====================================================================
+    // compact: boundary guards, entry removal
 
     @Nested
     class Compact {
@@ -517,7 +499,7 @@ class RaftLogUnitTest {
             // index == lastIndex (3) takes the PARTIAL path (index > lastIndex is
             // false), removing the whole prefix [1..3] inclusive. Kills compact L488
             // ConditionalsBoundary (index > lastIndex): if it became `>=`, index==3
-            // would wrongly take the clear-everything branch — same final size here,
+            // would wrongly take the clear-everything branch - same final size here,
             // but the boundary BELOW (index just under last) must use the partial
             // path and retain the tail.
             RaftLog log = logWith(1, 1, 1, 1); // lastIndex=4
@@ -543,9 +525,7 @@ class RaftLogUnitTest {
         }
     }
 
-    // ====================================================================
-    // isAtLeastAsUpToDate — Raft §5.4.1 vote freshness
-    // ====================================================================
+    // isAtLeastAsUpToDate: Raft section 5.4.1 vote freshness
 
     @Nested
     class UpToDate {
@@ -578,7 +558,7 @@ class RaftLogUnitTest {
         void termComparisonIsStrictlyGreaterAtBoundary() {
             // Kills isAtLeastAsUpToDate L535 ConditionalsBoundary
             // (candidateLastLogTerm > myLastTerm). A candidate whose last term is
-            // EQUAL to ours does NOT win on term — it falls through to the index
+            // EQUAL to ours does NOT win on term - it falls through to the index
             // comparison. The `>` must not become `>=`: at equal term + a SHORTER
             // index the candidate must lose, which a `>=` term mutant would wrongly
             // accept (it would treat equal-term as term-superior and return true).
@@ -590,9 +570,7 @@ class RaftLogUnitTest {
         }
     }
 
-    // ====================================================================
-    // Recovery constructor — WAL + snapshot-meta cross-validation
-    // ====================================================================
+    // Recovery constructor: WAL + snapshot-meta cross-validation
 
     @Nested
     class Recovery {
@@ -646,7 +624,7 @@ class RaftLogUnitTest {
             Storage storage = Storage.inMemory();
             RaftLog log = new RaftLog(storage);
             for (int i = 1; i <= 4; i++) log.append(entry(i, 1));
-            // Persist the snapshot bytes BEFORE compaction (RR-003 durable-prefix),
+            // Persist the snapshot bytes BEFORE compaction (durable-prefix invariant),
             // then compact to index 2. On reopen, the blob whose lastIncludedIndex
             // matches snapshotIndex must be recovered.
             log.persistSnapshot(new SnapshotState(new byte[]{9, 9}, 2, 1, null));

@@ -8,7 +8,7 @@ import org.junit.jupiter.api.Test;
 import static org.junit.jupiter.api.Assertions.*;
 
 /**
- * Tests for {@link FlowController} — credit acquisition, release,
+ * Tests for {@link FlowController} - credit acquisition, release,
  * throttling, and boundary conditions.
  */
 class FlowControllerTest {
@@ -184,7 +184,7 @@ class FlowControllerTest {
 
         @Test
         void releaseCapsAtInitialCredits() {
-            // Release without acquiring — should not exceed initial
+            // Release without acquiring - should not exceed initial
             controller.releaseCredits(FOLLOWER_1, 5);
             assertEquals(INITIAL_CREDITS, controller.availableCredits(FOLLOWER_1));
         }

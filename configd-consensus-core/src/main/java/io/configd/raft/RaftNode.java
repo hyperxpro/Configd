@@ -15,23 +15,23 @@ import java.util.random.RandomGenerator;
 /**
  * Full Raft consensus implementation driven by tick() and handleMessage().
  * <p>
- * This class is designed for single-threaded access from the Raft I/O thread
- * (ADR-0009). No synchronization is used. State transitions are driven
- * entirely by two entry points:
+ * This class is designed for single-threaded access from the Raft I/O thread.
+ * No synchronization is used. State transitions are driven entirely by two
+ * entry points:
  * <ul>
- *   <li>{@link #tick()} — called at regular intervals (e.g., every 1ms)
+ *   <li>{@link #tick()} - called at regular intervals (e.g., every 1ms)
  *       to drive election timeouts and heartbeat intervals.</li>
- *   <li>{@link #handleMessage(RaftMessage)} — called when a Raft protocol
+ *   <li>{@link #handleMessage(RaftMessage)} - called when a Raft protocol
  *       message arrives from a peer.</li>
  * </ul>
  * <p>
  * Implements:
  * <ul>
- *   <li>Raft §5: Leader election, log replication, safety</li>
- *   <li>Raft §7: Log compaction and snapshot transfer (InstallSnapshot RPC)</li>
- *   <li>Raft §9.6 (Ongaro dissertation): PreVote protocol to prevent term inflation</li>
+ *   <li>Raft section 5: Leader election, log replication, safety</li>
+ *   <li>Raft section 7: Log compaction and snapshot transfer (InstallSnapshot RPC)</li>
+ *   <li>PreVote protocol to prevent term inflation (Ongaro dissertation section 9.6)</li>
  *   <li>CheckQuorum: Leader steps down if no majority contact within election timeout</li>
- *   <li>Leadership transfer (Raft §3.10)</li>
+ *   <li>Leadership transfer (Raft section 3.10)</li>
  *   <li>ReadIndex protocol for linearizable reads without log writes</li>
  * </ul>
  */
@@ -43,24 +43,21 @@ public final class RaftNode {
     private final StateMachine stateMachine;
     private final RandomGenerator random;
 
-    // ---- Persistent state (on all servers) ----
-    // Backed by DurableRaftState for crash safety (Raft §5.2).
+    // Persistent state, on all servers. Backed by DurableRaftState for crash safety (Raft section 5.2).
     // The in-memory fields mirror the durable state for fast access.
     private final DurableRaftState durableState; // null when using legacy in-memory mode
     private long currentTerm;
     private NodeId votedFor;     // null if not voted in current term
 
-    // ---- Volatile state (visible across threads for cross-thread reads) ----
-    // role and leaderId are read by HTTP handler threads (isReadReady, leaderId)
-    // but written only by the tick thread. Volatile ensures cross-thread visibility.
+    // role and leaderId are written only by the tick thread but read by HTTP handler threads
+    // (isReadReady, leaderId). Volatile ensures cross-thread visibility.
     private volatile RaftRole role;
     private volatile NodeId leaderId;     // null if unknown
 
-    // ---- Timer state (tick-based, not wall-clock) ----
-    // RR-006: the RaftConfig durations are real milliseconds; they are converted
-    // to tick counts once via config.tickPeriodMs() so the documented budgets
-    // are realized regardless of how often the caller invokes tick(). Election
-    // bounds (min/max) and the heartbeat interval are cached in ticks here.
+    // Timer state in ticks, not milliseconds. The RaftConfig durations are real milliseconds;
+    // they are converted to tick counts once via config.tickPeriodMs() so the documented
+    // millisecond budgets are realized regardless of how often the caller invokes tick().
+    // Election bounds (min/max) and the heartbeat interval are cached in ticks here.
     private final int electionTimeoutMinTicks;
     private final int electionTimeoutMaxTicks;
     private final int heartbeatTimeoutTicks;
@@ -68,52 +65,43 @@ public final class RaftNode {
     private int electionTicksElapsed;
     private int heartbeatTicksElapsed;
 
-    // ---- Election state ----
+    // Election state
     /** Tracks which nodes granted votes (needed for joint consensus dual-majority). */
     private Set<NodeId> votesReceived;
     /** Tracks which nodes granted pre-votes (needed for joint consensus dual-majority). */
     private Set<NodeId> preVotesReceived;
     private boolean preVoteInProgress;
 
-    // ---- Leader state (reinitialized after election) ----
+    // Leader state, reinitialized after each election.
     private Map<NodeId, Long> nextIndex;   // per peer: next log index to send
     private Map<NodeId, Long> matchIndex;  // per peer: highest log index known replicated
     private Map<NodeId, Integer> inflightCount;  // per peer: in-flight AppendEntries RPCs
 
-    // ---- CheckQuorum state ----
-    /** Tracks which peers have responded since the last check-quorum check. */
+    /** Tracks which peers have responded since the last check-quorum interval. */
     private final Map<NodeId, Boolean> peerActivity;
 
-    // ---- Leadership transfer state ----
     private NodeId transferTarget;
 
-    // ---- Snapshot state ----
     /** The most recent snapshot available for transfer to lagging followers. */
     private SnapshotState latestSnapshot;
 
-    // ---- ReadIndex state ----
     /** Tracks pending linearizable read requests. */
     private final ReadIndexState readIndexState;
 
     /**
-     * Map of readId → one-shot callback fired when {@code isReadReady(readId)}
-     * becomes true (or when leadership is lost and the read is cancelled).
-     * <p>
-     * F-0022 fix: replaces the per-poll CompletableFuture allocation in
-     * ConfigdServer's linearizable-read path. The tick thread polls
-     * {@code isReadReady} after every heartbeat confirm / apply, and fires
-     * the callback exactly once. All access is from the tick thread only.
+     * One-shot callback per readId, fired exactly once when the read becomes ready
+     * or when leadership is lost. Avoids allocating a CompletableFuture on every
+     * linearizable-read poll. The tick thread fires the callback after every
+     * heartbeat confirmation or apply. Tick-thread only.
      */
     private final Map<Long, Runnable> readReadyCallbacks = new HashMap<>();
 
-    // ---- Commit-outcome seam (RR-004 / ADR-0033) ----
     /**
      * Pending one-shot commit-outcome callbacks for proposed entries, keyed by
-     * the proposed log {@code index}. Symmetric to {@link #readReadyCallbacks};
-     * all access is tick-thread only (R-01). Each record remembers the proposed
-     * {@code term} so the firing logic can distinguish COMMITTED (same term
-     * applied at {@code index}) from LOST (a different term applied at
-     * {@code index}). Bounded by the same {@code maxPendingProposals}
+     * the proposed log {@code index}. All access is tick-thread only. Each record
+     * remembers the proposed {@code term} so the firing logic can distinguish
+     * COMMITTED (same term applied at {@code index}) from LOST (a different term
+     * applied at {@code index}). Bounded by the same {@code maxPendingProposals}
      * backpressure that bounds in-flight proposals, plus deadline cleanup on the
      * registrant side (one-shot, late-completion-tolerant).
      */
@@ -122,38 +110,35 @@ public final class RaftNode {
     /**
      * Recently applied {@code index -> appliedSeq} for entries applied by
      * {@link #applyCommitted}. Lets a commit-outcome registration that arrives
-     * <em>after</em> the entry has already applied (the single-node
-     * immediate-commit path, where {@code propose} commits inline) still surface
-     * the correct applied-mutation sequence for that exact index. Pruned to the
-     * indices that may still be queried: entries below the lowest still-pending
-     * callback index are dropped, and the map is hard-capped to avoid unbounded
-     * growth if a caller never registers.
+     * after the entry has already applied (the single-node immediate-commit path,
+     * where {@code propose} commits inline) still surface the correct applied-mutation
+     * sequence for that exact index. Pruned to the indices that may still be queried:
+     * entries below the lowest still-pending callback index are dropped, and the map
+     * is hard-capped to avoid unbounded growth if a caller never registers.
      */
     private final Map<Long, Long> appliedSeqByIndex = new HashMap<>();
 
     /** Hard cap on {@link #appliedSeqByIndex} retained without a pending registrant. */
     private static final int MAX_RETAINED_APPLIED_SEQ = 4096;
 
-    // ---- S7.5 group commit (leader durable-index gating + coalescing flush) ----
     /**
-     * Highest log index force-synced to durable storage on THIS node while leader. The leader
+     * Highest log index force-synced to durable storage on this node while leader. The leader
      * counts its own log toward a commit quorum (in {@link #maybeAdvanceCommitIndex}) ONLY up to
      * this index: a buffered-but-unfsynced self-copy must never be the deciding vote, or a leader
      * crash before the flush could lose an entry that was reported "committed" (Raft durability
      * safety). Advanced by {@link #flushDurable()} after a group fsync and after the rare durable
-     * control-entry appends (no-op, config changes). Tick-thread only (R-01).
+     * control-entry appends (no-op, config changes). Tick-thread only.
      */
     private long durableIndex = 0L;
 
-    /** True while a coalescing flush task is already scheduled — prevents redundant scheduling. */
+    /** True while a coalescing flush task is already scheduled - prevents redundant scheduling. */
     private boolean flushScheduled = false;
 
     /**
      * Pluggable scheduler for the coalescing group-commit flush. The default runs the flush
-     * INLINE (synchronous per-append durability — unchanged semantics for tests and in-memory
+     * inline (synchronous per-append durability - unchanged semantics for tests and in-memory
      * mode). The production server wires {@link #setGroupCommit} to dispatch the flush onto the
-     * single tick executor so concurrently-proposed entries coalesce into one fsync (PART 2
-     * headline: the fix for the per-op-fsync ceiling).
+     * single tick executor so concurrently-proposed entries coalesce into one fsync.
      */
     @FunctionalInterface
     public interface FlushScheduler {
@@ -161,17 +146,17 @@ public final class RaftNode {
         void schedule(Runnable flush, long delayMicros);
     }
 
-    private FlushScheduler flushScheduler = (flush, delayMicros) -> flush.run(); // INLINE default
+    private FlushScheduler flushScheduler = (flush, delayMicros) -> flush.run(); // inline default
     private int groupCommitMaxBatch = Integer.MAX_VALUE; // entries per fsync cap (bounds latency)
     private long groupCommitLingerMicros = 0L;           // linger to grow a batch (0 = no linger)
 
     /**
-     * Enables asynchronous coalescing group commit (S7.5 PART 2). Called once at server wiring,
-     * before the node is started, with a {@code scheduler} that dispatches the flush onto the tick
-     * executor. {@code maxBatch} caps entries per fsync (bounds worst-case commit latency and the
-     * uncommitted backlog); {@code lingerMicros} optionally delays the flush to accumulate a larger
-     * batch — the throughput/latency knob swept for the sizing curve. With the default (INLINE)
-     * scheduler the node keeps the original synchronous per-append durability.
+     * Enables asynchronous coalescing group commit. Called once at server wiring, before the node
+     * is started, with a {@code scheduler} that dispatches the flush onto the tick executor.
+     * {@code maxBatch} caps entries per fsync (bounds worst-case commit latency and the uncommitted
+     * backlog); {@code lingerMicros} optionally delays the flush to accumulate a larger batch - the
+     * throughput/latency knob swept for the sizing curve. With the default (inline) scheduler the
+     * node keeps the original synchronous per-append durability.
      */
     public void setGroupCommit(FlushScheduler scheduler, int maxBatch, long lingerMicros) {
         this.flushScheduler = Objects.requireNonNull(scheduler, "scheduler");
@@ -188,7 +173,7 @@ public final class RaftNode {
     /** A pending commit-outcome callback bound to a proposed {@code (index, term)}. */
     private record PendingCommit(long term, java.util.function.Consumer<CommitOutcome> callback) {}
 
-    // ---- Reconfiguration state (Joint Consensus, Raft §6) ----
+    // Reconfiguration state - Joint Consensus (Raft section 6).
     /**
      * The current cluster configuration. Starts as a simple config
      * derived from {@link RaftConfig#peers()}. During reconfiguration,
@@ -200,7 +185,7 @@ public final class RaftNode {
     /**
      * True if a no-op entry has been committed in the current term.
      * Required before any config change can be proposed (prevents
-     * the single-server reconfig bug — Ongaro, raft-dev 2015).
+     * the single-server reconfig bug - Ongaro, raft-dev 2015).
      */
     private boolean noopCommittedInCurrentTerm;
 
@@ -223,40 +208,34 @@ public final class RaftNode {
 
     private final InvariantChecker invariantChecker;
 
-    // ---- R-01' owner-thread tripwire (Phase 0 threading-contract enforcement) ----
-    // Mirrors ConfigStateMachine.assertOwnerThread (RR-029/W-1). INERT until an owner is
-    // explicitly bound via bindOwnerThread(): production is not yet wired to bind (Workstream B)
-    // and existing single-threaded tests never bind, so this is a zero-behaviour-change addition.
-    // Once bound, every OWNER-ONLY entry point asserts it runs on the owner thread; a violation
+    // Owner-thread tripwire. Inert until an owner is explicitly bound via bindOwnerThread();
+    // existing single-threaded tests never bind, so this is a zero-behaviour-change addition.
+    // Once bound, every owner-only entry point asserts it runs on the owner thread; a violation
     // routes through the existing invariantChecker (throws in test/sim, metric+SEVERE in prod).
-    // volatile so a foreign thread reliably observes the bound owner — else a violation could be
-    // missed (a false negative). Written on the owner thread at bind; RE-BOUND across a Stage-2
-    // rehoming handoff (beginHandoff -> HANDOFF sentinel on the losing owner, adoptOwnerThread ->
-    // the gaining owner). The volatile + the driver's executor barriers order A's detach before B's
-    // adopt, so there is never a window where two real threads both equal ownerThread (no
-    // double-ownership). See docs/phase0-B-stage2/m2-rehoming-handoff-design.md.
+    // Volatile so a foreign thread reliably observes the bound owner - else a violation could be
+    // missed (a false negative). Written on the owner thread at bind; re-bound across a rehoming
+    // handoff (beginHandoff sets the HANDOFF sentinel on the losing owner, adoptOwnerThread sets
+    // the gaining owner). The volatile + the driver's executor barriers order the detach before
+    // the adopt, so there is never a window where two real threads both equal ownerThread.
     private volatile Thread ownerThread;
 
-    // Stage 2 M2 (rehoming): the "in-handoff, owned by nobody" sentinel. A Thread object that is
-    // never started, so it equals no running thread — while ownerThread==HANDOFF, EVERY guarded
-    // entry point fires for any real caller, so the ambiguous handoff window is fully net-covered.
+    // The "in-handoff, owned by nobody" sentinel. A Thread object that is never started,
+    // so it equals no running thread - while ownerThread==HANDOFF, every guarded entry
+    // point fires for any real caller, so the ambiguous handoff window is fully covered.
     private static final Thread HANDOFF = new Thread("raft-owner-handoff-sentinel");
 
-    // ---- H-3: the owner-published monitoring snapshot (Workstream B; docs/phase0-B/h3-monitor-view-design.md) ----
-    // The R-01 monitoring reads (currentTerm/log/...) were safe only because the metrics scrape ran
-    // INLINE on the single tick thread. Once owners are bound and tick() fans out, that scrape runs
-    // off the group's owner — an unsynchronised read of non-volatile consensus state. Resolution: the
-    // owner publishes an immutable RaftMetrics snapshot via this single volatile reference at the end
-    // of every tick(); any thread reads it via monitorView() with one volatile load. Immutable record
-    // + volatile publish ⇒ a coherent, never-torn, never-partial, at-most-one-tick-stale view that
-    // never blocks the owner. Seeded in the constructor so a startup-racing scrape never sees null.
+    // The owner publishes an immutable RaftMetrics snapshot via this single volatile reference
+    // at the end of every tick(). Any thread reads it via monitorView() with one volatile load.
+    // Immutable record + volatile publish gives a coherent, never-torn, at-most-one-tick-stale
+    // view that never blocks the owner. Seeded in the constructor so a startup-racing scrape
+    // never sees null.
     private volatile RaftMetrics monitorView;
 
     /**
      * Creates a new RaftNode with durable state persistence.
      * <p>
      * The {@code storage} parameter provides crash-safe persistence for
-     * {@code currentTerm} and {@code votedFor} as required by Raft §5.2.
+     * {@code currentTerm} and {@code votedFor} as required by Raft section 5.2.
      * On construction, any previously persisted state is loaded from storage.
      *
      * @param config       cluster configuration
@@ -275,7 +254,7 @@ public final class RaftNode {
 
     /**
      * Creates a new RaftNode with an explicit at-rest integrity codec for the
-     * durable Raft state (PA-2021 / ADR-0042). The server passes a KEYED
+     * durable Raft state. The server passes a keyed
      * {@link io.configd.common.IntegrityEnvelope} so a forged {@code votedFor} is
      * refused on load; the other constructors default to keyless (unchanged
      * behavior for tests and in-memory mode).
@@ -297,9 +276,8 @@ public final class RaftNode {
         this.random = Objects.requireNonNull(random, "random");
         this.invariantChecker = invariantChecker != null ? invariantChecker : InvariantChecker.NOOP;
 
-        // RR-006: convert the millisecond timing budgets to tick counts once,
-        // using the configured tick period. RaftConfig already validated that the
-        // derived election:heartbeat ratio is sane.
+        // Convert the millisecond timing budgets to tick counts once, using the configured
+        // tick period. RaftConfig already validated that the derived election:heartbeat ratio is sane.
         this.electionTimeoutMinTicks = config.electionTimeoutMinTicks();
         this.electionTimeoutMaxTicks = config.electionTimeoutMaxTicks();
         this.heartbeatTimeoutTicks = config.heartbeatIntervalTicks();
@@ -324,38 +302,34 @@ public final class RaftNode {
         this.noopCommittedInCurrentTerm = false;
         this.configChangePending = false;
 
-        // RR-003: restore the state machine from the durable snapshot BEFORE any
-        // WAL suffix replays. Without this, a node that restarts after a
-        // compaction starts with an EMPTY state machine and applyCommitted
-        // silently advances past the missing (compacted) entries — total silent
+        // Restore the state machine from the durable snapshot BEFORE any WAL suffix replays.
+        // Without this, a node that restarts after a compaction starts with an empty state machine
+        // and applyCommitted silently advances past the missing (compacted) entries - total silent
         // loss of all committed state at/below the snapshot point.
         //
-        // lastApplied is initialized to the recovered snapshotIndex whenever a
-        // snapshot boundary exists: everything at/below snapshotIndex is, by
-        // definition, folded into the snapshot, so the only entries left to
-        // replay are the WAL suffix (snapshotIndex+1 .. commitIndex]. Seeding
-        // lastApplied past the compacted prefix is also what stops applyCommitted
-        // from walking indices [1..snapshotIndex] (which entryAt() returns null
-        // for) and tripping the no-gap invariant on a perfectly-recovered node.
+        // lastApplied is initialized to the recovered snapshotIndex whenever a snapshot boundary
+        // exists: everything at/below snapshotIndex is, by definition, folded into the snapshot,
+        // so the only entries left to replay are the WAL suffix (snapshotIndex+1 .. commitIndex].
+        // Seeding lastApplied past the compacted prefix also stops applyCommitted from walking
+        // indices [1..snapshotIndex] (which entryAt() returns null for) and tripping the no-gap
+        // invariant on a perfectly-recovered node.
         //
-        // RaftLog accepts the durable snapshot blob only when its boundary
-        // matches the recovered WAL boundary (see RaftLog's recovery rule).
+        // RaftLog accepts the durable snapshot blob only when its boundary matches the recovered
+        // WAL boundary (see RaftLog's recovery rule).
         SnapshotState recovered = log.recoveredSnapshot();
         if (recovered != null) {
             stateMachine.restoreSnapshot(recovered.data());
             latestSnapshot = recovered;
         }
         if (log.snapshotIndex() > 0) {
-            // RR-003 (durable-prefix / no-gap invariant, recovery side): a
-            // snapshot BOUNDARY exists but no snapshot BYTES restored it. The
-            // state machine therefore does NOT reflect [1..snapshotIndex], yet we
-            // are about to advance lastApplied past that range — exactly the
-            // silent-skip that caused the data loss. This is unreachable when the
-            // persist-before-truncate fix holds (a boundary always has matching
-            // bytes); it fires only on genuinely unrecoverable storage (the blob
-            // lost to medium corruption) or if persistence is defeated. Fail
-            // LOUDLY: throw in test/sim, metric + SEVERE log in production — never
-            // boot silently into a state machine missing committed entries.
+            // A snapshot BOUNDARY exists but no snapshot BYTES restored it. The state machine
+            // therefore does NOT reflect [1..snapshotIndex], yet we are about to advance
+            // lastApplied past that range - exactly the silent-skip that causes data loss.
+            // This is unreachable when the persist-before-truncate ordering holds (a boundary
+            // always has matching bytes); it fires only on genuinely unrecoverable storage (the
+            // blob lost to medium corruption) or if persistence is defeated. Fail loudly: throw
+            // in test/sim, metric + SEVERE log in production - never boot silently into a state
+            // machine missing committed entries.
             invariantChecker.check("durable_prefix_no_gap",
                     recovered != null,
                     "Recovered snapshot boundary snapshotIndex=" + log.snapshotIndex()
@@ -371,9 +345,9 @@ public final class RaftNode {
 
         resetElectionTimeout();
 
-        // H-3: seed the monitoring snapshot from the fully-recovered state so a scrape that races
-        // startup observes a coherent zero/recovered view, never null. Construction legitimately runs
-        // on the wiring thread and reads node state (same as the durable-recovery reads above).
+        // Seed the monitoring snapshot from the fully-recovered state so a scrape that races
+        // startup observes a coherent zero/recovered view, never null. Construction legitimately
+        // runs on the wiring thread and reads node state (same as the durable-recovery reads above).
         this.monitorView = buildMetrics();
     }
 
@@ -397,32 +371,29 @@ public final class RaftNode {
         this(config, log, transport, stateMachine, random, Storage.inMemory(), null);
     }
 
-    // ========================================================================
-    // R-01' owner-thread contract (the R-01 replacement; see docs/phase0/threading-contract.md)
-    // ========================================================================
+    // Owner-thread contract
 
     /**
-     * Binds the calling thread as this group's single owner. MUST be invoked as the first task
-     * on the group's owner executor at wiring — NEVER during construction (the constructor runs
-     * on the wiring thread and legitimately touches state). Static for the life of the process
-     * (v1: no resharding). Until this is called the {@link #assertOwnerThread()} tripwire is inert,
-     * so production (not yet wired to bind) and existing single-threaded tests are unaffected.
+     * Binds the calling thread as this group's single owner. Must be invoked as the first task
+     * on the group's owner executor at wiring - never during construction (the constructor runs
+     * on the wiring thread and legitimately touches state). Until this is called the
+     * {@link #assertOwnerThread()} tripwire is inert, so existing single-threaded tests and any
+     * wiring that does not bind are unaffected.
      * <p>
-     * Public wiring API: invoked by the owner-executor wiring (Workstream B's {@code
-     * MultiRaftDriver}) and by the deterministic-simulation harness, which binds every node to its
-     * single drive thread so the tripwire is active across the randomized-schedule invariant surface.
+     * Invoked by the owner-executor wiring (MultiRaftDriver) and by the deterministic-simulation
+     * harness, which binds every node to its single drive thread so the tripwire is active across
+     * the randomized-schedule invariant surface.
      */
     public void bindOwnerThread() {
         this.ownerThread = Thread.currentThread();
     }
 
     /**
-     * Stage 2 M2 — rehoming handoff, step "quiesce". Run on the CURRENT (losing) owner thread BEFORE the
-     * routing flip + {@link #beginHandoff() detach}: force-syncs any entries buffered since the last sync
-     * so the gaining owner adopts a clean, fully-durable state (no torn / half-buffered log carried across
-     * the handoff). Owner-thread only — asserted here (the public-entry contract) and again inside
-     * {@link #flushDurable()}. Public wiring API (the driver's {@code rehomeGroup} submits it as a task on
-     * the losing owner). Inert at N=1 / no-rehome (no caller). See the M2 design doc §3 step 2.
+     * Rehoming handoff, quiesce step. Run on the current (losing) owner thread before the routing
+     * flip and detach: force-syncs any entries buffered since the last sync so the gaining owner
+     * adopts a clean, fully-durable state (no torn or half-buffered log carried across the handoff).
+     * Owner-thread only - asserted here and again inside {@link #flushDurable()}. Inert when no
+     * rehome is in progress (no caller).
      */
     public void quiesceForHandoff() {
         assertOwnerThread();
@@ -430,12 +401,11 @@ public final class RaftNode {
     }
 
     /**
-     * Stage 2 M2 — rehoming handoff, step "detach". Begins a co-tenant rehoming of this group: the
-     * CURRENT owner relinquishes the group by re-pointing {@link #ownerThread} at the {@link #HANDOFF}
-     * sentinel. MUST be called on the current owner thread (asserted) — only the owner may detach. After
-     * this, the group is "owned by nobody": every guarded entry point fires for any caller until a
-     * gaining owner calls {@link #adoptOwnerThread()}. Public wiring API (the driver's {@code
-     * rehomeGroup} calls it as a task on the losing owner). See the M2 design doc.
+     * Rehoming handoff, detach step. The current owner relinquishes the group by pointing
+     * {@link #ownerThread} at the {@link #HANDOFF} sentinel. Must be called on the current owner
+     * thread (asserted) - only the owner may detach. After this, the group is owned by nobody:
+     * every guarded entry point fires for any caller until a gaining owner calls
+     * {@link #adoptOwnerThread()}.
      */
     public void beginHandoff() {
         assertOwnerThread();          // only the current owner may begin the handoff
@@ -443,12 +413,12 @@ public final class RaftNode {
     }
 
     /**
-     * Stage 2 M2 — rehoming handoff, step "adopt". The GAINING owner takes ownership by binding
-     * {@link #ownerThread} to the calling (gaining-owner) thread. MUST run on the gaining owner thread,
-     * and only on a node currently mid-handoff ({@code ownerThread==HANDOFF}, asserted — a double-adopt
-     * or an adopt of a non-migrating node is a violation). Ordered AFTER the losing owner's {@link
-     * #beginHandoff()} by the driver's executor {@code .get()} barrier, which also publishes all of the
-     * losing owner's final state to this thread (no torn state). Public wiring API.
+     * Rehoming handoff, adopt step. The gaining owner takes ownership by binding {@link #ownerThread}
+     * to the calling thread. Must run on the gaining owner thread, and only on a node currently
+     * mid-handoff ({@code ownerThread==HANDOFF}, asserted - a double-adopt or an adopt of a
+     * non-migrating node is a violation). Ordered after the losing owner's {@link #beginHandoff()}
+     * by the driver's executor barrier, which also publishes all of the losing owner's final state
+     * to this thread (no torn state).
      */
     public void adoptOwnerThread() {
         if (ownerThread != HANDOFF) {
@@ -461,13 +431,12 @@ public final class RaftNode {
     }
 
     /**
-     * Stage 2 M2 — a NON-firing query (does not route through {@code invariantChecker}) used by the
-     * driver's check-and-bounce. True iff this node is bound to an owner that is NOT the current thread
-     * — a different owner, or the {@link #HANDOFF} sentinel mid-rehome. False if UNBOUND (legacy/test
-     * wiring, net inert) or owned by the current thread — in both of those cases marshalled work may run
-     * inline here. When true, the driver re-dispatches the work to the current owner instead of touching
-     * the node off-owner (no loss, no misroute, no fire). Distinct from {@link #assertOwnerThread()},
-     * which FIRES on mismatch.
+     * Non-firing query (does not route through the {@code invariantChecker}) used by the driver's
+     * check-and-bounce. True iff this node is bound to an owner that is NOT the current thread -
+     * a different owner, or the {@link #HANDOFF} sentinel mid-rehome. False if unbound (legacy/test
+     * wiring) or owned by the current thread - in both of those cases marshalled work may run inline
+     * here. When true, the driver re-dispatches the work to the current owner instead of touching the
+     * node off-owner. Distinct from {@link #assertOwnerThread()}, which fires on mismatch.
      */
     public boolean boundToAnotherThread() {
         Thread o = ownerThread;
@@ -475,25 +444,25 @@ public final class RaftNode {
     }
 
     /**
-     * Stage 2 M2 — a NON-firing query: true iff this node is currently detached onto the {@link #HANDOFF}
-     * sentinel (mid-handoff, or wedged on an abandoned handoff). Used by the driver to tell a TRANSIENT
-     * handoff/stale-owner bounce (re-dispatch lands on a real owner) from a WEDGED group owned by nobody
-     * (re-dispatching would livelock — red-team Finding 2). A single volatile read; never fires the net.
+     * Non-firing query: true iff this node is currently detached onto the {@link #HANDOFF} sentinel
+     * (mid-handoff, or wedged on an abandoned handoff). Used by the driver to tell a transient
+     * handoff/stale-owner bounce (re-dispatch lands on a real owner) from a wedged group owned by
+     * nobody (re-dispatching would livelock). A single volatile read; never fires the invariant net.
      */
     public boolean isDetached() {
         return ownerThread == HANDOFF;
     }
 
     /**
-     * R-01' tripwire: asserts the current thread is this group's bound owner. No-op until an owner
-     * is bound. A violation routes through the existing {@code invariantChecker} (throws in
-     * test/sim via a throwing checker; metric + SEVERE in production), exactly like the in-node
-     * safety invariants — so the concurrent stress harness can prove it catches an off-owner access.
+     * Asserts the current thread is this group's bound owner. No-op until an owner is bound.
+     * A violation routes through the existing {@code invariantChecker} (throws in test/sim;
+     * metric + SEVERE in production), so the concurrent stress harness can prove it catches
+     * an off-owner access.
      */
     private void assertOwnerThread() {
         Thread owner = ownerThread;
         if (owner == null) {
-            return; // inert until explicitly bound (Workstream B wiring / the stress harness)
+            return; // inert until explicitly bound
         }
         Thread cur = Thread.currentThread();
         if (owner != cur) {
@@ -504,9 +473,7 @@ public final class RaftNode {
         }
     }
 
-    // ========================================================================
     // Public API
-    // ========================================================================
 
     /**
      * Advances the internal timer by one tick. Called at a regular interval
@@ -519,17 +486,17 @@ public final class RaftNode {
             case FOLLOWER, CANDIDATE -> tickElection();
             case LEADER -> tickHeartbeat();
         }
-        // S7.5 group commit: cheap backstop — if any entry is still buffered unsynced and no flush
-        // is scheduled (e.g. a dropped scheduling, or the linger window slipping past a tick),
-        // schedule one now. The normal path always schedules from propose(); this only bounds the
-        // worst-case durability latency to a single tick. Guarded on LEADER (followers fsync inline
-        // in appendEntries); re-checks role since tickHeartbeat() above may have stepped us down.
+        // Cheap backstop: if any entry is still buffered unsynced and no flush is scheduled (e.g. a
+        // dropped scheduling, or the linger window slipping past a tick), schedule one now. The
+        // normal path always schedules from propose(); this only bounds worst-case durability latency
+        // to a single tick. Guarded on LEADER (followers fsync inline in appendEntries); re-checks
+        // role since tickHeartbeat() above may have stepped us down.
         if (role == RaftRole.LEADER && !flushScheduled && log.lastIndex() > durableIndex) {
             scheduleFlush();
         }
 
-        // H-3: republish the monitoring snapshot at the end of every tick (owner thread). Bounds the
-        // monitor view's staleness to one tick interval; off-owner scrapes read it via monitorView().
+        // Republish the monitoring snapshot at the end of every tick. Bounds the monitor view's
+        // staleness to one tick interval; off-owner scrapes read it via monitorView().
         publishMonitorView();
     }
 
@@ -557,11 +524,11 @@ public final class RaftNode {
     /**
      * Proposes a command to be replicated. Only the leader can accept proposals.
      * <p>
-     * RR-004 / ADR-0033: on acceptance the returned {@link ProposeOutcome} carries
-     * the assigned {@code (index, term)} so the caller can register a
-     * commit-outcome callback ({@link #whenCommitOutcome}) against the exact entry.
-     * Acceptance is still leader-LOCAL append; it is NOT a commit acknowledgement.
-     * The rejection reasons are unchanged.
+     * On acceptance the returned {@link ProposeOutcome} carries the assigned
+     * {@code (index, term)} so the caller can register a commit-outcome callback
+     * ({@link #whenCommitOutcome}) against the exact entry. Acceptance is still
+     * leader-local append; it is NOT a commit acknowledgement. The rejection
+     * reasons are unchanged.
      *
      * @param command the command bytes
      * @return the proposal outcome (accepted + position, or a rejection reason)
@@ -574,11 +541,11 @@ public final class RaftNode {
         }
         // Enforce the wire-encodable limit at the propose() boundary so an
         // oversized client command is rejected before it pollutes the log.
-        // MUST equal RaftMessageCodec.MAX_COMMAND_LEN — the per-entry
+        // MUST equal RaftMessageCodec.MAX_COMMAND_LEN - the per-entry
         // ceiling enforced by the wire codec. The constants live in
         // different modules (configd-server contains the codec; this
         // module cannot import it). Cross-module ownership of this
-        // constant is tracked as an iter-4 cleanup.
+        // constant lives in the wire-codec module and cannot be imported here.
         final int MAX_COMMAND_LEN = 1 * 1024 * 1024;
         if (command.length > MAX_COMMAND_LEN) {
             throw new IllegalArgumentException(
@@ -605,12 +572,12 @@ public final class RaftNode {
         long entryTerm = currentTerm;
         LogEntry entry = new LogEntry(newIndex, entryTerm, command);
         log.appendNoSync(entry);   // buffer durably-pending; the coalescing flush fsyncs the batch
-        broadcastAppendEntries();  // replicate immediately — followers fsync before they ACK
-        // S7.5 group commit: this leader's own commit-vote for the entry is deferred until the
-        // coalescing flush force-syncs it (the durableIndex gate in maybeAdvanceCommitIndex). On
-        // the single-node path the INLINE default scheduler flushes inline so the entry still
-        // commits before propose() returns; a commit-outcome callback registered afterward
-        // resolves immediately via appliedSeqByIndex (see whenCommitOutcome).
+        broadcastAppendEntries();  // replicate immediately - followers fsync before they ACK
+        // This leader's own commit-vote for the entry is deferred until the coalescing flush
+        // force-syncs it (the durableIndex gate in maybeAdvanceCommitIndex). On the single-node
+        // path the inline default scheduler flushes inline so the entry still commits before
+        // propose() returns; a commit-outcome callback registered afterward resolves immediately
+        // via appliedSeqByIndex (see whenCommitOutcome).
         scheduleFlush();
         return ProposeOutcome.accepted(newIndex, entryTerm);
     }
@@ -634,7 +601,7 @@ public final class RaftNode {
             return false; // Target not in cluster
         }
         if (configChangePending) {
-            return false; // Unsafe during reconfig — could split-brain
+            return false; // Unsafe during reconfig - could split-brain
         }
         this.transferTarget = target;
         // Send entries to catch up the target, then check if already caught up
@@ -661,36 +628,31 @@ public final class RaftNode {
         }
         long appliedTerm = log.termAt(appliedIndex);
         if (appliedTerm == -1) {
-            return false; // Cannot determine term — should not happen
+            return false; // Cannot determine term - should not happen
         }
 
-        // INV-SI-1 twin (SnapshotInstallSpec.SnapshotBoundedByCommitted): the
-        // local-snapshot path is the spec's LocalSnapshot action — a node must never
-        // snapshot ahead of its committed state. We snapshot at lastApplied, which in
-        // a correct system is always <= commitIndex; a regression that advanced
-        // lastApplied past commitIndex (or snapshotted a future index) would let a node
-        // hold a snapshot ahead of the committed log. This is the falsifiable
-        // local-path twin (the receive path checks term-matching/no-revert instead).
+        // INV-SI-1 (SnapshotBoundedByCommitted): a node must never snapshot ahead of its
+        // committed state. We snapshot at lastApplied, which in a correct system is always
+        // <= commitIndex; a regression that advanced lastApplied past commitIndex (or
+        // snapshotted a future index) would let a node hold a snapshot ahead of the committed log.
         invariantChecker.check("snapshot_bounded",
                 appliedIndex <= log.commitIndex(),
                 "Local snapshot at index " + appliedIndex + " exceeds commitIndex "
                         + log.commitIndex() + " — snapshotting ahead of committed state (INV-SI-1)");
 
         byte[] snapshotData = stateMachine.snapshot();
-        // FIND-0001 fix: capture the config at lastApplied, not the current
-        // in-memory clusterConfig. The current clusterConfig may include
-        // uncommitted config changes beyond lastApplied. A snapshot at
-        // appliedIndex must record only the config that was effective at
+        // Capture the config at lastApplied, not the current in-memory clusterConfig.
+        // The current clusterConfig may include uncommitted config changes beyond lastApplied.
+        // A snapshot at appliedIndex must record only the config that was effective at
         // that index, not a future uncommitted config.
         byte[] configData = serializeConfigChange(configAtIndex(appliedIndex));
         SnapshotState snapshot = new SnapshotState(snapshotData, appliedIndex, appliedTerm, configData);
 
-        // RR-003 (durable-prefix invariant): persist the snapshot bytes DURABLY
-        // BEFORE compaction deletes the WAL prefix. Until this fix the snapshot
-        // lived only in the RAM field below, so snapshot -> WAL truncate ->
-        // restart silently lost all committed state at/below appliedIndex. The
-        // persist-then-compact ordering guarantees a complete prefix (persisted
-        // snapshot OR intact WAL) is on durable storage at every instant.
+        // Persist the snapshot bytes DURABLY before compaction deletes the WAL prefix.
+        // If the snapshot lived only in RAM then a snapshot -> WAL truncate -> restart
+        // sequence would silently lose all committed state at/below appliedIndex. The
+        // persist-then-compact ordering guarantees a complete prefix (persisted snapshot
+        // OR intact WAL) is on durable storage at every instant.
         log.persistSnapshot(snapshot);
         latestSnapshot = snapshot;
         log.compact(appliedIndex, appliedTerm);
@@ -698,18 +660,13 @@ public final class RaftNode {
     }
 
     /**
-     * Threshold-gated Raft-log compaction (RR-005). Triggers
-     * {@link #triggerSnapshot()} when the applied-but-not-yet-snapshotted span
-     * ({@code lastApplied - snapshotIndex}) exceeds
-     * {@code appliedSinceSnapshotThreshold}. This is the size/interval trigger the
-     * wired server lacked: before it, the only {@code triggerSnapshot()} caller was
-     * the circular {@code sendInstallSnapshot} (reachable only after a snapshot
-     * already exists), so the WAL grew for the life of the process and a ≥ 2 GiB WAL
-     * eventually crash-looped recovery (the {@code FileStorage} read cap). The
-     * server tick loop calls this every tick via {@link io.configd.replication.MultiRaftDriver},
-     * so compaction is now actually reachable; it preserves RR-003's
-     * persist-before-truncate + {@code durable_prefix_no_gap} (it just calls the same
-     * {@code triggerSnapshot()} path).
+     * Threshold-gated Raft-log compaction. Triggers {@link #triggerSnapshot()} when the
+     * applied-but-not-yet-snapshotted span ({@code lastApplied - snapshotIndex}) exceeds
+     * {@code appliedSinceSnapshotThreshold}. Without this threshold trigger, the only
+     * {@code triggerSnapshot()} caller was {@code sendInstallSnapshot} (reachable only after
+     * a snapshot already exists), so the WAL grew for the life of the process and a large
+     * WAL eventually crash-looped recovery. The server tick loop calls this every tick via
+     * {@link io.configd.replication.MultiRaftDriver}.
      *
      * @param appliedSinceSnapshotThreshold applied entries to retain past the snapshot
      *                                       point before compacting; must be &gt;= 0
@@ -742,7 +699,7 @@ public final class RaftNode {
                 return deserializeConfigChange(entry.command());
             }
         }
-        // No config entry found in log after snapshot — fall back
+        // No config entry found in log after snapshot - fall back
         if (latestSnapshot != null && latestSnapshot.clusterConfigData() != null
                 && isConfigChangeEntry(latestSnapshot.clusterConfigData())) {
             return deserializeConfigChange(latestSnapshot.clusterConfigData());
@@ -785,7 +742,7 @@ public final class RaftNode {
      * This method re-verifies that this node is still the leader before
      * confirming readiness. Without this check, a deposed leader could
      * serve a stale read if leadership was lost between confirmation
-     * and this call (FIND-0002).
+     * and this call.
      *
      * @param readId the read ID returned by {@link #readIndex()}
      * @return true if the read can be served with linearizable guarantees
@@ -793,8 +750,7 @@ public final class RaftNode {
     public boolean isReadReady(long readId) {
         assertOwnerThread();
         // Re-verify leadership: a deposed leader must not serve reads.
-        // This closes the TOCTOU window between heartbeat confirmation
-        // and read serving (see FIND-0002).
+        // This closes the TOCTOU window between heartbeat confirmation and read serving.
         if (role != RaftRole.LEADER) {
             return false;
         }
@@ -802,11 +758,11 @@ public final class RaftNode {
     }
 
     /**
-     * Test-only seam (RR-030 / §4.5 assertion-twin firing): registers a pending
-     * ReadIndex with an arbitrary recorded {@code (readIndex, term)} and returns its
-     * id, so the firing test can drive {@link #assertReadServeInvariants} with a
-     * record that violates a ReadIndexSpec twin (readIndex ahead of lastApplied /
-     * commitIndex, or term ahead of the node). Not on any production path.
+     * Test-only seam: registers a pending ReadIndex with an arbitrary recorded
+     * {@code (readIndex, term)} and returns its id, so the firing test can drive
+     * {@link #assertReadServeInvariants} with a record that violates a ReadIndexSpec
+     * invariant (readIndex ahead of lastApplied/commitIndex, or term ahead of the node).
+     * Not on any production path.
      *
      * @param readIndex the recorded read index
      * @param term      the recorded read term
@@ -817,17 +773,13 @@ public final class RaftNode {
     }
 
     /**
-     * Test-only seam (RR-030 / §4.5 assertion-twin firing) for the in-node ConsensusSpec
-     * twins whose production call sites sit behind guards that early-return whenever the
-     * checked condition would be false, OR are inside private methods the protocol only
-     * reaches in the holds-true state. These twins are structurally-guarded
-     * defence-in-depth and cannot trip via the protocol path; this seam invokes the
-     * IDENTICAL production {@code invariantChecker.check(name, false, …)} call shape (the
-     * same expression and the same wired checker) with the condition forced false, so the
-     * twin's wiring (throw in test/sim, metric+log in prod) is exercised and observed.
-     * This is the same pattern {@code InvariantNetMetricTest} uses for per_key_order
-     * (inject the violating precondition; the real check then fires). Documented as such
-     * in {@code docs/session-2/assertion-verification.md}.
+     * Test-only seam for in-node invariant twins whose production call sites sit behind
+     * guards that early-return whenever the checked condition would be false, or are inside
+     * private methods the protocol only reaches in the holds-true state. These twins are
+     * structurally-guarded defence-in-depth and cannot trip via the protocol path; this
+     * seam invokes the identical production {@code invariantChecker.check(name, false, ...)}
+     * call shape with the condition forced false, so the twin's wiring (throw in test/sim,
+     * metric+log in prod) is exercised and observed.
      *
      * @param name the in-node twin name to fire
      */
@@ -876,13 +828,8 @@ public final class RaftNode {
      * ready (via {@link #isReadReady(long)}). If the read is already ready
      * at registration time, the callback fires synchronously.
      * <p>
-     * F-0022 fix: a single CompletableFuture per linearizable read, completed
-     * from the tick thread when the read transitions to ready. Replaces the
-     * per-poll CompletableFuture allocation that the previous dispatch loop
-     * paid on every iteration.
-     * <p>
-     * MUST be called from the tick thread (single-threaded executor). All
-     * access to {@link ReadIndexState} is tick-thread only per F-0010.
+     * Uses one callback per linearizable read rather than polling in a loop.
+     * All access to {@link ReadIndexState} is tick-thread only.
      *
      * @param readId   the read ID from {@link #readIndex()}
      * @param callback the callback to invoke exactly once when ready
@@ -899,36 +846,32 @@ public final class RaftNode {
     }
 
     /**
-     * ReadIndexSpec runtime twins — checked at the exact moment a linearizable
-     * read is served (the spec's CompleteReadIndex action), before the callback
-     * runs against the state machine. All three are the runtime counterparts of
-     * the de-vacuumed ReadIndexSpec safety invariants:
+     * ReadIndex invariants checked at the exact moment a linearizable read is served,
+     * before the callback runs against the state machine. The three checks are:
      * <ul>
      *   <li>{@code read_freshness} (INV-RI-3 ReadFreshness): a read is never served
-     *       ahead of the applied state — {@code readIndex <= lastApplied}.</li>
+     *       ahead of the applied state - {@code readIndex <= lastApplied}.</li>
      *   <li>{@code no_stale_leader_serve} (INV-RI-4 NoStaleLeaderServe): a read
      *       recorded at term T is never served after the node's term has moved past
-     *       T (a stepped-down / stale leader serve) — {@code recordedTerm <=
+     *       T (a stepped-down / stale leader serve) - {@code recordedTerm <=
      *       currentTerm} AND this node is still LEADER.</li>
      *   <li>{@code read_index_bounded} (INV-RI-2 ReadIndexBoundedByMaxIndex): the
-     *       served readIndex never exceeds what was committed —
+     *       served readIndex never exceeds what was committed -
      *       {@code readIndex <= commitIndex}.</li>
      * </ul>
      * Called from both serve paths (immediate in {@link #whenReadReady} and the
      * deferred {@link #fireReadyCallbacks}). Tick-thread only.
      * <p>
-     * Package-private (not private) so the assertion-twin firing test can drive it
-     * directly with a poisoned {@link ReadIndexState} (a read whose recorded index
-     * exceeds lastApplied/commitIndex, or whose term is ahead of the node) — the
-     * §4.5 requirement that every twin be observed firing. In the live serve paths
-     * the {@link #isReadReady} gate makes the freshness condition hold; the twin is
-     * the defence-in-depth that catches a regression which corrupts the read record
-     * between the readiness gate and the serve, or removes the gate entirely.
+     * Package-private so the invariant-firing test can drive it directly with a poisoned
+     * {@link ReadIndexState}. In the live serve paths the {@link #isReadReady} gate makes
+     * the freshness condition hold; this is the defence-in-depth that catches a regression
+     * which corrupts the read record between the readiness gate and the serve, or removes
+     * the gate entirely.
      */
     void assertReadServeInvariants(long readId) {
         long servedIdx = readIndexState.readIndex(readId);
         if (servedIdx < 0) {
-            return; // unknown read id — nothing to assert
+            return; // unknown read id - nothing to assert
         }
         long recordedTerm = readIndexState.termOf(readId);
 
@@ -978,9 +921,7 @@ public final class RaftNode {
         }
     }
 
-    // ========================================================================
-    // Commit-outcome seam (RR-004 / ADR-0033)
-    // ========================================================================
+    // Commit-outcome callbacks
 
     /**
      * Registers a one-shot callback fired exactly once with the
@@ -994,13 +935,12 @@ public final class RaftNode {
      * applied at {@code index} carries {@code term}; LOST when a different term
      * applied at {@code index} (Log Matching makes the slot permanent);
      * INDETERMINATE_LOCALLY when an InstallSnapshot covers {@code index} before it
-     * applied. Truncation-without-apply and step-down do NOT resolve to LOST —
+     * applied. Truncation-without-apply and step-down do NOT resolve to LOST -
      * those remain pending and surface as Indeterminate at the service deadline
-     * (by design: a false "definitely lost" that later commits is a phantom
-     * write).
+     * (by design: a false "definitely lost" that later commits is a phantom write).
      * <p>
-     * MUST be called from the tick thread (single-threaded executor); all access
-     * to the callback map is tick-thread only, preserving R-01.
+     * Must be called from the tick thread; all access to the callback map is
+     * tick-thread only.
      *
      * @param index    the proposed log index (from {@link ProposeOutcome#index()})
      * @param term     the proposed term (from {@link ProposeOutcome#term()})
@@ -1041,18 +981,18 @@ public final class RaftNode {
      * Matching guarantees the entry at {@code index} is permanent on this node, so
      * a same-term match is COMMITTED and a different-term match is LOST. If the
      * index has been compacted into a snapshot below {@code lastApplied} without a
-     * recorded applied seq, the per-index term is unrecoverable → INDETERMINATE.
+     * recorded applied seq, the per-index term is unrecoverable - INDETERMINATE.
      */
     private CommitOutcome decideCommitOutcome(long index, long term) {
         if (log.lastApplied() < index) {
-            return null; // not yet applied — outcome still open
+            return null; // not yet applied - outcome still open
         }
         // Applied. Recover the term that actually occupies this index.
         if (index <= log.snapshotIndex()) {
             // Index folded into a snapshot. If we recorded the applied seq while
             // applying it (the proposing leader's normal path), trust that record;
             // otherwise the per-index term is gone (snapshot install on a lagging
-            // follower) → locally indeterminate.
+            // follower) - locally indeterminate.
             Long seq = appliedSeqByIndex.get(index);
             if (seq != null) {
                 return CommitOutcome.committed(seq);
@@ -1061,7 +1001,7 @@ public final class RaftNode {
         }
         LogEntry entry = log.entryAt(index);
         if (entry == null) {
-            // Applied yet absent from the live log and not in a snapshot — should
+            // Applied yet absent from the live log and not in a snapshot - should
             // not happen on a consistent node; report indeterminate rather than
             // fabricate a definite outcome.
             return CommitOutcome.indeterminateLocally();
@@ -1073,7 +1013,7 @@ public final class RaftNode {
             // sequence (any S <= current version satisfies RYW for a no-op).
             return CommitOutcome.committed(seq != null ? seq : currentAppliedSequence());
         }
-        // Different term occupies this slot permanently (Log Matching) → lost.
+        // Different term occupies this slot permanently (Log Matching) - lost.
         return CommitOutcome.lost();
     }
 
@@ -1149,16 +1089,14 @@ public final class RaftNode {
      * Tick-thread-only (written in {@code applyCommitted}, read in
      * {@code currentAppliedSequence} on the commit-outcome path), so atomicity is
      * not strictly required; declared {@code volatile} to keep the 64-bit write
-     * atomic and clear the SpotBugs AT_NONATOMIC_64BIT_PRIMITIVE finding (RR-025).
+     * atomic and suppress the SpotBugs AT_NONATOMIC_64BIT_PRIMITIVE warning.
      */
     private volatile long lastRecordedSeq = -1;
 
-    // ========================================================================
-    // Reconfiguration (Joint Consensus — Raft §6)
-    // ========================================================================
+    // Reconfiguration - Joint Consensus (Raft section 6)
 
     /**
-     * Proposes a membership change using the joint consensus protocol (Raft §6).
+     * Proposes a membership change using the joint consensus protocol (Raft section 6).
      * <p>
      * The leader first appends a joint config entry C_old,new to the log.
      * Once committed (requiring agreement from both old and new majorities),
@@ -1195,12 +1133,12 @@ public final class RaftNode {
             return false; // No change needed
         }
 
-        // INV-8: SingleServerInvariant — only one config change in-flight at a time
+        // INV-8: SingleServerInvariant - only one config change in-flight at a time
         invariantChecker.check("single_server_invariant",
                 !configChangePending,
                 "Multiple concurrent config changes detected");
 
-        // INV-7: NoOpBeforeReconfig — at this point, no-op must be committed
+        // INV-7: NoOpBeforeReconfig - at this point, no-op must be committed
         invariantChecker.check("no_op_before_reconfig",
                 noopCommittedInCurrentTerm,
                 "Reached config change path without no-op committed");
@@ -1208,7 +1146,7 @@ public final class RaftNode {
         // Create joint config C_old,new
         ClusterConfig jointConfig = ClusterConfig.joint(clusterConfig.voters(), newVoters);
 
-        // INV-6: ReconfigSafety — joint config must require quorums from both sets
+        // INV-6: ReconfigSafety - joint config must require quorums from both sets
         invariantChecker.check("reconfig_safety",
                 jointConfig.isJoint(),
                 "Config change must use joint consensus");
@@ -1222,7 +1160,7 @@ public final class RaftNode {
         long newIndex = log.lastIndex() + 1;
         LogEntry entry = new LogEntry(newIndex, currentTerm, configEntry);
         log.append(entry);                 // durable control entry (appendNoSync + syncWal)
-        durableIndex = log.lastIndex();    // S7.5: synced — the leader may count it (gating)
+        durableIndex = log.lastIndex();    // synced - the leader may count it toward the quorum (gating)
 
         // Initialize tracking for any new peers added by this config change
         for (NodeId peer : clusterConfig.peersOf(config.nodeId())) {
@@ -1240,9 +1178,9 @@ public final class RaftNode {
      * Returns the current cluster configuration.
      */
     public ClusterConfig clusterConfig() {
-        // H-3: OWNER-THREAD-ONLY. ClusterConfig carries a lazy peersCache (HashMap) populated on first
-        // peersOf(), so an off-owner read races that cache regardless of field visibility. Monitors read
-        // the published view, not the live config. Guard inert until bindOwnerThread().
+        // ClusterConfig carries a lazy peersCache (HashMap) populated on first peersOf(), so an
+        // off-owner read races that cache regardless of field visibility. Monitors read the published
+        // view, not the live config. Guard inert until bindOwnerThread().
         assertOwnerThread();
         return clusterConfig;
     }
@@ -1427,52 +1365,48 @@ public final class RaftNode {
     }
 
     /**
-     * H-3: republish the owner-built monitoring snapshot through the single volatile reference.
-     * Owner-thread-only (called at the end of {@link #tick()}). One volatile store of an immutable
-     * record — never blocks the owner.
+     * Republishes the owner-built monitoring snapshot through the single volatile reference.
+     * Owner-thread only (called at the end of {@link #tick()}). One volatile store of an
+     * immutable record - never blocks the owner.
      */
     private void publishMonitorView() {
         this.monitorView = buildMetrics();
     }
 
     /**
-     * H-3 SAFE-CROSS-THREAD monitoring read: returns the last owner-published immutable
-     * {@link RaftMetrics} snapshot. A single volatile load — it never tears, never observes a
+     * Safe cross-thread monitoring read: returns the last owner-published immutable
+     * {@link RaftMetrics} snapshot. A single volatile load - it never tears, never observes a
      * partially-updated structure, never blocks the owner, and is at most one tick interval stale.
-     * This is the ONLY supported way for a non-owner thread (Prometheus scrape, admin status) to read
-     * consensus monitoring state; the live accessors ({@link #currentTerm()}, {@link #log()}, …) are
-     * owner-thread-only and guarded. See docs/phase0-B/h3-monitor-view-design.md.
+     * This is the only supported way for a non-owner thread (Prometheus scrape, admin status) to
+     * read consensus monitoring state; the live accessors ({@link #currentTerm()}, {@link #log()},
+     * etc.) are owner-thread-only and guarded.
      */
     public RaftMetrics monitorView() {
         return monitorView;
     }
 
-    // ---- Getters for state inspection (tests and monitoring) ----
+    // Getters for state inspection (tests and monitoring).
 
     public RaftRole role() { return role; }
     public NodeId leaderId() { return leaderId; }
     public NodeId nodeId() { return config.nodeId(); }
 
-    // H-3: currentTerm/votedFor/log/transferTarget read NON-VOLATILE consensus state and are now
-    // OWNER-THREAD-ONLY. Off-owner monitoring must use monitorView() instead; these would otherwise be
-    // unsynchronised reads once owners are bound. The guard is inert until bindOwnerThread() (so
-    // existing single-threaded tests and the not-yet-bound production server are unaffected) and, once
-    // bound, trips raft_owner_thread on any off-owner read — converting the former H-3 blind spot into
-    // net-covered surface. See docs/phase0-B/h3-monitor-view-design.md.
+    // currentTerm/votedFor/log/transferTarget read non-volatile consensus state and are
+    // owner-thread-only. Off-owner monitoring must use monitorView() instead; these would
+    // otherwise be unsynchronised reads once owners are bound. The guard is inert until
+    // bindOwnerThread(), so existing single-threaded tests are unaffected.
     public long currentTerm() { assertOwnerThread(); return currentTerm; }
     public NodeId votedFor() { assertOwnerThread(); return votedFor; }
     public RaftLog log() { assertOwnerThread(); return log; }
     public NodeId transferTarget() { assertOwnerThread(); return transferTarget; }
 
-    // ========================================================================
     // Timer logic
-    // ========================================================================
 
     private void tickElection() {
         electionTicksElapsed++;
         if (electionTicksElapsed >= electionTimeoutTicks) {
             electionTicksElapsed = 0;
-            // Election timer fired — we haven't heard from any leader for the
+            // Election timer fired - we haven't heard from any leader for the
             // full timeout duration. Clear leaderId so we (and our peers via
             // PreVote) know there is no known healthy leader. Without this,
             // the hasRecentLeader check in handlePreVoteRequest creates a
@@ -1498,38 +1432,32 @@ public final class RaftNode {
             }
             confirmPendingReads(activeSet);
 
-            // RR-103: heartbeat decay of the per-peer pipelining window. The window
-            // (inflightCount, capped at maxInflightAppends) is incremented on every
-            // send and decremented ONLY by a response. Because the periodic heartbeat
-            // is itself routed through sendAppendEntries — which skips a peer once its
-            // window is full — a peer that loses maxInflightAppends messages
-            // (partition / crash / drop) pins the window at the cap and is PERMANENTLY
-            // silenced for the rest of the term: no heartbeat, no backfill, no
-            // InstallSnapshot, no error, no metric (only a term change resets the map).
-            // A heartbeat is a liveness guarantee and must never be suppressible by a
-            // flow-control optimization. Free the window of any peer that is BOTH pinned
-            // at the cap (the silenced state) AND absent from the active set (no response
-            // this interval ⇒ its in-flight RPCs are presumed lost), before the broadcast,
-            // so this heartbeat reaches it. Narrowing to the pinned-AND-inactive state
-            // (rather than every inactive peer) keeps the window intact for a merely
-            // congested-but-alive peer whose RTT exceeds one heartbeat interval (a WAN
-            // follower, architecture §12) — it would otherwise be reset mid-pipeline and
-            // briefly over-send. A peer draining normally stays in the active set and is
-            // never touched.
+            // Heartbeat decay of the per-peer pipelining window. The window (inflightCount,
+            // capped at maxInflightAppends) is incremented on every send and decremented ONLY
+            // by a response. Because the periodic heartbeat is itself routed through
+            // sendAppendEntries - which skips a peer once its window is full - a peer that
+            // loses maxInflightAppends messages (partition / crash / drop) pins the window at
+            // the cap and is permanently silenced for the rest of the term: no heartbeat, no
+            // backfill, no InstallSnapshot, no error, no metric (only a term change resets the
+            // map). A heartbeat is a liveness guarantee and must never be suppressible by a
+            // flow-control optimization. Free the window of any peer that is BOTH pinned at
+            // the cap (the silenced state) AND absent from the active set (no response this
+            // interval - its in-flight RPCs are presumed lost), before the broadcast, so this
+            // heartbeat reaches it. Narrowing to the pinned-AND-inactive state (rather than
+            // every inactive peer) keeps the window intact for a merely congested-but-alive
+            // peer whose RTT exceeds one heartbeat interval - it would otherwise be reset
+            // mid-pipeline and briefly over-send. A peer draining normally stays in the active
+            // set and is never touched.
             for (NodeId peer : clusterConfig.peersOf(config.nodeId())) {
                 if (!activeSet.contains(peer)
                         && inflightCount.getOrDefault(peer, 0) >= config.maxInflightAppends()) {
                     inflightCount.put(peer, 0);
                 }
-                // RR-103 inflight-accounting twin (defence-in-depth, like the other
-                // structurally-guarded ConsensusSpec twins): at heartbeat-broadcast time no
-                // peer may be both silenced (window at the cap) AND not draining (inactive
-                // this interval) — exactly the permanent-silence state. The decay above
-                // re-establishes this, so on the un-mutated path the check is a postcondition
-                // that always holds; its live value is that a regression DROPPING the decay
-                // trips it on the SENDER under any window-pinning seed (throw in test/sim,
-                // metric + SEVERE log in prod). Real-path firing is proven by mutation-revert
-                // (review §5(iii)); forced firing by AssertionTwinFiringTest.
+                // Postcondition after the decay: no peer may be both silenced (window at the cap)
+                // AND not draining (inactive this interval). The decay above re-establishes this,
+                // so on the un-mutated path this check always holds; its value is that a regression
+                // dropping the decay trips it on the sender under any window-pinning seed (throw in
+                // test/sim, metric + SEVERE in prod).
                 invariantChecker.check("inflight_window_progress",
                         inflightCount.getOrDefault(peer, 0) < config.maxInflightAppends()
                                 || activeSet.contains(peer),
@@ -1542,12 +1470,10 @@ public final class RaftNode {
         }
     }
 
-    // ========================================================================
     // AppendEntries handling
-    // ========================================================================
 
     private void handleAppendEntries(AppendEntriesRequest req) {
-        // Rule: if term < currentTerm, reject (Raft §5.1)
+        // Rule: if term < currentTerm, reject (Raft section 5.1)
         if (req.term() < currentTerm) {
             transport.send(req.leaderId(),
                     new AppendEntriesResponse(currentTerm, false, 0, config.nodeId()));
@@ -1559,11 +1485,11 @@ public final class RaftNode {
             becomeFollower(req.term());
         } else if (role == RaftRole.CANDIDATE) {
             // If we're a candidate and receive AppendEntries with our current term,
-            // a leader has been elected — step down
+            // a leader has been elected - step down
             becomeFollower(req.term());
         }
 
-        // Reset election timer — we heard from the leader
+        // Reset election timer - we heard from the leader
         electionTicksElapsed = 0;
         leaderId = req.leaderId();
 
@@ -1575,7 +1501,7 @@ public final class RaftNode {
             return;
         }
 
-        // INV-3: LogMatching — if two logs contain an entry with the same
+        // INV-3: LogMatching - if two logs contain an entry with the same
         // index and term, they are identical in all preceding entries.
         // This is structurally guaranteed by the AppendEntries consistency check,
         // but we assert it was applied correctly.
@@ -1586,14 +1512,13 @@ public final class RaftNode {
                     stored != null && stored.term() == lastAppended.term(),
                     "Log matching violated at index " + lastAppended.index());
 
-            // Raft §4.1: "A server always uses the latest configuration in
-            // its log, regardless of whether the entry is committed."
-            // Recompute config after any log modification (append or truncation)
-            // to match the TLA+ spec's EffectiveConfig(newLog).
+            // Raft section 4.1: "A server always uses the latest configuration in its log,
+            // regardless of whether the entry is committed." Recompute config after any log
+            // modification (append or truncation) to match the TLA+ spec's EffectiveConfig(newLog).
             recomputeConfigFromLog();
         }
 
-        // Advance commit index (Raft §5.3 rule 5)
+        // Advance commit index (Raft section 5.3 rule 5)
         if (req.leaderCommit() > log.commitIndex()) {
             long lastNewIndex = req.entries().isEmpty() ? log.lastIndex()
                     : req.entries().getLast().index();
@@ -1602,7 +1527,7 @@ public final class RaftNode {
 
         applyCommitted();
 
-        // Report the last verified index — the last entry in the batch, or
+        // Report the last verified index - the last entry in the batch, or
         // prevLogIndex for an empty heartbeat.  Using log.lastIndex() would be
         // incorrect when the leader limits batch size: entries beyond the batch
         // are unverified and must not be counted as matched.
@@ -1645,16 +1570,14 @@ public final class RaftNode {
             // If we're transferring leadership and target is caught up, send TimeoutNow
             maybeSendTimeoutNow();
         } else {
-            // Decrement nextIndex and retry (Raft §5.3)
+            // Decrement nextIndex and retry (Raft section 5.3)
             long ni = nextIndex.getOrDefault(resp.from(), log.lastIndex() + 1);
             nextIndex.put(resp.from(), Math.max(1, ni - 1));
             sendAppendEntries(resp.from());
         }
     }
 
-    // ========================================================================
     // RequestVote handling
-    // ========================================================================
 
     private void handleRequestVote(RequestVoteRequest req) {
         if (req.preVote()) {
@@ -1662,7 +1585,7 @@ public final class RaftNode {
             return;
         }
 
-        // Non-voters must not grant votes (TLA+ spec: m ∈ VotingMembers(config[m]))
+        // Non-voters must not grant votes (TLA+ spec: m in VotingMembers(config[m]))
         if (!clusterConfig.isVoter(config.nodeId())) {
             transport.send(req.candidateId(),
                     new RequestVoteResponse(currentTerm, false, config.nodeId(), false));
@@ -1682,12 +1605,12 @@ public final class RaftNode {
         }
 
         // Grant vote if: (a) we haven't voted for someone else in this term,
-        // and (b) candidate's log is at least as up-to-date as ours (§5.4.1)
+        // and (b) candidate's log is at least as up-to-date as ours (Raft section 5.4.1)
         boolean canVote = (votedFor == null || votedFor.equals(req.candidateId()));
         boolean logOk = log.isAtLeastAsUpToDate(req.lastLogTerm(), req.lastLogIndex());
 
         if (canVote && logOk) {
-            durableState.vote(req.candidateId()); // Persist BEFORE in-memory update (Raft §5.2)
+            durableState.vote(req.candidateId()); // Persist BEFORE in-memory update (Raft section 5.2)
             votedFor = req.candidateId();
             electionTicksElapsed = 0; // reset timer on granting vote
             transport.send(req.candidateId(),
@@ -1699,11 +1622,11 @@ public final class RaftNode {
     }
 
     private void handlePreVoteRequest(RequestVoteRequest req) {
-        // PreVote (§9.6): respond based on whether we WOULD grant a vote.
+        // PreVote (Ongaro dissertation section 9.6): respond based on whether we WOULD grant a vote.
         // Do not update term, do not record a vote.
         //
         // Reject if:
-        //  (a) req.term < currentTerm — the candidate is stale
+        //  (a) req.term < currentTerm - the candidate is stale
         //  (b) we have a current leader and our election timer has not expired
         //      (meaning we recently heard from a leader, so the cluster is healthy
         //      and this candidate is likely partitioned)
@@ -1764,16 +1687,14 @@ public final class RaftNode {
             preVotesReceived.add(resp.from());
             // Use isQuorum for correct dual-majority check during joint consensus
             if (clusterConfig.isQuorum(preVotesReceived)) {
-                // PreVote succeeded — start real election
+                // PreVote succeeded - start real election
                 preVoteInProgress = false;
                 startElection();
             }
         }
     }
 
-    // ========================================================================
     // TimeoutNow handling (leadership transfer)
-    // ========================================================================
 
     private void handleTimeoutNow(TimeoutNowRequest req) {
         if (req.term() < currentTerm) {
@@ -1782,13 +1703,11 @@ public final class RaftNode {
         if (req.term() > currentTerm) {
             becomeFollower(req.term());
         }
-        // Immediately start an election — bypass PreVote
+        // Immediately start an election - bypass PreVote
         startElection();
     }
 
-    // ========================================================================
     // State transitions
-    // ========================================================================
 
     /**
      * Transitions to FOLLOWER state. Clears leader-specific state.
@@ -1803,10 +1722,9 @@ public final class RaftNode {
         leaderId = null;
         transferTarget = null;
         readIndexState.clear();
-        // F-0022: pending callbacks will observe isReadReady==false since
-        // readIndexState was cleared; we fire them so the HTTP-side future
-        // completes promptly (as "not leader") rather than waiting for the
-        // 150ms HTTP deadline. The callback is expected to re-check state.
+        // Pending read callbacks will observe isReadReady==false since readIndexState was cleared;
+        // fire them so the HTTP-side future completes promptly (as "not leader") rather than
+        // waiting for the HTTP deadline. The callback is expected to re-check state.
         if (!readReadyCallbacks.isEmpty()) {
             var toFire = new ArrayList<>(readReadyCallbacks.values());
             readReadyCallbacks.clear();
@@ -1818,26 +1736,24 @@ public final class RaftNode {
                 }
             }
         }
-        // RR-004 / ADR-0033: step-down is NOT a definite-loss trigger — a former
-        // leader steps down with its proposed entry still in its log, and a
-        // replica holding that entry can win a later election and commit it. So we
-        // only RE-EVALUATE pending commit outcomes here (some may now be decidable
-        // as COMMITTED/LOST because lastApplied advanced as this node caught up);
-        // we do NOT drain the still-undecidable ones as LOST. Those resolve on a
-        // later apply at their index, or surface as Indeterminate at the service
-        // deadline. (Contrast with the read callbacks above, which are correctly
-        // drained because a deposed leader can no longer serve a linearizable read.)
+        // Step-down is NOT a definite-loss trigger - a former leader steps down with its proposed
+        // entry still in its log, and a replica holding that entry can win a later election and
+        // commit it. So only re-evaluate pending commit outcomes here (some may now be decidable
+        // as COMMITTED/LOST because lastApplied advanced as this node caught up); do NOT drain
+        // the still-undecidable ones as LOST. Those resolve on a later apply at their index, or
+        // surface as Indeterminate at the service deadline. (Contrast with the read callbacks above,
+        // which are correctly drained because a deposed leader can no longer serve a linearizable read.)
         fireCommitOutcomes();
         resetElectionTimeout();
         electionTicksElapsed = 0;
     }
 
     /**
-     * Starts a PreVote round (§9.6). Does NOT increment the term.
+     * Starts a PreVote round (Ongaro dissertation section 9.6). Does NOT increment the term.
      * Sends PreVote requests to all peers.
      */
     private void startPreVote() {
-        // Non-voters must not start elections (TLA+ spec: n ∈ VotingMembers(config[n]))
+        // Non-voters must not start elections (TLA+ spec: n in VotingMembers(config[n]))
         if (!clusterConfig.isVoter(config.nodeId())) {
             return;
         }
@@ -1879,7 +1795,7 @@ public final class RaftNode {
      * Increments term, votes for self, sends RequestVote RPCs.
      */
     private void startElection() {
-        // Non-voters must not start elections (TLA+ spec: n ∈ VotingMembers(config[n]))
+        // Non-voters must not start elections (TLA+ spec: n in VotingMembers(config[n]))
         if (!clusterConfig.isVoter(config.nodeId())) {
             return;
         }
@@ -1920,15 +1836,15 @@ public final class RaftNode {
     /**
      * Transitions to LEADER state. Initializes nextIndex and matchIndex
      * for all peers. Appends a no-op entry to commit entries from prior
-     * terms (Raft §5.4.2). Broadcasts initial heartbeats.
+     * terms (Raft section 5.4.2). Broadcasts initial heartbeats.
      */
     private void becomeLeader() {
-        // INV-1: ElectionSafety — verify we won a proper election (dual-majority for joint consensus)
+        // INV-1: ElectionSafety - verify we won a proper election (dual-majority for joint consensus)
         invariantChecker.check("election_safety",
                 clusterConfig.isQuorum(votesReceived) || clusterConfig.peersOf(config.nodeId()).isEmpty(),
                 "Became leader without quorum: votes=" + votesReceived
                         + ", config=" + clusterConfig);
-        // INV-2: LeaderCompleteness — our log must contain all committed entries
+        // INV-2: LeaderCompleteness - our log must contain all committed entries
         // (guaranteed by the voting restriction in handleRequestVote, but assert here)
         invariantChecker.check("leader_completeness",
                 log.lastIndex() >= log.commitIndex(),
@@ -1953,13 +1869,13 @@ public final class RaftNode {
             peerActivity.put(peer, Boolean.TRUE); // Consider everyone active initially
         }
 
-        // Append a no-op entry to commit entries from prior terms (§5.4.2)
-        // This no-op must commit before any config changes can be proposed
+        // Append a no-op entry to commit entries from prior terms (Raft section 5.4.2).
+        // This no-op must commit before any config changes can be proposed.
         long noopIndex = log.lastIndex() + 1;
         log.append(LogEntry.noop(noopIndex, currentTerm)); // durable (appendNoSync + syncWal)
-        // S7.5 group commit: log.append() force-syncs the whole WAL, so the no-op AND every
-        // inherited entry (loaded from WAL / synced as a follower / any tail buffered in a prior
-        // leadership stint) is now durable. Seed durableIndex accordingly before the leader counts
+        // log.append() force-syncs the whole WAL, so the no-op AND every inherited entry
+        // (loaded from WAL / synced as a follower / any tail buffered in a prior leadership
+        // stint) is now durable. Seed durableIndex accordingly before the leader counts
         // itself in any commit quorum.
         durableIndex = log.lastIndex();
 
@@ -1967,9 +1883,7 @@ public final class RaftNode {
         maybeAdvanceCommitIndex();
     }
 
-    // ========================================================================
     // Log replication helpers
-    // ========================================================================
 
     /**
      * Sends AppendEntries RPCs to all peers in the current cluster config.
@@ -1996,7 +1910,7 @@ public final class RaftNode {
         long prevIndex = ni - 1;
         long prevTerm = log.termAt(prevIndex);
         if (prevTerm == -1) {
-            // prevIndex is before our snapshot — send snapshot instead
+            // prevIndex is before our snapshot - send snapshot instead
             sendInstallSnapshot(peer);
             return;
         }
@@ -2040,15 +1954,15 @@ public final class RaftNode {
      */
     private void sendInstallSnapshot(NodeId peer) {
         if (latestSnapshot == null) {
-            // No snapshot available yet — take one now
+            // No snapshot available yet - take one now
             triggerSnapshot();
         }
         if (latestSnapshot == null) {
-            return; // Still no snapshot (no applied entries) — nothing to send
+            return; // Still no snapshot (no applied entries) - nothing to send
         }
 
-        // INV-SI-4 twin (SnapshotInstallSpec.InflightTermMonotonic): a leader must
-        // only ship a snapshot it actually holds — the descriptor about to go on the
+        // INV-SI-4 check: a leader must only ship a snapshot it actually holds -
+        // the descriptor about to go on the
         // wire must equal what this node has recorded for that index. The spec rejects
         // "leader sends a snapshot it doesn't have". A regression corrupting the
         // outbound descriptor trips here on the SENDER.
@@ -2067,8 +1981,7 @@ public final class RaftNode {
 
         // Same inflight-leak guard as sendAppendEntries: send first,
         // increment only on success. Snapshots are large by definition,
-        // so the encoder-reject path here is the dominant cause of
-        // legitimate IAE in production (see ADR-0029 known limitation).
+        // so the encoder-reject path here is the dominant cause of legitimate IAE in production.
         try {
             transport.send(peer, req);
         } catch (IllegalArgumentException e) {
@@ -2081,9 +1994,9 @@ public final class RaftNode {
     }
 
     /**
-     * Advances the commit index based on matchIndex values (Raft §5.3/§5.4).
+     * Advances the commit index based on matchIndex values (Raft section 5.3/5.4).
      * <p>
-     * Only commits entries from the current term (§5.4.2 safety rule):
+     * Only commits entries from the current term (Raft section 5.4.2 safety rule):
      * a leader cannot determine commitment of entries from prior terms
      * based on replication count alone.
      * <p>
@@ -2107,11 +2020,11 @@ public final class RaftNode {
 
             // Build set of nodes that have replicated entry n
             replicated.clear();
-            // S7.5 group-commit safety: count THIS leader toward the quorum for index n ONLY if
-            // n is durably fsynced locally (durableIndex). A buffered-but-unsynced self-copy must
-            // never be the deciding vote — a leader crash before the flush would otherwise lose an
-            // entry that quorum logic had marked committed. Followers already report matchIndex
-            // only after their own durable append (persist-before-ACK), so peers are always durable.
+            // Count this leader toward the quorum for index n ONLY if n is durably fsynced
+            // locally (durableIndex). A buffered-but-unsynced self-copy must never be the deciding
+            // vote - a leader crash before the flush would otherwise lose an entry that quorum logic
+            // had marked committed. Followers already report matchIndex only after their own durable
+            // append (persist-before-ACK), so peers are always durable.
             if (durableIndex >= n) {
                 replicated.add(config.nodeId()); // self (durable)
             }
@@ -2134,7 +2047,7 @@ public final class RaftNode {
      * {@link RaftLog#appendNoSync} but not yet force-synced. If the unsynced backlog has reached
      * {@link #groupCommitMaxBatch}, flushes immediately (bounding latency and the uncommitted
      * backlog); otherwise schedules a single flush (honoring the linger) unless one is already
-     * pending — so concurrently-proposed entries coalesce into ONE fsync. Tick-thread only.
+     * pending - so concurrently-proposed entries coalesce into ONE fsync. Tick-thread only.
      */
     private void scheduleFlush() {
         long pending = log.lastIndex() - durableIndex;
@@ -2142,7 +2055,7 @@ public final class RaftNode {
             return; // nothing buffered (e.g. an INLINE flush already ran)
         }
         if (pending >= groupCommitMaxBatch) {
-            flushDurable(); // batch cap reached — flush now, bypass the linger
+            flushDurable(); // batch cap reached - flush now, bypass the linger
             return;
         }
         if (flushScheduled) {
@@ -2155,23 +2068,23 @@ public final class RaftNode {
     /**
      * Force-syncs every entry buffered since the last sync (ONE fsync for the whole batch),
      * advances {@link #durableIndex}, then re-evaluates the commit index now that the leader's own
-     * entries up to {@code lastIndex} are durable. Runs on the tick thread — inline via the default
+     * entries up to {@code lastIndex} are durable. Runs on the tick thread - inline via the default
      * scheduler, or dispatched onto the single tick executor in production. Because the tick thread
      * is single-threaded, no append can interleave the fsync, so {@code durableIndex == lastIndex}
      * captured here is exact.
      */
     private void flushDurable() {
-        // Stage 2 M2 (FlushScheduler retarget): the production FlushScheduler dispatches this flush onto
+        // The production FlushScheduler dispatches this flush onto
         // the group's owner executor. If a rehome moved the group AFTER the flush was scheduled, a stale
-        // dispatch would otherwise run here OFF the current owner — an unsynchronised touch of log /
+        // dispatch would otherwise run here OFF the current owner - an unsynchronised touch of log /
         // durableIndex / commit advancement. Guarding converts that into a net fire (throw in test/sim,
-        // metric + SEVERE in prod) instead of a SILENT race; on the correct owner (every production path —
+        // metric + SEVERE in prod) instead of a SILENT race; on the correct owner (every production path -
         // single-group, dormant rehoming) the call is on-owner and silent. See MultiRaftDriver.dispatchFlush.
         assertOwnerThread();
         flushScheduled = false;
         long target = log.lastIndex();
         if (target <= durableIndex) {
-            return; // already durable — nothing to sync
+            return; // already durable - nothing to sync
         }
         log.syncWal();           // single fsync covers every appendNoSync since the last sync
         durableIndex = target;   // the leader may now count itself up to here
@@ -2189,17 +2102,13 @@ public final class RaftNode {
 
             LogEntry entry = log.entryAt(nextApply);
             if (entry == null) {
-                // RR-003 (durable-prefix / no-gap invariant): a committed index
-                // with no log entry and no covering snapshot is a GAP in the
-                // recoverable prefix. The pre-fix code SILENTLY skipped here and
-                // advanced lastApplied — the loss amplifier that turned an
-                // unrestored snapshot into invisible total data loss. Fail
-                // LOUDLY instead: throw in test/sim, increment the
-                // durable_prefix_no_gap metric + SEVERE log in production
-                // (never silently skip a committed entry). nextApply > snapshotIndex
-                // here (we only advance lastApplied within (snapshotIndex,
-                // commitIndex]), so a null entry means the entry is genuinely
-                // missing, not merely compacted-and-restored.
+                // A committed index with no log entry and no covering snapshot is a GAP in the
+                // recoverable prefix. Silently skipping here and advancing lastApplied would amplify
+                // any data loss by turning an unrestored snapshot into invisible total data loss.
+                // Fail loudly instead: throw in test/sim, increment the durable_prefix_no_gap
+                // metric + SEVERE log in production. nextApply > snapshotIndex here (we only
+                // advance lastApplied within (snapshotIndex, commitIndex]), so a null entry means
+                // the entry is genuinely missing, not merely compacted-and-restored.
                 invariantChecker.check("durable_prefix_no_gap",
                         false,
                         "Committed index " + nextApply + " is missing from the recoverable prefix"
@@ -2208,23 +2117,20 @@ public final class RaftNode {
                                 + ", commitIndex=" + log.commitIndex()
                                 + "): persisted snapshot + WAL suffix do not cover all committed"
                                 + " entries — refusing to silently skip.");
-                // In production (fail-open) the metric/log has fired; do NOT
-                // advance lastApplied past the gap (that is the silent-skip we
-                // are killing). Stop applying — the node is in a corrupt
-                // recovery state and must not pretend the entry was applied.
+                // In production (fail-open) the metric/log has fired; do NOT advance lastApplied
+                // past the gap. Stop applying - the node is in a corrupt recovery state.
                 break;
             }
 
-            // INV-5: VersionMonotonicity — the entry we are about to apply must carry an
+            // INV-5: VersionMonotonicity - the entry we are about to apply must carry an
             // index strictly greater than lastApplied. entry.index() comes from the log
             // (independent of the nextApply computation), so a log returning a stale/wrong
-            // entry trips this. (A2/R-05c: the previous form `nextApply > lastApplied` with
-            // nextApply := lastApplied + 1 was locally vacuous and could never fire.)
+            // entry trips this.
             invariantChecker.check("version_monotonicity",
                     entry.index() > log.lastApplied(),
                     "Apply entry index " + entry.index() + " not > lastApplied " + log.lastApplied());
 
-            // INV-4: StateMachineSafety — entry at this index must match across nodes
+            // INV-4: StateMachineSafety - entry at this index must match across nodes
             // (structural guarantee from Raft log matching; assert entry consistency)
             invariantChecker.check("state_machine_safety",
                     entry.index() == nextApply,
@@ -2237,17 +2143,15 @@ public final class RaftNode {
 
             // Handle config change entries
             if (isConfigChangeEntry(entry.command())) {
-                // RR-004: RCFG entries bypass the state machine; they assign no
-                // applied-mutation seq. A commit-outcome callback on this index
-                // (clients never propose RCFG, but the seam is generic) surfaces
-                // the current sequence — consistent with the non-mutating case.
+                // RCFG entries bypass the state machine; they assign no applied-mutation seq.
+                // A commit-outcome callback on this index surfaces the current sequence,
+                // consistent with the non-mutating case.
                 handleCommittedConfigChange(entry);
                 recordAppliedSeq(entry.index(), currentAppliedSequence());
             } else {
-                // RR-004 / ADR-0033: apply now returns the assigned
-                // applied-mutation seq (or NON_MUTATING for a no-op). Record it
-                // per index so the commit-outcome seam can surface the correct
-                // seq for this exact entry.
+                // apply() returns the assigned applied-mutation seq (or NON_MUTATING for a no-op).
+                // Record it per index so the commit-outcome seam can surface the correct seq for
+                // this exact entry.
                 long appliedSeq = stateMachine.apply(entry.index(), entry.term(), entry.command());
                 if (appliedSeq == StateMachine.NON_MUTATING) {
                     appliedSeq = currentAppliedSequence();
@@ -2258,11 +2162,10 @@ public final class RaftNode {
             }
             log.setLastApplied(nextApply);
         }
-        // F-0022: apply advanced lastApplied — some pending reads may now
-        // satisfy the "lastApplied >= readIndex" condition.
+        // Apply advanced lastApplied - some pending reads may now satisfy "lastApplied >= readIndex".
         fireReadyCallbacks();
-        // RR-004: apply advanced lastApplied — pending commit outcomes at or below
-        // the new lastApplied are now decidable (COMMITTED / LOST).
+        // Apply advanced lastApplied - pending commit outcomes at or below the new lastApplied
+        // are now decidable (COMMITTED / LOST).
         fireCommitOutcomes();
     }
 
@@ -2274,19 +2177,19 @@ public final class RaftNode {
      */
     private void recordAppliedSeq(long index, long seq) {
         appliedSeqByIndex.put(index, seq);
-        // Drop records strictly below the lowest pending-callback index — once
+        // Drop records strictly below the lowest pending-callback index - once
         // every pending callback has registered at an index >= floor, no
         // registration can ever query an older index again. Only prune by floor
         // when callbacks ARE pending: with none pending, an imminent registration
         // (the single-node immediate-commit path registers right after this apply)
         // must still be able to read the seq it just recorded, so we must NOT wipe
-        // the recent records — the hard cap below bounds the map in that case.
+        // the recent records - the hard cap below bounds the map in that case.
         long floor = lowestPendingCommitIndex();
         if (floor != Long.MAX_VALUE) {
             appliedSeqByIndex.keySet().removeIf(k -> k < floor);
         }
         // Hard cap: bound the map for a workload that proposes without ever
-        // registering a commit-outcome callback — retain only the most recent
+        // registering a commit-outcome callback - retain only the most recent
         // window of indices (the only ones a late registration could query).
         if (appliedSeqByIndex.size() > MAX_RETAINED_APPLIED_SEQ) {
             long cutoff = log.lastApplied() - MAX_RETAINED_APPLIED_SEQ;
@@ -2314,7 +2217,7 @@ public final class RaftNode {
             //
             // Per the TLA+ spec (CommitJointConfig, lines 391-409), the
             // leader appends C_new to complete the transition. Followers
-            // do NOT transition their in-memory config to C_new here —
+            // do NOT transition their in-memory config to C_new here -
             // they will adopt C_new when the C_new entry arrives via
             // AppendEntries and recomputeConfigFromLog() runs.
             //
@@ -2322,10 +2225,10 @@ public final class RaftNode {
             // config from the log. If we transition the follower's
             // clusterConfig to C_new before C_new is in its log, the
             // follower would use simple C_new quorum rules for elections
-            // instead of joint C_old,new rules — a spec divergence that
+            // instead of joint C_old,new rules - a spec divergence that
             // could affect election safety.
             //
-            // configChangePending remains TRUE — a C_new entry still needs
+            // configChangePending remains TRUE - a C_new entry still needs
             // to be committed to complete the reconfiguration.
 
             if (role == RaftRole.LEADER) {
@@ -2336,7 +2239,7 @@ public final class RaftNode {
                 byte[] configEntry = serializeConfigChange(newConfig);
                 long newIndex = log.lastIndex() + 1;
                 log.append(new LogEntry(newIndex, currentTerm, configEntry)); // durable control entry
-                durableIndex = log.lastIndex(); // S7.5: synced — the leader may count it (gating)
+                durableIndex = log.lastIndex(); // synced - the leader may count it (gating)
                 broadcastAppendEntries();
                 maybeAdvanceCommitIndex();
 
@@ -2348,7 +2251,7 @@ public final class RaftNode {
             // Followers: clusterConfig stays as joint. recomputeConfigFromLog()
             // will set C_new when the C_new entry arrives via AppendEntries.
         } else {
-            // Simple config committed — this completes a C_new transition
+            // Simple config committed - this completes a C_new transition
             configChangePending = false;
 
             // If this node is no longer a voter, step down
@@ -2358,24 +2261,20 @@ public final class RaftNode {
         }
     }
 
-    // ========================================================================
     // InstallSnapshot handling
-    // ========================================================================
 
     /**
-     * Handles an InstallSnapshot RPC from the leader (Raft §7).
+     * Handles an InstallSnapshot RPC from the leader (Raft section 7).
      * <p>
      * Replaces the follower's state machine and log with the snapshot
      * if the snapshot is more recent than the follower's current state.
      */
     private void handleInstallSnapshot(InstallSnapshotRequest req) {
-        // Rule: if term < currentTerm, reject (Raft §5.1).
-        // Echo max(snapshotIndex, lastApplied) so the (now-stale)
-        // leader sees how far we have already advanced. We must use
-        // max because on a follower mid-recovery snapshotIndex can
-        // exceed lastApplied (snapshot ingested but state-machine
-        // apply lag hasn't caught up); telling the leader we are at
-        // lastApplied would understate our position.
+        // Rule: if term < currentTerm, reject (Raft section 5.1).
+        // Echo max(snapshotIndex, lastApplied) so the (now-stale) leader sees how far we have
+        // already advanced. We must use max because on a follower mid-recovery, snapshotIndex
+        // can exceed lastApplied (snapshot ingested but state-machine apply lag hasn't caught up);
+        // telling the leader we are at lastApplied would understate our position.
         if (req.term() < currentTerm) {
             transport.send(req.leaderId(),
                     new InstallSnapshotResponse(currentTerm, false,
@@ -2391,12 +2290,12 @@ public final class RaftNode {
             becomeFollower(req.term());
         }
 
-        // Reset election timer — we heard from the leader
+        // Reset election timer - we heard from the leader
         electionTicksElapsed = 0;
         leaderId = req.leaderId();
 
         // If the snapshot is not more recent than our current state,
-        // ignore. Echo max(snapshotIndex, lastApplied) — using
+        // ignore. Echo max(snapshotIndex, lastApplied) - using
         // lastApplied alone would tell the leader to send AppendEntries
         // from lastApplied+1, which on a follower that has compacted
         // past lastApplied would cause a prevLogTerm mismatch.
@@ -2408,8 +2307,8 @@ public final class RaftNode {
             return;
         }
 
-        // SnapshotInstallSpec runtime twins — checked at the install decision point
-        // (the spec's ReceiveInstallSnapshot "newer — install" branch), before we
+        // Snapshot install invariants - checked at the install decision point
+        // (the spec's ReceiveInstallSnapshot "newer - install" branch), before we
         // mutate any state. We are here only because req.lastIncludedIndex() >
         // log.snapshotIndex() (the early-return above handled the older/equal case),
         // i.e. this is the spec's installing branch.
@@ -2418,11 +2317,10 @@ public final class RaftNode {
         // Restore the state machine from the snapshot
         stateMachine.restoreSnapshot(req.data());
 
-        // RR-003: a follower installing a snapshot has the same restart-loss
-        // exposure as a leader taking one — it is about to compact away the WAL
-        // prefix. Persist the received snapshot bytes durably BEFORE compaction
-        // so a restart restores the state machine instead of silently dropping
-        // everything at/below lastIncludedIndex. Cache it as latestSnapshot too,
+        // A follower installing a snapshot has the same restart-loss exposure as a leader taking
+        // one - it is about to compact away the WAL prefix. Persist the received snapshot bytes
+        // durably BEFORE compaction so a restart restores the state machine instead of silently
+        // dropping everything at/below lastIncludedIndex. Cache it as latestSnapshot too,
         // so this node can in turn serve it to a lagging peer.
         SnapshotState installed = new SnapshotState(
                 req.data(), req.lastIncludedIndex(), req.lastIncludedTerm(),
@@ -2446,15 +2344,13 @@ public final class RaftNode {
         // is fully compacted past all config entries.
         recomputeConfigFromLog(req.clusterConfigData());
 
-        // RR-004 / ADR-0033: the snapshot just folded indices up to
-        // lastIncludedIndex into compacted state. A pending commit-outcome
-        // callback at an index covered by the snapshot whose entry this node never
-        // applied (and therefore never recorded) has an unrecoverable per-index
-        // term — fire INDETERMINATE_LOCALLY for it. (On the proposing leader apply
-        // always precedes local compaction of an index, so this only arises after
-        // step-down; the predicate also covers a follower that took the snapshot
-        // before catching up.) Callbacks whose index WAS recorded as applied
-        // resolve as COMMITTED via fireCommitOutcomes.
+        // The snapshot just folded indices up to lastIncludedIndex into compacted state. A pending
+        // commit-outcome callback at a covered index whose entry this node never applied (and
+        // therefore never recorded) has an unrecoverable per-index term - fire
+        // INDETERMINATE_LOCALLY for it. On the proposing leader, apply always precedes local
+        // compaction of an index, so this only arises after step-down; the predicate also covers
+        // a follower that took the snapshot before catching up. Callbacks whose index WAS recorded
+        // as applied resolve as COMMITTED via fireCommitOutcomes.
         fireSnapshotIndeterminate(req.lastIncludedIndex());
         fireCommitOutcomes();
 
@@ -2468,11 +2364,10 @@ public final class RaftNode {
     }
 
     /**
-     * Receive-side SnapshotInstallSpec runtime twins (INV-SI-2 SnapshotMatching,
+     * Receive-side snapshot install invariant checks (INV-SI-2 SnapshotMatching,
      * INV-SI-3 NoCommitRevert). Extracted from {@link #handleInstallSnapshot} so the
-     * assertion-twin firing test can drive these checks directly with a poisoned
-     * incoming descriptor (RR-030 / §4.5). Package-private; the production caller is
-     * {@code handleInstallSnapshot}.
+     * invariant-firing test can drive these checks directly with a poisoned incoming
+     * descriptor. Package-private; the production caller is {@code handleInstallSnapshot}.
      *
      * @param inIdx  the incoming snapshot's lastIncludedIndex
      * @param inTerm the incoming snapshot's lastIncludedTerm
@@ -2482,7 +2377,7 @@ public final class RaftNode {
         long curSnapTerm = log.snapshotTerm();
 
         // INV-SI-3 (NoCommitRevert): a higher-index install must never carry a lower
-        // term than the snapshot it replaces — snapshots come from the committed log
+        // term than the snapshot it replaces - snapshots come from the committed log
         // whose terms are monotonic in index, so a higher index always carries a >=
         // term. A higher-index/lower-term install is a commit revert.
         invariantChecker.check("snapshot_no_commit_revert",
@@ -2493,7 +2388,7 @@ public final class RaftNode {
 
         // INV-SI-2 (SnapshotMatching): if the incoming snapshot's index coincides with
         // a term we already record locally (in-log entry or our own snapshot boundary),
-        // the terms must agree — the snapshot equivalent of Log Matching.
+        // the terms must agree - the snapshot equivalent of Log Matching.
         long localTermAtIn = log.termAt(inIdx);
         invariantChecker.check("snapshot_matching",
                 localTermAtIn < 0 || localTermAtIn == inTerm,
@@ -2501,16 +2396,16 @@ public final class RaftNode {
                         + " but this node records term " + localTermAtIn
                         + " at that index — snapshot/log term mismatch (INV-SI-2)");
 
-        // (INV-SI-1 SnapshotBoundedByCommitted is twinned on the local-snapshot path
-        // in triggerSnapshot, where `index <= commitIndex` is falsifiable; the
-        // receive-branch precondition req.lastIncludedIndex() > log.snapshotIndex()
-        // makes a forward-boundary check vacuous here by construction.)
+        // INV-SI-1 (SnapshotBoundedByCommitted) is checked on the local-snapshot path in
+        // triggerSnapshot, where `index <= commitIndex` is falsifiable; the receive-branch
+        // precondition req.lastIncludedIndex() > log.snapshotIndex() makes a forward-boundary
+        // check vacuous here by construction.
     }
 
     /**
-     * Send-side SnapshotInstallSpec runtime twin (INV-SI-4 InflightTermMonotonic).
-     * Extracted from {@link #sendInstallSnapshot} so the firing test can drive it
-     * with a corrupted outbound descriptor (RR-030 / §4.5). Package-private.
+     * Send-side snapshot invariant check (INV-SI-4 InflightTermMonotonic). Extracted
+     * from {@link #sendInstallSnapshot} so the invariant-firing test can drive it with
+     * a corrupted outbound descriptor. Package-private.
      *
      * @param sendIdx  the lastIncludedIndex about to be sent
      * @param sendTerm the lastIncludedTerm about to be sent
@@ -2555,16 +2450,13 @@ public final class RaftNode {
         if (resp.success() && latestSnapshot != null) {
             long snapIndex = latestSnapshot.lastIncludedIndex();
 
-            // ADR-0029 W2 leader-side use of resp.lastIncludedIndex():
-            // a follower may already be past our cached snapshot
-            // (e.g., it caught up via a more-recent snapshot from a
-            // different leader during a partition). Trust the
-            // follower's reported index, BUT clamp the upper bound
-            // so a malicious or buggy follower cannot fast-forward
-            // matchIndex beyond what the leader can attest to.
+            // A follower may already be past our cached snapshot (e.g., it caught up via a
+            // more-recent snapshot from a different leader during a partition). Trust the
+            // follower's reported index, but clamp the upper bound so a malicious or buggy
+            // follower cannot fast-forward matchIndex beyond what the leader can attest to.
             //
             // The upper bound is `max(commitIndex, snapshotIndex,
-            // lastIndex)` — using `commitIndex` alone would regress
+            // lastIndex)` - using `commitIndex` alone would regress
             // on a freshly-elected leader whose noop hasn't committed
             // yet but whose durable snapshotIndex is already large
             // (cold-start-from-snapshot scenario), pinning matchIndex
@@ -2583,9 +2475,7 @@ public final class RaftNode {
         }
     }
 
-    // ========================================================================
     // CheckQuorum
-    // ========================================================================
 
     /**
      * Builds the set of active peers (including self), resets activity tracking,
@@ -2622,14 +2512,12 @@ public final class RaftNode {
     private void confirmPendingReads(Set<NodeId> activeSet) {
         if (clusterConfig.isQuorum(activeSet)) {
             readIndexState.confirmAllLeadership();
-            // F-0022: signal any callers waiting on whenReadReady(...).
+            // Signal any callers waiting on whenReadReady(...).
             fireReadyCallbacks();
         }
     }
 
-    // ========================================================================
     // Leadership transfer helpers
-    // ========================================================================
 
     private void maybeSendTimeoutNow() {
         if (transferTarget == null) {
@@ -2642,23 +2530,20 @@ public final class RaftNode {
         }
     }
 
-    // ========================================================================
     // Election timeout randomization
-    // ========================================================================
 
     private void resetElectionTimeout() {
-        // RR-006: randomize within the tick-domain bounds derived from the
-        // millisecond budgets (electionTimeoutMin/MaxMs / tickPeriodMs). With the
-        // simulation's 1ms tick this is identical to the prior ms-as-ticks values
-        // (150..300); in production (10ms tick) it is 15..30 ticks == 150..300ms.
+        // Randomize within the tick-domain bounds derived from the millisecond budgets
+        // (electionTimeoutMin/MaxMs / tickPeriodMs). With the simulation's 1ms tick this is
+        // identical to ms-as-ticks values (150..300); in production (10ms tick) it is
+        // 15..30 ticks == 150..300ms.
         electionTimeoutTicks = electionTimeoutMinTicks
                 + random.nextInt(electionTimeoutMaxTicks - electionTimeoutMinTicks + 1);
     }
 
-    // ---- Test seam (RR-006) ----
-    // Package-private accessors that expose the *derived* tick counts so a unit
-    // test can pin the ms->tick conversion directly (production code never reads
-    // these; the timer logic above uses the cached fields).
+    // Test seam for tick-count accessors. Package-private accessors expose the derived tick
+    // counts so a unit test can pin the ms->tick conversion directly. Production code never
+    // reads these; the timer logic above uses the cached fields.
 
     /** The current randomized election-timeout target, in ticks. */
     int electionTimeoutTicksForTest() {
@@ -2671,10 +2556,10 @@ public final class RaftNode {
     }
 
     /**
-     * The current per-peer in-flight AppendEntries window count (RR-103). Test seam so a
-     * recovery test can prove the wedge precondition (window pinned at {@code
-     * maxInflightAppends}) before exercising the heartbeat decay. Production code never
-     * reads this; it is leader-only volatile state.
+     * The current per-peer in-flight AppendEntries window count. Test seam so a recovery
+     * test can prove the wedge precondition (window pinned at {@code maxInflightAppends})
+     * before exercising the heartbeat decay. Production code never reads this; it is
+     * leader-only volatile state.
      */
     int inflightCountForTest(NodeId peer) {
         return inflightCount == null ? 0 : inflightCount.getOrDefault(peer, 0);

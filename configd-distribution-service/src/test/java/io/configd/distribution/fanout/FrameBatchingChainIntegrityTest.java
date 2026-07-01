@@ -26,15 +26,14 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.fail;
 
 /**
- * CT-17 (charter §4 C1 coalescing/gap rule; ADR-0038 frame-level batching). The
- * <b>exact invariant</b> this property proves, for arbitrary publish/ack/tick
- * interleavings:
+ * Frame-level batching chain integrity. The <b>exact invariant</b> this property proves,
+ * for arbitrary publish/ack/tick interleavings:
  *
  * <blockquote>
  * The concatenation of all NOTIFY batches a {@link FanOutSessionCore} emits is a
  * strictly-ascending, contiguous subsequence of the published applied-mutation seq chain
- * — NO duplicate, NO merge (every emitted notification is a verbatim published one), NO
- * skip — <b>except across an explicit DEMOTED+SNAPSHOT boundary</b>. At such a boundary
+ * - NO duplicate, NO merge (every emitted notification is a verbatim published one), NO
+ * skip - <b>except across an explicit DEMOTED+SNAPSHOT boundary</b>. At such a boundary
  * the stream jumps to the snapshot seq S (announced by SNAPSHOT_BEGIN/END), and the
  * NOTIFY batches that follow are again strictly-ascending and contiguous starting from
  * the first published seq &gt; S.
@@ -43,7 +42,7 @@ import static org.junit.jupiter.api.Assertions.fail;
  * "Contiguous over the published chain" means: consecutive emitted seqs are consecutive
  * <em>in the published sequence</em> (the publish stream itself can have natural seq gaps
  * from no-op/RCFG entries, so contiguity is over the published list's index order, not raw
- * seq arithmetic — every published notification between two emitted ones must also be
+ * seq arithmetic - every published notification between two emitted ones must also be
  * emitted).
  */
 class FrameBatchingChainIntegrityTest {
@@ -62,7 +61,7 @@ class FrameBatchingChainIntegrityTest {
             @ForAll @LongRange(min = 1, max = 100) long ackStride) {
 
         FanOutBuffer buffer = new FanOutBuffer(bufferCap);
-        // The replay source returns the store at its current version — we model "current
+        // The replay source returns the store at its current version - we model "current
         // version" as the highest published seq so far via a holder.
         long[] publishedHigh = {0L};
         ReplaySource replay = () -> {
@@ -172,12 +171,12 @@ class FrameBatchingChainIntegrityTest {
                         prevPublishedIdx = idx;
                     }
                 }
-                default -> { /* SubscribeOk / Heartbeat / ErrorClose / chunks — not chain links */ }
+                default -> { /* SubscribeOk / Heartbeat / ErrorClose / chunks - not chain links */ }
             }
         }
     }
 
-    /** The publish-order index of the highest published seq ≤ {@code seq}, or -1. */
+    /** The publish-order index of the highest published seq &lt;= {@code seq}, or -1. */
     private static int lastPublishedIdxAtOrBelow(List<Long> published, long seq) {
         int best = -1;
         for (int i = 0; i < published.size(); i++) {

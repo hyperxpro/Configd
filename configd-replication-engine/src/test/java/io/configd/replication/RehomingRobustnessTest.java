@@ -28,28 +28,27 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * Phase 0 — Workstream B — Stage 2 — M2b S1: ROBUSTNESS regressions for the two defects the adversarial
- * red-team found in the first S1 cut (commit {@code 3a44cf0}) and which the four-way fixes commit closed.
- * Each test ENCODES the contract that was broken; it goes RED on the pre-fix code and GREEN on the fix.
+ * Robustness regression tests for two defects discovered and fixed in the group-rehoming handoff.
+ * Each test encodes the contract that was broken; it goes RED on the pre-fix code and GREEN on
+ * the fix.
  *
  * <ul>
- *   <li><b>Finding 1 (P1) — {@link #interruptDuringHandoff_completesAtomically_reassertsInterrupt_notWedged()}:</b>
- *       a {@code Future.get()} interrupt does NOT cancel an already-submitted owner task, so the pre-fix
- *       interruptible barrier abandoned the wait while the queued publish/detach task ran later — wedging
- *       the group on the HANDOFF sentinel with both owners alive. Fix: the barriers are UNINTERRUPTIBLE
- *       (complete atomically, re-assert the interrupt afterward).</li>
- *   <li><b>Finding 2 (P2) — {@link #flushDispatch_onWedgedGroup_doesNotLivelock()}:</b> a dispatched flush
- *       on a group wedged on HANDOFF re-dispatched FOREVER (no real owner ever runs it). Fix:
- *       {@code runFlushOnCurrentOwner} only bounces a TRANSIENT mismatch (migrating, or a different REAL
- *       owner); a wedged ({@code isDetached}, not migrating) node falls through so flushDurable's guard
- *       FIRES once (loud) instead of spinning silently.</li>
- *   <li><b>{@link #quiesceThrowsMidRehome_leavesGroupCleanOnLosingOwner()}</b> — a confirmation (GREEN on
- *       both pre- and post-fix): quiesce runs BEFORE publish+detach, so an fsync failure there leaves the
- *       group clean on the losing owner (no override published, not detached).</li>
+ *   <li><b>Finding 1 - {@link #interruptDuringHandoff_completesAtomically_reassertsInterrupt_notWedged()}:</b>
+ *       a {@code Future.get()} interrupt does NOT cancel an already-submitted owner task, so the
+ *       original interruptible barrier abandoned the wait while the queued publish/detach task ran
+ *       later - wedging the group on the HANDOFF sentinel with both owners alive. Fix: the barriers
+ *       are uninterruptible (complete atomically, re-assert the interrupt afterward).</li>
+ *   <li><b>Finding 2 - {@link #flushDispatch_onWedgedGroup_doesNotLivelock()}:</b> a dispatched
+ *       flush on a group wedged on HANDOFF re-dispatched forever (no real owner ever runs it). Fix:
+ *       {@code runFlushOnCurrentOwner} only bounces a TRANSIENT mismatch (migrating, or a different
+ *       real owner); a wedged ({@code isDetached}, not migrating) node falls through so
+ *       flushDurable's guard fires once (loud) instead of spinning silently.</li>
+ *   <li><b>{@link #quiesceThrowsMidRehome_leavesGroupCleanOnLosingOwner()}</b> - a confirmation
+ *       (GREEN on both pre- and post-fix): quiesce runs BEFORE publish+detach, so an fsync failure
+ *       there leaves the group clean on the losing owner (no override published, not detached).</li>
  * </ul>
  *
- * <p>Credit: the attack harness here is the red-team's, adapted to assert the fixed contract. The
- * mechanism is dormant in production; this is N&gt;1 test-only surface. See docs/phase0-B-stage2-m2b/.
+ * <p>The mechanism is dormant in production; this is N&gt;1 test-only surface.
  */
 class RehomingRobustnessTest {
 
@@ -101,14 +100,12 @@ class RehomingRobustnessTest {
 
     @FunctionalInterface private interface RunnableEx { void run() throws Exception; }
 
-    // =============================================================================================
-    // FINDING 1 — interrupt during a handoff barrier must NOT wedge the group. The fix makes the
-    // barriers uninterruptible: the handoff completes ATOMICALLY to the gaining owner (or rolls back),
-    // and the interrupt is re-asserted to the coordinator afterward (never lost). We run the rehome on a
+    // Interrupt during a handoff barrier must NOT wedge the group. The fix makes the barriers
+    // uninterruptible: the handoff completes ATOMICALLY to the gaining owner (or rolls back), and the
+    // interrupt is re-asserted to the coordinator afterward (never lost). We run the rehome on a
     // dedicated coordinator thread (the test thread must stay free to release the owner0 blocker; the
     // pre-fix interruptible version would instead throw + leave the group wedged, and a same-thread
     // harness would deadlock under the fix).
-    // =============================================================================================
     @Test
     @Timeout(30)
     void interruptDuringHandoff_completesAtomically_reassertsInterrupt_notWedged() throws Exception {
@@ -155,11 +152,11 @@ class RehomingRobustnessTest {
         assertEquals(1, driver.currentOwnerIndex(0), "rehome completed to owner1 despite the interrupt");
 
         // NOT wedged: the node is owned by exactly owner1 (both owners observing boundToAnotherThread would
-        // mean it is on the HANDOFF sentinel — owned by nobody).
+        // mean it is on the HANDOFF sentinel - owned by nobody).
         boolean wedged = pool.ownerByIndex(0).submit(g::boundToAnotherThread).get(5, TimeUnit.SECONDS)
                 && pool.ownerByIndex(1).submit(g::boundToAnotherThread).get(5, TimeUnit.SECONDS);
         assertFalse(wedged, "group must not be wedged on HANDOFF (owned by nobody) after the interrupt");
-        onOwner(pool, 1, () -> driver.tickOwner(1)); // tick on the new owner — must not fire
+        onOwner(pool, 1, () -> driver.tickOwner(1)); // tick on the new owner - must not fire
         assertEquals(0, checker.ownerFires.get(),
                 "the completed handoff must leave the group serviceable on owner1 — zero fires: "
                         + checker.firstViolation.get());
@@ -168,13 +165,11 @@ class RehomingRobustnessTest {
         pool.awaitTermination(10, TimeUnit.SECONDS);
     }
 
-    // =============================================================================================
-    // FINDING 2 — a dispatched flush on a HANDOFF-wedged group must NOT livelock. Pre-fix,
+    // A dispatched flush on a HANDOFF-wedged group must NOT livelock. Pre-fix,
     // runFlushOnCurrentOwner re-dispatched forever (groupOwner override + boundToAnotherThread, never
     // migrating, no real owner). The fix runs the flush on a wedged node (its guard fires loud, single
     // shot) instead of spinning. We construct the wedge deterministically and prove the flush body runs
-    // (lands) exactly once rather than being bounced indefinitely.
-    // =============================================================================================
+    // exactly once rather than being bounced indefinitely.
     @Test
     @Timeout(30)
     void flushDispatch_onWedgedGroup_doesNotLivelock() throws Exception {
@@ -187,13 +182,13 @@ class RehomingRobustnessTest {
 
         // Deterministic wedge: complete a real rehome 0->1, then detach on owner1 (ownerThread=HANDOFF)
         // WITHOUT adopting. Now groupOwner.containsKey(0)==true, node.boundToAnotherThread()==true (HANDOFF),
-        // migrating empty, node.isDetached()==true — an abandoned-handoff terminal state.
+        // migrating empty, node.isDetached()==true - an abandoned-handoff terminal state.
         driver.rehomeGroup(0, 1);
         assertEquals(1, driver.currentOwnerIndex(0), "rehomed to owner1");
         onOwner(pool, 1, g::beginHandoff); // detach: ownerThread -> HANDOFF, never adopt
 
         // Drive the REAL production path. The flush body (a counter, not flushDurable, so no fire here)
-        // must LAND once — the dispatch must terminate, not re-dispatch forever.
+        // must LAND once - the dispatch must terminate, not re-dispatch forever.
         AtomicInteger flushBodyRuns = new AtomicInteger();
         driver.dispatchFlush(0, flushBodyRuns::incrementAndGet, 0);
 
@@ -216,12 +211,9 @@ class RehomingRobustnessTest {
         pool.awaitTermination(10, TimeUnit.SECONDS);
     }
 
-    // =============================================================================================
-    // FINDING 2 (symmetric — replay SHOULD-FIX) — routeMessage on a HANDOFF-wedged group must NOT
-    // livelock either. Same bounce pathology as the flush path; the fix gates the bounce on !isDetached
-    // so a wedged-group inbound message falls through to handleMessage and the net FIRES once (loud),
-    // rather than re-dispatching forever (CPU burn + the message never delivered).
-    // =============================================================================================
+    // routeMessage on a HANDOFF-wedged group must NOT livelock either. Same bounce pathology as the
+    // flush path; the fix gates the bounce on !isDetached so a wedged-group inbound message falls
+    // through to handleMessage and the net FIRES once (loud), rather than re-dispatching forever.
     @Test
     @Timeout(30)
     void routeMessage_onWedgedGroup_firesOnceDoesNotLivelock() throws Exception {
@@ -237,7 +229,7 @@ class RehomingRobustnessTest {
         onOwner(pool, 1, g::beginHandoff);
 
         // An inbound message routed on the wedged group's current owner (owner1) must FIRE the net once
-        // (handleMessage off the HANDOFF sentinel) — not spin re-dispatching forever.
+        // (handleMessage off the HANDOFF sentinel) - not spin re-dispatching forever.
         var ee = assertThrows(java.util.concurrent.ExecutionException.class,
                 () -> pool.ownerByIndex(1).submit(
                                 () -> driver.routeMessage(0, new RequestVoteRequest(0L, PHANTOM, 0L, 0L, true)))
@@ -258,10 +250,8 @@ class RehomingRobustnessTest {
         pool.awaitTermination(10, TimeUnit.SECONDS);
     }
 
-    // =============================================================================================
-    // CONFIRMATION (GREEN pre- and post-fix) — if QUIESCE throws (fsync error) the group is left CLEAN:
-    // quiesce runs BEFORE publish+detach, so a throw leaves groupOwner unwritten and ownerThread on owner0.
-    // =============================================================================================
+    // If QUIESCE throws (fsync error) the group is left CLEAN: quiesce runs BEFORE publish+detach,
+    // so a throw leaves groupOwner unwritten and ownerThread on owner0.
     @Test
     @Timeout(30)
     void quiesceThrowsMidRehome_leavesGroupCleanOnLosingOwner() throws Exception {
@@ -286,7 +276,7 @@ class RehomingRobustnessTest {
         onOwner(pool, 0, () -> driver.propose(0, "x".getBytes()));
         syncFault.set(new RuntimeException("induced fsync failure"));
 
-        // Rehome 0->1: quiesce throws on owner0 BEFORE publish+detach → surfaced as IllegalStateException.
+        // Rehome 0->1: quiesce throws on owner0 BEFORE publish+detach - surfaced as IllegalStateException.
         assertThrows(IllegalStateException.class, () -> driver.rehomeGroup(0, 1),
                 "rehome must surface the quiesce failure");
 

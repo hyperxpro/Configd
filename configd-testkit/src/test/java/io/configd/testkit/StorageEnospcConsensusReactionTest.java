@@ -20,17 +20,17 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * Session 4 / Workstream B-rest — ENOSPC during WAL append, at the CONSENSUS layer (the B1
+ * ENOSPC during WAL append, at the CONSENSUS layer (the
  * self-test pins only the storage-level throw; this pins how {@link RaftNode}/{@link RaftLog}
- * REACT). Oracle (`storage-fault-layer-design.md §2` / arch §11): a disk-full append must be
+ * REACT). Oracle (`storage-fault-layer-design.md section 2` / arch section 11): a disk-full append must be
  * SURFACED (not swallowed into a mute zombie), must NOT silently advance the log (no partial /
- * no lost-but-acked write), and the node must recover cleanly once space returns — defined
+ * no lost-but-acked write), and the node must recover cleanly once space returns - defined
  * degradation, never a crash-loop or silent loss.
  *
  * <p>The load-bearing invariant is {@link RaftLog#append}'s durable-FIRST ordering
  * ({@code storage.appendToLog(...)} BEFORE {@code entries.add(...)}): an ENOSPC throw leaves the
- * in-memory log == the durable log (neither has the failed entry). Mutation (EXP-008): swap that
- * order → after ENOSPC the in-memory log advances past durable → this test's no-silent-advance
+ * in-memory log == the durable log (neither has the failed entry). Mutation: swap that
+ * order -> after ENOSPC the in-memory log advances past durable -> this test's no-silent-advance
  * assertion fails.
  */
 class StorageEnospcConsensusReactionTest {
@@ -64,21 +64,21 @@ class StorageEnospcConsensusReactionTest {
         // Disk full: any further append now exceeds the cumulative-byte limit and throws ENOSPC.
         storage.enospcAfterBytes(storage.bytesAppended());
 
-        // (1) SURFACED — the disk-full append propagates, never swallowed into a mute zombie.
+        // (1) SURFACED - the disk-full append propagates, never swallowed into a mute zombie.
         UncheckedIOException ex = assertThrows(UncheckedIOException.class,
                 () -> node.propose("over-the-limit".getBytes()),
                 "ENOSPC on the WAL append must surface, not be silently swallowed");
         String msg = ex.getMessage() + (ex.getCause() == null ? "" : " / " + ex.getCause().getMessage());
         assertTrue(msg.contains("ENOSPC"), "the surfaced error must name ENOSPC: " + msg);
 
-        // (2) NO SILENT ADVANCE — the failed entry never entered the log (durable-first append),
+        // (2) NO SILENT ADVANCE - the failed entry never entered the log (durable-first append),
         // so a later commit/replication can never pick up an entry that was never durable.
         assertEquals(lastIndexBefore, log.lastIndex(),
                 "an ENOSPC append must NOT advance the log (durable-first: storage before in-memory)");
         assertEquals(committedBefore, log.commitIndex(),
                 "the failed entry must not be committed (no lost-but-acked write)");
 
-        // (3) DEFINED DEGRADATION, NOT A WEDGE — once space returns the node appends again.
+        // (3) DEFINED DEGRADATION, NOT A WEDGE - once space returns the node appends again.
         storage.enospcAfterBytes(-1); // disarm (space reclaimed)
         assertEquals(ProposalResult.ACCEPTED, node.propose("after-recovery".getBytes()).result(),
                 "the node must recover and accept writes after ENOSPC clears");
@@ -87,10 +87,10 @@ class StorageEnospcConsensusReactionTest {
 
     /**
      * ENOSPC during the SNAPSHOT write (distinct from the WAL-append cell above). Oracle
-     * (design §2 / RR-003): `triggerSnapshot` persists the blob BEFORE compaction truncates the
+     * (design section 2): `triggerSnapshot` persists the blob BEFORE compaction truncates the
      * WAL prefix, so a disk-full on the blob `put` must abort the snapshot with the **WAL prefix
-     * intact** — no truncation, no snapshot-index advance, NO loss, no `durable_prefix_no_gap` on
-     * a later restart. (The persist-before-truncate ORDERING this relies on is the RR-003 invariant,
+     * intact** - no truncation, no snapshot-index advance, NO loss, no `durable_prefix_no_gap` on
+     * a later restart. (The persist-before-truncate ordering this relies on is a durable-log invariant,
      * mutation-covered by SnapshotCrashRecoveryTest's persist-after-compact revert; here the trigger
      * is an ENOSPC throw rather than a crash.)
      */
@@ -114,7 +114,7 @@ class StorageEnospcConsensusReactionTest {
         assertEquals(0L, snapBefore, "no snapshot yet");
 
         // Disk full exactly when the snapshot blob is written: the NEXT write (persistSnapshot's
-        // put of the blob) throws — BEFORE compaction truncates the WAL prefix.
+        // put of the blob) throws - BEFORE compaction truncates the WAL prefix.
         storage.failNextWrites(1);
         assertThrows(UncheckedIOException.class, node::triggerSnapshot,
                 "a failed snapshot-blob write must surface, not be swallowed");

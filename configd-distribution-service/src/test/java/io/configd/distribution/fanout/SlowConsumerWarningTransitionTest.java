@@ -8,12 +8,11 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * CT-27 — architecture §7 ":288 0 credits for &gt; 10 s → Warning log + metric", re-based
- * on the C1 signals (C4 design §1/§2): the queue at/above the C1 warn threshold sustained
- * for {@code edge.fanout.policy.queueWarnWindowMs} promotes HEALTHY→SLOW with the
+ * Queue-warn sustained-window transition: the queue at or above the warn threshold held for
+ * {@code edge.fanout.policy.queueWarnWindowMs} promotes HEALTHY to SLOW with the
  * {@code edge_fanout_slow_transitions_total} metric and the structured transition event;
  * ack progress (the queue draining below warn) returns the consumer to HEALTHY.
- * Clock-driven (explicit nowMillis — no sleeps; evidence discipline, handoff §6).
+ * Clock-driven (explicit nowMillis - no sleeps).
  */
 class SlowConsumerWarningTransitionTest {
 
@@ -21,7 +20,7 @@ class SlowConsumerWarningTransitionTest {
     private static final long T0 = 1_700_000_000_000L;
 
     private static SlowConsumerPolicyConfig config() {
-        // queueWarnWindowMs = 10_000 (the §7 ">10 s" analogue), everything else defaults.
+        // queueWarnWindowMs = 10_000 (">10 s" sustained window), everything else defaults.
         return SlowConsumerPolicyConfig.defaults();
     }
 
@@ -65,7 +64,7 @@ class SlowConsumerWarningTransitionTest {
         governor.evaluate(EDGE, T0 + 10_000);
         assertEquals(ConsumerState.SLOW, governor.state(EDGE));
 
-        // The queue drains below warn — the §2 "ack progress resumes" exit.
+        // The queue drains below warn - the "ack progress resumes" exit.
         governor.onQueuePressure(EDGE, false, 50L, 50L, T0 + 12_000);
         assertEquals(ConsumerState.HEALTHY, governor.state(EDGE));
         SlowConsumerGovernor.TransitionEvent event = probe.lastTransition();
@@ -82,7 +81,7 @@ class SlowConsumerWarningTransitionTest {
         SlowConsumerGovernor governor =
                 new SlowConsumerGovernor(config(), probe, probe::onTransition);
 
-        // Above for 9 s, then below — the window re-arms from scratch on the next excursion.
+        // Above for 9 s, then below - the window re-arms from scratch on the next excursion.
         governor.onQueuePressure(EDGE, true, 10L, 5L, T0);
         governor.onQueuePressure(EDGE, false, 12L, 12L, T0 + 9_000);
         governor.onQueuePressure(EDGE, true, 20L, 15L, T0 + 9_500);
@@ -141,7 +140,7 @@ class SlowConsumerWarningTransitionTest {
         governor.onQueuePressure(EDGE, true, 1L, 0L, T0);
         assertEquals(1, probe.lastHealthy,
                 "the consumer_state gauge must count a newly tracked identity");
-        // Under the bound, identities coexist — eviction must not run below it.
+        // Under the bound, identities coexist - eviction must not run below it.
         governor.onQueuePressure("CN=edge-other,O=configd", true, 1L, 0L, T0 + 1);
         assertEquals(2, governor.trackedIdentities(),
                 "no eviction below maxTrackedIdentities");

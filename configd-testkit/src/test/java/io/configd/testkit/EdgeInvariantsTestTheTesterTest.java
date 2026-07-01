@@ -14,21 +14,21 @@ import java.util.concurrent.atomic.AtomicLong;
 import static org.junit.jupiter.api.Assertions.*;
 
 /**
- * RR-012 test-the-tester for {@link EdgeInvariants}: each edge invariant is observed
+ * Test-the-tester for {@link EdgeInvariants}: each edge invariant is observed
  * <b>FIRING</b> on a deliberately-constructed violation, so the checker is proven
- * non-vacuous (an assertion never seen to fire is unverified — contract §4.5).
+ * non-vacuous (an assertion never seen to fire is unverified - contract section 4.5).
  * <p>
  * The four firings (one per invariant clause) and their capture is the deliverable:
  * <ol>
- *   <li>(a) a snapshot that decreases store version → version-monotonicity throws;</li>
+ *   <li>(a) a snapshot that decreases store version -> version-monotonicity throws;</li>
  *   <li>(b) a snapshot that decreases a key's version (while overall version rises)
- *       → no-stale-overwrite throws; PLUS the production guard path — a stale
+ *       -> no-stale-overwrite throws; PLUS the production guard path - a stale
  *       {@link EdgeStream.Notify} is refused by {@link io.configd.edge.DeltaApplier}
  *       ({@code STALE_DELTA}) and never overwrites, so production correctness itself
  *       protects the invariant;</li>
- *   <li>(c) a divergent edge end-state → {@link EdgeInvariants#finalCheck} throws
+ *   <li>(c) a divergent edge end-state -> {@link EdgeInvariants#finalCheck} throws
  *       with a precise diff;</li>
- *   <li>(d) a publication observed past the bound → a recorded liveness violation
+ *   <li>(d) a publication observed past the bound -> a recorded liveness violation
  *       with the correct lateness (NOT thrown).</li>
  * </ol>
  * The captured firing messages are printed for the evidence record.
@@ -67,7 +67,7 @@ class EdgeInvariantsTestTheTesterTest {
         inv.checkAll(List.of(edge), now.get(), e -> true); // records baseline version 10
 
         // Force a regression to version 5 within the SAME incarnation, BYPASSING the
-        // production backward-snapshot guard (which now correctly refuses it — see the
+        // production backward-snapshot guard (which now correctly refuses it - see the
         // separate guard test below). This models a hypothetical bug so the checker's
         // non-vacuity is still provable.
         edge.forceLoadSnapshotUnsafeForTest(snapshotWith(5, "k", "v5", 5), 5);
@@ -84,7 +84,7 @@ class EdgeInvariantsTestTheTesterTest {
     /**
      * The complementary half of (a): the production {@link EdgeActor#applySnapshot} now
      * REFUSES a backward snapshot (one whose seq is below the edge's current cursor), so the
-     * edge never regresses through the real apply path — production correctness protects the
+     * edge never regresses through the real apply path - production correctness protects the
      * monotonicity invariant. (Found while building the C1 driver: a demotion snapshot taken
      * from a transiently-behind subscribed node would otherwise regress the edge.)
      */
@@ -105,7 +105,7 @@ class EdgeInvariantsTestTheTesterTest {
         edge.deliver(new EdgeStream.Snapshot(snapshotWith(5, "k", "v5", 5), 5));
         edge.tick();
         assertEquals(10, edge.currentVersion(), "backward snapshot must be refused (no regression)");
-        // The checker passes (no decrease occurred) — production guard protected it.
+        // The checker passes (no decrease occurred) - production guard protected it.
         inv.checkAll(List.of(edge), now.get(), e -> true);
     }
 
@@ -123,10 +123,10 @@ class EdgeInvariantsTestTheTesterTest {
         inv.checkAll(List.of(edge), now.get(), e -> true);
 
         // Store version RISES to 11 (so invariant (a) passes) but key 'k' regresses to
-        // version 5 — a per-key stale overwrite, which invariant (b) must catch. We inject
+        // version 5 - a per-key stale overwrite, which invariant (b) must catch. We inject
         // this via the UNSAFE force-load hook (BYPASSING the codec): the production snapshot
         // path serializes through EdgeSnapshotCodec, which RESTAMPS every key to the snapshot
-        // seq (ADR-0028) — so a per-key regression cannot survive the real path and a bug must
+        // seq (per the apply-sequence invariant) - so a per-key regression cannot survive the real path and a bug must
         // be injected directly to prove the checker's non-vacuity. (Same discipline as (a).)
         edge.forceLoadSnapshotUnsafeForTest(snapshotWith(11, "k", "v5", 5), 11);
 
@@ -152,7 +152,7 @@ class EdgeInvariantsTestTheTesterTest {
         assertEquals(3, edge.currentVersion());
 
         // A read with a cursor at version 9 (ahead of the store's 3) must trip
-        // INV-M1 (monotonic_read) — test mode → AssertionError, which fails the seed.
+        // Monotonic-read guarantee (monotonic_read) - test mode -> AssertionError, which fails the seed.
         VersionCursor aheadCursor = new VersionCursor(9, now.get());
         AssertionError ex = assertThrows(AssertionError.class,
                 () -> edge.get("k", aheadCursor),
@@ -172,7 +172,7 @@ class EdgeInvariantsTestTheTesterTest {
     void productionDeltaApplierGuardRefusesStaleDeltaSoTheStoreNeverRegresses() {
         // The complementary half of (b): when the violation is offered through the
         // REAL apply path (a Notify with a stale delta), DeltaApplier's own
-        // STALE_DELTA guard refuses it — production correctness protects the
+        // STALE_DELTA guard refuses it - production correctness protects the
         // invariant, so the checker has nothing to catch. We assert the refusal.
         EdgeActivity activity = new EdgeActivity();
         EdgeInvariants inv = new EdgeInvariants(SEED, activity);
@@ -190,7 +190,7 @@ class EdgeInvariantsTestTheTesterTest {
         edge.tick();
         assertEquals(1, edge.currentVersion(), "stale delta must NOT change version");
         assertEquals("v1", value(edge, "k"), "stale delta must NOT overwrite the value");
-        // The checker sees no regression and does not fire — exactly because the
+        // The checker sees no regression and does not fire - exactly because the
         // production guard already protected the invariant.
         assertDoesNotThrow(() -> inv.checkAll(List.of(edge), now.get(), e -> true));
     }

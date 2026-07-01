@@ -9,15 +9,13 @@ import org.junit.jupiter.api.Test;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
 /**
- * CT-30 — architecture §7 ":291 3 quarantines in 1 hour → Marked as unhealthy, removed
- * from distribution tree" (C4 design §2): the {@code quarantineLimit}-th quarantine
- * within {@code unhealthyWindowMs} escalates to UNHEALTHY (alert-grade
+ * Verifies the repeat-quarantine escalation policy: the {@code quarantineLimit}-th
+ * quarantine within {@code unhealthyWindowMs} escalates to UNHEALTHY (alert-grade
  * {@code edge_fanout_unhealthy_total}); SUBSCRIBEs are refused for
  * {@code unhealthyCooldownMs}, after which the identity is AUTOMATICALLY readmitted with
- * the snapshot-first re-bootstrap forced — the cooldown alone is a sufficient exit
- * (screen condition C4-3: UNHEALTHY is never a permanent lockout; operator reset is
- * additional). Clock-driven (explicit nowMillis), no sleeps — the evidence discipline
- * the CT-30 row demands.
+ * the snapshot-first re-bootstrap forced - the cooldown alone is a sufficient exit
+ * (UNHEALTHY is never a permanent lockout; operator reset is additional). Clock-driven
+ * (explicit nowMillis), no sleeps.
  */
 class RepeatQuarantineUnhealthyTest {
 
@@ -84,7 +82,7 @@ class RepeatQuarantineUnhealthyTest {
         governor.admit(EDGE, q2 + 60_000);
 
         // The 3rd quarantine lands > 1 h after the 1st: the sliding window holds only
-        // two — QUARANTINED again, not UNHEALTHY.
+        // two - QUARANTINED again, not UNHEALTHY.
         quarantineCycle(governor, q1 + HOUR + 60_000L);
         assertEquals(ConsumerState.QUARANTINED, governor.state(EDGE),
                 "the unhealthy window is sliding — a stale quarantine must not count");
@@ -104,7 +102,7 @@ class RepeatQuarantineUnhealthyTest {
         long q3 = quarantineCycle(governor, q2 + 120_000);
         assertEquals(ConsumerState.UNHEALTHY, governor.state(EDGE), "fixture");
 
-        // Refused throughout the 1 h unhealthy cooldown — and OBSERVABLY so (C4-3).
+        // Refused throughout the 1 h unhealthy cooldown - and the refusal is observable.
         Admission during = governor.admit(EDGE, q3 + 30 * 60_000L);
         assertEquals(AdmissionDecision.REFUSE, during.decision());
         assertEquals(ConsumerState.UNHEALTHY, during.state());
@@ -112,8 +110,8 @@ class RepeatQuarantineUnhealthyTest {
         assertEquals(AdmissionDecision.REFUSE, governor.admit(EDGE, q3 + HOUR - 1).decision());
         assertEquals(2, probe.reconnectsRefused);
 
-        // The cooldown ALONE readmits — no operator action required (the C4-3
-        // anti-permanent-lockout condition): forced snapshot-first re-bootstrap.
+        // The cooldown ALONE readmits - no operator action required (no permanent lockout):
+        // forced snapshot-first re-bootstrap.
         Admission readmitted = governor.admit(EDGE, q3 + HOUR);
         assertEquals(AdmissionDecision.ALLOW_FORCE_SNAPSHOT, readmitted.decision());
         assertEquals(3, probe.readmissions,
@@ -154,7 +152,7 @@ class RepeatQuarantineUnhealthyTest {
     @Test
     void trackedIdentityMapIsBoundedAndNeverEvictsADistressedIdentity() {
         // Hard rule 4: the per-identity map is bounded; only HEALTHY identities are
-        // evicted (forgetting a quarantine would be a policy escape) — and a distressed
+        // evicted (forgetting a quarantine would be a policy escape) - and a distressed
         // record at the access-order head must not dam up eviction of healthy ones.
         RecordingPolicyProbe probe = new RecordingPolicyProbe();
         SlowConsumerPolicyConfig tiny = new SlowConsumerPolicyConfig(

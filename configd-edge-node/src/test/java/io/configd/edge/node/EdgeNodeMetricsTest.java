@@ -21,8 +21,8 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * {@link EdgeNodeMetrics} matrix: RR-013 eager registration, the core delta-pump, the
- * CT-04 STALE-transition counter, and the CT-06 DISCONNECTED re-bootstrap trigger seam.
+ * {@link EdgeNodeMetrics} matrix: eager registration, the core delta-pump, the STALE-transition
+ * counter, and the DISCONNECTED re-bootstrap trigger seam.
  */
 class EdgeNodeMetricsTest {
 
@@ -58,8 +58,8 @@ class EdgeNodeMetricsTest {
 
     @Test
     void everySeriesIsRegisteredEagerly() {
-        // RR-013: a fresh registry snapshot already contains every series this class can
-        // ever write — no metric blinks into existence after its first event.
+        // A fresh registry snapshot must already contain every series this class can ever
+        // write — no metric blinks into existence after its first event.
         var names = registry.snapshot().metrics().keySet();
         for (String name : List.of(
                 "edge.applied", "edge.gaps", "edge.snapshots_applied", "edge.verify_rejections",
@@ -107,7 +107,7 @@ class EdgeNodeMetricsTest {
         }
         core.onFrame(new EdgeFrame.SnapshotEnd(5));
 
-        // A SIGNED delta on a verifier-less core → rejected fail-closed (F-0052).
+        // A SIGNED delta on a verifier-less core -> rejected fail-closed.
         ConfigDelta signed = new ConfigDelta(5, 6,
                 List.of(new ConfigMutation.Put("b", "2".getBytes(StandardCharsets.UTF_8))),
                 new byte[64]);
@@ -194,7 +194,7 @@ class EdgeNodeMetricsTest {
     @Test
     void bootStateDoesNotCountAsTransition() {
         // bind() seeded the baseline with the boot state (DISCONNECTED — no frontier yet):
-        // process start is the bootstrap (C5), not a staleness violation or a re-bootstrap.
+        // process start is the initial bootstrap, not a staleness violation or a re-bootstrap.
         AtomicInteger hookRuns = new AtomicInteger();
         metrics.syncFromCore(core, hookRuns::incrementAndGet);
         assertEquals(0, metrics.stalenessViolationsCount());

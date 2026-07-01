@@ -1,7 +1,7 @@
 package io.configd.distribution;
 
 /**
- * Functional metrics hook for {@link FanOutBuffer} (ADR-0034 §overflow policy).
+ * Functional metrics hook for {@link FanOutBuffer} (overflow policy).
  *
  * <p>Mirrors the established {@code StateMachineMetrics} pattern: a tiny SAM-style
  * interface with a {@link #NOOP} sentinel, so {@code configd-distribution-service}
@@ -9,7 +9,7 @@ package io.configd.distribution;
  * {@code fanout_buffer_dropped_total} counter; tests and bootstraps use NOOP.
  *
  * <p>All callbacks run on the single appender (apply) thread and must be
- * allocation-free — eviction is on the steady-state append path.
+ * allocation-free - eviction is on the steady-state append path.
  */
 public interface FanOutMetrics {
 

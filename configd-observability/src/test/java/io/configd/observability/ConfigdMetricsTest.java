@@ -7,14 +7,10 @@ import java.util.concurrent.atomic.AtomicLong;
 import static org.junit.jupiter.api.Assertions.*;
 
 /**
- * F5 (Tier-1-METRIC-DRIFT) — verifies that every metric referenced by
- * {@code ops/alerts/configd-slo-alerts.yaml} is registered with the
- * correct type after {@link ConfigdMetrics} construction, and that the
- * Prometheus exposition emits the {@code _bucket{le="X"}} labels that
- * the alert expressions query.
- *
- * <p>Per the F5 prompt: tests use the real {@link MetricsRegistry}
- * instance (no mocks) per the codebase's testing convention.
+ * Verifies that every metric referenced by {@code ops/alerts/configd-slo-alerts.yaml} is
+ * registered with the correct type after {@link ConfigdMetrics} construction, and that the
+ * Prometheus exposition emits the {@code _bucket{le="X"}} labels that the alert expressions
+ * query. Uses the real {@link MetricsRegistry} instance (no mocks).
  */
 class ConfigdMetricsTest {
 
@@ -114,14 +110,14 @@ class ConfigdMetricsTest {
                 "missing raft_pending_apply_entries gauge\n" + text);
 
         // Histogram count and bucket counts must reflect the recorded sample:
-        //   100 ms < 150 ms → le="0.150" bucket count = 1
+        //   100 ms < 150 ms -> le="0.150" bucket count = 1
         assertTrue(text.contains("configd_write_commit_seconds_bucket{le=\"0.150\"} 1"),
                 "100ms sample should fall inside le=\"0.150\" bucket\n" + text);
     }
 
     @Test
     void bucketScheduleCutoffsAreStrictlyIncreasing() {
-        // Defensive — schedule constructors validate this, but assert
+        // Defensive - schedule constructors validate this, but assert
         // here so a future PR that reorders entries breaks the test
         // before it lands in production.
         var schedules = ConfigdMetrics.histogramSchedules();

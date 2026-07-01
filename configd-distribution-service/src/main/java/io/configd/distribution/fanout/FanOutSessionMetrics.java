@@ -1,14 +1,13 @@
 package io.configd.distribution.fanout;
 
 /**
- * Per-session metrics sink for a {@link FanOutSessionCore} (C1 design §4 metric table;
- * charter §6 rule 8 — every policy decision is observable). Follows the codebase's
+ * Per-session metrics sink for a {@link FanOutSessionCore}. Follows the codebase's
  * leaf-module metrics-sink idiom (a small SAM-style interface with a {@link #NOOP}
  * sentinel, e.g. {@code FanOutMetrics}/{@code StateMachineMetrics}) so this module needs
  * no {@code configd-observability} dependency; the live server bridges each method to a
  * real {@code MetricsRegistry} counter/histogram via method references.
  *
- * <p>Each method maps to a design §4 {@code edge_fanout_*} series. The Prometheus name is
+ * <p>Each method maps to an {@code edge_fanout_*} series. The Prometheus name is
  * documented per method; a registry name of {@code "edge.fanout.x"} exports as
  * {@code edge_fanout_x_total} (counters) / {@code _count}+percentiles (histograms).
  */
@@ -32,7 +31,7 @@ public interface FanOutSessionMetrics {
     void onQueueDepth(int depth);
 
     /**
-     * The queue crossed {@code queueWarnPct} of {@code queueFrames} — a slow consumer.
+     * The queue crossed {@code queueWarnPct} of {@code queueFrames} - a slow consumer.
      * Series {@code edge_fanout_slow_consumer_warnings_total} (counter).
      */
     void onSlowConsumerWarning();
@@ -67,34 +66,31 @@ public interface FanOutSessionMetrics {
     void onSessionClosed(String reason);
 
     /**
-     * The subscribe-time replay-vs-re-bootstrap decision (C3; charter §6 rule 8 — the
-     * decision AND its input are observable). Series
+     * The subscribe-time replay-vs-re-bootstrap decision. Series
      * {@code edge_fanout_subscribe_tail_total} /
-     * {@code edge_fanout_subscribe_snapshot_first_total} (per-reason-suffix convention; the
-     * registry has no label support) and {@code edge_fanout_subscribe_horizon_distance}
-     * (gauge: the last decision's distance).
+     * {@code edge_fanout_subscribe_snapshot_first_total} and
+     * {@code edge_fanout_subscribe_horizon_distance} (gauge: the last decision's distance).
      * <p>
-     * {@code horizonDistance = cursor − (oldestRetainedSeq − 1)}: how far ABOVE the replay
-     * horizon's edge the subscriber's cursor sits. {@code >= 0} ⇒ tail-recoverable (replay
-     * from the boundary ring); {@code < 0} ⇒ beyond the horizon (snapshot re-bootstrap).
-     * An empty ring reports {@code cursor + 1} (nothing evicted — trivially recoverable).
+     * {@code horizonDistance = cursor - (oldestRetainedSeq - 1)}: how far ABOVE the replay
+     * horizon the subscriber's cursor sits. {@code >= 0} => tail-recoverable (replay from
+     * the boundary ring); {@code < 0} => beyond the horizon (snapshot re-bootstrap). An
+     * empty ring reports {@code cursor + 1} (nothing evicted, trivially recoverable).
      * <p>
      * A {@code default} no-op so existing sinks ({@link #NOOP}, the sim) are unaffected.
      *
-     * @param snapshotFirst   true ⇒ SNAPSHOT_FIRST was chosen, false ⇒ TAIL
+     * @param snapshotFirst   true => SNAPSHOT_FIRST was chosen, false => TAIL
      * @param horizonDistance the cursor's distance above the replay-horizon edge
      */
     default void onSubscribeMode(boolean snapshotFirst, long horizonDistance) { }
 
     // ------------------------------------------------------------------
-    // C4 slow-consumer policy series (SlowConsumerGovernor; design §2). All
-    // default no-ops so existing sinks (NOOP, the sim) are unaffected — the
-    // same non-breaking pattern onSubscribeMode (C3) established.
+    // Slow-consumer policy series (SlowConsumerGovernor). All default no-ops
+    // so existing sinks (NOOP, the sim) are unaffected.
     // ------------------------------------------------------------------
 
     /**
-     * HEALTHY→SLOW: the queue stayed at/above the warn threshold for
-     * {@code edge.fanout.policy.queueWarnWindowMs} (§7's "0 credits for &gt; 10 s").
+     * HEALTHY-to-SLOW: the queue stayed at/above the warn threshold for
+     * {@code edge.fanout.policy.queueWarnWindowMs}.
      * Series {@code edge_fanout_slow_transitions_total} (counter).
      */
     default void onSlowTransition() { }
@@ -115,28 +111,28 @@ public interface FanOutSessionMetrics {
 
     /**
      * A SUBSCRIBE from a QUARANTINED/UNHEALTHY identity was refused inside its cooldown
-     * (C4-3: a flapping edge in cooldown is observable, never silently dark).
+     * (a flapping edge in cooldown is observable, never silently dark).
      * Series {@code edge_fanout_reconnects_refused_total} (counter).
      */
     default void onReconnectRefused() { }
 
     /**
      * A QUARANTINED/UNHEALTHY identity passed its cooldown and was readmitted with the
-     * snapshot-first re-bootstrap forced (the C4-3 automatic time-based exit).
+     * snapshot-first re-bootstrap forced (the automatic time-based exit).
      * Series {@code edge_fanout_readmissions_total} (counter).
      */
     default void onReadmission() { }
 
     /**
-     * The per-state tracked-identity tallies after a transition. The design's
-     * {@code edge_fanout_consumer_state{state}} gauge becomes one gauge per state
-     * ({@code edge_fanout_consumer_state_healthy} … {@code _unhealthy}) — the
-     * established per-suffix encoding for the label-free registry.
+     * The per-state tracked-identity tallies after a transition. The gauge
+     * {@code edge_fanout_consumer_state{state}} becomes one gauge per state
+     * ({@code edge_fanout_consumer_state_healthy} ... {@code _unhealthy}),
+     * the per-suffix encoding for the label-free registry.
      */
     default void onConsumerStates(int healthy, int slow, int catchup,
                                   int quarantined, int unhealthy) { }
 
-    /** No-op sink — the default for tests and any wiring that does not export metrics. */
+    /** No-op sink - the default for tests and any wiring that does not export metrics. */
     FanOutSessionMetrics NOOP = new FanOutSessionMetrics() {
         @Override public void onNotifyBatch(int n, int bytes) { }
         @Override public void onQueueDepth(int depth) { }

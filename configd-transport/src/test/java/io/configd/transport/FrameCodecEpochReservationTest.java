@@ -10,17 +10,16 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
 
 /**
- * Multi-Raft Phase 1 — Seam F (D1) wire-bump invariants for {@link FrameCodec}: the 8-byte reserved
- * epoch field and the N=1 byte-identity guarantee.
+ * Wire-format invariants for the 8-byte reserved epoch field in {@link FrameCodec}.
  *
  * <p>Three properties pin the dormant-but-correct reservation:
  * <ol>
- *   <li><b>MBZ on send</b> — the encoder writes 8 zero bytes for the epoch (offset 18..25), for both
+ *   <li><b>MBZ on send</b> - the encoder writes 8 zero bytes for the epoch (offset 18..25), for both
  *       the array and the {@link ByteBuffer} overload.</li>
- *   <li><b>Ignored on receive</b> — a frame whose epoch bytes are NON-zero (a hypothetical future
+ *   <li><b>Ignored on receive</b> - a frame whose epoch bytes are NON-zero (a hypothetical future
  *       v2.x sender that populates the field) still decodes cleanly to the same logical {@link
  *       FrameCodec.Frame}, so activating epoch later needs no further wire bump (forward-compatible).</li>
- *   <li><b>Byte-identity except the sanctioned diff</b> — a v2 frame, with its version byte reset to
+ *   <li><b>Byte-identity except the sanctioned diff</b> - a v2 frame, with its version byte reset to
  *       0x01 and the 8 reserved epoch bytes spliced out (length + CRC fixed), is byte-for-byte the
  *       canonical v1 frame. i.e. v2 == v1 + version-bump + reserved-epoch, and <em>nothing else</em>.</li>
  * </ol>
@@ -71,7 +70,7 @@ class FrameCodecEpochReservationTest {
     @Test
     void decodeIgnoresNonZeroEpoch_forwardCompatible() {
         // Forge a frame whose reserved epoch bytes are NON-zero (a future v2.x sender), with a valid
-        // CRC, and assert it still decodes to the same logical frame — the decode-but-ignore contract.
+        // CRC, and assert it still decodes to the same logical frame - the decode-but-ignore contract.
         byte[] frame = FrameCodec.encode(MessageType.REQUEST_VOTE, GROUP_ID, TERM, PAYLOAD);
         for (int i = EPOCH_OFFSET; i < EPOCH_OFFSET + EPOCH_SIZE; i++) {
             frame[i] = (byte) 0xFF; // populate the reserved field

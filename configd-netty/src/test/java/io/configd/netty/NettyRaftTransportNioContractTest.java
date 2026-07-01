@@ -12,17 +12,16 @@ import java.util.function.Consumer;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
 /**
- * CI-fallback proof (ADR-0043 M4, charter §3.2): re-runs the <b>entire</b>
- * {@link AbstractRaftTransportContract} on the Netty consensus transport with the tier <b>forced to
- * the pure-Java NIO tier</b> — the always-available floor a CI runner (or any sandbox) that lacks
- * io_uring/epoll falls back to. io_uring is a performance tier, never a correctness dependency; this
- * proves every safety property holds on the fallback transport, not just on the tier this box happens
- * to pick. Forcing the tier in-process (around construction) avoids depending on surefire forwarding
- * a {@code -D} to the test fork.
+ * CI-fallback proof: re-runs the <b>entire</b> {@link AbstractRaftTransportContract} on the Netty
+ * consensus transport with the tier <b>forced to the pure-Java NIO tier</b> - the always-available
+ * floor a CI runner or sandbox that lacks io_uring/epoll falls back to. io_uring is a performance
+ * tier, never a correctness dependency; this proves every safety property holds on the fallback
+ * transport. Forcing the tier in-process (around construction) avoids depending on surefire
+ * forwarding a {@code -D} to the test fork.
  *
- * <p>An epoll-forced equivalent isn't a separate class: the configd-netty {@code NettyTransportTest}
- * proves epoll resolves where available, and the auto-selected suite
- * ({@link NettyRaftTransportContractTest}) already exercises the best available tier on this box.
+ * <p>An epoll-forced equivalent is not a separate class: {@code NettyTransportTest} proves epoll
+ * resolves where available, and the auto-selected suite ({@link NettyRaftTransportContractTest})
+ * already exercises the best available tier on this box.
  */
 class NettyRaftTransportNioContractTest extends AbstractRaftTransportContract {
 

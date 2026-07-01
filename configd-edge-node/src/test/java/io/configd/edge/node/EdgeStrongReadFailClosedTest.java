@@ -32,14 +32,13 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.fail;
 
 /**
- * CT-37 at process level — strong reads are <b>store-and-never-serve</b> (C2 design §3.1):
- * the signed chain delivers {@code secure/} keys to the edge (ADR-0038 suppression
- * detectability), the edge STORES them (keeping the snapshot–delta equivalence invariant a
- * plain full-store compare), and the serving path fail-closes: 503 +
- * {@code X-Fail-Closed: strong-read} (RR-020-consistent) — clients go to the control
- * plane's linearizable path. Non-secure keys serve normally.
+ * Process-level test for the strong-read fail-closed contract: {@code secure/} keys are
+ * <b>store-and-never-serve</b>. The signed chain delivers them to the edge (keeping the
+ * snapshot-delta equivalence invariant), and the serving path fail-closes: 503 +
+ * {@code X-Fail-Closed: strong-read} — clients must go to the control plane's linearizable
+ * path. Non-secure keys serve normally.
  *
- * <p>Also pins the RR-098 residual boundary: the edge's {@code --data-dir} holds only
+ * <p>Also pins the data-dir boundary: the edge's {@code --data-dir} holds only
  * {@code epoch.lock} metadata — no {@code secure/} VALUE bytes ever land on the edge's disk.
  */
 @Timeout(120)
@@ -104,7 +103,7 @@ class EdgeStrongReadFailClosedTest {
             Thread.onSpinWait();
         }
 
-        // STORED: the chain delivered it and the store kept it (ADR-0038 always-store).
+        // STORED: the chain delivered it and the store kept it (always-store for snapshot-delta equivalence).
         assertTrue(edge.core().get("secure/kill-switch").found(),
                 "the secure/ key must be STORED at the edge");
         assertEquals(SECRET_VALUE,
@@ -131,8 +130,8 @@ class EdgeStrongReadFailClosedTest {
                         l.startsWith("edge_read_refusals_strong_read_total ") && !l.endsWith(" 0")),
                 "edge_read_refusals_strong_read_total must have moved");
 
-        // RR-098 residual boundary: --data-dir carries epoch metadata only — the secure
-        // VALUE bytes must never land on the edge's disk.
+        // --data-dir carries epoch metadata only — the secure/ VALUE bytes must never land
+        // on the edge's disk.
         try (var paths = Files.walk(edgeDataDir)) {
             for (Path p : paths.filter(Files::isRegularFile).toList()) {
                 byte[] content = Files.readAllBytes(p);
@@ -142,9 +141,7 @@ class EdgeStrongReadFailClosedTest {
         }
     }
 
-    // -----------------------------------------------------------------------
     // Helpers
-    // -----------------------------------------------------------------------
 
     private HttpResponse<String> get(String url, String... headers) throws Exception {
         HttpRequest.Builder b = HttpRequest.newBuilder()

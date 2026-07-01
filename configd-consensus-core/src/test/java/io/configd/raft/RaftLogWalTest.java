@@ -142,7 +142,7 @@ class RaftLogWalTest {
         // Simulate restart
         RaftLog log2 = new RaftLog(storage);
 
-        // snapshotIndex should be inferred from first entry (index 4 → snapshotIndex = 3)
+        // snapshotIndex should be inferred from first entry (index 4 -> snapshotIndex = 3)
         assertEquals(3, log2.snapshotIndex());
         assertEquals(2, log2.snapshotTerm()); // recovered from SNAPSHOT_META_KEY
         assertEquals(5, log2.lastIndex());
@@ -165,7 +165,7 @@ class RaftLogWalTest {
         assertEquals(2, log2.termAt(3)); // snapshotTerm
         assertEquals(2, log2.termAt(4)); // live entry
         assertEquals(3, log2.termAt(5)); // live entry
-        assertEquals(-1, log2.termAt(2)); // before snapshot — not available
+        assertEquals(-1, log2.termAt(2)); // before snapshot - not available
     }
 
     @Test
@@ -240,7 +240,7 @@ class RaftLogWalTest {
         assertEquals(2, log1.snapshotIndex());
         assertEquals(0, log1.size()); // all entries compacted
 
-        // Simulate restart — empty WAL, but metadata contains snapshotIndex+snapshotTerm
+        // Simulate restart - empty WAL, but metadata contains snapshotIndex+snapshotTerm
         RaftLog log2 = new RaftLog(storage);
 
         // snapshotIndex and snapshotTerm recovered from metadata even with empty WAL
@@ -291,7 +291,7 @@ class RaftLogWalTest {
     }
 
     /**
-     * Regression test for F-0012: truncateFrom() must persist correctly so that
+     * Regression: truncateFrom() must persist correctly so that
      * a new RaftLog created from the same storage directory recovers the
      * truncated state.
      * <p>
@@ -322,7 +322,7 @@ class RaftLogWalTest {
         assertEquals(5, log1.lastIndex());
         assertEquals(5, log1.size());
 
-        // Truncate from index 3 — entries 3, 4, 5 are removed
+        // Truncate from index 3 - entries 3, 4, 5 are removed
         log1.truncateFrom(3);
         assertEquals(2, log1.lastIndex());
         assertEquals(2, log1.size());
@@ -333,7 +333,7 @@ class RaftLogWalTest {
         assertNull(log1.entryAt(5), "Entry 5 should be gone after truncation");
 
         // Simulate restart: create a new RaftLog backed by the same storage.
-        // Before the F-0012 fix, the directory fsync was missing after rewriteWal().
+        // The directory fsync was missing after rewriteWal().
         // This test verifies the truncated state is recovered correctly.
         RaftLog log2 = new RaftLog(storage);
 
@@ -380,12 +380,12 @@ class RaftLogWalTest {
     }
 
     /**
-     * C-101 (iter-2) regression: when {@code Storage.appendToLog} throws
+     * C-101 regression: when {@code Storage.appendToLog} throws
      * (ENOSPC, IOException), the in-memory entries list MUST NOT be mutated.
      * Otherwise the leader has a volatile entry that followers may have
-     * fsync'd durably — a leader crash immediately after returning would lose
+     * fsync'd durably - a leader crash immediately after returning would lose
      * a committed entry on the leader's state machine. Pre-fix ordering was
-     * {@code entries.add(entry); storage.appendToLog(...);} — this test would
+     * {@code entries.add(entry); storage.appendToLog(...);} - this test would
      * have asserted {@code lastIndex() == 1} after the throw.
      */
     @Test

@@ -30,11 +30,11 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * jqwik property fuzz suite for {@link EdgeFrameCodec} (CT-41; mirrors
- * {@code FrameCodecPropertyTest}'s adversarial-input discipline). Every property
- * targets a class of input that could arrive on a TLS-terminated edge socket:
- * round-trip fidelity, truncation at every byte boundary, single-bit corruption →
- * CRC error (never a misparse), and length-cap violations rejected before allocation.
+ * jqwik property fuzz suite for {@link EdgeFrameCodec} (mirrors
+ * {@code FrameCodecPropertyTest}'s adversarial-input discipline). Every property targets a
+ * class of input that could arrive on a TLS-terminated edge socket: round-trip fidelity,
+ * truncation at every byte boundary, single-bit corruption -> CRC error (never a misparse),
+ * and length-cap violations rejected before allocation.
  */
 class EdgeFrameCodecPropertyTest {
 
@@ -50,9 +50,9 @@ class EdgeFrameCodecPropertyTest {
     }
 
     /**
-     * The load-bearing fidelity property (ADR-0038): a signed delta carried in a NOTIFY
-     * frame round-trips with its {@link ConfigDelta#signingPayload()} byte-identical —
-     * edge signature verification depends on this exact byte equality.
+     * Load-bearing fidelity: a signed delta carried in a NOTIFY frame round-trips with its
+     * {@link ConfigDelta#signingPayload()} byte-identical - edge signature verification
+     * depends on this exact byte equality.
      */
     @Property(tries = 300)
     void signedDeltaSigningPayloadRoundTripsByteIdentical(@ForAll("notifications") CommitNotification n) {
@@ -96,7 +96,7 @@ class EdgeFrameCodecPropertyTest {
                 "truncated frame must be rejected as a CodecException");
     }
 
-    // ---- single-bit corruption → CRC error, not misparse -------------------
+    // ---- single-bit corruption -> CRC error, not misparse ------------------
 
     @Property(tries = 500)
     void singleBitFlipIsCaughtByCrcNotMisparsed(
@@ -104,7 +104,7 @@ class EdgeFrameCodecPropertyTest {
             @ForAll @IntRange(min = 0, max = 100_000) int bitPos) {
         byte[] wire = EdgeFrameCodec.encode(frame);
         // Flip one bit somewhere in [0, wire.length*8) EXCEPT inside the length prefix
-        // (bytes 0..3) — corrupting the length prefix is a separate property (it is
+        // (bytes 0..3) - corrupting the length prefix is a separate property (it is
         // rejected as a length mismatch, also fine, but we isolate CRC here).
         int totalBits = wire.length * 8;
         int startBit = 4 * 8; // skip the length prefix
@@ -120,7 +120,7 @@ class EdgeFrameCodecPropertyTest {
         // trailer, so decode must fail; it must NOT return a different valid frame.
         EdgeFrameCodec.CodecException ex = assertThrows(EdgeFrameCodec.CodecException.class,
                 () -> EdgeFrameCodec.decode(corrupted));
-        // The flip is caught as corruption (CRC), bad version, or a malformed payload —
+        // The flip is caught as corruption (CRC), bad version, or a malformed payload -
         // all are FRAME_CORRUPT or BAD_WIRE_VERSION, never a silent wrong-frame.
         assertTrue(ex.code() == ErrorCode.FRAME_CORRUPT
                         || ex.code() == ErrorCode.BAD_WIRE_VERSION
@@ -130,7 +130,7 @@ class EdgeFrameCodecPropertyTest {
 
     /**
      * A bit flip anywhere in the body (version/type/payload) with the CRC left stale
-     * must surface as {@link ErrorCode#FRAME_CORRUPT} — never a "bad version" or "unknown
+     * must surface as {@link ErrorCode#FRAME_CORRUPT} - never a "bad version" or "unknown
      * type" that would point an operator at the wrong root cause.
      */
     @Property(tries = 300)
@@ -238,7 +238,7 @@ class EdgeFrameCodecPropertyTest {
         assertThrows(IllegalArgumentException.class, () -> FrameType.fromCode(99));
     }
 
-    // ---- RFC §2 watch frames (0x02) ----------------------------------------
+    // ---- Watch frames (0x02) -----------------------------------------------
 
     /** Every watch frame round-trips byte-for-byte through a 0x02 encode/decode. */
     @Property(tries = 500)
@@ -250,7 +250,7 @@ class EdgeFrameCodecPropertyTest {
 
     /**
      * The per-shard cursor vector (W3-5) round-trips through a WATCH_PROGRESS carrier with
-     * its components preserved in unsigned-ascending order — empty (from-now), single
+     * its components preserved in unsigned-ascending order - empty (from-now), single
      * ({@code N=1}), and multi-component forms.
      */
     @Property(tries = 400)

@@ -8,7 +8,7 @@ import io.configd.store.VersionedConfigStore;
  * Minimal read-only view of a simulated cluster, sufficient for the cross-node
  * safety checks in {@link SimInvariants}. Implemented by both
  * {@link ConsistencyPropertyTests.ClusterHarness} (the property-test / seed-sweep
- * harness) and {@link AdversarialSim} (the §4.3 adversarial harness), so one
+ * harness) and {@link AdversarialSim} (the section 4.3 adversarial harness), so one
  * invariant checker serves both without coupling them to each other.
  */
 interface ClusterView {

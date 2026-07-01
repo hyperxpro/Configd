@@ -11,8 +11,8 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 
 /**
- * Unit tests for {@link WatchTargetValidator} — the semantic {@code WATCH_CREATE} target +
- * flag validation that produces the {@code BAD_SUBSCRIBE} diagnostic (RFC §2 W2-4, W5-4a). A
+ * Unit tests for {@link WatchTargetValidator} - the semantic {@code WATCH_CREATE} target +
+ * flag validation that produces the {@code BAD_SUBSCRIBE} diagnostic (W2-4, W5-4a). A
  * {@code null} return means well-formed; a non-null string is the reject reason.
  */
 @DisplayName("WatchTargetValidator — WATCH_CREATE target + flag validation (BAD_SUBSCRIBE)")

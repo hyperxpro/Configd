@@ -26,14 +26,14 @@ import static org.junit.jupiter.api.Assertions.fail;
 
 /**
  * Adversarial fuzz suite for {@link FrameCodec#decode} and the
- * {@link TcpRaftTransport} socket read-loop length check (S7 charter §6).
+ * {@link TcpRaftTransport} socket read-loop length check.
  *
- * <p>This complements — does NOT duplicate — {@link FrameCodecPropertyTest},
+ * <p>This complements (does NOT duplicate) {@link FrameCodecPropertyTest},
  * which proves <em>structural</em> properties (round-trip, truncation, unknown
  * type/version, length mismatch). This suite adds the security
  * <b>resource oracle</b>: for arbitrary and adversarially-mutated input, decode
  * must EITHER return a well-formed {@link FrameCodec.Frame} OR throw one of a
- * small, <b>bounded, expected</b> exception set — and must NEVER:
+ * small, <b>bounded, expected</b> exception set - and must NEVER:
  * <ul>
  *   <li>throw {@link OutOfMemoryError} (unbounded allocation),</li>
  *   <li>throw {@link NullPointerException},
@@ -46,7 +46,7 @@ import static org.junit.jupiter.api.Assertions.fail;
  * {@link IllegalArgumentException} (framing/length/CRC/unknown-type),
  * {@link FrameCodec.UnsupportedWireVersionException} (bad version), and
  * {@link BufferUnderflowException} (a {@link ByteBuffer} read past its limit on a
- * structurally short frame — a benign, bounded JDK exception, never a memory or
+ * structurally short frame - a benign, bounded JDK exception, never a memory or
  * index-corruption hazard). {@code FrameCodec.decode} guards length before any
  * buffer read, so in practice underflow is unreachable from {@code decode}; it is
  * admitted defensively so a future refactor that relaxes a guard fails LOUD here
@@ -65,9 +65,7 @@ class FrameCodecFuzzTest {
 
     private static final int MIN_FRAME = FrameCodec.HEADER_SIZE + FrameCodec.TRAILER_SIZE; // 30 (v2: 26+4)
 
-    // -----------------------------------------------------------------------
-    // 1. Arbitrary bytes — the core fuzz oracle.
-    // -----------------------------------------------------------------------
+    // 1. Arbitrary bytes - the core fuzz oracle.
 
     /**
      * Wholly arbitrary byte arrays of widely varied sizes (empty, 1 byte,
@@ -92,7 +90,7 @@ class FrameCodecFuzzTest {
     }
 
     /**
-     * peekLength must satisfy the same oracle on arbitrary input — it is the
+     * peekLength must satisfy the same oracle on arbitrary input - it is the
      * read-path's pre-allocation gate, so a forbidden error here is a
      * pre-allocation crash.
      */
@@ -112,21 +110,19 @@ class FrameCodecFuzzTest {
         });
     }
 
-    // -----------------------------------------------------------------------
     // 2. Structured mutations of a VALID frame.
-    // -----------------------------------------------------------------------
 
     /**
      * Flip the 4-byte length prefix to a hostile value (smaller, larger,
      * negative, Integer.MAX_VALUE, MAX_FRAME_SIZE+1). Each must be rejected
-     * cleanly — never silently accepted, never a forbidden error, never a hang.
+     * cleanly - never silently accepted, never a forbidden error, never a hang.
      */
     @Property(tries = 600, seed = "1001")
     void lengthPrefixLieIsRejectedCleanly(
             @ForAll("validFrames") byte[] valid,
             @ForAll("hostileLengths") int hostileLength) {
         // If the hostile value happens to equal the frame's real length, the
-        // prefix is unchanged and the frame legitimately decodes — that is not a
+        // prefix is unchanged and the frame legitimately decodes - that is not a
         // "lie", so skip it. Every other value is a genuine length lie.
         if (hostileLength == valid.length) {
             return;
@@ -141,14 +137,14 @@ class FrameCodecFuzzTest {
                 fail("a length-prefix lie (" + hostileLength
                         + ") must not decode to a Frame");
             } catch (IllegalArgumentException expected) {
-                // framing/length/CRC rejection — correct
+                // framing/length/CRC rejection - correct
             } catch (Throwable t) {
                 failForbidden("length-lie decode", frame, t);
             }
         });
     }
 
-    /** Corrupt the version byte (offset 4) and leave the CRC stale → rejected. */
+    /** Corrupt the version byte (offset 4) and leave the CRC stale - rejected. */
     @Property(tries = 400, seed = "1002")
     void corruptVersionByteIsRejectedCleanly(
             @ForAll("validFrames") byte[] valid,
@@ -158,7 +154,7 @@ class FrameCodecFuzzTest {
         assertRejectedCleanly(frame, "corrupt-version");
     }
 
-    /** Corrupt the type code (offset 5) and leave the CRC stale → rejected. */
+    /** Corrupt the type code (offset 5) and leave the CRC stale - rejected. */
     @Property(tries = 400, seed = "1003")
     void corruptTypeByteIsRejectedCleanly(
             @ForAll("validFrames") byte[] valid,
@@ -168,7 +164,7 @@ class FrameCodecFuzzTest {
         assertRejectedCleanly(frame, "corrupt-type");
     }
 
-    /** Flip any single CRC-trailer byte → CRC mismatch, rejected cleanly. */
+    /** Flip any single CRC-trailer byte - CRC mismatch, rejected cleanly. */
     @Property(tries = 400, seed = "1004")
     void flippedCrcByteIsRejectedCleanly(
             @ForAll("validFrames") byte[] valid,
@@ -181,7 +177,7 @@ class FrameCodecFuzzTest {
 
     /**
      * Truncate a valid frame at EVERY offset (0 .. length-1). Each prefix must
-     * be rejected cleanly — a partial frame must never decode and never crash.
+     * be rejected cleanly - a partial frame must never decode and never crash.
      */
     @Property(tries = 1, seed = "1005")
     void truncateAtEveryOffsetIsRejectedCleanly(@ForAll("validFrames") byte[] valid) {
@@ -203,7 +199,7 @@ class FrameCodecFuzzTest {
 
     /**
      * Appending trailing garbage to a valid frame makes {@code data.length} no
-     * longer equal the declared length → rejected as a length mismatch.
+     * longer equal the declared length - rejected as a length mismatch.
      */
     @Property(tries = 300, seed = "1006")
     void trailingGarbageIsRejectedCleanly(
@@ -214,15 +210,13 @@ class FrameCodecFuzzTest {
         assertRejectedCleanly(frame, "trailing-garbage");
     }
 
-    // -----------------------------------------------------------------------
     // 3 & 4. Frame-length-lie / bounded allocation + boundary fuzzing.
-    // -----------------------------------------------------------------------
 
     /**
      * The OOM lever at the CODEC level: a length prefix at exactly
      * {@code MAX_FRAME_SIZE + 1} or {@code Integer.MAX_VALUE} must be rejected by
      * {@link FrameCodec#decode} / {@link FrameCodec#peekLength} with an
-     * {@link IllegalArgumentException} — BEFORE any large allocation. We assert
+     * {@link IllegalArgumentException} - BEFORE any large allocation. We assert
      * the rejection happens with only a tiny (header-sized) input present, so no
      * multi-MiB buffer is required to trigger it.
      */
@@ -251,7 +245,7 @@ class FrameCodecFuzzTest {
      * Boundary fuzzing of the length field: exactly {@code MIN_FRAME} and exactly
      * {@code MAX_FRAME_SIZE} are accepted by peekLength; one below MIN_FRAME and
      * one above MAX_FRAME_SIZE are rejected. (We test peekLength here because a
-     * real {@code MAX_FRAME_SIZE}-byte decode buffer would be 16 MiB — peekLength
+     * real {@code MAX_FRAME_SIZE}-byte decode buffer would be 16 MiB - peekLength
      * exercises the identical bound without the allocation.)
      */
     @Property(tries = 1, seed = "1008")
@@ -268,16 +262,14 @@ class FrameCodecFuzzTest {
         return FrameCodec.peekLength(header);
     }
 
-    // -----------------------------------------------------------------------
     // 3 (read-loop level). Bounded allocation in the TcpRaftTransport reader.
-    // -----------------------------------------------------------------------
 
     /**
      * The {@link TcpRaftTransport} steady-state read loop (the only place a raw
      * peer length prefix sizes an allocation) is reachable solely via a live
      * socket + DataInputStream. Rather than spin up TLS sockets on the 2-vCPU box
      * (flaky), this test drives a <b>faithful extraction</b> of that loop's
-     * length check — byte-for-byte the guard at {@code TcpRaftTransport} lines
+     * length check - byte-for-byte the guard at {@code TcpRaftTransport} lines
      * 346-353:
      * <pre>
      *   int frameLength = in.readInt();
@@ -290,7 +282,7 @@ class FrameCodecFuzzTest {
      * negative / Integer.MAX_VALUE sign handling) is identical to production.
      *
      * <p>Oracle: for a hostile length prefix, the guard rejects with
-     * {@link IOException} BEFORE {@code new byte[frameLength]} executes — proven by
+     * {@link IOException} BEFORE {@code new byte[frameLength]} executes - proven by
      * the fact that no array is ever sized from the hostile value (the helper
      * returns the would-be allocation size only on the accept path; on reject it
      * throws). MAX_FRAME_SIZE caps any accepted allocation at 16 MiB.
@@ -321,7 +313,7 @@ class FrameCodecFuzzTest {
      * frame-length gate. Reads the length via {@link DataInputStream#readInt()}
      * (identical to production) and applies the identical bound. Returns the size
      * the production code would pass to {@code new byte[frameLength]} on accept;
-     * throws {@link IOException} on reject — exactly as production does, and
+     * throws {@link IOException} on reject - exactly as production does, and
      * exactly BEFORE the allocation site.
      */
     private static int readLoopLengthGate(int declaredLength) throws IOException {
@@ -338,9 +330,7 @@ class FrameCodecFuzzTest {
         return frameLength;
     }
 
-    // -----------------------------------------------------------------------
     // Oracle + helpers.
-    // -----------------------------------------------------------------------
 
     /** Runs decode within the time budget and asserts the resource oracle. */
     private static void assertOracleHolds(byte[] data) {
@@ -354,7 +344,7 @@ class FrameCodecFuzzTest {
             } catch (IllegalArgumentException
                      | FrameCodec.UnsupportedWireVersionException
                      | BufferUnderflowException expected) {
-                // bounded, documented — the allowed rejection set
+                // bounded, documented - the allowed rejection set
             } catch (Throwable t) {
                 failForbidden("decode", data, t);
             }
@@ -382,7 +372,7 @@ class FrameCodecFuzzTest {
 
     private static void failForbidden(String op, byte[] data, Throwable t) {
         if (t instanceof AssertionError ae) {
-            throw ae; // a fail()/assert from inside the try — propagate verbatim
+            throw ae; // a fail()/assert from inside the try - propagate verbatim
         }
         fail(op + " produced FORBIDDEN throwable " + t.getClass().getName()
                 + " on input " + describe(data) + ": " + t.getMessage(), t);
@@ -394,9 +384,7 @@ class FrameCodecFuzzTest {
                 + (data.length > 48 ? "..." : "");
     }
 
-    // -----------------------------------------------------------------------
     // Arbitraries.
-    // -----------------------------------------------------------------------
 
     /**
      * Arbitrary byte arrays whose SIZE distribution is weighted toward the

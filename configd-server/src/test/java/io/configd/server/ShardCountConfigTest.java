@@ -15,12 +15,12 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 /**
- * Multi-Raft Phase 1 — C4a: tests for the deploy-time shard-count selection + the fixed-at-deploy
+ * Tests for the deploy-time shard-count selection + the fixed-at-deploy
  * reshard guard ({@link ConfigdServer#resolveShardCount} / {@link ConfigdServer#enforceFixedShardCount}).
  *
  * <p>These drive the REAL helpers the production boot path calls, so they discriminate: the default is
- * {@code N=1} (byte-identical to today), {@code N} is range-checked, {@code N>1} now BOOTS (Seam G4
- * removed the temporary boot guard once the N-group wiring was proven end-to-end), and {@code N} is FIXED
+ * {@code N=1} (byte-identical to today), {@code N} is range-checked, {@code N>1} now BOOTS (the temporary
+ * boot guard was removed once the N-group wiring was proven end-to-end), and {@code N} is FIXED
  * AT DEPLOY (a later boot with a different {@code N} is rejected rather than silently mis-routing keys).
  */
 class ShardCountConfigTest {
@@ -79,11 +79,11 @@ class ShardCountConfigTest {
         assertFalse(Files.exists(dataDir.resolve(MARKER)), "a rejected boot must not persist a marker");
     }
 
-    // ---- resolveShardCount: N>1 now BOOTS (Seam G4 — the boot guard was removed) ------------
+    // ---- resolveShardCount: N>1 now BOOTS (the boot guard was removed) ------------
 
     @Test
     void nGreaterThanOneNowBootsAndIsFixedAtDeploy(@TempDir Path freshDir) {
-        // Seam G4 flipped the switch: the temporary N>1 boot refusal is GONE (the N-group wiring is proven
+        // The temporary N>1 boot refusal is GONE (the N-group wiring is proven
         // end-to-end + the integrated sweep is green). N>1 now resolves to N AND persists the fixed-at-
         // deploy marker (so a later reshard is rejected). Cover the BOUNDARY N=2 and the ceiling N=16, each
         // on its OWN fresh data dir (so a persisted N from one iteration doesn't reshard-reject the next).
@@ -98,7 +98,7 @@ class ShardCountConfigTest {
             assertEquals(n, ConfigdServer.resolveShardCount(dir), () -> "N=" + n + " must now boot");
             // fixed-at-deploy is now ACTIVE for N>1: the marker records N.
             assertTrue(Files.exists(dir.resolve(MARKER)), "N=" + n + " boot persists the fixed-at-deploy marker");
-            // A reshard attempt (a DIFFERENT in-range N on the same dir) is rejected — not silent
+            // A reshard attempt (a DIFFERENT in-range N on the same dir) is rejected - not silent
             // mis-routing. Use n-1 (in [1,16], distinct from n) so the reshard guard fires, not the range
             // check (n+1 would hit MAX_SHARD_COUNT for n=16 and throw IllegalArgumentException instead).
             System.setProperty(PROP, Integer.toString(n - 1));
@@ -112,7 +112,7 @@ class ShardCountConfigTest {
     @Test
     void n1StillBootsByteIdenticalAfterGuardRemoval() {
         // The guard removal must NOT touch the N=1 path: default (no property) resolves to 1 and persists
-        // the N=1 marker, exactly as before G4.
+        // the N=1 marker, exactly as before the guard removal.
         System.clearProperty(PROP);
         assertEquals(1, ConfigdServer.resolveShardCount(dataDir));
         try {

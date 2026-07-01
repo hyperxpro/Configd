@@ -18,17 +18,17 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * F-S7-FUZZ-1 (slowloris / FD-exhaustion) — end-to-end negative tests against the REAL
- * {@link TcpRaftTransport} inbound path (S7.5). The mechanism is pinned by
- * {@link InboundReadDeadlineFuzzTest} (bare sockets); these assert the FIX is wired into the transport:
+ * Slowloris / FD-exhaustion end-to-end tests against the real {@link TcpRaftTransport} inbound
+ * path. The mechanism is pinned at the socket level by {@link InboundReadDeadlineFuzzTest};
+ * these assert the fix is wired into the transport:
  * <ol>
  *   <li>a slow-drip peer that connects and then stalls is dropped by the server within the
  *       {@code inboundReadTimeoutMs} read-idle deadline (reader vthread + FD released), and</li>
- *   <li>once {@code maxInboundConnections} sockets are live, further inbound connections are refused
- *       (closed + counted) — the node stays available instead of exhausting FDs.</li>
+ *   <li>once {@code maxInboundConnections} sockets are live, further inbound connections are
+ *       refused (closed + counted) - the node stays available instead of exhausting FDs.</li>
  * </ol>
- * Plaintext transport (tlsManager=null) keeps the attacker a bare socket. The guard runs on transport
- * virtual threads, never {@code configd-tick} (RR-002-safe — see deploy-security-recon §"THREADING").
+ * Plaintext transport (tlsManager=null) keeps the attacker a bare socket. The guard runs on
+ * transport virtual threads, never {@code configd-tick}, so it cannot park the tick thread.
  */
 class TcpRaftTransportSlowlorisTest {
 
@@ -81,7 +81,7 @@ class TcpRaftTransportSlowlorisTest {
 
             Socket attacker = connectAttacker(port);
             // Slow drip: send NOTHING. The server's first readInt() (sender id) blocks, then trips the
-            // 500 ms read-idle deadline and closes the connection — which the attacker observes as EOF.
+            // 500 ms read-idle deadline and closes the connection - which the attacker observes as EOF.
             long t0 = System.nanoTime();
             attacker.setSoTimeout(5_000); // bound the attacker's own read so the test can never hang
             InputStream in = attacker.getInputStream();

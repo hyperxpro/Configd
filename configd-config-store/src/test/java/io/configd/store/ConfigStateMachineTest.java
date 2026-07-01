@@ -34,9 +34,7 @@ class ConfigStateMachineTest {
         return s.getBytes(StandardCharsets.UTF_8);
     }
 
-    // -----------------------------------------------------------------------
-    // Apply — PUT
-    // -----------------------------------------------------------------------
+    // Apply - PUT
 
     @Nested
     class ApplyPut {
@@ -74,9 +72,7 @@ class ConfigStateMachineTest {
         }
     }
 
-    // -----------------------------------------------------------------------
-    // Apply — DELETE
-    // -----------------------------------------------------------------------
+    // Apply - DELETE
 
     @Nested
     class ApplyDelete {
@@ -99,9 +95,7 @@ class ConfigStateMachineTest {
         }
     }
 
-    // -----------------------------------------------------------------------
-    // Apply — BATCH
-    // -----------------------------------------------------------------------
+    // Apply - BATCH
 
     @Nested
     class ApplyBatch {
@@ -138,9 +132,7 @@ class ConfigStateMachineTest {
         }
     }
 
-    // -----------------------------------------------------------------------
-    // Apply — NOOP
-    // -----------------------------------------------------------------------
+    // Apply - NOOP
 
     @Nested
     class ApplyNoop {
@@ -372,29 +364,25 @@ class ConfigStateMachineTest {
         }
     }
 
-    // -----------------------------------------------------------------------
-    // F-0013: Snapshot key length overflow for keys > 65535 bytes
-    // -----------------------------------------------------------------------
+    // Snapshot key length overflow: keys > 65535 bytes
 
     @Nested
     class SnapshotKeyLengthOverflow {
 
         /**
-         * Regression test for F-0013: snapshot/restoreSnapshot must handle keys
-         * longer than 65535 bytes.
+         * snapshot/restoreSnapshot must handle keys longer than 65535 bytes.
          * <p>
-         * Before the fix, snapshot() used putShort for key length (max 65535)
-         * and restoreSnapshot() used getShort. Keys longer than 65535 bytes
-         * would have their length silently truncated, corrupting the snapshot
-         * and making it impossible to restore.
+         * Before the fix, snapshot() used putShort for key length (max 65535) and
+         * restoreSnapshot() used getShort. Keys longer than 65535 bytes would have
+         * their length silently truncated, corrupting the snapshot and making it
+         * impossible to restore.
          * <p>
-         * After the fix, both use putInt/getInt (max ~2 billion bytes).
+         * After the fix, both use putInt/getInt.
          * <p>
-         * Note: The CommandCodec uses shorts for key lengths in its wire format,
-         * so we cannot use apply() with a 70000-byte key. Instead, we put the
-         * long key directly into the store (simulating what would happen if the
-         * command codec also supported long keys, or if data arrived via snapshot
-         * transfer from a node that already had such keys).
+         * Note: CommandCodec uses shorts for key lengths in its wire format, so we
+         * cannot use apply() with a 70000-byte key. Instead, we put the long key
+         * directly into the store (as would happen via snapshot transfer from a node
+         * that already had such keys).
          */
         @Test
         void snapshotAndRestoreWithLongKey() {
@@ -412,7 +400,7 @@ class ConfigStateMachineTest {
             assertTrue(result.found(), "Long key should be stored");
             assertArrayEquals(value, result.value());
 
-            // Take a snapshot — before the fix, putShort would truncate the
+            // Take a snapshot - before the fix, putShort would truncate the
             // key length to (70000 & 0xFFFF) = 4464, corrupting the snapshot.
             byte[] snapshotBytes = stateMachine.snapshot();
             assertNotNull(snapshotBytes);
@@ -437,17 +425,14 @@ class ConfigStateMachineTest {
         }
     }
 
-    // -----------------------------------------------------------------------
-    // F-0053: Snapshot restore must bound-check envelope fields
-    // -----------------------------------------------------------------------
+    // Snapshot restore must bound-check envelope fields
 
     @Nested
     class SnapshotBoundsCheck {
 
         /**
-         * Regression test for F-0053: restoreSnapshot must reject a malicious
-         * or corrupted payload that claims an absurdly large entryCount,
-         * rather than attempting a huge allocation (OOM).
+         * restoreSnapshot must reject a malicious or corrupted payload that claims
+         * an absurdly large entryCount, rather than attempting a huge allocation (OOM).
          */
         @Test
         void restoreRejectsAbsurdEntryCount() {
@@ -641,10 +626,9 @@ class ConfigStateMachineTest {
             assertNotNull(sig);
 
             // Verify using a verify-only signer with just the public key.
-            // F-0052: signature is over canonical batch form bound with the
-            // epoch and nonce — the verifier must reconstruct the same
-            // payload. This mirrors ConfigDelta.signingPayload(), which is
-            // what DeltaApplier.buildVerificationPayload uses.
+            // The signature is over the canonical batch form bound with the epoch and nonce;
+            // the verifier must reconstruct the same payload. This mirrors
+            // ConfigDelta.signingPayload(), which is what DeltaApplier.buildVerificationPayload uses.
             ConfigSigner verifier = new ConfigSigner(keyPair.getPublic());
             byte[] canonical = CommandCodec.encodeBatch(List.of(
                     new ConfigMutation.Put("db.host", bytes("localhost"))));
@@ -652,7 +636,8 @@ class ConfigStateMachineTest {
             assertTrue(verifier.verify(payload, sig),
                     "Signature should verify against canonical batch-encoded form bound with epoch+nonce");
 
-            // The raw command bytes should NOT verify — this was the FIND-0004 bug.
+            // The raw command bytes should NOT verify - the signature covers the canonical
+            // batch encoding, not the raw wire bytes.
             assertFalse(verifier.verify(command, sig),
                     "Signature must NOT verify against raw PUT-encoded bytes");
         }
@@ -678,7 +663,7 @@ class ConfigStateMachineTest {
             byte[] sig = sm.lastSignature();
             assertNotNull(sig);
 
-            // Canonical form of a batch bound with epoch+nonce should verify (F-0052).
+            // Canonical form of a batch bound with epoch+nonce should verify.
             ConfigSigner verifier = new ConfigSigner(keyPair.getPublic());
             byte[] canonical = CommandCodec.encodeBatch(List.of(
                     new ConfigMutation.Put("a", bytes("1")),
@@ -690,10 +675,9 @@ class ConfigStateMachineTest {
 
         @Test
         void singleMutationBatchSignatureMatchesSinglePutCanonical() throws Exception {
-            // FIND-0004: a batch with one mutation must produce a signature that
-            // verifies against the same canonical mutations as a standalone PUT.
-            // F-0052: signatures are now also bound to epoch+nonce, so each
-            // state-machine instance produces a different signature envelope —
+            // A batch with one mutation must produce a signature that verifies against
+            // the same canonical mutations as a standalone PUT. Signatures are bound to
+            // epoch+nonce, so each state-machine instance produces a different envelope -
             // but the mutation encoding is still byte-identical.
             ConfigStateMachine smBatch = new ConfigStateMachine(
                     new VersionedConfigStore(), Clock.system(), signer);
@@ -766,24 +750,19 @@ class ConfigStateMachineTest {
         }
     }
 
-    // -----------------------------------------------------------------------
-    // SEC-018 (iter-2): sign-then-mutate-then-fanout ordering — a sign
-    // failure must leave the store untouched and listeners unfired.
-    // -----------------------------------------------------------------------
+    // sign-then-mutate-then-fanout ordering: a sign failure must leave the store
+    // untouched and listeners unfired.
 
     /**
-     * Closes the gap that motivated SEC-018: previously, the apply loop
-     * mutated the store first, then called {@code signCommand} which
-     * silently swallowed any {@link java.security.GeneralSecurityException}.
-     * That allowed a partially-applied write to be committed to the store
-     * while no signature was produced — so the unsigned delta was either
-     * broadcast and rejected at the edge (gap loop) or was lost entirely
-     * while the leader believed the mutation had been published. Reordering
-     * sign → mutate → fanout, with a propagating exception on sign failure,
-     * makes apply atomic from the outside: either everything happens
-     * (store mutation + lastSignature populated + listeners notified) or
-     * nothing does (store unchanged + IllegalStateException propagates +
-     * no listener notification).
+     * The apply loop was previously: mutate the store first, then call {@code signCommand}
+     * which silently swallowed any {@link java.security.GeneralSecurityException}. That
+     * allowed a partially-applied write to be committed to the store while no signature
+     * was produced - the unsigned delta was either broadcast and rejected at the edge or
+     * lost entirely while the leader believed the mutation had been published. The ordering
+     * is now sign - mutate - fanout, with a propagating exception on sign failure, making
+     * apply atomic from the outside: either everything happens (store mutation + lastSignature
+     * populated + listeners notified) or nothing does (store unchanged + IllegalStateException
+     * propagates + no listener notification).
      */
     @Nested
     class SignFailurePreservesStore {
@@ -814,20 +793,19 @@ class ConfigStateMachineTest {
 
             byte[] command = CommandCodec.encodePut("k", bytes("v"));
 
-            // (a) The IllegalStateException must propagate — silent failure
-            //     was the historical bug.
+            // (a) The IllegalStateException must propagate - silent failure was the historical bug.
             assertThrows(IllegalStateException.class,
                     () -> sm.apply(1, 1, command),
                     "sign failure must propagate so Raft can panic / retry");
 
-            // (b) Store must NOT contain the key — the previous order
-            //     (mutate then sign) would have left it partially applied.
+            // (b) Store must NOT contain the key - the old mutate-then-sign order
+            //     would have left it partially applied.
             assertFalse(localStore.get("k").found(),
                     "store must be unmutated after sign failure (SEC-018)");
             assertEquals(0L, localStore.currentVersion(),
                     "version must not advance on aborted apply");
 
-            // (c) Sequence counter must NOT have advanced — a second apply
+            // (c) Sequence counter must NOT have advanced - a second apply
             //     attempt with seq=1 would otherwise hit a gap.
             assertEquals(0L, sm.sequenceCounter(),
                     "sequence counter must not advance on aborted apply");
@@ -838,7 +816,7 @@ class ConfigStateMachineTest {
             assertEquals(0L, sm.lastEpoch());
             assertNull(sm.lastNonce());
 
-            // (e) Listeners MUST NOT have been called — fanout-after-mutate
+            // (e) Listeners MUST NOT have been called - fanout-after-mutate
             //     would otherwise leak the unsigned mutation downstream.
             assertTrue(fanoutLog.isEmpty(),
                     "listeners must not be notified for an aborted apply (SEC-018)");
@@ -879,7 +857,7 @@ class ConfigStateMachineTest {
             assertThrows(IllegalStateException.class,
                     () -> sm.apply(3, 1, command));
 
-            // None of the batch's mutations may be visible — atomicity
+            // None of the batch's mutations may be visible - atomicity
             // is the whole point of the batch encoding.
             assertFalse(localStore.get("a").found());
             assertFalse(localStore.get("b").found());
@@ -909,12 +887,10 @@ class ConfigStateMachineTest {
         }
     }
 
-    // -----------------------------------------------------------------------
-    // R-002 (iter-2): TLV snapshot trailer — extensible, backward-compatible.
-    // The snapshot trailer must accept three forms (legacy empty, iter-1 raw
-    // 8-byte epoch, canonical TLV) and ignore unknown trailing fields inside
-    // a TLV payload so v1 readers can load v2 snapshots that add a field.
-    // -----------------------------------------------------------------------
+    // TLV snapshot trailer: extensible, backward-compatible. The snapshot trailer
+    // must accept three forms (legacy empty, raw 8-byte epoch, canonical TLV) and
+    // ignore unknown trailing fields inside a TLV payload so older readers can load
+    // newer snapshots that add a field.
     @Nested
     class SnapshotTrailerCompatibility {
 
@@ -1002,9 +978,7 @@ class ConfigStateMachineTest {
                     "malformed trailer must throw rather than silently accept");
         }
 
-        // -------------------------------------------------------------------
-        // RR-092: decodeTrailer BOUNDARY survivors (9 surviving boundary
-        // mutants, test-forensics §1.3 #9). decodeTrailer dispatches on the
+        // decodeTrailer BOUNDARY coverage. decodeTrailer dispatches on the
         // bytes AFTER the entries:
         //   remaining == 0                         -> legacy (accept, no epoch)
         //   remaining >= 8 && first4 == MAGIC      -> TLV form
@@ -1136,7 +1110,7 @@ class ConfigStateMachineTest {
         @Test
         void tlvTrailerLengthBelowEpochSizeSkipsWithoutReadingEpoch() {
             // trailerLen == Long.BYTES - 1 (7): below the `>= Long.BYTES` gate, so
-            // the epoch is NOT read — the 7 bytes are skipped and the epoch stays 0.
+            // the epoch is NOT read - the 7 bytes are skipped and the epoch stays 0.
             ByteBuffer t = ByteBuffer.allocate(4 + 4 + 7);
             t.putInt(SNAPSHOT_TRAILER_MAGIC);
             t.putInt(7);

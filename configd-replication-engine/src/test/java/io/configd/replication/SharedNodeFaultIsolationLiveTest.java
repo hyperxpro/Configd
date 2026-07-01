@@ -34,39 +34,36 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * Multi-Raft Phase 1 — Seam G2: the LIVE shared-node isolation sim (C3a / SF1 mandate). Runs N groups on
- * a P&lt;N owner pool (the production shape — groups SHARE owner threads) on the REAL
- * {@link MultiRaftDriver} + {@link OwnerExecutorPool}, and proves the isolation the independent-harness V
- * sim could not: a real coupling leak is INJECTED and a per-group liveness witness goes RED, while a
- * non-thread-blocking fault leaves siblings unharmed.
+ * Live shared-node isolation sim. Runs N groups on a P&lt;N owner pool (the production shape - groups
+ * SHARE owner threads) on the REAL {@link MultiRaftDriver} + {@link OwnerExecutorPool}, and proves
+ * the isolation the independent-harness V sim could not: a real coupling leak is INJECTED and a
+ * per-group liveness witness goes RED, while a non-thread-blocking fault leaves siblings unharmed.
  *
- * <p>The {@code OwnerIsolationMultiOwnerTest} already proves the <em>missed-hop</em> isolation class (a
+ * <p>The {@code OwnerIsolationMultiOwnerTest} already proves the missed-hop isolation class (a
  * group's entry point run on the wrong owner trips {@code assertOwnerThread}). This test adds the
- * <em>starvation</em> class, which {@code assertOwnerThread} CANNOT catch (no thread violation — the owner
- * is simply blocked) and which therefore needs an explicit per-group LIVENESS witness:
+ * starvation class, which {@code assertOwnerThread} CANNOT catch (no thread violation - the owner
+ * is simply blocked) and which therefore needs an explicit per-group liveness witness:
  *
  * <ul>
  *   <li><b>{@link #couplingLeakRed_stuckApplyStarvesCoOwnedSibling_otherOwnerUnaffected_thenRecovers()}</b>
- *       — a STUCK apply on group 0 blocks owner0's single thread; its co-owned sibling group 2 is STARVED
- *       (witness RED — the genuinely non-vacuous coupling-leak proof at the shared-node fidelity), while
- *       groups on owner1 keep committing (cross-owner isolation GREEN — the fault is owner-confined, not
- *       node-wide). Releasing the apply RECOVERS group 0 and group 2 (the stall was transient, not
- *       corruption).</li>
- *   <li><b>{@link #perShardSafetyHoldsUnderSharedOwnerConcurrency()}</b> — under a concurrent multi-owner
- *       workload on shared owners, each group's applied-mutation sequence is strictly monotone and contains
- *       ONLY its own shard's commands (S2/S4 per-shard safety + isolation; no cross-shard leak, no
- *       corruption) even while a sibling's apply is transiently slow.</li>
+ *       - a STUCK apply on group 0 blocks owner0's single thread; its co-owned sibling group 2 is
+ *       STARVED (witness RED - the genuinely non-vacuous coupling-leak proof at shared-node fidelity),
+ *       while groups on owner1 keep committing (cross-owner isolation GREEN - the fault is
+ *       owner-confined). Releasing the apply RECOVERS group 0 and group 2.</li>
+ *   <li><b>{@link #perShardSafetyHoldsUnderSharedOwnerConcurrency()}</b> - under a concurrent
+ *       multi-owner workload on shared owners, each group's applied-mutation sequence is strictly
+ *       monotone and contains ONLY its own shard's commands (per-shard safety + isolation; no
+ *       cross-shard leak, no corruption) even while a sibling's apply is transiently slow.</li>
  * </ul>
  *
- * <p>Production stays single-group (N&gt;1 is boot-refused until Seam G4); this multi-group fault surface
- * is the proof that N&gt;1 is isolation-safe BEFORE the guard is lifted. See
- * {@code docs/multiraft/phase1/c3-multigroup-wiring.md} (SF1) and {@code seam-g2-live-isolation.md}.
+ * <p>Production stays single-group when N&gt;1 is boot-gated; this multi-group fault surface is the
+ * proof that N&gt;1 is isolation-safe before the guard is lifted.
  */
 class SharedNodeFaultIsolationLiveTest {
 
     private static final NodeId LOCAL = NodeId.of(1);
 
-    /** No peers — single-node groups self-elect; transport is unused. */
+    /** No peers - single-node groups self-elect; transport is unused. */
     private static final class NoopTransport implements RaftTransport {
         @Override public void send(NodeId target, RaftMessage message) { }
     }
@@ -74,7 +71,7 @@ class SharedNodeFaultIsolationLiveTest {
     /**
      * A real-ish state machine that (a) records the per-shard applied-mutation sequence so per-shard
      * monotonicity + isolation can be asserted, and (b) can be ARMED to block its mutating apply on a
-     * latch — the "stuck/slow apply" fault that, running on the owner thread, starves co-owned siblings.
+     * latch - the "stuck/slow apply" fault that, running on the owner thread, starves co-owned siblings.
      * The first byte of every command is the owning gid; a cross-shard leak would surface as a foreign gid.
      */
     private static final class BlockableTrackingStateMachine implements StateMachine {
@@ -93,10 +90,10 @@ class SharedNodeFaultIsolationLiveTest {
         @Override
         public long apply(long index, long term, byte[] command) {
             if (command == null || command.length == 0) {
-                return StateMachine.NON_MUTATING; // leader no-op / election entry — never blocks
+                return StateMachine.NON_MUTATING; // leader no-op / election entry - never blocks
             }
             if ((command[0] & 0xFF) != (gid & 0xFF)) {
-                sawForeignGid = true; // cross-shard leak — group applied another shard's command
+                sawForeignGid = true; // cross-shard leak - group applied another shard's command
             }
             CountDownLatch g = gate;
             if (g != null) {
@@ -120,7 +117,7 @@ class SharedNodeFaultIsolationLiveTest {
         return new byte[]{(byte) gid, (byte) (n & 0xFF), (byte) (n >>> 8)};
     }
 
-    /** Builds a storage-backed single-node group with the tracking SM, owner-binds it (H-6), self-elects. */
+    /** Builds a storage-backed single-node group with the tracking SM, owner-binds it, then self-elects. */
     private static RaftNode newTrackingLeader(OwnerExecutorPool pool, int gid,
             BlockableTrackingStateMachine sm) throws Exception {
         Storage storage = Storage.inMemory();
@@ -138,8 +135,8 @@ class SharedNodeFaultIsolationLiveTest {
     /**
      * The per-group LIVENESS WITNESS. Submits a propose + repeated ticks for {@code gid} onto its owner
      * (fire-and-forget, so a STUCK owner cannot block the witness thread) and polls the shard's applied
-     * count. Returns true iff the shard makes apply progress within the budget. A stuck owner ⇒ the tasks
-     * queue and never run ⇒ no progress ⇒ false (RED). A free owner ⇒ progress ⇒ true (GREEN).
+     * count. Returns true iff the shard makes apply progress within the budget. A stuck owner means the tasks
+     * queue and never run, so no progress (RED). A free owner means progress (GREEN).
      */
     private static boolean witnessProgresses(MultiRaftDriver driver, OwnerExecutorPool pool,
             BlockableTrackingStateMachine sm, int gid, int n, long budgetMs) throws Exception {
@@ -183,7 +180,7 @@ class SharedNodeFaultIsolationLiveTest {
         // INJECT the coupling leak: arm group 0's apply to block, then drive a mutating apply on owner0.
         // On the single-node INLINE group-commit path, driver.propose(0,...) itself runs append -> flush
         // -> advanceCommit -> applyCommitted -> stateMachine.apply ON owner0's single thread, so the
-        // BLOCK happens inside propose() here (the trailing tickOwner(0) never gets to run — owner0 is
+        // BLOCK happens inside propose() here (the trailing tickOwner(0) never gets to run - owner0 is
         // already stuck). The effect is owner0 STUCK in group 0's apply; fire-and-forget so the test
         // thread is not blocked.
         CountDownLatch stuck = new CountDownLatch(1);
@@ -195,7 +192,7 @@ class SharedNodeFaultIsolationLiveTest {
         // Give owner0 a moment to enter the blocking apply.
         Thread.sleep(200);
 
-        // WITNESS RED (the SF1 mandate): group 2 SHARES owner0 with the stuck group 0, so it is STARVED —
+        // WITNESS RED: group 2 SHARES owner0 with the stuck group 0, so it is STARVED -
         // its propose/tick tasks queue behind the blocked apply and never run. No assertOwnerThread fire
         // could catch this (no thread violation); only a liveness witness can.
         assertFalse(witnessProgresses(driver, pool, sms.get(2), 2, 1, 1_500),
@@ -203,7 +200,7 @@ class SharedNodeFaultIsolationLiveTest {
                         + "was stuck in group 0's apply — the starvation witness is vacuous");
 
         // CROSS-OWNER ISOLATION GREEN: groups 1 and 3 are on owner1 (a DIFFERENT thread), so the fault is
-        // owner-confined — they keep committing. This is the property that makes shared-node co-tenancy
+        // owner-confined - they keep committing. This is the property that makes shared-node co-tenancy
         // safe: a stuck owner stalls only ITS groups, never the whole node.
         for (int gid : new int[]{1, 3}) {
             assertTrue(witnessProgresses(driver, pool, sms.get(gid), gid, 2, 5_000),
@@ -211,7 +208,7 @@ class SharedNodeFaultIsolationLiveTest {
         }
 
         // RECOVER: release the stuck apply. owner0 drains the queued work; group 0 and the starved group 2
-        // both resume — proving the stall was transient back-pressure, not corruption or deadlock.
+        // both resume - proving the stall was transient back-pressure, not corruption or deadlock.
         sms.get(0).gate = null;
         stuck.countDown();
         assertTrue(witnessProgresses(driver, pool, sms.get(0), 0, 100, 5_000),
@@ -298,7 +295,7 @@ class SharedNodeFaultIsolationLiveTest {
         assertTrue(pool.awaitTermination(10, TimeUnit.SECONDS), "owner pool did not terminate");
     }
 
-    /** S2/S4: the shard's applied-mutation sequence is strictly 1,2,3,… and it never applied a foreign gid. */
+    /** The shard's applied-mutation sequence is strictly 1,2,3,... and it never applied a foreign gid. */
     private static void assertMonotoneAndIsolated(BlockableTrackingStateMachine sm, int gid) {
         assertFalse(sm.sawForeignGid, "group " + gid + " applied a FOREIGN shard's command (cross-shard leak)");
         List<Long> seqs;

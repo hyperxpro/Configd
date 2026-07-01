@@ -7,14 +7,14 @@ import org.junit.jupiter.api.Test;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 
 /**
- * S7.5 per-principal rate limiting (Med residual): one tenant's write flood must NOT starve another
- * tenant's writes. A per-principal token bucket (factory-minted, keyed by the authenticated principal)
- * replaces the single global bucket, so principal A exhausting its OWN budget leaves B's intact. The
- * gate stays before the Raft proposal (RR-002-safe — a CAS on the request thread, never the tick thread).
+ * Per-principal rate limiting: one tenant's write flood must NOT starve another tenant's writes. A
+ * per-principal token bucket (factory-minted, keyed by the authenticated principal) replaces the single
+ * global bucket, so principal A exhausting its OWN budget leaves B's intact. The gate stays before the
+ * Raft proposal (a CAS on the request thread, never the tick thread).
  */
 class ConfigWriteServicePerPrincipalRateLimitTest {
 
-    /** Fixed clock: time never advances, so a token bucket never refills — deterministic exhaustion. */
+    /** Fixed clock: time never advances, so a token bucket never refills - deterministic exhaustion. */
     private static final Clock FIXED = new Clock() {
         @Override public long currentTimeMillis() { return 1_000L; }
         @Override public long nanoTime() { return 1_000_000_000L; }
@@ -39,7 +39,7 @@ class ConfigWriteServicePerPrincipalRateLimitTest {
         assertInstanceOf(ConfigWriteService.WriteResult.Overloaded.class,
                 svc.put("a3", v, ConfigScope.GLOBAL, "A"), "A stays shed");
 
-        // Principal B: unaffected by A's flood — B's OWN fresh bucket grants its first write.
+        // Principal B: unaffected by A's flood - B's OWN fresh bucket grants its first write.
         assertInstanceOf(ConfigWriteService.WriteResult.Committed.class,
                 svc.put("b1", v, ConfigScope.GLOBAL, "B"),
                 "B is NOT starved by A's flood — per-principal isolation is the fix");
@@ -53,7 +53,7 @@ class ConfigWriteServicePerPrincipalRateLimitTest {
         byte[] v = "v".getBytes();
         assertInstanceOf(ConfigWriteService.WriteResult.Committed.class,
                 svc.put("k1", v, ConfigScope.GLOBAL, "A"));
-        // Same global bucket: A's second AND B's first are both shed — the old, NON-isolated behavior
+        // Same global bucket: A's second AND B's first are both shed - the old, NON-isolated behavior
         // this fix replaces (kept as a guard that the legacy path is unchanged).
         assertInstanceOf(ConfigWriteService.WriteResult.Overloaded.class,
                 svc.put("k2", v, ConfigScope.GLOBAL, "A"));

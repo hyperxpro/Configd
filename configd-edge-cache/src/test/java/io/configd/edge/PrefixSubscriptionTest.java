@@ -9,7 +9,7 @@ import java.util.Set;
 import static org.junit.jupiter.api.Assertions.*;
 
 /**
- * Tests for {@link PrefixSubscription} — prefix-based subscription management.
+ * Tests for {@link PrefixSubscription} - prefix-based subscription management.
  */
 class PrefixSubscriptionTest {
 

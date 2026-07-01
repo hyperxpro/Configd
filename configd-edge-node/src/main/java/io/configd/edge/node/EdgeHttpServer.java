@@ -13,43 +13,41 @@ import java.util.Objects;
 import java.util.concurrent.Executors;
 
 /**
- * The edge node's read-serving surface (C2 design §3.4/§4): JDK {@link HttpServer}
- * (the HttpApiServer pattern — virtual-thread executor).
+ * The edge node's read-serving surface: JDK {@link HttpServer} with a virtual-thread executor.
  *
- * <p><b>Netty-migration (ADR-0043).</b> The read-serving <em>decision logic</em> now lives in the
- * transport-agnostic {@link EdgeReadHandler}; this class is a thin JDK-{@code HttpServer} adapter
- * over it, and {@link NettyEdgeHttpServer} is the Netty adapter over the <em>same</em> logic — so
- * the two transports serve byte-identical responses on the canonical request paths by construction
- * (DR-N2; routing is exact-match, DR-N4). M1 swaps the
- * production edge to {@link NettyEdgeHttpServer}; this JDK adapter is retained as the equivalence
- * reference (it is what {@code EdgeHttpServerTest} pins) until the swap is verified.
+ * <p>The read-serving <em>decision logic</em> lives in the transport-agnostic
+ * {@link EdgeReadHandler}; this class is a thin JDK-{@code HttpServer} adapter over it, and
+ * {@link NettyEdgeHttpServer} is the Netty adapter over the <em>same</em> logic - so the two
+ * transports serve byte-identical responses on the canonical request paths by construction
+ * (routing is exact-match). This JDK adapter is retained as the equivalence reference
+ * (it is what {@code EdgeHttpServerTest} pins).
  *
  * <h2>Endpoints</h2>
  * <ul>
- *   <li>{@code GET /v1/config/{key}} — cursor/staleness-governed reads;</li>
- *   <li>{@code GET /health/live} — always 200 (process liveness);</li>
- *   <li>{@code GET /health/ready} — 503 when the staleness state is DEGRADED or worse (CT-05);</li>
- *   <li>{@code GET /metrics} — Prometheus exposition (F-S7-TLS-2 Bearer gate when configured).</li>
+ *   <li>{@code GET /v1/config/{key}} - cursor/staleness-governed reads;</li>
+ *   <li>{@code GET /health/live} - always 200 (process liveness);</li>
+ *   <li>{@code GET /health/ready} - 503 when the staleness state is DEGRADED or worse;</li>
+ *   <li>{@code GET /metrics} - Prometheus exposition (optional Bearer scrape-token gate when
+ *       configured).</li>
  * </ul>
  *
- * <h2>Read semantics (contract §2/§3; ADR-0035 + ADR-0039 consistent refusal)</h2>
+ * <h2>Read semantics</h2>
  * <ul>
  *   <li>The client's cursor arrives via {@code X-Configd-Cursor}; every response carries
  *       {@code X-Configd-Cursor} = this edge's current store version, and a hit carries
  *       {@code X-Configd-Version} = the value's write version;</li>
- *   <li><b>cursor-behind → 404 + {@code X-Configd-Refused: cursor-behind}</b>: the edge NEVER serves
+ *   <li><b>cursor-behind: 404 + {@code X-Configd-Refused: cursor-behind}</b>: the edge NEVER serves
  *       stale on a cursor-behind read; the refused read still routes through the monitor-wired store
- *       so {@code invariant.violation.monotonic_read} fires (INV-M1 seam);</li>
- *   <li>{@code X-Configd-Stale: true} on ALL read responses while STALE or worse (CT-03);</li>
- *   <li><b>strong-read keys (CT-37)</b>: 503 + {@code X-Fail-Closed: strong-read} before the store
- *       is consulted (RR-020);</li>
- *   <li><b>not-subscribed keys (ADR-0040 §2)</b>: 404 + {@code X-Configd-Refused: not-subscribed}
+ *       so {@code invariant.violation.monotonic_read} fires;</li>
+ *   <li>{@code X-Configd-Stale: true} on ALL read responses while STALE or worse;</li>
+ *   <li><b>strong-read keys</b>: 503 + {@code X-Fail-Closed: strong-read} before the store
+ *       is consulted;</li>
+ *   <li><b>not-subscribed keys</b>: 404 + {@code X-Configd-Refused: not-subscribed}
  *       before the store is consulted.</li>
  * </ul>
  *
- * <h2>Hot-path honesty (CT-34)</h2>
- * The §3 hot-path law binds the in-process read path; THIS JDK HTTP shell allocates per request
- * (exchange, headers, streams) — the very cost the Netty adapter removes (8.7×, ADR-0043 evidence).
+ * <p>This JDK HTTP shell allocates per request (exchange, headers, streams) - the very cost
+ * the Netty adapter removes (8.7x less server-side allocation).
  */
 public final class EdgeHttpServer {
 
@@ -61,14 +59,13 @@ public final class EdgeHttpServer {
     public static final String HDR_REFUSED = "X-Configd-Refused";
     /** Response header set on all reads while STALE+. */
     public static final String HDR_STALE = "X-Configd-Stale";
-    /** Response header on the strong-read fail-close (RR-020-consistent). */
+    /** Response header on the strong-read fail-close. */
     public static final String HDR_FAIL_CLOSED = "X-Fail-Closed";
 
     /**
-     * F-S7-TLS-2 (edge {@code /metrics} exposure, Low): optional Bearer-token scrape secret for
-     * {@code GET /metrics} (system property {@code configd.edge.metricsScrapeToken}). When set, an
-     * unauthenticated scrape is refused 401. Null = open (legacy). Read once at construction so both
-     * adapters observe the same policy.
+     * Optional Bearer-token scrape secret for {@code GET /metrics} (system property
+     * {@code configd.edge.metricsScrapeToken}). When set, an unauthenticated scrape is refused 401.
+     * Null = open. Read once at construction so both adapters observe the same policy.
      */
     private final String metricsScrapeToken = System.getProperty("configd.edge.metricsScrapeToken");
 
@@ -78,7 +75,7 @@ public final class EdgeHttpServer {
     /**
      * @param port               the bind port (0 = ephemeral; see {@link #port()})
      * @param core               the edge client core (lock-free read path + staleness)
-     * @param strongReadKeyClass the CT-37 strong-read predicate (shared with the storage filter)
+     * @param strongReadKeyClass the strong-read predicate (shared with the storage filter)
      * @param exporter           the Prometheus exporter over the process registry
      * @param metrics            the edge metric series (reads/refusals)
      */

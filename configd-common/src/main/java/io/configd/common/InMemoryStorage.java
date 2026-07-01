@@ -9,9 +9,9 @@ import java.util.concurrent.ConcurrentHashMap;
 /**
  * In-memory implementation of {@link Storage} for testing.
  * <p>
- * NOT durable — all data is lost on process restart. This is the
+ * NOT durable - all data is lost on process restart. This is the
  * correct implementation for deterministic simulation testing
- * (ADR-0007) where persistence is simulated, not real.
+ * where persistence is simulated, not real.
  */
 public final class InMemoryStorage implements Storage {
 

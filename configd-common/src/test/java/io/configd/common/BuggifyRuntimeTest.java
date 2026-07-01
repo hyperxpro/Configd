@@ -16,7 +16,7 @@ class BuggifyRuntimeTest {
         BuggifyRuntime.disableSimulationMode();
     }
 
-    // ── Production mode (simulation not enabled) ────────────────────────
+    // Production mode (simulation not enabled)
 
     @Nested
     class ProductionMode {
@@ -37,7 +37,7 @@ class BuggifyRuntimeTest {
         }
     }
 
-    // ── Simulation mode lifecycle ───────────────────────────────────────
+    // Simulation mode lifecycle
 
     @Nested
     class SimulationModeLifecycle {
@@ -64,7 +64,7 @@ class BuggifyRuntimeTest {
         }
     }
 
-    // ── Seed determinism (CRITICAL-3 fix) ─────────────────────────────
+    // Seed determinism
 
     @Nested
     class SeedDeterminism {
@@ -118,7 +118,7 @@ class BuggifyRuntimeTest {
         }
     }
 
-    // ── Simulation mode behavior ────────────────────────────────────────
+    // Simulation mode behavior
 
     @Nested
     class SimulationModeBehavior {

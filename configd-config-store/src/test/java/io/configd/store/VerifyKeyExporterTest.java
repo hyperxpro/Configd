@@ -16,10 +16,10 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * The C2 verify-key distribution path (design §3.6): {@link VerifyKeyExporter} produces an
- * X.509/SPKI DER public key from {@code signing-key.bin} that (a) round-trips through the
- * JDK Ed25519 {@link KeyFactory} (exactly how the edge loads {@code --verify-key}) and
- * (b) verifies a signature made with the corresponding private key.
+ * Unit tests for {@link VerifyKeyExporter}. Verifies that the exporter produces an X.509/SPKI
+ * DER public key from {@code signing-key.bin} that (a) round-trips through the JDK Ed25519
+ * {@link KeyFactory} (how the edge loads {@code --verify-key}) and (b) verifies a signature
+ * made with the corresponding private key.
  */
 class VerifyKeyExporterTest {
 

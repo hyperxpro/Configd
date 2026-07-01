@@ -13,13 +13,13 @@ import java.util.Queue;
 import java.util.Set;
 
 /**
- * Plumtree epidemic broadcast tree node (ADR-0003).
+ * Plumtree epidemic broadcast tree node.
  * <p>
  * Plumtree maintains two peer sets:
  * <ul>
- *   <li><b>Eager peers</b> — receive messages immediately via eager push.
+ *   <li><b>Eager peers</b> - receive messages immediately via eager push.
  *       These form the spanning tree for efficient O(N) broadcast.</li>
- *   <li><b>Lazy peers</b> — receive only IHAVE notifications. If a node
+ *   <li><b>Lazy peers</b> - receive only IHAVE notifications. If a node
  *       hasn't received a message after a timeout, it GRAFTs from a lazy
  *       peer, repairing the tree.</li>
  * </ul>
@@ -141,7 +141,7 @@ public final class PlumtreeNode {
         Objects.requireNonNull(id, "id must not be null");
 
         if (receivedMessages.contains(id)) {
-            // Duplicate — PRUNE the sender to move them to lazy set
+            // Duplicate - PRUNE the sender to move them to lazy set
             outbox.add(new OutboundMessage.Prune(from));
             return false;
         }

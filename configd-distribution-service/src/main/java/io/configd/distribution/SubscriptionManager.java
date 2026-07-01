@@ -22,10 +22,10 @@ import java.util.Set;
  */
 public final class SubscriptionManager {
 
-    /** Mapping from edge node → set of subscribed prefixes. */
+    /** Mapping from edge node to set of subscribed prefixes. */
     private final Map<NodeId, Set<String>> subscriptions;
 
-    /** Reverse index: prefix → set of subscribing nodes. */
+    /** Reverse index: prefix to set of subscribing nodes. */
     private final Map<String, Set<NodeId>> prefixIndex;
 
     public SubscriptionManager() {

@@ -26,7 +26,7 @@ import static io.configd.raft.RaftArtifactMagic.WALE_MAGIC;
  * Snapshot frequency bounds the replay cost on recovery.
  * <p>
  * This implementation is designed for single-threaded access from the
- * Raft I/O thread (ADR-0009). No synchronization is used.
+ * Raft I/O thread. No synchronization is used.
  */
 public final class RaftLog {
 
@@ -64,12 +64,11 @@ public final class RaftLog {
     private final Storage storage;
 
     /**
-     * PA-2021 (ADR-0042): at-rest integrity codec applied as a pure transform
-     * over the WAL-entry and snapshot-blob payloads. Never null — a keyless
-     * {@link IntegrityEnvelope} (Layer A: version + CRC32C, reads legacy raw bytes)
-     * is the default so the in-memory mode and every existing test are unchanged in
-     * behavior. The server wires a KEYED envelope (Layer B: HMAC-SHA-256, fail-closed)
-     * derived from the cluster signing key.
+     * At-rest integrity codec applied as a pure transform over the WAL-entry and
+     * snapshot-blob payloads. Never null - a keyless {@link IntegrityEnvelope}
+     * (version + CRC32C, reads legacy raw bytes) is the default so the in-memory
+     * mode and every existing test are unchanged in behavior. The server wires a
+     * keyed envelope (HMAC-SHA-256, fail-closed) derived from the cluster signing key.
      */
     private final IntegrityEnvelope integrity;
 
@@ -77,12 +76,9 @@ public final class RaftLog {
     private static final String WAL_TMP_NAME = "raft-log.tmp";
     private static final String SNAPSHOT_META_KEY = "raft-log.snapshot-meta";
     /**
-     * RR-003: durable storage key for the snapshot BYTES (the state-machine
-     * bytes plus the SnapshotState envelope). Distinct from
-     * {@link #SNAPSHOT_META_KEY}, which carries only the (index, term) boundary.
-     * Before this fix the snapshot bytes lived only in a RAM field of RaftNode,
-     * so a restart after compaction silently lost all state at/below the
-     * snapshot point.
+     * Durable storage key for the snapshot BYTES (state-machine bytes plus the
+     * SnapshotState envelope). Distinct from {@link #SNAPSHOT_META_KEY}, which
+     * carries only the (index, term) boundary.
      */
     private static final String SNAPSHOT_BLOB_KEY = "raft-log.snapshot";
 
@@ -123,12 +119,12 @@ public final class RaftLog {
     }
 
     /**
-     * Creates a RaftLog backed by durable storage with an explicit at-rest
-     * integrity codec (PA-2021 / ADR-0042). A KEYED {@link IntegrityEnvelope}
-     * authenticates the WAL entries and snapshot blob (fail-closed: a tampered
-     * artifact is refused on recovery); a keyless one applies version + CRC32C
-     * only and reads legacy raw bytes (back-compat). The recovery behavior is
-     * otherwise identical to {@link #RaftLog(Storage)}.
+     * Creates a RaftLog backed by durable storage with an explicit at-rest integrity
+     * codec. A keyed {@link IntegrityEnvelope} authenticates the WAL entries and
+     * snapshot blob (fail-closed: a tampered artifact is refused on recovery); a
+     * keyless one applies version + CRC32C only and reads legacy raw bytes
+     * (back-compat). The recovery behavior is otherwise identical to
+     * {@link #RaftLog(Storage)}.
      *
      * @param storage   the durable storage implementation
      * @param integrity the at-rest integrity codec (non-null; use
@@ -147,11 +143,11 @@ public final class RaftLog {
         storage.truncateLog(WAL_TMP_NAME);
 
         // Recover entries from the WAL. FileStorage has already dropped any torn
-        // trailing frame (incomplete length/data/CRC32) BEFORE these bytes reach
-        // us — so every `raw` here is a complete, CRC32-valid frame. deserializeEntry
-        // then verifies the at-rest integrity envelope: a complete-but-tampered
-        // frame (MAC mismatch under a keyed codec) fails LOUD (ADR-0042 torn-vs-
-        // tamper rule), never silently dropped.
+        // trailing frame (incomplete length/data/CRC32) BEFORE these bytes reach us,
+        // so every `raw` here is a complete, CRC32-valid frame. deserializeEntry then
+        // verifies the at-rest integrity envelope: a complete-but-tampered frame (MAC
+        // mismatch under a keyed codec) fails loudly (torn-vs-tamper rule), never
+        // silently dropped.
         List<byte[]> walEntries = storage.readLog(WAL_NAME);
         for (byte[] raw : walEntries) {
             entries.add(deserializeEntry(raw));
@@ -161,7 +157,7 @@ public final class RaftLog {
         // Format: [8-byte snapshotIndex][8-byte snapshotTerm].
         // This handles both cases:
         //   (a) WAL has entries starting after index 1 (partial compaction)
-        //   (b) WAL is empty (full compaction — all entries were in the snapshot)
+        //   (b) WAL is empty (full compaction - all entries were in the snapshot)
         byte[] snapMeta = storage.get(SNAPSHOT_META_KEY);
         if (snapMeta != null && snapMeta.length >= 16) {
             ByteBuffer metaBuf = ByteBuffer.wrap(snapMeta);
@@ -188,7 +184,7 @@ public final class RaftLog {
             long expectedSnapshotIndex = entries.getFirst().index() - 1;
             if (this.snapshotIndex != expectedSnapshotIndex) {
                 this.snapshotIndex = expectedSnapshotIndex;
-                // Stale metadata snapshotTerm is also suspect — reset to 0.
+                // Stale metadata snapshotTerm is also suspect - reset to 0.
                 // termAt(snapshotIndex) returns 0, which is conservative for
                 // isAtLeastAsUpToDate: may reject a valid vote but never
                 // grants an invalid one.
@@ -196,11 +192,11 @@ public final class RaftLog {
             }
         }
 
-        // RR-003: recover the durable snapshot bytes (the state-machine state at
-        // the snapshot boundary) so the owning RaftNode can restore the state
-        // machine BEFORE replaying the WAL suffix. Acceptance rule:
+        // Recover the durable snapshot bytes (state-machine state at the snapshot
+        // boundary) so the owning RaftNode can restore the state machine BEFORE
+        // replaying the WAL suffix. Acceptance rule:
         //
-        //   accept iff blob.lastIncludedIndex == snapshotIndex (the consistent,
+        //   accept iff blob.lastIncludedIndex == snapshotIndex (consistent,
         //   post-compaction steady state).
         //
         // If they disagree, the WAL is authoritative and still holds the entries
@@ -219,7 +215,7 @@ public final class RaftLog {
         }
     }
 
-    // ---- Query methods ----
+    // Query methods
 
     /**
      * Returns the index of the last log entry, or snapshotIndex if log is empty.
@@ -338,7 +334,7 @@ public final class RaftLog {
         return entries.size();
     }
 
-    // ---- Mutation methods ----
+    // Mutation methods
 
     /**
      * Appends a new entry to the end of the log.
@@ -352,11 +348,11 @@ public final class RaftLog {
     }
 
     /**
-     * Appends a new entry to the in-memory log and the WAL <b>without</b> fsyncing it
-     * (S7.5 group commit). The entry is NOT durable until a subsequent {@link #syncWal()}
-     * returns; any caller that counts this entry toward Raft commitment — the leader's own
-     * match, or a follower's AppendEntries ACK — MUST call {@link #syncWal()} first. RaftNode
-     * gates its leader durable-index on this so a non-durable self-copy is never counted in a
+     * Appends a new entry to the in-memory log and the WAL <b>without</b> fsyncing it.
+     * The entry is NOT durable until a subsequent {@link #syncWal()} returns; any caller
+     * that counts this entry toward Raft commitment - the leader's own match, or a
+     * follower's AppendEntries ACK - MUST call {@link #syncWal()} first. RaftNode gates
+     * its leader durable-index on this so a non-durable self-copy is never counted in a
      * commit quorum. The entry's index must equal {@code lastIndex() + 1}.
      *
      * @throws IllegalArgumentException if the index is not sequential
@@ -377,7 +373,7 @@ public final class RaftLog {
      * Forces every entry appended via {@link #appendNoSync} since the last sync to durable
      * storage. After this returns, all entries up to {@link #lastIndex()} are durable. No-op in
      * the in-memory ({@code storage == null}) mode. One {@code syncLog} amortizes the fsync
-     * across the whole batch — the group-commit win over per-entry {@code force}.
+     * across the whole batch - the group-commit win over per-entry force.
      */
     public void syncWal() {
         if (storage != null) {
@@ -403,7 +399,7 @@ public final class RaftLog {
     /**
      * Handles entries received in an AppendEntries RPC.
      * <p>
-     * Implements the log matching property (Raft §5.3):
+     * Implements the log matching property (Raft section 5.3):
      * <ol>
      *   <li>If an existing entry conflicts with a new one (same index,
      *       different term), truncate the log from that point.</li>
@@ -424,11 +420,11 @@ public final class RaftLog {
             }
         }
 
-        // Process each new entry. S7.5 group commit: buffer the appends and fsync ONCE for
-        // the whole RPC batch (appendNoSync + a single trailing syncWal) instead of one fsync
-        // per entry. Persist-before-ACK is preserved: syncWal() completes before this method
-        // returns, and the follower's AppendEntries response is sent only after it returns — so
-        // the matchIndex the follower reports is always already durable.
+        // Buffer the appends and fsync ONCE for the whole RPC batch (appendNoSync + a single
+        // trailing syncWal) instead of one fsync per entry. Persist-before-ACK is preserved:
+        // syncWal() completes before this method returns, and the follower's AppendEntries
+        // response is sent only after it returns - so the matchIndex the follower reports is
+        // always already durable.
         boolean appended = false;
         for (LogEntry newEntry : newEntries) {
             long idx = newEntry.index();
@@ -438,16 +434,16 @@ public final class RaftLog {
             }
             long existingTerm = termAt(idx);
             if (existingTerm == -1) {
-                // Entry beyond current log — append
+                // Entry beyond current log - append
                 appendNoSync(newEntry);
                 appended = true;
             } else if (existingTerm != newEntry.term()) {
-                // Conflict — truncate from this index (durably rewrites the WAL) and append
+                // Conflict - truncate from this index (durably rewrites the WAL) and append
                 truncateFrom(idx);
                 appendNoSync(newEntry);
                 appended = true;
             }
-            // else: entry already in log with same term — skip (idempotent)
+            // else: entry already in log with same term - skip (idempotent)
         }
         if (appended) {
             syncWal(); // single durable barrier for the batch, before the ACK is sent
@@ -474,11 +470,10 @@ public final class RaftLog {
         entries.subList(offset, entries.size()).clear();
         if (storage != null) {
             rewriteWal();
-            // F-0012 fix: fsync the directory after WAL rewrite to ensure
-            // the rename is durable. Without this, a crash on Linux ext4
-            // after renameLog() but before directory metadata sync could
-            // lose the truncation, leaving stale entries that violate the
-            // log matching property on recovery.
+            // Fsync the directory after WAL rewrite to ensure the rename is durable.
+            // Without this, a crash on Linux ext4 after renameLog() but before
+            // directory metadata sync could lose the truncation, leaving stale entries
+            // that violate the log matching property on recovery.
             storage.sync();
         }
     }
@@ -505,18 +500,17 @@ public final class RaftLog {
     }
 
     /**
-     * RR-003: durably persists the snapshot bytes (state-machine state + the
+     * Durably persists the snapshot bytes (state-machine state + the
      * {@link SnapshotState} envelope) to storage, fsynced, before returning.
      * <p>
-     * <b>Ordering contract (the durable-prefix invariant).</b> This MUST be
-     * called and MUST complete BEFORE {@link #compact(long, long)} deletes the
-     * WAL prefix [1..index]. Persist-before-truncate guarantees that at every
-     * instant a complete prefix exists on durable storage: either the snapshot
-     * bytes (once persisted) OR the still-present WAL. A crash between this call
-     * and {@code compact()} leaves the full WAL intact (recovery replays it and
-     * ignores the ahead-of-WAL blob); a crash after {@code compact()} has the
-     * snapshot bytes durable. There is no instant at which both the WAL prefix
-     * and the snapshot bytes for an index are missing.
+     * <b>Ordering contract (the durable-prefix invariant).</b> This MUST be called
+     * and MUST complete BEFORE {@link #compact(long, long)} deletes the WAL prefix
+     * [1..index]. Persist-before-truncate guarantees that at every instant a complete
+     * prefix exists on durable storage: either the snapshot bytes (once persisted)
+     * OR the still-present WAL. A crash between this call and {@code compact()} leaves
+     * the full WAL intact (recovery replays it and ignores the ahead-of-WAL blob); a
+     * crash after {@code compact()} has the snapshot bytes durable. There is no instant
+     * at which both the WAL prefix and the snapshot bytes for an index are missing.
      * <p>
      * No-op in the in-memory ({@code storage == null}) mode.
      *
@@ -528,16 +522,16 @@ public final class RaftLog {
             return; // in-memory mode: nothing durable to write
         }
         // Storage.put writes a temp file, fsyncs it, atomic-renames, and fsyncs
-        // the directory before returning — so the blob is on durable storage
+        // the directory before returning - so the blob is on durable storage
         // when this returns, independent of any later WAL rewrite.
         storage.put(SNAPSHOT_BLOB_KEY, serializeSnapshot(snapshot));
     }
 
     /**
-     * RR-003: the snapshot recovered from durable storage on construction, used
-     * by RaftNode to restore the state machine before replaying the WAL suffix,
-     * or {@code null} if none is on disk or it does not match the recovered WAL
-     * boundary (see the recovery rule in the constructor). Idempotent.
+     * Returns the snapshot recovered from durable storage on construction, used by
+     * RaftNode to restore the state machine before replaying the WAL suffix, or
+     * {@code null} if none is on disk or it does not match the recovered WAL boundary
+     * (see the recovery rule in the constructor). Idempotent.
      */
     public SnapshotState recoveredSnapshot() {
         return recoveredSnapshot;
@@ -547,10 +541,9 @@ public final class RaftLog {
      * Compacts entries up to the given index (inclusive) for snapshot.
      * After compaction, entries [1..snapshotIndex] are discarded.
      * <p>
-     * RR-003: callers that take a real snapshot (not just a follower's
-     * InstallSnapshot of already-known state) MUST {@link #persistSnapshot} the
-     * snapshot bytes durably BEFORE invoking this, so the WAL prefix is never the
-     * sole record of committed state.
+     * Callers that take a real snapshot (not just a follower's InstallSnapshot of
+     * already-known state) MUST {@link #persistSnapshot} the snapshot bytes durably
+     * BEFORE invoking this, so the WAL prefix is never the sole record of committed state.
      *
      * @param index the index of the last entry included in the snapshot
      * @param term  the term of the last entry included in the snapshot
@@ -560,7 +553,7 @@ public final class RaftLog {
             return; // Already compacted past this point
         }
         if (index > lastIndex()) {
-            // Snapshot includes entries we don't have — clear everything
+            // Snapshot includes entries we don't have - clear everything
             entries.clear();
         } else {
             int offset = toOffset(index);
@@ -575,12 +568,12 @@ public final class RaftLog {
             // Crash safety analysis:
             // - Crash after rewriteWal() but before metadata persist:
             //   Recovery infers snapshotIndex from first WAL entry (correct),
-            //   snapshotTerm defaults to 0 (safe but imprecise — only affects
+            //   snapshotTerm defaults to 0 (safe but imprecise - only affects
             //   termAt(snapshotIndex) and isAtLeastAsUpToDate comparisons).
             //
             // - Crash before rewriteWal():
             //   Old WAL is intact, compaction effectively didn't happen.
-            //   Any stale metadata from a prior run is harmless — it's only
+            //   Any stale metadata from a prior run is harmless - it's only
             //   read when firstIndex > 1, which is consistent with a prior
             //   successful compaction.
             //
@@ -598,7 +591,7 @@ public final class RaftLog {
 
     /**
      * Checks whether candidate's log is at least as up-to-date as this log.
-     * Used for vote decisions (Raft §5.4.1).
+     * Used for vote decisions (Raft section 5.4.1).
      * <p>
      * A log is "at least as up-to-date" if its last term is greater,
      * or if terms are equal and its last index is >= this log's last index.
@@ -611,7 +604,7 @@ public final class RaftLog {
         return candidateLastLogIndex >= lastIndex();
     }
 
-    // ---- Internal helpers ----
+    // Internal helpers
 
     /**
      * Converts a 1-based log index to a 0-based offset into the entries list,
@@ -621,13 +614,12 @@ public final class RaftLog {
         return (int) (index - snapshotIndex - 1);
     }
 
-    // ---- WAL persistence helpers ----
+    // WAL persistence helpers
 
     /**
-     * Serializes a LogEntry for WAL storage, wrapped in the at-rest integrity
-     * envelope (PA-2021 / ADR-0042). The envelope IS the {@code data} that
-     * FileStorage frames as {@code [len][data][CRC32]}, so per-record
-     * authentication lives INSIDE the FileStorage frame — after FileStorage's
+     * Serializes a LogEntry for WAL storage, wrapped in the at-rest integrity envelope.
+     * The envelope IS the {@code data} that FileStorage frames as {@code [len][data][CRC32]},
+     * so per-record authentication lives inside the FileStorage frame - after FileStorage's
      * torn-tail/length/CRC32 checks, which still run untouched.
      * <p>
      * Inner payload format: {@code [8-byte index][8-byte term][N-byte command]}.
@@ -648,16 +640,16 @@ public final class RaftLog {
      * The frame reaching here is already complete and CRC32-valid (FileStorage
      * dropped any torn trailing frame). A complete-but-tampered frame therefore
      * fails the envelope's MAC/CRC32C/version check and throws
-     * {@link io.configd.common.IntegrityException} — recovery refuses rather than
-     * replaying forged committed state (ADR-0042 torn-vs-tamper rule). A keyless
-     * codec transparently accepts legacy raw (pre-envelope) WAL records.
+     * {@link io.configd.common.IntegrityException} - recovery refuses rather than
+     * replaying forged committed state (torn-vs-tamper rule). A keyless codec
+     * transparently accepts legacy raw (pre-envelope) WAL records.
      */
     private LogEntry deserializeEntry(byte[] raw) {
         byte[] payload = integrity.unwrapOrNull(WALE_MAGIC, raw);
         // Keyless back-compat: a legacy raw record (no envelope) returns null from
-        // unwrapOrNull — fall back to the bytes as-is. A keyed codec never returns
-        // null for non-enveloped bytes (it throws — fail-closed), so this branch is
-        // reached only in keyless mode reading a pre-ADR-0042 WAL.
+        // unwrapOrNull - fall back to the bytes as-is. A keyed codec never returns
+        // null for non-enveloped bytes (it throws - fail-closed), so this branch is
+        // reached only in keyless mode reading a pre-envelope WAL.
         byte[] body = (payload != null) ? payload : raw;
         ByteBuffer buf = ByteBuffer.wrap(body);
         long index = buf.getLong();
@@ -667,13 +659,12 @@ public final class RaftLog {
         return new LogEntry(index, term, command);
     }
 
-    // ---- Snapshot blob persistence (RR-003) ----
+    // Snapshot blob persistence.
     //
-    // RaftLog-level envelope around the state-machine snapshot bytes. This frames
-    // the SnapshotState (index/term/clusterConfig + the state-machine `data`),
-    // NOT the state machine's internal byte format — the latter is ADR-0028 and
-    // is owned by ConfigStateMachine, which serializes/deserializes `data`. A
-    // -1 length encodes a null clusterConfigData (legacy snapshots).
+    // RaftLog-level envelope around the state-machine snapshot bytes. This frames the
+    // SnapshotState (index/term/clusterConfig + the state-machine `data`), NOT the state
+    // machine's internal byte format (which is owned by ConfigStateMachine). A -1 length
+    // encodes a null clusterConfigData (legacy snapshots).
     //
     //   [8 lastIncludedIndex][8 lastIncludedTerm]
     //   [4 dataLen][data][4 configLen (-1 == null)][config]
@@ -692,28 +683,25 @@ public final class RaftLog {
         if (cfg != null) {
             buf.put(cfg);
         }
-        // PA-2021 (ADR-0042): wrap the snapshot-envelope bytes in the at-rest
-        // integrity envelope. The snapshot blob is an atomic-rename artifact
-        // (never torn), so any keyed-MAC mismatch on recovery is unambiguously
-        // tamper and fails loud in readSnapshotBlob.
+        // Wrap the snapshot-envelope bytes in the at-rest integrity envelope. The snapshot
+        // blob is an atomic-rename artifact (never torn), so any keyed-MAC mismatch on
+        // recovery is unambiguously tamper and fails loud in readSnapshotBlob.
         return integrity.wrap(SNAP_MAGIC, buf.array());
     }
 
     /**
      * Reads and deserializes the persisted snapshot blob, or returns {@code null}
-     * if the blob is structurally absent or too short to be an envelope (legit
-     * first boot / a torn-short blob — the WAL remains authoritative).
+     * if the blob is structurally absent or too short to be an envelope (legitimate
+     * first boot / torn-short blob - the WAL remains authoritative).
      * <p>
-     * <b>PA-2021 (ADR-0042 D-1 condition 4 — BLOCKING):</b> a structurally-complete
-     * blob whose integrity envelope FAILS verification (keyed-MAC mismatch, CRC32C
-     * mismatch, rolled version, or a downgrade to algId=NONE under a configured key)
-     * propagates as an {@link io.configd.common.IntegrityException} — it MUST NOT be
-     * swallowed to {@code null}. Returning null here would re-arm the silent-
-     * downgrade vulnerability: the recovery rule would treat the tampered blob as
-     * "absent" and fall back to the (also-attacker-writable) WAL or, worse, advance
-     * past a hole. The snapshot blob is written by {@link Storage#put} (temp +
-     * fsync + atomic rename), so it is never torn — any MAC mismatch is
-     * unambiguously tamper.
+     * A structurally-complete blob whose integrity envelope FAILS verification
+     * (keyed-MAC mismatch, CRC32C mismatch, rolled version, or a downgrade to
+     * algId=NONE under a configured key) propagates as an
+     * {@link io.configd.common.IntegrityException} - it MUST NOT be swallowed to
+     * {@code null}. Returning null would treat the tampered blob as "absent" and
+     * fall back to the WAL, re-enabling a silent-downgrade attack. The snapshot blob
+     * is written by {@link Storage#put} (temp + fsync + atomic rename) so it is
+     * never torn - any MAC mismatch is unambiguously tamper.
      */
     private SnapshotState readSnapshotBlob() {
         byte[] raw = storage.get(SNAPSHOT_BLOB_KEY);
@@ -722,7 +710,7 @@ public final class RaftLog {
         // on a present-but-tampered envelope. That throw deliberately propagates.
         byte[] payload = integrity.unwrapOrNull(SNAP_MAGIC, raw);
         if (payload == null) {
-            // Keyless back-compat: legacy raw (pre-envelope) blob — parse directly.
+            // Keyless back-compat: legacy raw (pre-envelope) blob - parse directly.
             // (A keyed codec never returns null for non-enveloped bytes: it throws.)
             payload = raw;
         }
@@ -766,7 +754,7 @@ public final class RaftLog {
      */
     private void rewriteWal() {
         if (entries.isEmpty()) {
-            // No entries left after compaction — just delete the WAL.
+            // No entries left after compaction - just delete the WAL.
             // No temp-rename needed: losing an empty WAL on crash is safe.
             storage.truncateLog(WAL_NAME);
             storage.truncateLog(WAL_TMP_NAME);
@@ -783,7 +771,7 @@ public final class RaftLog {
 
         // 3. Atomically replace the old WAL with the temp WAL.
         // Files.move with ATOMIC_MOVE | REPLACE_EXISTING handles this in one step.
-        // Do NOT delete the old WAL first — that creates a crash window where
+        // Do NOT delete the old WAL first - that creates a crash window where
         // both files are gone (the old deleted, the rename not yet complete).
         storage.renameLog(WAL_TMP_NAME, WAL_NAME);
     }

@@ -20,10 +20,10 @@ import java.util.Set;
  *   <li>{@link #flush(NodeId)} or {@link #flushAll()} is called explicitly</li>
  * </ul>
  * <p>
- * Default delays from ADR-0010:
+ * Default delays:
  * <ul>
- *   <li>Raft AppendEntries: 200μs max delay, 64 entries or 256 KB trigger</li>
- *   <li>Plumtree EagerPush: 100μs max delay, 32 events or 128 KB trigger</li>
+ *   <li>Raft AppendEntries: 200us max delay, 64 entries or 256 KB trigger</li>
+ *   <li>Plumtree EagerPush: 100us max delay, 32 events or 128 KB trigger</li>
  * </ul>
  * <p>
  * Thread safety: designed for single-threaded access from the transport

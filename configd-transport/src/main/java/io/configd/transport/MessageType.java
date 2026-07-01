@@ -2,7 +2,7 @@ package io.configd.transport;
 
 /**
  * Wire protocol message types for the Configd data plane.
- * Each type maps to a single byte on the wire (ADR-0010).
+ * Each type maps to a single byte on the wire.
  */
 public enum MessageType {
     APPEND_ENTRIES(0x01),
@@ -22,11 +22,10 @@ public enum MessageType {
     INSTALL_SNAPSHOT_RESPONSE(0x0F),
     TIMEOUT_NOW(0x10),
     /**
-     * Multi-Raft Phase 1 (D2; wire v2): a coalesced heartbeat carrying every group's empty
-     * AppendEntries that one node drained for a single peer in one tick, as ONE frame instead of one
-     * per group (M3). Dormant at N=1 (a single-group drain sends a plain {@link #APPEND_ENTRIES}); the
-     * coalesced frame is only emitted at N&gt;1. Payload codec + demux:
-     * {@code RaftMessageCodec.{encode,decode}CoalescedHeartbeat}.
+     * Coalesced heartbeat: carries every group's empty AppendEntries that one node drained for
+     * a single peer in one tick, as ONE frame instead of one per group. Dormant at N=1
+     * (a single-group drain sends a plain {@link #APPEND_ENTRIES}); emitted at N&gt;1.
+     * Payload codec and demux: {@code RaftMessageCodec.{encode,decode}CoalescedHeartbeat}.
      */
     RAFT_COALESCED_HEARTBEAT(0x11);
 

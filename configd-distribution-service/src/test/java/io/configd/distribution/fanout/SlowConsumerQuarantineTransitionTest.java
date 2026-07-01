@@ -8,17 +8,15 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * CT-28 — architecture §7 ":289 0 credits for &gt; 30 s → Disconnect from tree, mark as
- * quarantined", re-based on the C1 demotion signals (C4 design §2): {@code demoteLimit}
- * distress demotions within {@code demoteWindowMs} transition the identity to QUARANTINED
- * — the caller disconnects with {@code ErrorCode.QUARANTINED} (wire code 8; the wire leg
- * is {@code FanOutServerQuarantineTest}) — with the {@code edge_fanout_quarantines_total}
- * metric and the structured event carrying the cursor evidence.
+ * {@code demoteLimit} distress demotions within {@code demoteWindowMs} transition the
+ * identity to QUARANTINED; the caller disconnects with {@code ErrorCode.QUARANTINED}
+ * (wire code 8). The metric {@code edge_fanout_quarantines_total} fires and the structured
+ * event carries the cursor evidence.
  *
- * <p>Also pins the screen C4-2 reason weighting: GAP demotions (network/eviction
- * artifacts) are counted separately at the higher {@code gapDemoteLimit}, so a lossy-WAN
- * edge that gaps and heals repeatedly does not walk to QUARANTINED — while a genuine gap
- * loop still trips the backstop.
+ * <p>Also pins the reason weighting: GAP demotions (network/eviction artifacts) are
+ * counted separately at the higher {@code gapDemoteLimit}, so a lossy-WAN edge that gaps
+ * and heals repeatedly does not walk to QUARANTINED - while a genuine gap loop still trips
+ * the backstop.
  */
 class SlowConsumerQuarantineTransitionTest {
 
@@ -75,7 +73,7 @@ class SlowConsumerQuarantineTransitionTest {
         governor.onDemotion(EDGE, distress(10, 5), T0);
         governor.onDemotion(EDGE, distress(20, 5), T0 + 30_000);
         // The first demotion (T0) has aged out of the 60 s window by T0 + 61_000: the
-        // sliding window holds only two distress demotions — under the limit.
+        // sliding window holds only two distress demotions - under the limit.
         assertEquals(ConsumerState.CATCHUP,
                 governor.onDemotion(EDGE, distress(30, 5), T0 + 61_000));
         assertEquals(0, probe.quarantines,
@@ -130,7 +128,7 @@ class SlowConsumerQuarantineTransitionTest {
         SlowConsumerGovernor governor =
                 new SlowConsumerGovernor(config(), probe, probe::onTransition);
 
-        // 2 distress + 2 gap: neither ladder at its limit — no quarantine.
+        // 2 distress + 2 gap: neither ladder at its limit - no quarantine.
         governor.onDemotion(EDGE, distress(10, 5), T0);
         governor.onDemotion(EDGE, gap(11, 5), T0 + 1_000);
         governor.onDemotion(EDGE, distress(12, 5), T0 + 2_000);

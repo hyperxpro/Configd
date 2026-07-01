@@ -7,8 +7,8 @@ import java.util.function.Predicate;
 
 /**
  * TEST-ONLY {@link StreamDriver} that pushes handcrafted {@link EdgeStream}
- * messages — including deliberately invalid sequences — at scripted sim ticks
- * (RR-012 test-the-tester). It does NOT read the {@link StreamDriver.Context}
+ * messages - including deliberately invalid sequences - at scripted sim ticks
+ * (test-the-tester). It does NOT read the {@link StreamDriver.Context}
  * sources; it is the manual counterpart to the real C1 drain, used by
  * {@link EdgeInvariantsTestTheTesterTest} to drive each edge invariant into a
  * firing state and to verify the {@link EdgeActor} apply paths.
@@ -16,7 +16,7 @@ import java.util.function.Predicate;
  * Determinism: injections are emitted in FIFO order at or after their scheduled
  * tick, addressed to the first edge matching a predicate. No randomness.
  * <p>
- * This class is intentionally <b>not</b> a model of the production protocol — it
+ * This class is intentionally <b>not</b> a model of the production protocol - it
  * exists only to construct arbitrary (valid and invalid) inputs for the checker.
  */
 final class DirectInjectionDriver implements StreamDriver {

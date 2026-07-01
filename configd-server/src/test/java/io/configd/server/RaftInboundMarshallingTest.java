@@ -37,13 +37,13 @@ import java.util.concurrent.locks.LockSupport;
 import org.junit.jupiter.api.Test;
 
 /**
- * R-01 regression: the formally-verified, explicitly single-threaded {@link RaftNode}
+ * The formally-verified, explicitly single-threaded {@link RaftNode}
  * ("No synchronization is used") must only ever be touched by ONE thread. The server has three
  * node-access entry points that all run on different threads in the unfixed code:
  * <ul>
- *   <li>{@code tick()} — the "configd-tick" thread,</li>
- *   <li>inbound {@code handleMessage()} — per-connection virtual threads, and</li>
- *   <li>{@code propose()} (writes) — HTTP virtual threads.</li>
+ *   <li>{@code tick()} - the "configd-tick" thread,</li>
+ *   <li>inbound {@code handleMessage()} - per-connection virtual threads, and</li>
+ *   <li>{@code propose()} (writes) - HTTP virtual threads.</li>
  * </ul>
  * The fix marshals BOTH inbound routing ({@link ConfigdServer#raftInboundHandler}) and proposals
  * ({@link ConfigdServer#raftProposer}) onto the single tick executor.
@@ -86,7 +86,7 @@ class RaftInboundMarshallingTest {
         return driver;
     }
 
-    /** A stale-term AppendEntries — a leader (term >= 1) rejects it and replies, producing a send. */
+    /** A stale-term AppendEntries - a leader (term >= 1) rejects it and replies, producing a send. */
     private static AppendEntriesRequest staleAppendEntries() {
         return new AppendEntriesRequest(0L, NodeId.of(2), 0L, 0L, List.of(), 0L);
     }
@@ -99,7 +99,7 @@ class RaftInboundMarshallingTest {
      * Concurrency stress: drive {@code tick()} on the raft executor while two other threads flood
      * inbound messages AND proposals through the production seams. A shared sentinel (across
      * {@code send} + {@code apply}) detects any concurrent RaftNode access. With the fix everything
-     * serializes on the raft executor → clean; without it the flood threads race the tick thread.
+     * serializes on the raft executor -> clean; without it the flood threads race the tick thread.
      */
     @Test
     void concurrentTickInboundAndProposeAreSerializedOnTheRaftExecutor() throws Exception {
@@ -114,7 +114,7 @@ class RaftInboundMarshallingTest {
             ConfigWriteService.RaftProposer proposer =
                     ConfigdServer.raftProposer(driver, GROUP, raftExecutor, 2000);
 
-            // tick on the raft executor — the in-confinement entry point.
+            // tick on the raft executor - the in-confinement entry point.
             ScheduledFuture<?> ticker = raftExecutor.scheduleAtFixedRate(() -> {
                 try {
                     node.tick();
@@ -215,7 +215,7 @@ class RaftInboundMarshallingTest {
                     ConfigdServer.raftProposer(driverFor(node), GROUP, raftExecutor, 5000);
 
             String callerThread = Thread.currentThread().getName();
-            // RR-004 / ADR-0033: a single-node leader commits + applies inline, so
+            // A single-node leader commits + applies inline, so
             // the proposer returns Committed (commit-confirmed), not a bare accept.
             ConfigWriteService.ProposeCommitResult result = proposer.propose(null, java.util.List.of("hello"), cmd("hello"));
             assertInstanceOf(ConfigWriteService.ProposeCommitResult.Committed.class, result,

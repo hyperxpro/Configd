@@ -12,23 +12,23 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.fail;
 
 /**
- * C3 gap recovery in the SIM, through the REAL {@code EdgeClientCore} directive path and
- * a REAL {@link C1StreamDriver} resubscribe (CT-16's owed GAP→replay orchestration; the
- * charter §4 C3 "both paths tested under concurrent writes" at sim level):
+ * Gap recovery in the SIM, through the REAL {@code EdgeClientCore} directive path and
+ * a REAL {@link C1StreamDriver} resubscribe (GAP->replay orchestration;
+ * charter section 4 recovery "both paths tested under concurrent writes" at sim level):
  * <ul>
- *   <li><b>within the replay horizon</b> — a partitioned edge misses deltas; on heal the
+ *   <li><b>within the replay horizon</b> - a partitioned edge misses deltas; on heal the
  *       next NOTIFY gaps, the core queues {@code RECONNECT_RESUBSCRIBE(cursor)}, the
- *       resubscribe gets TAIL and REPLAYS the missed run from the boundary ring — no
+ *       resubscribe gets TAIL and REPLAYS the missed run from the boundary ring - no
  *       snapshot;</li>
- *   <li><b>beyond the replay horizon</b> — same wedge against a tiny ring that LAPS the
+ *   <li><b>beyond the replay horizon</b> - same wedge against a tiny ring that LAPS the
  *       edge's cursor: the resubscribe probe GAPs and the recovery is a snapshot+delta
  *       re-bootstrap;</li>
- *   <li><b>adversarial sweep</b> — full fault schedules (edge crash/partition/lag + CP
+ *   <li><b>adversarial sweep</b> - full fault schedules (edge crash/partition/lag + CP
  *       workload) with recovery enabled on every edge: the recovery path must introduce
  *       ZERO safety violations and must actually fire (non-vacuity).</li>
  * </ul>
- * The C1 ack-lag self-heal is DISABLED in the two scenario legs (ackLagDemoteSeqs huge)
- * so the recovery being tested is provably C3's resubscribe, not the C1 demotion path.
+ * The ack-lag self-heal is DISABLED in the two scenario legs (ackLagDemoteSeqs huge)
+ * so the recovery being tested is provably the resubscribe path, not the ack-lag demotion path.
  */
 class EdgeGapRecoveryTest {
 
@@ -36,7 +36,7 @@ class EdgeGapRecoveryTest {
     private static final int EDGES = 2;
     private static final int WORKLOAD_TICKS = 1_500;
 
-    /** ackLag effectively disabled: the ONLY recovery available is the C3 resubscribe. */
+    /** ackLag effectively disabled: the ONLY recovery available is the resubscribe path. */
     private static FanOutConfig noAckLagHealConfig() {
         return new FanOutConfig(64, 80, 64, 262_144, 1_000_000L, 250L, 5L, 1_048_576);
     }
@@ -55,7 +55,7 @@ class EdgeGapRecoveryTest {
         sim.enableEdgeRecovery(0);
 
         // Partition, then commit writes the victim misses (its session streams them into
-        // the void — the concurrent-writes requirement).
+        // the void - the concurrent-writes requirement).
         sim.partitionEdge(0);
         for (int i = 1; i <= 3; i++) {
             commit(sim, victim.subscribedCpNode(), "gap/k" + i, "missed-" + i);
@@ -65,7 +65,7 @@ class EdgeGapRecoveryTest {
         sim.healEdge(0);
         commit(sim, victim.subscribedCpNode(), "gap/after", "post-heal");
 
-        // The REAL chain: GAP_DETECTED → RECONNECT_RESUBSCRIBE(cursor) → TAIL replay.
+        // The REAL chain: GAP_DETECTED -> RECONNECT_RESUBSCRIBE(cursor) -> TAIL replay.
         long target = sim.cpSim().store(victim.subscribedCpNode()).currentVersion();
         tickUntil(sim, () -> victim.currentVersion() >= target,
                 "victim re-converged by replay");
@@ -84,7 +84,7 @@ class EdgeGapRecoveryTest {
     void gapBeyondTheHorizonRecoversBySnapshotRebootstrap() {
         C1StreamDriver driver = new C1StreamDriver(noAckLagHealConfig());
         // Ring capacity 8: a dozen missed commits lap the victim's cursor (the horizon is
-        // crossable at sim scale; production keeps 10_000 — same code, smaller knob).
+        // crossable at sim scale; production keeps 10_000 - same code, smaller knob).
         EdgeFanOutSim sim = new EdgeFanOutSim(23L, CP_NODES, EDGES, WORKLOAD_TICKS,
                 false, driver, new AdversarialSchedule.Intensity(0, 30, 0.0),
                 EdgeInvariants.BOUND_MS, 8);
@@ -138,7 +138,7 @@ class EdgeGapRecoveryTest {
             for (int e = 0; e < 3; e++) {
                 sim.enableEdgeRecovery(e);
             }
-            // Safety invariants run EVERY tick and THROW — an unsafe recovery fails here.
+            // Safety invariants run EVERY tick and THROW - an unsafe recovery fails here.
             sim.run();
             try {
                 sim.finalCheckHealingCp();
@@ -163,7 +163,7 @@ class EdgeGapRecoveryTest {
 
     /**
      * Commits one write through the REAL CP (leader propose) and ticks until the observed
-     * node has APPLIED IT (value equality — a bare version-advance check races the
+     * node has APPLIED IT (value equality - a bare version-advance check races the
      * previous write's in-flight apply on a follower and returns one seq short).
      */
     private static void commit(EdgeFanOutSim sim, int observedCpNode, String key, String value) {
@@ -184,7 +184,7 @@ class EdgeGapRecoveryTest {
         fail("write '" + key + "' did not commit/apply on cp node " + observedCpNode);
     }
 
-    /** Ticks the sim (bounded) until the condition holds — logical time, no sleeps. */
+    /** Ticks the sim (bounded) until the condition holds - logical time, no sleeps. */
     private static void tickUntil(EdgeFanOutSim sim, java.util.function.BooleanSupplier cond,
                                   String what) {
         for (int t = 0; t < 3_000; t++) {

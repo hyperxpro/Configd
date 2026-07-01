@@ -20,10 +20,10 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * Behavioral tests for the O-6 Seam 2a CONFIG-SOURCED policy layer in {@link AclService}: additive union
- * with the static layer, absolute deny-precedence ACROSS layers, the effective-WATCH floor through config,
+ * Behavioral tests for the CONFIG-SOURCED policy layer in {@link AclService}: additive union with the
+ * static layer, absolute deny-precedence ACROSS layers, the effective-WATCH floor through config,
  * the atomic publish-swap, a torn-read concurrency stress, and the carve mechanism that motivates the
- * loader's reserved-name validation. (Reservation itself is the loader's job — see
+ * loader's reserved-name validation. (Reservation itself is the loader's job - see
  * {@code AclConfigPolicyLoaderTest}; {@link AclService} is deliberately layer-agnostic.)
  */
 class AclServiceConfigPolicyTest {
@@ -65,10 +65,10 @@ class AclServiceConfigPolicyTest {
         AclService acl = new AclService();
         acl.publishConfigPolicy(new ConfigPolicy(
                 Map.of("reader", role("reader", allow("x.", READ))), Map.of()));
-        // principal asserts "reader" (authn) → resolves against the config role
+        // principal asserts "reader" (authn) -> resolves against the config role
         assertTrue(acl.isAllowed("alice", Set.of("reader"), "x.y", READ));
         assertFalse(acl.isAllowed("alice", Set.of("reader"), "y.z", READ)); // prefix miss
-        assertFalse(acl.isAllowed("alice", Set.of(), "x.y", READ));         // not asserted ⇒ no grant
+        assertFalse(acl.isAllowed("alice", Set.of(), "x.y", READ));         // not asserted -> no grant
     }
 
     @Test
@@ -90,7 +90,7 @@ class AclServiceConfigPolicyTest {
                 Map.of("writer", role("writer", allow("x.", WRITE))),
                 Map.of("alice", Set.of("writer"))));                // config: WRITE
         assertTrue(acl.isAllowed("alice", "x.y", READ));            // from own grant
-        assertTrue(acl.isAllowed("alice", "x.y", WRITE));           // from config role — additive union
+        assertTrue(acl.isAllowed("alice", "x.y", WRITE));           // from config role - additive union
     }
 
     // ---------------- absolute deny-precedence ACROSS layers ----------------
@@ -116,16 +116,16 @@ class AclServiceConfigPolicyTest {
         assertFalse(acl.isAllowed("alice", "a.b", WRITE));         // own deny wins (subtracted once over both)
     }
 
-    // ---------------- effective-WATCH = WATCH ∧ READ through config ----------------
+    // ---------------- effective-WATCH = WATCH AND READ through config ----------------
 
     @Test
     void configWatchFloorRequiresRead() {
         AclService acl = new AclService();
-        // WATCH granted but not READ ⇒ effective WATCH is false.
+        // WATCH granted but not READ -> effective WATCH is false.
         acl.publishConfigPolicy(new ConfigPolicy(
                 Map.of("w", role("w", allow("x.", WATCH))), Map.of("alice", Set.of("w"))));
         assertFalse(acl.isAllowed("alice", "x.y", WATCH));
-        // WATCH + READ ⇒ effective WATCH true.
+        // WATCH + READ -> effective WATCH true.
         acl.publishConfigPolicy(new ConfigPolicy(
                 Map.of("w", role("w", allow("x.", WATCH, READ))), Map.of("alice", Set.of("w"))));
         assertTrue(acl.isAllowed("alice", "x.y", WATCH));
@@ -133,7 +133,7 @@ class AclServiceConfigPolicyTest {
         acl.grant("x.", "alice", EnumSet.of(READ, WATCH));         // own grant gives READ+WATCH
         acl.publishConfigPolicy(new ConfigPolicy(
                 Map.of("d", role("d", deny("x.", READ))), Map.of("alice", Set.of("d"))));
-        assertFalse(acl.isAllowed("alice", "x.y", WATCH));         // READ denied ⇒ WATCH floored off
+        assertFalse(acl.isAllowed("alice", "x.y", WATCH));         // READ denied -> WATCH floored off
     }
 
     // ---------------- the atomic publish-swap ----------------
@@ -152,14 +152,14 @@ class AclServiceConfigPolicyTest {
     }
 
     /**
-     * Torn-read stress (strong shape). Two snapshots A and B BOTH grant {@code alice READ} on {@code x.} —
+     * Torn-read stress (strong shape). Two snapshots A and B BOTH grant {@code alice READ} on {@code x.} -
      * but via <b>different</b> role names ({@code roleA} vs {@code roleB}). So the only correct decision is
      * {@code true} under <b>either</b> whole snapshot. A torn / read-more-than-once {@link
      * AclService#isAllowed} (e.g. reading {@code alice}'s bindings from one snapshot but the role
      * definitions from the other) would resolve {@code alice} to a role that is undefined in the snapshot
-     * the definitions came from ⇒ {@code false}, a value <b>impossible</b> for either whole snapshot. So
+     * the definitions came from -> {@code false}, a value <b>impossible</b> for either whole snapshot. So
      * "always {@code true}" is a genuine torn-read detector (not merely no-throw), and it is
-     * <b>deterministic</b> — no scheduler-dependent "observe both decisions" liveness flake. The reader must
+     * <b>deterministic</b> - no scheduler-dependent "observe both decisions" liveness flake. The reader must
      * also never throw (a non-atomic in-place mutation would risk CME/NPE during iteration).
      */
     @Test
@@ -246,7 +246,7 @@ class AclServiceConfigPolicyTest {
         AclService acl = new AclService();
         acl.grant("", "root", EnumSet.allOf(AclService.Permission.class)); // the static break-glass grant
         // Demonstrate the vector: a config role bound to "root" that denies everything WOULD carve root.
-        // AclService is layer-agnostic, so this is allowed HERE — which is exactly why the LOADER must
+        // AclService is layer-agnostic, so this is allowed HERE - which is exactly why the LOADER must
         // reject a config that binds the reserved "root" principal (N2).
         acl.publishConfigPolicy(new ConfigPolicy(
                 Map.of("evil", role("evil", deny("", EnumSet.allOf(AclService.Permission.class)
@@ -267,7 +267,7 @@ class AclServiceConfigPolicyTest {
     void rootAssertingNoRolesIsImmuneToAConfigAdminRole() {
         AclService acl = new AclService();
         acl.grant("", "root", EnumSet.allOf(AclService.Permission.class));
-        // A config role literally named "admin" that denies everything — but root asserts Set.of() (N1) and
+        // A config role literally named "admin" that denies everything - but root asserts Set.of() (N1) and
         // is NOT bound to it, so root never holds "admin" and is not carved. (This is the latent footgun N1
         // closes: an operator naturally defining an "admin" role must not silently strip root.)
         acl.publishConfigPolicy(new ConfigPolicy(
@@ -284,7 +284,7 @@ class AclServiceConfigPolicyTest {
      * The positive witness for WHY N1 (root asserts {@code Set.of()} in {@code ConfigdServer}) is needed:
      * if root instead asserted the role name {@code "admin"} AND a config role named {@code "admin"} carries
      * a deny, the deny WOULD carve root through the asserted-role vector. This is exactly the footgun N1
-     * removes at the source (and N3 — reserving the {@code admin} role name in the loader — backstops). The
+     * removes at the source (and N3 - reserving the {@code admin} role name in the loader - backstops). The
      * wired server never reaches this state, but this proves the vector is real, so N1 is not vacuous.
      */
     @Test
@@ -295,7 +295,7 @@ class AclServiceConfigPolicyTest {
                 Map.of("admin", role("admin", deny("", EnumSet.allOf(AclService.Permission.class)
                         .toArray(new AclService.Permission[0])))),
                 Map.of()));
-        // Asserting {"admin"} (the PRE-N1 production shape) resolves the config "admin" deny-all ⇒ root carved.
+        // Asserting {"admin"} (the PRE-N1 production shape) resolves the config "admin" deny-all -> root carved.
         assertFalse(acl.isAllowed("root", Set.of("admin"), "anything", READ),
                 "asserting the 'admin' role with a config 'admin' deny-all role present carves root — this is "
                         + "the vector N1 (root asserts Set.of()) and N3 (reserve 'admin') close");

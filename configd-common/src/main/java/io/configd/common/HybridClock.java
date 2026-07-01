@@ -52,7 +52,7 @@ public final class HybridClock {
         this.state = encode(physicalClock.currentTimeMillis(), 0);
     }
 
-    // ── Encoding helpers ────────────────────────────────────────────────
+    // Encoding helpers
 
     /** Pack (physicalMs, logical) into a single long. */
     public static long encode(long physicalMs, int logical) {
@@ -79,7 +79,7 @@ public final class HybridClock {
         return encode(ts.wallTime(), ts.logical());
     }
 
-    // ── Hot path: returns packed longs, zero allocation ─────────────────
+    // Hot path: returns packed longs, zero allocation
 
     /**
      * Generate a new timestamp for a local event and return it packed.
@@ -146,7 +146,7 @@ public final class HybridClock {
         return (long) STATE.getVolatile(this);
     }
 
-    // ── Structured-form conveniences (allocate; not on hot path) ────────
+    // Structured-form conveniences (allocate; not on hot path)
 
     /**
      * Structured form of {@link #now()}. Prefer the primitive variant on

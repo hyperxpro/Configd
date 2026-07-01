@@ -13,10 +13,10 @@ import java.util.random.RandomGeneratorFactory;
 import static org.junit.jupiter.api.Assertions.*;
 
 /**
- * Crash-restart fault class for the adversarial simulation (design §2 crash row,
- * §3 durable-prefix invariant). Lives in {@code io.configd.raft} (testkit test
- * sources) so it can consume the RR-003 {@link CrashStorage} / {@link KvStateMachine}
- * fixtures from the consensus-core <b>test-jar</b> — proving lead decision #1's
+ * Crash-restart fault class for the adversarial simulation (design section 2 crash row,
+ * section 3 durable-prefix invariant). Lives in {@code io.configd.raft} (testkit test
+ * sources) so it can consume the {@link CrashStorage} / {@link KvStateMachine}
+ * fixtures from the consensus-core <b>test-jar</b> - proving lead decision #1's
  * test-jar reuse works end-to-end for the simulation's purposes (no duplication).
  * <p>
  * This is the testkit-side twin of {@code SnapshotCrashRecoveryTest}: it drives a
@@ -109,7 +109,7 @@ class AdversarialCrashRecoveryTest {
                 NO_PEERS, recoveredSm, rngFor(seed), recovered, THROWING);
         // Drive the restarted node back to leadership: a recovered node applies
         // prior-term committed entries only after it commits a no-op in its new
-        // term (§5.4.2). Tick until it leads and its applied prefix catches up.
+        // term (section 5.4.2). Tick until it leads and its applied prefix catches up.
         electSingleNode(restarted);
         if (restarted.role() != RaftRole.LEADER) {
             return false; // recovery liveness stall, recorded not failed

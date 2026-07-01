@@ -7,14 +7,12 @@ import java.util.Set;
 
 /**
  * One authorization rule: a literal key {@code prefix} and the capabilities it {@code allow}s and
- * {@code deny}s (RFC §01 A5-3 — "a rule is {@code (…, pattern, effect) → {capabilities}}"; here ALLOW
- * and DENY are carried as two sets, mirroring {@link AclService}'s per-prefix {@code GrantEntry}).
+ * {@code deny}s. ALLOW and DENY are carried as two independent sets, mirroring {@link AclService}'s
+ * per-prefix {@code GrantEntry}.
  * <p>
- * This is the production realization of the docs-only
- * {@code docs/design/namespace-model/sketch/.../PolicyRule} concept, deliberately <b>without</b> the
- * sketch's glob {@code PathPattern} or {@code Scope}: matching is literal {@code key.startsWith(prefix)}
- * (the same matcher {@link AclService} uses) and scope stays out of the rule (DL-O6-02). Segment-aware /
- * glob matching remains the DL-O3-02-deferred binary/driver surface.
+ * Matching is literal {@code key.startsWith(prefix)}, the same matcher {@link AclService} uses. Scope
+ * is not part of the rule (it is folded into the key hash at routing time). Segment-aware and glob
+ * matching are deferred.
  * <p>
  * Permissive like {@code GrantEntry}: either set may be empty (an empty {@code allow} grants nothing, an
  * empty {@code deny} denies nothing). Both sets are defensively copied to unmodifiable snapshots, so the
@@ -36,9 +34,9 @@ public record PolicyRule(String prefix, Set<AclService.Permission> allow, Set<Ac
     }
 
     /**
-     * True when this rule's prefix is an ancestor of (or equals) {@code key} — the SAME literal
-     * {@code key.startsWith(prefix)} matcher {@link AclService#isAllowed} walks ancestors with. Glob /
-     * segment-aware matching is DL-O3-02-deferred and deliberately excluded here.
+     * True when this rule's prefix is an ancestor of (or equals) {@code key} - the same literal
+     * {@code key.startsWith(prefix)} matcher {@link AclService#isAllowed} uses. Glob and
+     * segment-aware matching are deferred and deliberately excluded here.
      *
      * @param key the config key to test (non-null)
      * @return whether this rule applies to {@code key}

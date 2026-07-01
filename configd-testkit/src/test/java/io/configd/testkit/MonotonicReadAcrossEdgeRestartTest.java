@@ -18,17 +18,17 @@ import java.util.concurrent.atomic.AtomicLong;
 import static org.junit.jupiter.api.Assertions.*;
 
 /**
- * CT-13 — per-session monotonic reads ACROSS edge restart (the read/cursor half is C2; the
+ * Per-session monotonic reads ACROSS edge restart (the read/cursor half is the edge client; the
  * re-bootstrap path is C3). An edge is a cache: a crash loses the store. A client that holds a
  * cursor at version V, after the edge crashes + restarts + re-bootstraps, must have its reads
- * with cursor V <b>refused</b> (NOT_FOUND via the INV-M1 monotonic_read seam) until the rebuilt
- * store catches up PAST V — never serving pre-crash-stale data.
+ * with cursor V <b>refused</b> (NOT_FOUND via the monotonic_read seam) until the rebuilt
+ * store catches up PAST V - never serving pre-crash-stale data.
  *
  * <p>The clause that gets silently dropped without this test: after restart the edge
- * re-bootstraps from a snapshot that may be ≥ or &lt; the client's cursor; the cursor check
+ * re-bootstraps from a snapshot that may be >= or &lt; the client's cursor; the cursor check
  * must run against the POST-BOOTSTRAP store version, and reads during bootstrap (store still
- * behind the cursor) must refuse. Driven through the real {@link EdgeActor} →
- * {@link io.configd.edge.EdgeClientCore} read path (the monitor-wired store + INV-M1 seam).
+ * behind the cursor) must refuse. Driven through the real {@link EdgeActor} ->
+ * {@link io.configd.edge.EdgeClientCore} read path (the monitor-wired store + monotonic_read seam).
  */
 class MonotonicReadAcrossEdgeRestartTest {
 
@@ -66,18 +66,18 @@ class MonotonicReadAcrossEdgeRestartTest {
         ReadResult preCrash = edge.get("k5", heldCursor);
         assertTrue(preCrash.found(), "client reads k5 at version 5 before the crash");
 
-        // The edge CRASHES — a cache loses ALL state — then RESTARTS empty at cursor 0.
+        // The edge CRASHES - a cache loses ALL state - then RESTARTS empty at cursor 0.
         edge.crash();
         edge.restart();
         assertEquals(0, edge.cursor(), "a restarted cache is empty at cursor 0");
 
         // Reads with the held cursor (version 5) against the empty post-restart store must
-        // REFUSE — never serve pre-crash data. The INV-M1 seam (test mode) THROWS on a cursor
+        // REFUSE - never serve pre-crash data. The monotonic_read seam (test mode) THROWS on a cursor
         // ahead of the store, which is the strongest form of "refused".
         assertThrows(AssertionError.class, () -> edge.get("k5", heldCursor),
                 "a held cursor ahead of the rebuilt store must refuse (INV-M1), not serve stale");
 
-        // RE-BOOTSTRAP in progress: a snapshot at version 3 (BELOW the held cursor 5) — a
+        // RE-BOOTSTRAP in progress: a snapshot at version 3 (BELOW the held cursor 5) - a
         // partial catch-up. Reads with cursor 5 must STILL refuse (store 3 < cursor 5).
         edge.deliver(new EdgeStream.Snapshot(snapshot(3, "k3", "v3"), 3));
         edge.tick();
@@ -85,7 +85,7 @@ class MonotonicReadAcrossEdgeRestartTest {
         assertThrows(AssertionError.class, () -> edge.get("k5", heldCursor),
                 "during bootstrap (store 3 < cursor 5) the read must still refuse");
 
-        // Bootstrap completes PAST the held cursor: a snapshot at version 6 (≥ 5). Now the
+        // Bootstrap completes PAST the held cursor: a snapshot at version 6 (>= 5). Now the
         // store has caught up past the cursor, so the read is served again (monotonic).
         edge.deliver(new EdgeStream.Snapshot(snapshot(6, "k5", "v5"), 6));
         edge.tick();
@@ -107,7 +107,7 @@ class MonotonicReadAcrossEdgeRestartTest {
         edge.crash();
         edge.restart();
 
-        // A cursorless read after restart (empty store) must MISS — the pre-crash value is
+        // A cursorless read after restart (empty store) must MISS - the pre-crash value is
         // gone with the cache, never resurrected.
         assertFalse(edge.get("secret").found(),
                 "a restarted cache must not serve the pre-crash value (the cache was lost)");

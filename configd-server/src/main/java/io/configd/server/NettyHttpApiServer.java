@@ -57,40 +57,40 @@ import java.util.function.BiFunction;
 import static io.netty.handler.codec.http.HttpVersion.HTTP_1_1;
 
 /**
- * Netty adapter for the Configd admin / control-plane HTTP API (ADR-0043 M2) — the Netty transport
+ * Netty adapter for the Configd admin / control-plane HTTP API - the Netty transport
  * over the same transport-agnostic {@link AdminApiHandler} the JDK {@link HttpApiServer} delegates to.
- * Every S7 control is therefore re-proven on this pipeline by the identical contract
+ * Every security control is therefore re-proven on this pipeline by the identical contract
  * ({@code AbstractAdminApiServerContract} run on JDK + Netty + forced-NIO), not re-implemented.
  *
- * <p><b>Transport.</b> Tier selected at startup by {@link NettyTransport} (io_uring → Epoll → NIO,
+ * <p><b>Transport.</b> Tier selected at startup by {@link NettyTransport} (io_uring -> Epoll -> NIO,
  * runtime-detected; CI exercises the fallback). Same constructor shape as {@link HttpApiServer}, so the
  * {@code ConfigdServer} swap is a one-line change.
  *
- * <p><b>Why this differs from the M1 edge read server.</b> The admin surface is the <em>write</em> path:
+ * <p><b>Why this differs from the edge read server.</b> The admin surface is the <em>write</em> path:
  * {@link AdminApiHandler#handle} can <b>block</b> (a PUT waits on Raft quorum commit; a strong/linearizable
  * read waits on ReadIndex). The JDK server runs each request on a virtual thread; this adapter does the
- * same — the event loop never blocks. Each request is decoded ({@link HttpObjectAggregator} assembles the
+ * same - the event loop never blocks. Each request is decoded ({@link HttpObjectAggregator} assembles the
  * full request incl. the PUT body and emits 413 on oversize), copied to a transport-free carrier, and
  * dispatched to a per-server virtual-thread executor; the {@link AdminApiHandler.AdminResponse} is written
  * back <b>on the event loop</b>. Requests on one connection are processed strictly in arrival order (a
  * small per-connection FIFO), matching the JDK server's per-connection serialization even under HTTP/1.1
- * pipelining. The admin API is low-QPS control plane, so (unlike M1's hot read path) the aggregator +
+ * pipelining. The admin API is low-QPS control plane, so the aggregator +
  * virtual-thread hop are the right simplicity/correctness trade, not an allocation hot spot.
  *
- * <p><b>C6 / RR-020 (load-bearing).</b> The request URI handed to {@link AdminApiHandler} is built with
- * {@code new URI(request.uri())} — the SAME {@code java.net.URI} decoder the JDK exchange uses — so the
+ * <p><b>URI handling (load-bearing).</b> The request URI handed to {@link AdminApiHandler} is built with
+ * {@code new URI(request.uri())} - the SAME {@code java.net.URI} decoder the JDK exchange uses - so the
  * strong-read key (from {@link URI#getPath()}, percent-decoded, not normalized/lowercased) is byte-identical
  * across transports. A request target that is not a valid URI is rejected with 400 before the handler runs.
  *
- * <p><b>Server-side TLS (C11).</b> When an {@link SSLContext} is supplied (the same one the JDK
+ * <p><b>Server-side TLS.</b> When an {@link SSLContext} is supplied (the same one the JDK
  * {@link javax.net.ssl.SSLContext}-backed {@code HttpsServer} would use), an {@link SslHandler} in server
  * mode is the first pipeline stage. Client identity remains the Bearer token (the JDK
- * {@code HttpsConfigurator} does not require client auth either); mTLS is a fan-out/consensus property
- * (M3/M4), not this surface (DR-N1).
+ * {@code HttpsConfigurator} does not require client auth either); mTLS is a fan-out/consensus property,
+ * not this surface.
  *
- * <p><b>Hardening</b> (a control-plane write port is hostile, charter §3): bounded {@link HttpServerCodec}
- * (oversize line/header → 400 + close); {@link HttpObjectAggregator} request-size ceiling (oversize body →
- * 413 + close); a request-arrival completion deadline (slowloris incl. the dribble variant — the aggregator
+ * <p><b>Hardening</b> (the admin write port is exposed): bounded {@link HttpServerCodec}
+ * (oversize line/header -> 400 + close); {@link HttpObjectAggregator} request-size ceiling (oversize body ->
+ * 413 + close); a request-arrival completion deadline (slowloris incl. the dribble variant - the aggregator
  * holds a partial body so a dribble never flips to "processing", and the deadline reaps it);
  * {@link IdleStateHandler} idle reaping; and a leak-free {@code ByteBuf} lifecycle.
  */
@@ -113,7 +113,7 @@ public final class NettyHttpApiServer {
     private EventLoopGroup boss;
     private EventLoopGroup worker;
     private Channel serverChannel;
-    private ExecutorService blockingExecutor; // virtual threads: runs the (blocking) decision logic off-loop
+    private ExecutorService blockingExecutor; // runs the (blocking) decision logic off-loop
 
     /** Same parameter shape as {@link HttpApiServer}'s full constructor (so the swap is one line). */
     public NettyHttpApiServer(int port,
@@ -143,7 +143,7 @@ public final class NettyHttpApiServer {
         this.transport = NettyTransport.select();
     }
 
-    /** The active transport tier (io_uring / epoll / nio) — surfaced for logging + the CI proof. */
+    /** The active transport tier (io_uring / epoll / nio) - surfaced for logging + the CI proof. */
     public String transportTier() {
         return transport.tier();
     }
@@ -189,7 +189,7 @@ public final class NettyHttpApiServer {
         return ((InetSocketAddress) serverChannel.localAddress()).getPort();
     }
 
-    /** Bounded graceful shutdown (the JDK-25 io_uring shutdown-slowness mitigation, netty42-api.md §2). */
+    /** Bounded graceful shutdown. */
     public void stop() {
         if (serverChannel != null) {
             serverChannel.close();
@@ -219,7 +219,7 @@ public final class NettyHttpApiServer {
     }
 
     /**
-     * Per-connection inbound handler (a new instance per connection — holds per-connection state). All
+     * Per-connection inbound handler (a new instance per connection - holds per-connection state). All
      * methods run on the channel's single event-loop thread, so the mutable fields need no synchronization;
      * only the (blocking) {@link AdminApiHandler#handle} call is hopped to the virtual-thread executor.
      */
@@ -230,7 +230,7 @@ public final class NettyHttpApiServer {
         private boolean processing;
 
         // Slowloris arrival deadline: a full request must ARRIVE by deadlineNanos. While a request is
-        // being processed/queued (processing=true) the watcher does not close — the handler is bounded by
+        // being processed/queued (processing=true) the watcher does not close - the handler is bounded by
         // its own commit/read deadline. Re-armed when the connection goes idle waiting for the next request.
         private long deadlineNanos;
         private ScheduledFuture<?> deadlineWatcher;

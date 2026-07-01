@@ -3,31 +3,31 @@ package io.configd.distribution.fanout;
 import java.util.Set;
 
 /**
- * The watch-authorization SPI (RFC §2 W7) — the security gate the watch veneer calls at
+ * The watch-authorization SPI (W7) - the security gate the watch veneer calls at
  * {@code WATCH_CREATE} time, before any data frame is emitted for a watch.
  *
  * <p><b>Module seam (LOCKED).</b> {@code configd-distribution-service} (the fan-out plane)
- * is built <em>before</em> {@code configd-control-plane-api} in the reactor and therefore
- * cannot see {@code AclService}. The veneer depends only on this SPI; the real adapter
+ * is built before {@code configd-control-plane-api} in the reactor and therefore cannot see
+ * {@code AclService}. The veneer depends only on this SPI; the real adapter
  * ({@code AclServiceWatchAuthorizer}) lives in {@code configd-server} (which depends on
- * both) and is wired by {@code ConfigdServer} in a later increment. This mirrors the
- * existing SPI discipline in the codebase (auth-SPI, KMS-SPI, {@code NettyTransport.select}):
- * fail-loud on misconfiguration, <b>fail-closed</b> on any doubt.
+ * both) and is wired by {@code ConfigdServer}. This mirrors the existing SPI discipline in
+ * the codebase (auth-SPI, KMS-SPI, {@code NettyTransport.select}): fail-loud on
+ * misconfiguration, <b>fail-closed</b> on any doubt.
  *
  * <p><b>Whole-target semantics (W7-2 / W7-2a).</b> An implementation MUST authorize the
- * <em>whole</em> target — {@code READ ∧ WATCH} covering <b>all</b> of it — and MUST reject
+ * whole target - {@code READ} and {@code WATCH} covering <b>all</b> of it - and MUST reject
  * (not silently narrow) an over-broad target. A PREFIX/FULL target with an intersecting
  * interior {@code DENY} MUST be rejected. {@code full_chain_verify}/{@code FULL} targets
  * (see {@link WatchTarget#fullChainVerify()} / {@link WatchTarget#isFull()}) require a
- * root-scope grant (W7-3) — the adapter maps them to the empty (root) effective target
+ * root-scope grant (W7-3) - the adapter maps them to the empty (root) effective target
  * before evaluation.
  *
  * <p><b>Fail-closed contract.</b> The veneer treats a {@code null} authorizer, an
  * unauthenticated principal ({@code "plaintext"}), a {@code false} return, <b>and any
- * throwable</b> thrown by an implementation all as <b>deny</b> — and rejects the watch with
+ * throwable</b> thrown by an implementation all as <b>deny</b> - and rejects the watch with
  * {@code WATCH_CANCELED(NOT_AUTHORIZED)} and zero preceding data frames (W7-5). An
- * implementation therefore need not catch its own exceptions for safety, but SHOULD avoid
- * throwing for an ordinary "not authorized" outcome (return {@code false}).
+ * implementation need not catch its own exceptions for safety, but SHOULD avoid throwing
+ * for an ordinary "not authorized" outcome (return {@code false}).
  */
 @FunctionalInterface
 public interface WatchAuthorizer {
@@ -49,15 +49,15 @@ public interface WatchAuthorizer {
     boolean authorizeWatch(String principal, Set<String> roles, WatchTarget target);
 
     /**
-     * The current authorization-policy version — a monotonic counter the veneer polls to drive
-     * <b>bounded watch revocation</b> (RFC §2 W7-7). The veneer caches the version each live watch was
+     * The current authorization-policy version - a monotonic counter the veneer polls to drive
+     * <b>bounded watch revocation</b> (W7-7). The veneer caches the version each live watch was
      * last authorized at and, when this value <b>advances</b>, re-runs {@link #authorizeWatch} for every
      * live watch on the connection, force-closing any whose principal no longer holds {@code READ ∧
-     * WATCH} over its target — within a bounded latency of the policy change. When the version is
+     * WATCH} over its target - within a bounded latency of the policy change. When the version is
      * unchanged the veneer does no re-authorization work (a single comparison per tick), so a policy
      * that never changes (the production default, no {@code _acl/} keys) costs nothing.
      * <p>
-     * The default is the constant {@code 0} — an implementation that does not expose a policy version
+     * The default is the constant {@code 0} - an implementation that does not expose a policy version
      * (e.g. a fixed test authorizer) thus never triggers re-authorization. The production adapter
      * overrides this with the live {@code AclService} config-policy version.
      *

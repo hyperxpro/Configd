@@ -10,7 +10,7 @@ import java.util.List;
 import static org.junit.jupiter.api.Assertions.*;
 
 /**
- * Tests for {@link BurnRateAlertEvaluator} — burn-rate alerting on SLO breaches.
+ * Tests for {@link BurnRateAlertEvaluator} - burn-rate alerting on SLO breaches.
  */
 class BurnRateAlertEvaluatorTest {
 

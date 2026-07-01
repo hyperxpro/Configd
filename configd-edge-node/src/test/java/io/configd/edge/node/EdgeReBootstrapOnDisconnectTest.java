@@ -35,11 +35,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.fail;
 
 /**
- * CT-06, the PROCESS half (C3): the DISCONNECTED re-bootstrap orchestration behind the
- * C2 trigger seam is REAL. The trigger chain was pinned by C2
- * ({@code EdgeNodeMetricsTest#disconnectedTransitionFiresTheRebootstrapSeamOnce}: each
- * entry into DISCONNECTED counts {@code edge_rebootstrap_triggered_total} and fires the
- * hook, including with no live stream); C3 supplies what the hook DOES — this test pins:
+ * Process-level test for the DISCONNECTED re-bootstrap orchestration. This test pins:
  * <ol>
  *   <li>the composed hook invokes {@link EdgeStreamClient#requestRebootstrap} FIRST and
  *       any injected observer second (the composition contract);</li>
@@ -47,9 +43,8 @@ import static org.junit.jupiter.api.Assertions.fail;
  *       client re-SUBSCRIBEs at its current cursor and keeps converging — a real full
  *       re-subscribe, not a stub.</li>
  * </ol>
- * The DISCONNECTED *transition* itself is wall-clock-bound (30 s, ADR-0039) and is
- * exercised at SIM level with the logical clock (testkit
- * {@code EdgeReBootstrapOnDisconnectTest}) — no sleeps-as-sync here.
+ * The DISCONNECTED transition itself is wall-clock-bound (30 s) and is exercised at SIM
+ * level with the logical clock in configd-testkit — no sleeps-as-sync here.
  */
 @Timeout(120)
 class EdgeReBootstrapOnDisconnectTest {
@@ -86,8 +81,7 @@ class EdgeReBootstrapOnDisconnectTest {
                 observerRuns::incrementAndGet, () -> { });
 
         // Never started: no connection exists — the orchestration reduces to arming the
-        // re-bootstrap request (cuts the next backoff short), exactly the disconnected
-        // case the CT-06 metrics-pump gotcha names.
+        // re-bootstrap request, which cuts the next backoff short.
         client.rebootstrapHookForTest().run();
 
         assertTrue(client.rebootstrapRequestedForTest(),
@@ -120,7 +114,7 @@ class EdgeReBootstrapOnDisconnectTest {
         await("edge converged", () -> edge.core().currentVersion() >= seq1);
         long reconnectsBefore = edge.metricsRegistry().counter("edge.reconnects").get();
 
-        // The CT-06 orchestration: tear down + immediate full re-subscribe (the same call
+        // Trigger a re-bootstrap: tear down + immediate full re-subscribe (the same call
         // the composed hook makes on a DISCONNECTED entry).
         edge.streamClient().requestRebootstrap("test-trigger");
 
@@ -138,7 +132,7 @@ class EdgeReBootstrapOnDisconnectTest {
         assertEquals(200, read.statusCode());
         assertEquals("v2", read.body());
 
-        // CT-06's metric series exists from scrape 0 (the trigger-count half is C2's
+        // The metric series exists from scrape 0 (the trigger-count semantics are pinned in
         // EdgeNodeMetricsTest; here we only require the seam stayed observable).
         String metrics = get(edgeBase + "/metrics").body();
         assertTrue(metrics.lines().anyMatch(l ->

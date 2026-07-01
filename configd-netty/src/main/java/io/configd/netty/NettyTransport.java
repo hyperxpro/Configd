@@ -18,27 +18,26 @@ import io.netty.channel.uring.IoUringSocketChannel;
 import java.util.Locale;
 
 /**
- * The production Netty transport selector (ADR-0043 / charter §3.2;
- * {@code docs/netty-migration/netty42-api.md} §1).
+ * Netty transport tier selector.
  *
- * <p>Auto-selects in the order <b>Epoll → NIO</b> and returns a <em>coherent triple</em> — the
+ * <p>Auto-selects in the order <b>Epoll -&gt; NIO</b> and returns a <em>coherent triple</em> - the
  * {@link IoHandlerFactory} <b>and</b> the matching {@link ServerChannel} class. In Netty 4.2 the
  * event-loop group no longer implies the channel type (one generic {@code MultiThreadIoEventLoopGroup}
  * takes any {@code IoHandlerFactory}); pairing a factory with the wrong channel class is the #1 4.2
  * migration bug. Resolving both together here is the single place that pairing is decided.
  *
- * <p><b>io_uring is OPT-IN, not auto-selected</b> (Phase V, ADR-0043). It is a performance tier,
- * never a correctness dependency — and Phase V <em>measured</em> that at Configd's workload it
- * delivers no throughput/tail benefit and a ~2× throughput <b>regression</b> at high fan-out, with
- * Epoll the proven-faster transport (the default does not select the path measured slower). io_uring
- * remains available for operators whose workload has the per-event-loop connection density to benefit,
- * via the override below. NIO is pure-Java and available on every JVM/OS.
+ * <p><b>io_uring is OPT-IN, not auto-selected.</b> It is a performance tier, never a correctness
+ * dependency. Measured at Configd's workload it delivers no throughput/tail benefit and a ~2x
+ * throughput <b>regression</b> at high fan-out (1024 subscriber streams), with Epoll the
+ * proven-faster transport. io_uring's syscall reduction is real but batches per event loop (one loop
+ * per core), so at Configd's connection scale the per-loop density is too low to help. io_uring
+ * remains available for operators via the override below. NIO is pure-Java and available on every
+ * JVM/OS.
  *
- * <p><b>Override (opt-in / CI-fallback proof, fail-loud).</b>
- * {@code -Dconfigd.netty.transport=io_uring|epoll|nio} forces a tier — the way to <em>opt into</em>
- * io_uring, and the way CI exercises the NIO/Epoll paths deterministically (independent of the
- * runner's kernel). Forcing a tier that is <em>unavailable</em> on the host is a startup error, not a
- * silent downgrade — a silent downgrade is how a "we ran on io_uring/epoll" claim becomes fiction.
+ * <p><b>Override (opt-in, fail-loud).</b>
+ * {@code -Dconfigd.netty.transport=io_uring|epoll|nio} forces a tier. Forcing a tier that is
+ * unavailable on the host is a startup error, not a silent downgrade - a silent downgrade is how
+ * a "we ran on io_uring/epoll" claim becomes fiction.
  */
 public final class NettyTransport {
 
@@ -53,12 +52,10 @@ public final class NettyTransport {
      * client-channel) triple to bootstrap with. The same factory instance is shared by the boss and
      * worker groups (it is a factory of per-thread handlers).
      *
-     * <p>{@code serverChannelClass} is used by surfaces that accept connections (M1 edge-read, M2
-     * admin, M3 fan-out); {@code clientChannelClass} (M4 / DR-N19) is the matching outbound
-     * {@code SocketChannel} for the consensus transport, which is the first surface that also
-     * <em>connects out</em> to peers. Both are paired with the same {@link IoHandlerFactory} — pairing
-     * a factory with a channel from a different tier is the #1 Netty 4.2 migration bug, so the
-     * coherent set is decided here, in one place.
+     * <p>{@code serverChannelClass} is used by surfaces that accept connections; {@code clientChannelClass}
+     * is the matching outbound {@code SocketChannel} for the consensus transport, which connects out to
+     * peers. Both are paired with the same {@link IoHandlerFactory} - pairing a factory with a channel
+     * from a different tier is the #1 Netty 4.2 migration bug, so the coherent set is decided here.
      */
     public record Selection(String tier,
                             IoHandlerFactory ioHandlerFactory,
@@ -67,17 +64,13 @@ public final class NettyTransport {
     }
 
     /**
-     * Resolves the transport per the override, else auto-selects <b>Epoll → NIO</b>.
+     * Resolves the transport per the override, else auto-selects <b>Epoll -&gt; NIO</b>.
      *
-     * <p><b>io_uring is NOT auto-selected</b> (Phase V, ADR-0043, 2026-06-26). Measured at Configd's
-     * workload, io_uring delivers <em>no</em> throughput/tail benefit (edge-read is tied
-     * io_uring-vs-Epoll at every connection count) and a <b>~2× throughput regression at high fan-out</b>
-     * (1024 subscriber streams), with Epoll the proven-faster transport — see
-     * {@code docs/netty-migration/phase-v-io-uring.md}. io_uring's syscall reduction is real but
-     * batches per event loop (one loop per core), so at Configd's connection scale the per-loop density
-     * is too low to help. The auto default is therefore the <em>measured-best available</em> tier;
-     * io_uring is <b>opt-in</b> via {@code -Dconfigd.netty.transport=io_uring} for operators whose
-     * workload has the per-loop density to benefit (still fail-loud if unavailable).
+     * <p>io_uring is NOT auto-selected. Measured at Configd's workload, io_uring delivers no
+     * throughput/tail benefit and a ~2x throughput regression at high fan-out (1024 subscriber
+     * streams) vs Epoll. io_uring's syscall reduction is real but batches per event loop (one loop
+     * per core), so at Configd's connection scale the per-loop density is too low to help.
+     * io_uring is opt-in via {@code -Dconfigd.netty.transport=io_uring}.
      */
     public static Selection select() {
         String forced = System.getProperty(PROP);

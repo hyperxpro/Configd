@@ -14,25 +14,25 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.fail;
 
 /**
- * Session 4 / Workstream D — overload under chaos (charter §6/§11). Two cells:
+ * Overload under chaos (charter section 6/section 11). Two cells:
  * <ol>
- *   <li><b>Control-plane write flood</b> — past-capacity proposals must SHED with
- *       {@code OVERLOADED} (the §11 429-equivalent) and the uncommitted queue must PLATEAU at the
+ *   <li><b>Control-plane write flood</b> - past-capacity proposals must SHED with
+ *       {@code OVERLOADED} (the section 11 429-equivalent) and the uncommitted queue must PLATEAU at the
  *       bound, never grow unbounded with more load; it drains and accepts writes again once
  *       delivery resumes (clean recovery).</li>
  *   <li><b>Post-partition reconnect storm</b> (the data plane's most dangerous overload, called out
- *       in charter §6) — a whole fleet of edges partitioned to DISCONNECTED then HEALED at once
+ *       in charter section 6) - a whole fleet of edges partitioned to DISCONNECTED then HEALED at once
  *       must all recover to CURRENT (catch-up thundering herd), none stuck stale-but-silent, no
  *       terminal failure.</li>
  * </ol>
  * The fan-out admission/queue bounds themselves are pinned by {@code FanOutServerAdmissionBoundTest},
  * {@code DemotionNoticeBackpressureTest}, {@code BootstrapSnapshotBackpressureTest}, and the A3 legs
- * (ack-lag / wedged-transport / governor-churn); this adds the two overload *scenarios*. fault-matrix §D.
+ * (ack-lag / wedged-transport / governor-churn); this adds the two overload *scenarios*. fault-matrix section D.
  */
 class OverloadChaosTest {
 
     // ------------------------------------------------------------------------
-    // D-1: control-plane write flood — OVERLOADED shed + bounded (plateau) queue + recovery
+    // D-1: control-plane write flood - OVERLOADED shed + bounded (plateau) queue + recovery
     // ------------------------------------------------------------------------
     @Test
     void controlPlaneWriteFlood_shedsWithOverload_boundedQueue_recovers() {
@@ -41,8 +41,8 @@ class OverloadChaosTest {
         assertTrue(elect > 0, "cluster must elect a leader");
         RaftNode ldr = c.nodes.get(c.findLeader());
 
-        // Flood WITHOUT stepping: no delivery → no commit → uncommitted builds; no ticks → the
-        // leader stays leader (no CheckQuorum). §11 backpressure must shed with OVERLOADED.
+        // Flood WITHOUT stepping: no delivery -> no commit -> uncommitted builds; no ticks -> the
+        // leader stays leader (no CheckQuorum). section 11 backpressure must shed with OVERLOADED.
         final int FLOOD = 1500;
         int accepted = 0, overloaded = 0;
         for (int i = 0; i < FLOOD; i++) {
@@ -57,7 +57,7 @@ class OverloadChaosTest {
         assertTrue(overloaded > 0, "D-1: the write flood must shed with OVERLOADED (the §11 429-equivalent)");
         assertTrue(accepted < FLOOD, "D-1: not every write accepted — the queue is bounded");
 
-        // Sustained MORE load must NOT grow the queue — it plateaus at the bound (never unbounded).
+        // Sustained MORE load must NOT grow the queue - it plateaus at the bound (never unbounded).
         int overloaded2 = 0;
         for (int i = 0; i < FLOOD; i++) {
             ProposalResult r = ldr.propose(CommandCodec.encodePut("flood/b" + i, ("v" + i).getBytes())).result();
@@ -70,7 +70,7 @@ class OverloadChaosTest {
                 "D-1: the uncommitted queue must PLATEAU under sustained overload (bounded, never unbounded)");
         assertEquals(FLOOD, overloaded2, "D-1: once the bound is hit, ALL further writes are shed (no silent buffering)");
 
-        // Recovery: resume delivery → commits drain → queue clears → writes accepted again.
+        // Recovery: resume delivery -> commits drain -> queue clears -> writes accepted again.
         for (int t = 0; t < 3000; t++) {
             c.step();
         }
@@ -86,11 +86,11 @@ class OverloadChaosTest {
     }
 
     // ------------------------------------------------------------------------
-    // D-2: post-partition reconnect storm — a fleet of edges all DISCONNECTED then HEALED at once
+    // D-2: post-partition reconnect storm - a fleet of edges all DISCONNECTED then HEALED at once
     // ------------------------------------------------------------------------
     @Test
     void postPartitionReconnectStorm_allEdgesRecoverToCurrent() {
-        // The S4 EXP-010 anchor point: 5 edges. (S5 D.3 extends this to a fleet-size
+        // Anchor point: 5 edges. (Future work extends this to a fleet-size
         // distribution via reconnectStormRecoveryTicks below; this @Test keeps the
         // original single-cell assertion as the regression anchor.)
         long ticks = reconnectStormRecoveryTicks(5);
@@ -99,8 +99,8 @@ class OverloadChaosTest {
 
     // ------------------------------------------------------------------------
     // D-2 (S5 D.3): reconnect-storm recovery distribution at fleet sizes {5,10,25,50}.
-    // Deterministic in-sim — leadership-stable (no live 2-vCPU ceiling), so it IS locally
-    // measurable. 1 tick ≈ 1 ms modeled. Each cell prints the canonical OVERLOAD line.
+    // Deterministic in-sim - leadership-stable (no live 2-vCPU ceiling), so it IS locally
+    // measurable. 1 tick ~ 1 ms modeled. Each cell prints the canonical OVERLOAD line.
     // ------------------------------------------------------------------------
     @ParameterizedTest(name = "reconnect-storm fleet edges={0}")
     @ValueSource(ints = {5, 10, 25, 50})
@@ -112,7 +112,7 @@ class OverloadChaosTest {
 
     /**
      * Runs one post-partition reconnect-storm cell with {@code edges} edges and returns the
-     * recovery tick count (heal-instant → whole-fleet-CURRENT). Asserts the same invariants as
+     * recovery tick count (heal-instant -> whole-fleet-CURRENT). Asserts the same invariants as
      * the S4 D-2 cell: every edge ends CURRENT and caught up to the authoritative version, and no
      * edge is pushed TERMINAL. Prints the canonical
      * {@code OVERLOAD: scenario=reconnect-storm edges=N recoveryTicks=M} line.
@@ -147,7 +147,7 @@ class OverloadChaosTest {
             sim.tick();
         }
 
-        // THE STORM: heal the entire fleet at the SAME instant — every edge reconnects +
+        // THE STORM: heal the entire fleet at the SAME instant - every edge reconnects +
         // re-bootstraps at once (the catch-up thundering herd). All must recover to CURRENT.
         long target = sim.cpSim().store(obs).currentVersion();
         for (int e = 0; e < edges; e++) {

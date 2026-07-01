@@ -6,17 +6,16 @@ import java.util.Objects;
 import java.util.function.Supplier;
 
 /**
- * Minimal honest {@link ReplaySource} backed by the config store's current
- * snapshot (ADR-0034 §replay contract).
+ * Minimal {@link ReplaySource} backed by the config store's current snapshot.
  *
  * <p>It delivers a <b>snapshot-equivalent state</b>: the cumulative committed
  * state at the store's current version. The supplier is typically
- * {@code versionedConfigStore::snapshot} — a single volatile read of the
+ * {@code versionedConfigStore::snapshot} - a single volatile read of the
  * immutable {@link ConfigSnapshot} pointer (no copy, no lock; the HAMT inside is
  * persistent and shareable). The snapshot's {@code version} is the
  * applied-mutation sequence S the consumer adopts as its post-replay cursor.
  *
- * <p>This is the contract Session 3 recovers against after a
+ * <p>This is the path a consumer takes after a
  * {@link CommitNotificationSource#readSince(long)} GAP: apply the snapshot, set
  * the cursor to {@link ReplaySource.Replay#seq()}, resume tailing. It is NOT a
  * per-mutation historical replay (see {@link ReplaySource} for why that is out of

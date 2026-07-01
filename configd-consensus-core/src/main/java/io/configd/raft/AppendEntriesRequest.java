@@ -5,7 +5,7 @@ import io.configd.common.NodeId;
 import java.util.List;
 
 /**
- * Raft AppendEntries RPC request (Raft §5.3).
+ * Raft AppendEntries RPC request (Raft section 5.3).
  * <p>
  * Sent by the leader to replicate log entries and as heartbeats
  * (empty entries list).

@@ -6,23 +6,22 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
 /**
- * Validates {@link SlowConsumerPolicyConfig} defaults (the C4 design §2 table — each a
- * named threshold, charter §6 rule 8) and every positivity guard, so the bounds are
- * mutation-tight (gate-3), mirroring {@code FanOutConfigTest}.
+ * Validates {@link SlowConsumerPolicyConfig} defaults (each a named threshold) and every
+ * positivity guard, so the bounds are mutation-tight, mirroring {@code FanOutConfigTest}.
  */
 class SlowConsumerPolicyConfigTest {
 
     @Test
     void defaultsMatchTheDesignTable() {
         SlowConsumerPolicyConfig c = SlowConsumerPolicyConfig.defaults();
-        assertEquals(10_000L, c.queueWarnWindowMs());   // §7 "0 credits for > 10 s" analogue
+        assertEquals(10_000L, c.queueWarnWindowMs());   // 0 credits for > 10 s analogue
         assertEquals(3, c.demoteLimit());
-        assertEquals(10, c.gapDemoteLimit());           // C4-2 reason weighting
+        assertEquals(10, c.gapDemoteLimit());           // gap demotions count more
         assertEquals(60_000L, c.demoteWindowMs());
         assertEquals(60_000L, c.quarantineCooldownMs());
-        assertEquals(3, c.quarantineLimit());           // §7 "3 quarantines in 1 hour"
+        assertEquals(3, c.quarantineLimit());           // 3 quarantines in 1 hour
         assertEquals(3_600_000L, c.unhealthyWindowMs());
-        assertEquals(3_600_000L, c.unhealthyCooldownMs()); // C4-3 auto-exit
+        assertEquals(3_600_000L, c.unhealthyCooldownMs()); // automatic exit after cooldown
         assertEquals(4_096, c.maxTrackedIdentities());
     }
 

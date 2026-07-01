@@ -41,11 +41,11 @@ import java.nio.charset.StandardCharsets;
 import static io.netty.handler.codec.http.HttpVersion.HTTP_1_1;
 
 /**
- * BEST-NETTY edge read-serving HTTP/1.1 server — the "Netty done properly" side of the
+ * BEST-NETTY edge read-serving HTTP/1.1 server - the "Netty done properly" side of the
  * edge-read head-to-head (surface 2). It serves the <b>same response</b> as the production
- * {@link EdgeHttpServer} 200/404 read path — same {@link EdgeClientCore} read, same
+ * {@link EdgeHttpServer} 200/404 read path - same {@link EdgeClientCore} read, same
  * {@code X-Configd-Cursor}/{@code X-Configd-Version}/{@code Content-Type} headers, same
- * {@link EdgeNodeMetrics} accounting — so the <em>only</em> difference between the two servers
+ * {@link EdgeNodeMetrics} accounting - so the <em>only</em> difference between the two servers
  * is the HTTP transport shell (JDK {@code com.sun.net.httpserver} vs this Netty pipeline). That
  * isolates exactly the contested transport-shell allocation.
  *

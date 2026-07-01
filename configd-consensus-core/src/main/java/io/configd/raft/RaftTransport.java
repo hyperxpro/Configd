@@ -5,8 +5,8 @@ import io.configd.common.NodeId;
 /**
  * Abstraction for sending Raft protocol messages to peer nodes.
  * <p>
- * Implementations may use gRPC, Netty, or any other transport (ADR-0010).
- * For simulation testing (ADR-0007), a deterministic in-memory transport
+ * Implementations may use gRPC, Netty, or any other transport.
+ * For simulation testing, a deterministic in-memory transport
  * is used to control message delivery, reordering, and loss.
  * <p>
  * Messages are fire-and-forget: the transport does not guarantee delivery.

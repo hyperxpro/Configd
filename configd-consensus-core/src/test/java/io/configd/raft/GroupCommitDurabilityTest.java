@@ -15,12 +15,12 @@ import java.util.Set;
 import static org.junit.jupiter.api.Assertions.*;
 
 /**
- * S7.5 group-commit durability gate (locks DL-7.5-01). The leader buffers a proposed entry with
+ * Group-commit durability verification. The leader buffers a proposed entry with
  * {@link RaftLog#appendNoSync} and only force-syncs it on a coalescing flush; until that flush runs,
  * {@link RaftNode#maybeAdvanceCommitIndex} must NOT count the leader's own (not-yet-durable) copy
  * toward a commit quorum. These tests inject a <em>deferred</em> {@link RaftNode.FlushScheduler} that
- * parks the flush in a queue the test pumps by hand, so the "proposed but not yet fsynced" window —
- * impossible to hit with the INLINE default — is made explicit and deterministic.
+ * parks the flush in a queue the test pumps by hand, so the "proposed but not yet fsynced" window -
+ * impossible to hit with the INLINE default - is made explicit and deterministic.
  * <p>
  * Two invariants, both load-bearing for Raft safety under group commit:
  * <ol>
@@ -106,13 +106,13 @@ class GroupCommitDurabilityTest {
         assertEquals(base + 1, idx);
         assertEquals(1, pending.size(), "propose must have scheduled exactly one coalescing flush");
 
-        // A follower (N2) ACKs the entry — quorum-1 of three. Even WITH this ACK the entry must NOT
+        // A follower (N2) ACKs the entry - quorum-1 of three. Even WITH this ACK the entry must NOT
         // commit, because the leader's own copy is still only buffered (durableIndex < idx).
         leader.handleMessage(new AppendEntriesResponse(leader.currentTerm(), true, idx, N2));
         assertEquals(base, leader.log().commitIndex(),
                 "must NOT commit before the leader's own fsync — counting a buffered self-copy would be a safety bug");
 
-        // Pump the deferred flush: the leader is now durable up to idx and self-counts → quorum {self,N2}.
+        // Pump the deferred flush: the leader is now durable up to idx and self-counts -> quorum {self,N2}.
         pending.poll().run();
         assertEquals(idx, leader.log().commitIndex(),
                 "commits once the leader's entry is force-synced AND a follower quorum exists");
@@ -131,7 +131,7 @@ class GroupCommitDurabilityTest {
         assertTrue(out.accepted());
         long idx = out.index();
         // Give it a follower ACK too, so the ONLY thing standing between it and commit is the leader's
-        // own durability — making the step-down gate the sole reason it stays uncommitted.
+        // own durability - making the step-down gate the sole reason it stays uncommitted.
         leader.handleMessage(new AppendEntriesResponse(leader.currentTerm(), true, idx, N2));
         assertEquals(base, leader.log().commitIndex(), "not committed yet (leader copy still buffered)");
 
@@ -140,7 +140,7 @@ class GroupCommitDurabilityTest {
         assertEquals(RaftRole.FOLLOWER, leader.role(), "higher term must step the leader down");
 
         // Pump the now-stale flush. It advances durableIndex and calls maybeAdvanceCommitIndex, which
-        // must early-return because role != LEADER — so NOTHING commits as a follower.
+        // must early-return because role != LEADER - so NOTHING commits as a follower.
         assertEquals(1, pending.size());
         pending.poll().run();
         assertEquals(base, leader.log().commitIndex(),

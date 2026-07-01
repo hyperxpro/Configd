@@ -19,30 +19,23 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.fail;
 
 /**
- * CT-22 STATIC GUARD (source scan; mirrors
- * {@code configd-transport/.../NoBlockingConnectOnConsensusPathTest}). ADR-0034's
- * handoff step 3 is a hard rule: <b>never consume {@code FanOutBuffer.deltasSince}</b>
- * (the legacy non-atomic read, RR-066) — only {@code readSince}. The legacy method is
- * kept public solely for the pre-existing fan-out tests; it must never appear on a
- * production drain or sim-driver call site.
+ * Static source scan: never consume {@code FanOutBuffer.deltasSince} (the legacy
+ * non-atomic read) on any production drain or sim-driver call site - only
+ * {@code readSince}. The legacy method is kept public solely for the pre-existing fan-out
+ * tests.
  *
  * <h3>Why a static scan, not a runtime assertion</h3>
- * The defect is structural — a specific call shape — so a static scan is deterministic,
+ * The defect is structural - a specific call shape - so a static scan is deterministic,
  * timing-free, runs in milliseconds, and catches the regression at the exact site
- * regardless of test coverage (the same rationale the RR-002 transport guard records).
- * It pins that as C1/C2 code lands, no production/sim consumer reintroduces the
- * non-atomic read.
+ * regardless of test coverage.
  *
- * <h3>Scope is DERIVED, not enumerated (C2 contract-qa audit follow-up)</h3>
- * The original hand-enumerated {@code SCAN_ROOTS} went stale twice in one session: the
- * C1 audit found it could not catch a configd-server regression, and the C2 audit found
- * the brand-new {@code configd-edge-node} module silently outside the scan. The roots
- * are therefore now derived from the reactor pom's {@code <modules>} list — every
- * module's {@code src/main/java} — plus {@code configd-testkit/src/test/java} (the sim
- * drivers live in test scope there). A module may only escape via
- * {@link #EXEMPT_MODULES}, each entry carrying its justification, and the
+ * <h3>Scope is DERIVED, not enumerated</h3>
+ * The roots are derived from the reactor pom's {@code <modules>} list - every module's
+ * {@code src/main/java} - plus {@code configd-testkit/src/test/java} (the sim drivers
+ * live in test scope there). A module may only escape via {@link #EXEMPT_MODULES}, each
+ * entry carrying its justification, and the
  * {@link #everyReactorModuleIsScannedOrExplicitlyExempted() tripwire} asserts
- * scanned-set == reactor-modules − exemptions, so a future module can never silently
+ * scanned-set == reactor-modules minus exemptions, so a future module can never silently
  * escape the guard.
  *
  * <p><b>File-level exemptions:</b> {@code FanOutBuffer.java} itself (it defines and
@@ -53,13 +46,13 @@ class NoDeltasSinceOnConsumerPathTest {
 
     /**
      * Reactor modules exempted from the main-source scan, each with a one-line reason.
-     * EMPTY today — and that is the point: every module's {@code src/main/java} is
+     * EMPTY today - and that is the point: every module's {@code src/main/java} is
      * scanned, including ones with no conceivable consumer (the scan is milliseconds and
      * a vacuous scan is cheaper than a stale enumeration). Add an entry ONLY with a
      * reason a reviewer can audit; the tripwire fails on stale entries.
      */
     private static final Map<String, String> EXEMPT_MODULES = Map.of(
-            // (no exemptions — see javadoc; keep the reason format "module → why")
+            // (no exemptions - see javadoc; keep the reason format "module: why")
     );
 
     /**
@@ -108,9 +101,8 @@ class NoDeltasSinceOnConsumerPathTest {
 
     /**
      * THE TRIPWIRE: the set of scanned modules must equal the reactor's
-     * {@code <modules>} list minus {@link #EXEMPT_MODULES} — a new module is therefore
-     * either scanned or loudly accounted for, never silently invisible (the gap class
-     * the C1 AND C2 contract-qa audits each caught one instance of).
+     * {@code <modules>} list minus {@link #EXEMPT_MODULES} - a new module is therefore
+     * either scanned or loudly accounted for, never silently invisible.
      */
     @Test
     void everyReactorModuleIsScannedOrExplicitlyExempted() throws IOException {
@@ -206,7 +198,7 @@ class NoDeltasSinceOnConsumerPathTest {
     }
 
     // -----------------------------------------------------------------------
-    // Matching (UNCHANGED — the pattern-aware logic the C1 hardening reviewed)
+    // Matching (pattern-aware logic - reads a line, strips comments and strings, then scans)
     // -----------------------------------------------------------------------
 
     private static void scanFile(Path file, List<String> violations) throws IOException {

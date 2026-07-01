@@ -18,38 +18,36 @@ import java.util.Objects;
 import java.util.function.Consumer;
 
 /**
- * The transport-agnostic, per-subscriber fan-out session engine (C1 design §2/§4;
- * ADR-0034 consumer loop; ADR-0038 verbatim-signed-chain delivery). One instance per
- * subscribed edge: the SAME code the live {@code FanOutServer} (part b) drives from a
- * virtual thread and the simulator drives tick-by-tick as its {@code StreamDriver}.
+ * The transport-agnostic, per-subscriber fan-out session engine. One instance per
+ * subscribed edge: the SAME code the live server drives from a virtual thread and the
+ * simulator drives tick-by-tick as its {@code StreamDriver}.
  *
- * <h2>Determinism &amp; threading</h2>
+ * <h2>Determinism and threading</h2>
  * Deterministic and single-threaded-per-instance: no threads, no wall-clock reads, no
  * sleeps inside. Time enters only through {@link #tick(long)}'s {@code nowMillis} (the
  * caller's {@link Clock} / sim clock). It PULLS via {@link CommitNotificationSource#readSince}
- * / {@link ReplaySource}; it never touches the publish path (charter §6 rule 4 / CT-22) and
- * holds no lock.
+ * / {@link ReplaySource}; it never touches the publish path and holds no lock.
  *
  * <h2>Lifecycle</h2>
  * <ol>
- *   <li>{@link #onSubscribe(EdgeFrame.Subscribe)} — emits {@code SUBSCRIBE_OK} with the
+ *   <li>{@link #onSubscribe(EdgeFrame.Subscribe)} - emits {@code SUBSCRIBE_OK} with the
  *       {@link EdgeFrame.Mode} decision (TAIL vs SNAPSHOT_FIRST).</li>
- *   <li>{@link #tick(long)} — drains {@code readSince(cursor)} into bounded {@code NOTIFY}
- *       batches (verbatim, never merged — ADR-0038); demotes to catch-up on queue
- *       overflow / ack-lag / GAP; runs the snapshot flow; emits a {@code HEARTBEAT} when
- *       idle past {@code heartbeatMs}.</li>
- *   <li>{@link #onCursorAck(long)} — advances the ack watermark, releasing in-flight
+ *   <li>{@link #tick(long)} - drains {@code readSince(cursor)} into bounded {@code NOTIFY}
+ *       batches (verbatim, never merged); demotes to catch-up on queue overflow / ack-lag /
+ *       GAP; runs the snapshot flow; emits a {@code HEARTBEAT} when idle past
+ *       {@code heartbeatMs}.</li>
+ *   <li>{@link #onCursorAck(long)} - advances the ack watermark, releasing in-flight
  *       frame accounting.</li>
  * </ol>
  *
  * <h2>States ({@link SessionState})</h2>
- * {@code STREAMING → (queue overflow | readSince GAP | ack-lag | transport block) →
- * CATCHUP (snapshot+chunks) → STREAMING}. Never an unbounded queue; never a silent drop —
- * every demotion records a {@link DemotionEvent} (cursor evidence) + a metric (CT-26).
+ * {@code STREAMING -> (queue overflow | readSince GAP | ack-lag | transport block) ->
+ * CATCHUP (snapshot+chunks) -> STREAMING}. Never an unbounded queue; never a silent drop -
+ * every demotion records a {@link DemotionEvent} (cursor evidence) and a metric.
  */
 public final class FanOutSessionCore {
 
-    /** The C1 session states (C4 adds quarantine policy on top of the transition events). */
+    /** The session states. */
     public enum SessionState {
         /** Tailing {@code readSince(cursor)} into NOTIFY batches. */
         STREAMING,
@@ -66,7 +64,7 @@ public final class FanOutSessionCore {
     private final FanOutSessionMetrics metrics;
     private final Clock clock;
 
-    /** Optional structured demotion-event listener (CT-26 cursor evidence; C4 substrate). */
+    /** Optional structured demotion-event listener (cursor evidence). */
     private final Consumer<DemotionEvent> demotionListener;
 
     private SessionState state = SessionState.STREAMING;
@@ -81,7 +79,7 @@ public final class FanOutSessionCore {
     /** In-flight NOTIFY frames, by their highest contained seq, awaiting CURSOR_ACK. FIFO. */
     private final Deque<Long> inFlightFrameMaxSeq = new ArrayDeque<>();
 
-    /** Sim/wall time (ms) of the last frame this session emitted — heartbeat cadence input. */
+    /** Sim/wall time (ms) of the last frame this session emitted - heartbeat cadence input. */
     private long lastTrafficMillis = Long.MIN_VALUE;
 
     /** Whether a slow-consumer warning has already fired since the last drop below threshold. */
@@ -97,15 +95,15 @@ public final class FanOutSessionCore {
 
     /**
      * The in-progress (possibly transport-paused) snapshot transfer; null when none.
-     * See {@link #performSnapshotTransfer} — the C5 backpressure finding.
+     * See {@link #performSnapshotTransfer} for the backpressure pacing rationale.
      */
     private PendingSnapshotTransfer pendingTransfer;
 
     /**
-     * RR-104: a DEMOTED_TO_CATCHUP notice the full transport queue refused at
-     * {@link #demote} time; null when none owed. Re-offered each {@link #tick(long)}
-     * ahead of the owed snapshot transfer (would-block pacing, the RR-102 doctrine —
-     * the notice is advisory and must never close-mark the session).
+     * A DEMOTED_TO_CATCHUP notice the full transport queue refused at {@link #demote}
+     * time; null when none owed. Re-offered each {@link #tick(long)} ahead of the owed
+     * snapshot transfer (would-block pacing - the notice is advisory and must never
+     * close-mark the session).
      */
     private EdgeFrame.ErrorClose pendingDemotionNotice;
 
@@ -113,7 +111,7 @@ public final class FanOutSessionCore {
      * A snapshot transfer paced against transport backpressure: the immutable frame plan
      * (seq, chunks, declared size) plus the emission high-water mark, so a transfer that
      * would overrun the bounded transport queue pauses at the refused frame and resumes
-     * there on the next {@link #tick(long)} — the SAME envelope, never a restart.
+     * there on the next {@link #tick(long)} - the SAME envelope, never a restart.
      */
     private static final class PendingSnapshotTransfer {
         final long seq;
@@ -160,14 +158,12 @@ public final class FanOutSessionCore {
     /**
      * Handles the edge's {@code SUBSCRIBE} and emits {@code SUBSCRIBE_OK}. The session
      * cursor is set to the subscribe's {@link EdgeFrame.Subscribe#effectiveResumeCursor()}
-     * (the larger of resume / failover-resume — the §3 reserved field). The TAIL vs
-     * SNAPSHOT_FIRST decision:
+     * (the larger of resume / failover-resume). The TAIL vs SNAPSHOT_FIRST decision:
      * <ul>
      *   <li><b>SNAPSHOT_FIRST</b> if {@code readSince(cursor)} would GAP (the cursor is
-     *       behind the cache tail — beyond the replay horizon), OR the subscriber is
-     *       fresh/cache-less ({@code cursor == 0}) and any data exists (C3: tail-replaying
-     *       history to a cache-less subscriber is unsafe — see {@code decideMode}; this
-     *       supersedes C1's backlog-vs-queueFrames refinement).</li>
+     *       behind the cache tail, beyond the replay horizon), OR the subscriber is
+     *       fresh/cache-less ({@code cursor == 0}) and any data exists (tail-replaying
+     *       history to a cache-less subscriber is unsafe - see {@code decideMode}).</li>
      *   <li><b>TAIL</b> otherwise (the cursor is recoverable from the retained tail).</li>
      * </ul>
      * On SNAPSHOT_FIRST the snapshot transfer is performed on the next {@link #tick(long)}
@@ -181,7 +177,7 @@ public final class FanOutSessionCore {
             return;
         }
         if (subscribed) {
-            // One subscribe per connection (§3). A second is a protocol violation.
+            // One subscribe per connection (protocol rule). A second is a protocol violation.
             closeWith(ErrorCode.PROTOCOL_VIOLATION, "duplicate SUBSCRIBE");
             return;
         }
@@ -192,10 +188,9 @@ public final class FanOutSessionCore {
         long latest = source.latestSeq();
         EdgeFrame.Mode mode = decideMode(cursor, latest);
 
-        // C3 observability (charter §6 rule 8): the replay-vs-re-bootstrap decision and
-        // its input. horizonDistance = cursor − (oldest − 1): ≥ 0 ⇒ the cursor is at or
-        // above the replay-horizon edge (tail-recoverable); < 0 ⇒ beyond it. Empty ring
-        // (oldest < 0) ⇒ nothing evicted yet — report cursor + 1 (trivially recoverable).
+        // horizonDistance = cursor - (oldest - 1): >= 0 means the cursor is at or above the
+        // replay-horizon edge (tail-recoverable); < 0 means it is beyond it. Empty ring
+        // (oldest < 0) means nothing evicted yet - report cursor + 1 (trivially recoverable).
         long oldest = source.oldestSeq();
         long horizonDistance = (oldest < 0) ? cursor + 1 : cursor - (oldest - 1);
         metrics.onSubscribeMode(mode == EdgeFrame.Mode.SNAPSHOT_FIRST, horizonDistance);
@@ -219,20 +214,18 @@ public final class FanOutSessionCore {
             return EdgeFrame.Mode.SNAPSHOT_FIRST;
         }
         if (cursor == 0) {
-            // C3 (supersedes C1's backlog>queueFrames refinement): a cursor-0 subscriber
-            // ALWAYS gets a snapshot when any data exists. Two recovery wedges proved
-            // tail-replaying history to a cache-less subscriber unsafe:
-            //  1. SEC-017 epoch floor (CT-13, found by MonotonicReadAcrossEdgeRestartTest):
-            //     a RESTARTED edge persists its highest-seen signing epoch (epoch.lock) and
-            //     — correctly, by design — REJECTS every redelivered old-epoch delta as a
-            //     replay. A TAIL decision therefore wedges it at version 0 behind the
-            //     production ack-lag threshold (8192 seqs). The server cannot observe the
-            //     subscriber's epoch floor; the snapshot (unsigned cumulative state,
-            //     monotonic-version-guarded) is always epoch-safe.
+            // A cursor-0 subscriber ALWAYS gets a snapshot when any data exists. Two
+            // recovery scenarios proved tail-replaying history to a cache-less subscriber
+            // unsafe:
+            //  1. Epoch floor (SEC-017): a RESTARTED edge persists its highest-seen signing
+            //     epoch (epoch.lock) and - correctly, by design - REJECTS every redelivered
+            //     old-epoch delta as a replay. A TAIL decision therefore wedges it at version
+            //     0 behind the production ack-lag threshold (8192 seqs). The server cannot
+            //     observe the subscriber's epoch floor; the snapshot (unsigned cumulative
+            //     state, monotonic-version-guarded) is always epoch-safe.
             //  2. Ring genesis: after a server restart the ring retains only seqs > the
             //     restored version V, so readSince(0) returns a run that does NOT start at
-            //     genesis — a TAIL would gap at the edge immediately.
-            // A fresh bootstrap via snapshot+cutover is also exactly C5's mechanism.
+            //     genesis - a TAIL would gap at the edge immediately.
             return EdgeFrame.Mode.SNAPSHOT_FIRST;
         }
         return EdgeFrame.Mode.TAIL;
@@ -245,7 +238,7 @@ public final class FanOutSessionCore {
     /**
      * Advances the session one step at logical time {@code nowMillis}: performs an owed
      * snapshot transfer (catch-up), drains new notifications into bounded NOTIFY batches,
-     * and emits a heartbeat if idle. Deterministic — all behavior is a function of the
+     * and emits a heartbeat if idle. Deterministic - all behavior is a function of the
      * source contents, the acks received, and {@code nowMillis}.
      *
      * @param nowMillis the caller's logical/wall time in ms
@@ -256,9 +249,9 @@ public final class FanOutSessionCore {
         }
         boolean emittedThisTick = false;
 
-        // RR-104: a demotion notice refused at demote() time (full queue) is owed; it
-        // must precede the snapshot envelope on the wire. If the queue is STILL full,
-        // the snapshot cannot start either — would-block, retry next tick.
+        // A demotion notice refused at demote() time (full queue) is owed; it must precede
+        // the snapshot envelope on the wire. If the queue is STILL full, the snapshot
+        // cannot start either - would-block, retry next tick.
         if (state == SessionState.CATCHUP && pendingDemotionNotice != null) {
             if (!sink.offer(pendingDemotionNotice)) {
                 return;
@@ -287,7 +280,7 @@ public final class FanOutSessionCore {
      */
     private boolean drainStreaming(long nowMillis) {
         // Ack-lag breach check FIRST (a stuck consumer that never acks must demote even if
-        // new data keeps it under the frame cap — design §4 ack-lag signal).
+        // new data keeps it under the frame cap).
         if (cursor - lastAckedSeq > config.ackLagDemoteSeqs()) {
             demote(DemotionEvent.REASON_ACK_LAG);
             return true; // demoted (the notice is emitted, or parked per RR-104 would-block)
@@ -319,7 +312,7 @@ public final class FanOutSessionCore {
                 CommitNotification n = pending.get(idx);
                 int encodedBytes = encodedNotificationBytes(n);
                 if (!batch.isEmpty() && batchBytes + encodedBytes > config.batchMaxBytes()) {
-                    break; // byte cap — close this batch, start the next frame
+                    break; // byte cap - close this batch, start the next frame
                 }
                 batch.add(n);
                 batchBytes += encodedBytes;
@@ -328,7 +321,7 @@ public final class FanOutSessionCore {
             }
             EdgeFrame.Notify frame = new EdgeFrame.Notify(batch);
             if (!sink.offer(frame)) {
-                // Transport would block — bounded by construction; demote (never buffer
+                // Transport would block - bounded by construction; demote (never buffer
                 // unboundedly, never drop silently).
                 demote(DemotionEvent.REASON_TRANSPORT_BLOCK);
                 return true;
@@ -345,28 +338,27 @@ public final class FanOutSessionCore {
     }
 
     /**
-     * The DEMOTED→snapshot→resume-tail flow (design §4), paced against transport
-     * backpressure. Returns true if a frame was emitted.
+     * The DEMOTED-to-snapshot-to-resume-tail flow, paced against transport backpressure.
+     * Returns true if a frame was emitted.
      *
-     * <h4>Backpressure pacing (C5 finding, RR-102-class)</h4>
-     * The transport queue is BOUNDED and non-blocking ({@code FanOutServer.Connection},
-     * default 64 frames), so a transfer whose chunk count exceeds the queue's free space
-     * cannot be emitted in one burst: the original code routed every snapshot frame
-     * through {@link #emit}, whose refusal semantics ("a refused control frame means the
-     * transport is gone") closed the session at the first full-queue chunk, then the
-     * unconditional cutover tail resurrected it to STREAMING — delivering a TORN envelope
-     * the edge cannot reassemble (which lands in the ADR-0040 poison ladder). Net effect:
-     * a zero-state edge whose store exceeds {@code transportQueueFrames ×
-     * snapshotChunkBytes} could never bootstrap.
+     * <h4>Backpressure pacing</h4>
+     * The transport queue is BOUNDED and non-blocking (default 64 frames), so a transfer
+     * whose chunk count exceeds the queue's free space cannot be emitted in one burst: the
+     * original code routed every snapshot frame through {@link #emit}, whose refusal
+     * semantics ("a refused control frame means the transport is gone") closed the session
+     * at the first full-queue chunk, then the unconditional cutover tail resurrected it to
+     * STREAMING - delivering a TORN envelope the edge cannot reassemble. Net effect: a
+     * zero-state edge whose store exceeds {@code transportQueueFrames x snapshotChunkBytes}
+     * could never bootstrap.
      *
      * <p>A refused snapshot-frame offer here is therefore treated as WOULD-BLOCK, not
-     * transport death: the transfer pauses at the refused frame and resumes on the next
-     * tick once the writer has drained queue space (the session stays CATCHUP with the
-     * transfer owed). A genuinely dead transport is the shell's lifecycle concern — it
-     * tears the connection down and the session with it (the sim/process shells both do).
-     * The cutover bookkeeping (cursor = S, resume STREAMING) runs ONLY when SNAPSHOT_END
-     * was actually accepted, so a paused transfer never declares a cutover it did not
-     * deliver. Pinned by {@code BootstrapSnapshotBackpressureTest}.
+     * transport death: the transfer pauses at the refused frame and resumes on the next tick
+     * once the writer has drained queue space (the session stays CATCHUP with the transfer
+     * owed). A genuinely dead transport is the shell's lifecycle concern - it tears the
+     * connection down and the session with it (the sim/process shells both do). The cutover
+     * bookkeeping (cursor = S, resume STREAMING) runs ONLY when SNAPSHOT_END was actually
+     * accepted, so a paused transfer never declares a cutover it did not deliver. Pinned by
+     * {@code BootstrapSnapshotBackpressureTest}.
      */
     private boolean performSnapshotTransfer() {
         if (pendingTransfer == null) {
@@ -374,7 +366,7 @@ public final class FanOutSessionCore {
             try {
                 replay = replaySource.replayFromSnapshot();
             } catch (RuntimeException e) {
-                // Replay source unavailable for the needed range — fatal for this session.
+                // Replay source unavailable for the needed range - fatal for this session.
                 catchupSnapshotOwed = false;
                 closeWith(ErrorCode.GAP_UNRECOVERABLE, "replay unavailable: " + e.getMessage());
                 return true;
@@ -404,16 +396,16 @@ public final class FanOutSessionCore {
             return emitted; // would-block: only END is still owed
         }
 
-        // Transfer fully accepted by the transport — NOW the cutover bookkeeping runs:
+        // Transfer fully accepted by the transport - NOW the cutover bookkeeping runs:
         // cursor jumps to the snapshot seq so tailing resumes from there; clear stale
         // in-flight accounting and resume TAIL.
         //
-        // CRITICAL: the snapshot transfer is unacknowledged on the wire — do NOT advance
+        // CRITICAL: the snapshot transfer is unacknowledged on the wire - do NOT advance
         // lastAckedSeq here. Optimistically marking the edge as caught-up would silently
         // strand it if the snapshot frame is lost in transit (the session would then idle,
         // believing the edge converged, while the edge sits at a stale version forever).
         // Leaving lastAckedSeq behind means a lost snapshot rebuilds ack-lag and the session
-        // re-demotes + re-snapshots until the edge's CURSOR_ACK confirms application — the
+        // re-demotes + re-snapshots until the edge's CURSOR_ACK confirms application - the
         // robust, self-healing behavior. (Witnessed on the lossy edge-network sim: without
         // this, ~75% of would-converge seeds stranded an edge at an intermediate version.)
         pendingTransfer = null;
@@ -450,7 +442,7 @@ public final class FanOutSessionCore {
 
     /**
      * Records a {@code CURSOR_ACK}: advances {@link #lastAckedSeq} and releases every
-     * in-flight NOTIFY frame whose highest seq is ≤ {@code seq} (bounded-queue accounting).
+     * in-flight NOTIFY frame whose highest seq is {@code <= seq} (bounded-queue accounting).
      * A stale or duplicate ack ({@code seq <= lastAckedSeq}) is ignored.
      *
      * @param seq the highest applied seq the edge acknowledges
@@ -460,7 +452,7 @@ public final class FanOutSessionCore {
             return;
         }
         if (seq <= lastAckedSeq) {
-            return; // stale / duplicate — never moves the watermark backward
+            return; // stale / duplicate - never moves the watermark backward
         }
         lastAckedSeq = seq;
         while (!inFlightFrameMaxSeq.isEmpty() && inFlightFrameMaxSeq.peekFirst() <= seq) {
@@ -480,18 +472,16 @@ public final class FanOutSessionCore {
         demotionCount++;
         DemotionEvent event = new DemotionEvent(cursor, lastAckedSeq, reason);
         lastDemotion = event;
-        // Non-fatal notice to the edge (the demotion code). RR-104: the notice is
-        // ADVISORY — the snapshot that follows is the load-bearing signal — and the
-        // outbound queue is full BY DEFINITION when the reason is TRANSPORT_BLOCK, so a
-        // refused offer here is WOULD-BLOCK (the RR-102 doctrine), not transport death.
-        // Never route it through emit(), whose refusal semantics close-mark the session
-        // (the close/resurrect inconsistency RR-104 names: a phantom
-        // onSessionClosed("transport_gone") followed by the CATCHUP tail below). A
-        // refused notice is retained and re-offered each tick AHEAD of the snapshot
-        // transfer (tick()), preserving wire order: notice, BEGIN..chunks..END.
+        // Non-fatal notice to the edge (the demotion code). The notice is ADVISORY - the
+        // snapshot that follows is the load-bearing signal - and the outbound queue is full
+        // BY DEFINITION when the reason is TRANSPORT_BLOCK, so a refused offer here is
+        // WOULD-BLOCK, not transport death. Never route it through emit(), whose refusal
+        // semantics close-mark the session. A refused notice is retained and re-offered
+        // each tick AHEAD of the snapshot transfer (tick()), preserving wire order:
+        // notice, BEGIN..chunks..END.
         EdgeFrame.ErrorClose notice = new EdgeFrame.ErrorClose(ErrorCode.DEMOTED_TO_CATCHUP, reason);
         pendingDemotionNotice = sink.offer(notice) ? null : notice;
-        // Drop pending outbound accounting — the snapshot supersedes everything in flight.
+        // Drop pending outbound accounting - the snapshot supersedes everything in flight.
         inFlightFrameMaxSeq.clear();
         slowConsumerWarned = false;
         metrics.onDemotion(reason);
@@ -528,7 +518,7 @@ public final class FanOutSessionCore {
     private void emit(EdgeFrame frame) {
         // The session's own bounded accounting governs NOTIFY frames; control frames
         // (SUBSCRIBE_OK, snapshot, heartbeat, demotion notice) are always offered. A
-        // false return on a control frame means the transport is gone — close.
+        // false return on a control frame means the transport is gone - close.
         if (!sink.offer(frame) && !(frame instanceof EdgeFrame.Notify)) {
             // Avoid recursion through closeWith's sink.close; mark closed directly.
             if (state != SessionState.CLOSED) {

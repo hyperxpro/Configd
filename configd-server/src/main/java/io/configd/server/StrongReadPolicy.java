@@ -8,26 +8,25 @@ import java.util.Set;
 
 /**
  * Decides which config keys are {@code GLOBAL}/security ("strong-read") keys that
- * MUST be served by the fail-closed linearizable read path (ADR-0030 INV-1,
- * RR-020).
+ * MUST be served by the fail-closed linearizable read path.
  *
- * <p>ADR-0030 Amendment A1 / INV-1 mandates that reads of a {@code GLOBAL}
+ * <p>The policy mandates that reads of a {@code GLOBAL}
  * (security kill-switch, ACL/auth revocation, legal gate) key MUST use the
- * linearizable root ReadIndex path and MUST <em>fail closed</em> — deny, never
- * serve a bounded-stale local copy — when that linearizable read cannot be
+ * linearizable root ReadIndex path and MUST <em>fail closed</em> - deny, never
+ * serve a bounded-stale local copy - when that linearizable read cannot be
  * confirmed. A stale "allow" on a revoked credential is unbounded damage, so the
  * safe failure is to refuse to answer.
  *
- * <p><b>Freshness, not confidentiality (RR-098).</b> "strong-read" / {@code secure/} is a
+ * <p><b>Freshness, not confidentiality.</b> "strong-read" / {@code secure/} is a
  * <em>freshness</em> guarantee, NOT encryption: values are stored plaintext at rest
  * (integrity-checked only, ADR-0042). Configd does not encrypt data at rest in v1; do not store
- * secrets here. At-rest encryption is a v2 item (RR-098).
+ * secrets here. At-rest encryption is a v2 item.
  *
  * <p>Key-class assignment here is <b>configuration-driven</b>: a key is a
  * strong-read key iff it starts with one of a configured set of prefixes
  * (default {@code secure/}). This is the minimal, testable enforcement seam for
  * this session; the fuller {@code ConfigScope}-based class story
- * (GLOBAL/REGIONAL/LOCAL routing) is RR-078 and owned by Session 6. Until then
+ * (GLOBAL/REGIONAL/LOCAL routing) is deferred. Until then
  * the prefix set is the single source of truth for the strong-read class.
  *
  * <p>Immutable and thread-safe.
@@ -37,7 +36,7 @@ public final class StrongReadPolicy {
     /**
      * Default strong-read prefix when none is configured. Sourced from the shared
      * {@link StrongReadKeyClass#DEFAULT_PREFIX} (the single definition both the control
-     * plane and the ADR-0038 edge storage filter agree on) so the two cannot drift.
+     * plane and the edge storage filter agree on) so the two cannot drift.
      */
     public static final String DEFAULT_PREFIX = StrongReadKeyClass.DEFAULT_PREFIX;
 

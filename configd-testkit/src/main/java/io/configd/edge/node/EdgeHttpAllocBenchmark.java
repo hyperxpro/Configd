@@ -21,8 +21,8 @@ import java.util.List;
 import java.util.concurrent.TimeUnit;
 
 /**
- * Netty-migration baseline (Phase R) — <b>surface 2: edge read-serving API</b>
- * ({@code configd-edge-node} · {@link EdgeHttpServer}, JDK {@code com.sun.net.httpserver}).
+ * Netty-migration baseline - <b>surface 2: edge read-serving API</b>
+ * ({@code configd-edge-node} - {@link EdgeHttpServer}, JDK {@code com.sun.net.httpserver}).
  * Measures the <b>end-to-end per-request allocation</b> of a real edge read over a real
  * loopback connection, with {@code -prof gc} (metric {@code gc.alloc.rate.norm}, B/op).
  *
@@ -32,15 +32,15 @@ import java.util.concurrent.TimeUnit;
  *
  * <p>Mirrors {@code EdgeHttpServerTest}'s wiring: a deterministically clocked
  * {@link EdgeClientCore} fed deltas directly (no fan-out socket). The fixed clock never
- * advances, so the core stays {@code CURRENT} and the read is served (200) — the
+ * advances, so the core stays {@code CURRENT} and the read is served (200) - the
  * steady-state hot read.
  *
  * <h2>Method (the same control as the admin baseline)</h2>
  * <ul>
- *   <li>{@code healthLive} — {@code GET /health/live}, trivial constant body: the JDK
+ *   <li>{@code healthLive} - {@code GET /health/live}, trivial constant body: the JDK
  *       {@code HttpExchange} + client round-trip floor (the per-request garbage the
  *       {@code EdgeHttpServer} Javadoc itself flags as out-of-scope of the zero-alloc law).</li>
- *   <li>{@code configGet} — {@code GET /v1/config/{key}} → 200 + value, hitting the real
+ *   <li>{@code configGet} - {@code GET /v1/config/{key}} -> 200 + value, hitting the real
  *       lock-free {@link EdgeClientCore} read (the 32-B/op in-process path) wrapped in the
  *       HTTP shell. The marginal over {@code healthLive} is the read path; the shared term
  *       is the shell.</li>
@@ -126,7 +126,7 @@ public class EdgeHttpAllocBenchmark {
         }
     }
 
-    /** The edge read path: GET /v1/config/{key} → 200 + value, over real loopback. */
+    /** The edge read path: GET /v1/config/{key} -> 200 + value, over real loopback. */
     @Benchmark
     public int configGet() throws Exception {
         HttpRequest req = configRequests[(cursor++ & 0x7fffffff) % KEY_COUNT];
@@ -134,7 +134,7 @@ public class EdgeHttpAllocBenchmark {
         return resp.statusCode() + resp.body().length;
     }
 
-    /** CONTROL: GET /health/live — the JDK shell + client round-trip floor (no read path). */
+    /** CONTROL: GET /health/live - the JDK shell + client round-trip floor (no read path). */
     @Benchmark
     public int healthLive() throws Exception {
         HttpResponse<byte[]> resp = client.send(healthRequest, HttpResponse.BodyHandlers.ofByteArray());

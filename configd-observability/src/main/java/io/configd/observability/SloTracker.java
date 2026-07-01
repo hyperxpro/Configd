@@ -120,7 +120,7 @@ public final class SloTracker {
     }
 
     /**
-     * Returns {@code true} if the SLO is currently breaching — i.e., the
+     * Returns {@code true} if the SLO is currently breaching - i.e., the
      * current compliance is below the target.
      *
      * @param sloName the SLO name (must have been defined)

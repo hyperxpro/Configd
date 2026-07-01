@@ -20,7 +20,7 @@ import static org.junit.jupiter.api.Assertions.*;
  * These tests exercise adversarial scenarios that are critical for correctness
  * but are not covered by the standard test suite:
  * <ul>
- *   <li>CERT-0011: Figure 8 adversarial — leader commits prior-term entry indirectly</li>
+ *   <li>CERT-0011: Figure 8 adversarial - leader commits prior-term entry indirectly</li>
  *   <li>CERT-0012: Joint consensus with leader failure mid-transition</li>
  *   <li>CERT-0013: ReadIndex invalidation on leader step-down</li>
  *   <li>CERT-0014: Config entry truncation and revert on follower</li>
@@ -28,9 +28,7 @@ import static org.junit.jupiter.api.Assertions.*;
  */
 class CertificationTest {
 
-    // ========================================================================
     // Test infrastructure
-    // ========================================================================
 
     static final class TestTransport implements RaftTransport {
         private final List<SentMessage> messages = new ArrayList<>();
@@ -210,7 +208,7 @@ class CertificationTest {
         }
 
         /**
-         * RR-085 / Figure-8 helper: delivers only the messages whose sender is in
+         * Figure-8 helper: delivers only the messages whose sender is in
          * {@code from} and target is in {@code to}; all other queued messages for
          * those senders are LEFT in place (not dropped), so a subsequent targeted
          * delivery can pick them up. Used to deliver a leader's AppendEntries to a
@@ -244,12 +242,12 @@ class CertificationTest {
         }
 
         /**
-         * RR-085 / Figure-8 helper: drives {@code candidate} through
+         * Figure-8 helper: drives {@code candidate} through
          * PreVote+election among {@code members} (clearing the others' recent-leader
          * gates first, as {@code ReconfigurationTest.electAmong} does) and STOPS the
-         * instant the candidate reaches LEADER — dropping all pending messages — so
+         * instant the candidate reaches LEADER - dropping all pending messages - so
          * the new leader's current-term no-op has NOT yet been replicated/committed.
-         * That intermediate state is exactly where the §5.4.2 commit guard is
+         * That intermediate state is exactly where the section 5.4.2 commit guard is
          * observable. Returns the new leader, or null if none emerged.
          */
         RaftNode electAmongStopAtLeader(NodeId candidate, Set<NodeId> members, int attempts) {
@@ -295,10 +293,8 @@ class CertificationTest {
         }
     }
 
-    // ========================================================================
-    // CERT-0011: Figure 8 adversarial — leader cannot commit prior-term
-    // entries based on replication count alone (Raft §5.4.2, Figure 8)
-    // ========================================================================
+    // CERT-0011: Figure 8 adversarial - leader cannot commit prior-term
+    // entries based on replication count alone (Raft section 5.4.2, Figure 8)
 
     @Nested
     class Figure8Adversarial {
@@ -313,14 +309,14 @@ class CertificationTest {
          *       it must first commit a new entry from term 3</li>
          * </ol>
          * <p>
-         * This verifies Raft §5.4.2: "a leader cannot determine commitment
+         * This verifies Raft section 5.4.2: "a leader cannot determine commitment
          * of entries from previous terms based on replication count."
          */
         @Test
         void leaderCannotCommitPriorTermEntryByReplicationCountAlone() {
-            // RR-085 #1 / RR-091 F-C1: this body used to assert a by-construction
+            // This body used to assert a by-construction
             // tautology (`term1EntryIndex > commitBefore || termAt(idx) == term1`,
-            // both disjuncts always true) and so could NOT see the §5.4.2 guard
+            // both disjuncts always true) and so could NOT see the section 5.4.2 guard
             // mutant (`log.termAt(n) != currentTerm` -> `false` at
             // RaftNode.maybeAdvanceCommitIndex), which makes the Figure-8
             // lost-write reachable. The body below CONSTRUCTS Raft Figure 8 and
@@ -330,9 +326,9 @@ class CertificationTest {
             // guard fails this test (capture:
             // docs/session-2/captures/rr-085-figure8.txt).
             //
-            // Figure 8 (Raft §5.4.2): an old entry replicated to a MAJORITY by a
+            // Figure 8 (Raft section 5.4.2): an old entry replicated to a MAJORITY by a
             // re-elected leader must NOT be considered committed by replication
-            // count alone — only committing a CURRENT-term entry commits it
+            // count alone - only committing a CURRENT-term entry commits it
             // indirectly. Otherwise a later leader without the entry can still win
             // and overwrite it.
             TestCluster cluster = new TestCluster(3);
@@ -356,8 +352,8 @@ class CertificationTest {
 
             // (b) n1 is RE-ELECTED at a higher term (Figure 8: the same server
             //     returns as leader still holding the uncommitted prior-term entry
-            //     X), and we STOP the instant it wins — before any post-election
-            //     AppendEntries response lands — so its current-term no-op is NOT
+            //     X), and we STOP the instant it wins - before any post-election
+            //     AppendEntries response lands - so its current-term no-op is NOT
             //     yet committed (commitIndex stays low). becomeLeader appended that
             //     no-op above X.
             RaftNode reLeader = cluster.electAmongStopAtLeader(n1, Set.of(n1, n2, n3), 8);
@@ -376,10 +372,10 @@ class CertificationTest {
             // (c) Drive the production commit-advance with a prior-term entry at a
             //     QUORUM but NO current-term entry at a quorum. A follower reports
             //     matchIndex = idxX (it has X, term1). Now {n1(self), reporter} = a
-            //     majority of 3 hold X. The §5.4.2 guard MUST refuse to commit X
+            //     majority of 3 hold X. The section 5.4.2 guard MUST refuse to commit X
             //     (its term != currentTerm). WITHOUT the guard
             //     (`termAt(n)!=currentTerm -> false`), maybeAdvanceCommitIndex
-            //     commits X here by replication count — the Figure-8 lost-write.
+            //     commits X here by replication count - the Figure-8 lost-write.
             long commitBeforeX = leader.log().commitIndex();
             leader.handleMessage(new AppendEntriesResponse(term2, true, idxX, n3));
             assertEquals(commitBeforeX, leader.log().commitIndex(),
@@ -390,8 +386,8 @@ class CertificationTest {
             assertTrue(leader.log().commitIndex() < idxX,
                     "commitIndex must not have reached X");
 
-            // (d) Liveness sanity (and the indirect-commit half of §5.4.2): once a
-            //     CURRENT-term entry — the no-op at noopIdx — reaches a quorum, the
+            // (d) Liveness sanity (and the indirect-commit half of section 5.4.2): once a
+            //     CURRENT-term entry - the no-op at noopIdx - reaches a quorum, the
             //     commit advances and X is committed INDIRECTLY (commit >= idxX).
             leader.handleMessage(new AppendEntriesResponse(term2, true, noopIdx, n2));
             assertTrue(leader.log().commitIndex() >= noopIdx,
@@ -402,7 +398,7 @@ class CertificationTest {
 
         /**
          * Verifies that a new leader commits prior-term entries indirectly
-         * by first committing a no-op from its own term (Raft §5.4.2).
+         * by first committing a no-op from its own term (Raft section 5.4.2).
          */
         @Test
         void newLeaderCommitsPriorTermEntriesIndirectlyViaNoOp() {
@@ -442,9 +438,7 @@ class CertificationTest {
         }
     }
 
-    // ========================================================================
     // CERT-0012: Joint consensus with leader failure mid-transition
-    // ========================================================================
 
     @Nested
     class JointConsensusLeaderFailure {
@@ -477,10 +471,10 @@ class CertificationTest {
             cluster.deliverMessagesTo(Set.of(n2));
             cluster.deliverMessagesTo(Set.of(n1));
 
-            // "Crash" n1 — drop all its messages.
+            // "Crash" n1 - drop all its messages.
             // Joint config C_old,new requires dual majority:
-            //   old {1,2,3}: need 2 of 3 → n2+n3 suffice
-            //   new {1,2,3,4}: need 3 of 4 → n2+n3+n4 needed
+            //   old {1,2,3}: need 2 of 3 -> n2+n3 suffice
+            //   new {1,2,3,4}: need 3 of 4 -> n2+n3+n4 needed
             // So n4 must participate for the election to succeed.
             //
             // First, tick n3 and n4 past election timeout to clear leaderId
@@ -558,9 +552,7 @@ class CertificationTest {
         }
     }
 
-    // ========================================================================
     // CERT-0013: ReadIndex invalidation on leader step-down
-    // ========================================================================
 
     @Nested
     class ReadIndexInvalidation {
@@ -630,9 +622,7 @@ class CertificationTest {
         }
     }
 
-    // ========================================================================
     // CERT-0014: Config entry truncation and revert
-    // ========================================================================
 
     @Nested
     class ConfigEntryTruncation {
@@ -675,7 +665,7 @@ class CertificationTest {
             cluster.triggerElectionTimeout(n3);
 
             // n3 starts election. Let n3 get votes from at least n2
-            // (n3 may or may not win depending on log comparison —
+            // (n3 may or may not win depending on log comparison -
             // but even if n3 doesn't win, we test the truncation path)
             for (int i = 0; i < 15; i++) {
                 cluster.deliverMessagesBetween(Set.of(n2, n3), Set.of(n2, n3));
@@ -738,9 +728,7 @@ class CertificationTest {
         }
     }
 
-    // ========================================================================
     // CERT-0015: Leadership transfer blocked during reconfig
-    // ========================================================================
 
     @Nested
     class LeadershipTransferDuringReconfig {
@@ -764,7 +752,7 @@ class CertificationTest {
             assertTrue(leader.proposeConfigChange(Set.of(n1, n2, n3, n4)));
             assertTrue(leader.clusterConfig().isJoint());
 
-            // Try to transfer leadership — should be rejected
+            // Try to transfer leadership - should be rejected
             assertFalse(leader.transferLeadership(n2),
                     "Leadership transfer must be blocked during pending config change");
             assertNull(leader.transferTarget(),
@@ -772,9 +760,7 @@ class CertificationTest {
         }
     }
 
-    // ========================================================================
     // CERT-0016: RCFG magic collision guard
-    // ========================================================================
 
     @Nested
     class RcfgMagicGuard {
@@ -816,9 +802,7 @@ class CertificationTest {
         }
     }
 
-    // ========================================================================
     // CERT-0017: inflightCount never goes negative
-    // ========================================================================
 
     @Nested
     class InflightCountSafety {

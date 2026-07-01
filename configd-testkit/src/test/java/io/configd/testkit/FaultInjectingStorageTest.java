@@ -11,7 +11,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 
 /**
- * B1 self-test (Session 4): proves {@link FaultInjectingStorage} injects each operational
+ * Self-test: proves {@link FaultInjectingStorage} injects each operational
  * fault exactly per the oracle catalogue, and otherwise delegates transparently. A fault
  * injector that doesn't actually inject is worse than none.
  */

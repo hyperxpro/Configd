@@ -15,14 +15,13 @@ import java.util.Optional;
 /**
  * Concurrent client + faithful outcome mapper. Uses the JDK {@link HttpClient}
  * over the real HTTP API and maps each observation to the checker-neutral
- * {@link Op.Status} exactly as the design's §7 table requires:
+ * {@link Op.Status} exactly as the design requires for the history table:
  *
  * <ul>
- *   <li>PUT/DELETE 200 {@code Committed: seq=S} -> {@code OK} (ADR-0033: 200 is returned ONLY
- *       after quorum commit + local apply, so the write definitely happened — was {@code INFO}
- *       pre-RR-004 when 200 meant a leader-local append, a lie)</li>
+ *   <li>PUT/DELETE 200 {@code Committed: seq=S} -> {@code OK} (200 is returned ONLY
+ *       after quorum commit + local apply, so the write definitely happened)</li>
  *   <li>PUT/DELETE 504 Indeterminate (commit unconfirmed within the deadline) -> {@code INFO}
- *       (ADR-0033: the write MAY still commit later; not a definite failure)</li>
+ *       (the write MAY still commit later; not a definite failure)</li>
  *   <li>PUT/DELETE timeout / conn-refused / 5xx-other -> {@code INFO} (may have committed)</li>
  *   <li>PUT/DELETE 503 Lost/NotLeader (no usable hint) / 400 / 403 / 429 -> {@code FAIL}
  *       (definite non-commit, did not happen)</li>
@@ -60,7 +59,7 @@ public final class ConfigClient {
         return suspectedLeaderId;
     }
 
-    // ---- writes -----------------------------------------------------------
+    // writes
 
     /**
      * PUT {@code token} as the value of {@code key}. Tries {@code target}; on a
@@ -90,14 +89,14 @@ public final class ConfigClient {
                 HttpResponse<String> resp = http.send(req, HttpResponse.BodyHandlers.ofString());
                 int code = resp.statusCode();
                 if (code == 200) {
-                    // ADR-0033: 200 "Committed: seq=S" is returned ONLY after quorum commit +
-                    // local apply, so the write definitely happened -> OK (was INFO pre-RR-004).
+                    // 200 "Committed: seq=S" is returned ONLY after quorum commit + local apply,
+                    // so the write definitely happened -> OK.
                     suspectedLeaderId = node.id();
                     return new OpResult(Op.Status.OK, value, call, System.nanoTime());
                 }
                 if (code == 504) {
-                    // ADR-0033: Indeterminate — commit unconfirmed within the deadline; the write
-                    // MAY still commit later, so it is INFO (indeterminate), never a definite FAIL.
+                    // Indeterminate - commit unconfirmed within the deadline; the write MAY still
+                    // commit later, so it is INFO (indeterminate), never a definite FAIL.
                     return new OpResult(Op.Status.INFO, value, call, System.nanoTime());
                 }
                 if (code == 503) {
@@ -114,14 +113,14 @@ public final class ConfigClient {
                 }
                 if (code == 400 || code == 401 || code == 403 || code == 429) {
                     // Definite rejections the server contract guarantees never committed
-                    // (validation 400, authn 401 / authz 403 — both rejected before the
+                    // (validation 400, authn 401 / authz 403 - both rejected before the
                     // proposer is reached, backpressure-before-propose 429).
                     return new OpResult(Op.Status.FAIL, value, call, System.nanoTime());
                 }
                 // Any other 5xx (or unrecognized status) is INDETERMINATE on the write
                 // path: an unknown server-side failure cannot guarantee the write did NOT
                 // commit, so recording FAIL (a definite no-occurrence) is the UNSAFE
-                // direction — it could mask a real lost-write anomaly. Record INFO.
+                // direction - it could mask a real lost-write anomaly. Record INFO.
                 return new OpResult(Op.Status.INFO, value, call, System.nanoTime());
             } catch (Exception e) {
                 // timeout / connection refused (node killed) / reset: may have committed
@@ -131,10 +130,10 @@ public final class ConfigClient {
         return new OpResult(Op.Status.FAIL, value, call, System.nanoTime());
     }
 
-    // ---- linearizable read ------------------------------------------------
+    // linearizable read
 
     /**
-     * Linearizable GET of {@code key} against {@code target} (no hint-following — a
+     * Linearizable GET of {@code key} against {@code target} (no hint-following - a
      * linearizable-read 503 has no leader hint). 200 -> OK read of the body;
      * 404 -> OK read of "" (absent); 503/timeout -> INFO (indeterminate, dropped).
      */
@@ -182,7 +181,7 @@ public final class ConfigClient {
     }
 
     /**
-     * Default (stale) GET against a specific node — reads that node's local applied
+     * Default (stale) GET against a specific node - reads that node's local applied
      * state directly (no ReadIndex). Returns the body, or {@code null} on 404/error.
      * Used only for harness warm-up / liveness checks, never recorded as a
      * linearizable observation.
@@ -201,11 +200,11 @@ public final class ConfigClient {
         }
     }
 
-    // ---- leader discovery -------------------------------------------------
+    // leader discovery
 
     /**
      * Discovers the current leader via a throwaway probe PUT (NOT recorded into any
-     * history — a reserved key). Returns the leader id or -1.
+     * history - a reserved key). Returns the leader id or -1.
      */
     public int probeLeader(List<ClusterNode> all) {
         for (ClusterNode n : all) {

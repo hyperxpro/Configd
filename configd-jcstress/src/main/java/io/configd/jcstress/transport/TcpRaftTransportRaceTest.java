@@ -12,12 +12,11 @@ import org.openjdk.jcstress.infra.results.II_Result;
 import org.openjdk.jcstress.infra.results.I_Result;
 
 /**
- * RR-002 — the six jcstress interleavings on {@code TcpRaftTransport}'s new
- * per-peer shared state, from {@code docs/session-2/reviews/rr-002-fix-review.md}
- * §"jcstress-must-cover list (B6 — consume verbatim)". Each nested test maps 1:1
- * to a numbered item. The concurrency is exercised through {@link PeerModel},
- * which copies the field algebra and publish order from {@code PeerConnection}
- * verbatim (see that class for why a model rather than live sockets).
+ * The six jcstress interleavings on {@code TcpRaftTransport}'s per-peer shared
+ * state. Each nested test maps 1:1 to a numbered scenario. The concurrency is
+ * exercised through {@link PeerModel}, which copies the field algebra and publish
+ * order from {@code PeerConnection} verbatim (see that class for why a model
+ * rather than live sockets).
  *
  * <p>The single-writer-per-stream and single-in-flight-connect contracts are
  * enforced by {@code connectInFlight}/the identity guard; these tests assert
@@ -29,11 +28,9 @@ public final class TcpRaftTransportRaceTest {
     private TcpRaftTransportRaceTest() {
     }
 
-    // ==================================================================
     // (1) enqueue(out==null) vs teardown-clear vs connect-publish
     //     Assert: no frame left queued with no scheduled connect (no wedge),
     //     and no double in-flight connect.
-    // ==================================================================
     @JCStressTest
     @State
     @Description("(1) enqueue(out==null) vs teardown vs connect-publish — no wedge, no double connect")
@@ -65,10 +62,10 @@ public final class TcpRaftTransportRaceTest {
         @Arbiter
         public void arbiter(I_Result r) {
             // No-wedge invariant: if frames remain queued, delivery must be covered
-            // by EITHER a live connection (out != null → its writer drains) OR a
+            // by EITHER a live connection (out != null -> its writer drains) OR a
             // connect that is currently pending/in-flight (pendingConnects > 0 ||
             // connectInFlight). The wedge bug is frames queued with out == null AND
-            // no connect pending AND not in-flight — nothing will ever drain them.
+            // no connect pending AND not in-flight - nothing will ever drain them.
             boolean framesRemain = p.queueSize() > 0;
             boolean connectPath = p.out() != null
                     || p.pendingConnects.get() > 0
@@ -77,10 +74,8 @@ public final class TcpRaftTransportRaceTest {
         }
     }
 
-    // ==================================================================
     // (2) scheduleConnect CAS vs connectAndStartWriter finally reset+reschedule
     //     Assert: exactly one pending connect survives when frames remain.
-    // ==================================================================
     @JCStressTest
     @State
     @Description("(2) scheduleConnect CAS vs connect finally reset — exactly one pending connect")
@@ -112,11 +107,11 @@ public final class TcpRaftTransportRaceTest {
             // Invariant: connectInFlight (single-in-flight CAS) admits AT MOST one
             // pending connect at a time. After the race, if frames remain there must
             // be exactly one connect pending (the finally's reschedule OR the sender's
-            // — never both, never neither). pendingConnects models scheduled-not-run.
+            // - never both, never neither). pendingConnects models scheduled-not-run.
             boolean framesRemain = p.queueSize() > 0;
             int pending = p.pendingConnects.get();
             if (!framesRemain) {
-                // Genuinely empty queue → no connect needed; but if one is still
+                // Genuinely empty queue -> no connect needed; but if one is still
                 // pending that is harmless (it will run and find nothing). Either is
                 // legal; 0 keeps the outcome distinct from the frames-remain case.
                 r.r1 = (pending <= 1) ? 0 : 9; // >1 pending is a double-schedule even when empty
@@ -130,11 +125,9 @@ public final class TcpRaftTransportRaceTest {
         }
     }
 
-    // ==================================================================
     // (3) reader-teardown vs writer-teardown on the SAME socket s
-    //     Assert: identity guard makes teardown idempotent — at most one
+    //     Assert: identity guard makes teardown idempotent - at most one
     //     "wasLive" clear; never clobber a newer published socket.
-    // ==================================================================
     @JCStressTest
     @State
     @Description("(3) reader-teardown vs writer-teardown same socket — idempotent, one clear")
@@ -169,10 +162,8 @@ public final class TcpRaftTransportRaceTest {
         }
     }
 
-    // ==================================================================
     // (4) socket/out volatile publish vs writer-start visibility
     //     Assert: the writer never sees a null/stale stream; never two writers.
-    // ==================================================================
     @JCStressTest
     @State
     @Description("(4) publish vs writer-start visibility — never null stream, never two writers")
@@ -202,11 +193,9 @@ public final class TcpRaftTransportRaceTest {
         }
     }
 
-    // ==================================================================
     // (5) close() vs in-flight connect past the closed gate
-    //     Assert: at most a benign leaked socket — no writer left running, no
+    //     Assert: at most a benign leaked socket - no writer left running, no
     //     use of a closed stream; the queue is cleared and closed observed.
-    // ==================================================================
     @JCStressTest
     @State
     @Description("(5) close() vs in-flight connect past closed gate — benign leak only")
@@ -239,11 +228,9 @@ public final class TcpRaftTransportRaceTest {
         }
     }
 
-    // ==================================================================
-    // (6) drop-oldest evict vs writer poll — framesDropped accounting exact
+    // (6) drop-oldest evict vs writer poll - framesDropped accounting exact
     //     Assert: total accounted frames (delivered + dropped + still-queued) is
     //     conserved; no double count, no missed count.
-    // ==================================================================
     @JCStressTest
     @State
     @Description("(6) drop-oldest evict vs writer poll — framesDropped accounting is exact")
@@ -260,7 +247,7 @@ public final class TcpRaftTransportRaceTest {
 
         @Actor
         public void sender() {
-            // Full queue → drop-oldest path: poll() + offer(), incrementing dropped.
+            // Full queue -> drop-oldest path: poll() + offer(), incrementing dropped.
             p.enqueueOrDrop(new byte[]{2});
         }
 

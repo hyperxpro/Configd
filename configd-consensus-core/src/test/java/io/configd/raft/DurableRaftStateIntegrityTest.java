@@ -18,15 +18,15 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * PA-2021 GREEN — at-rest integrity of {@code raft.persistent_state} (ADR-0042).
+ * Verifies at-rest integrity of {@code raft.persistent_state}.
  * <p>
- * A forged {@code votedFor} (flipped to another valid node id, with no valid MAC —
+ * A forged {@code votedFor} (flipped to another valid node id, with no valid MAC -
  * the attacker has no key) must be REFUSED on load: loading it would let a restarted
  * node believe it voted for a different candidate in a term, violating Election
  * Safety. A keyless legacy (pre-envelope) raw file still loads (back-compat).
  * <p>
  * {@code raft.persistent_state} is an atomic-rename artifact (never torn), so any
- * structurally-complete MAC mismatch is unambiguously tamper → always fail loud.
+ * structurally-complete MAC mismatch is unambiguously tamper - always fail loud.
  */
 class DurableRaftStateIntegrityTest {
 
@@ -41,7 +41,7 @@ class DurableRaftStateIntegrityTest {
         state.setTermAndVote(5, NodeId.of(2));
 
         // Adversary flips the votedFor int inside the envelope payload from 2 to 3
-        // (a different valid voter) and recomputes the envelope CRC32C — only the
+        // (a different valid voter) and recomputes the envelope CRC32C - only the
         // HMAC, which they cannot forge, catches it.
         Path file = tempDir.resolve(STATE_FILE);
         byte[] raw = Files.readAllBytes(file);
@@ -87,7 +87,7 @@ class DurableRaftStateIntegrityTest {
     }
 
     /**
-     * Back-compat: a legacy raw (pre-ADR-0042, 12-byte non-enveloped) state file is
+     * Back-compat: a legacy raw (12-byte non-enveloped) state file is
      * still loaded by a KEYLESS codec. This is the migration path for nodes upgraded
      * before authentication is turned on.
      */

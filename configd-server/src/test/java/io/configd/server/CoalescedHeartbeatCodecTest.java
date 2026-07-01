@@ -18,7 +18,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * Multi-Raft Phase 1 — Seam F (D2): {@link RaftMessageCodec#encodeCoalescedHeartbeat} /
+ * {@link RaftMessageCodec#encodeCoalescedHeartbeat} /
  * {@link RaftMessageCodec#decodeCoalescedHeartbeat} round-trip + adversarial bounds. The coalesced
  * payload is a count-bounded fixed-size-record format; a hostile peer's frame is bounded BEFORE any
  * map allocation and rejected on every malformation (bad count, truncation, duplicate gid, padding).

@@ -10,15 +10,11 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * CT-29 — architecture §7 ":290 Quarantined → Must re-bootstrap via catch-up protocol"
- * (C4 design §2/§3): SUBSCRIBEs from a QUARANTINED identity are REFUSED for
- * {@code quarantineCooldownMs} (each refusal counted on
- * {@code edge_fanout_reconnects_refused_total} — screen C4-3's observability demand);
- * after the cooldown the identity is readmitted with {@code ALLOW_FORCE_SNAPSHOT} — the
- * caller rebinds the resume cursor to 0 so the C3 {@code decideMode} cursor-0 rule forces
- * the snapshot re-bootstrap (reused, not duplicated; the wire leg incl. the forced
- * SNAPSHOT_FIRST is {@code FanOutServerQuarantineTest}). Operator reset is an ADDITIONAL
- * exit, never the only one. Clock-driven, no sleeps.
+ * SUBSCRIBEs from a QUARANTINED identity are REFUSED for {@code quarantineCooldownMs}
+ * (each refusal counted on {@code edge_fanout_reconnects_refused_total}); after the cooldown
+ * the identity is readmitted with {@code ALLOW_FORCE_SNAPSHOT} - the caller rebinds the
+ * resume cursor to 0 so the cursor-0 rule in decideMode forces the snapshot re-bootstrap.
+ * Operator reset is an ADDITIONAL exit, never the only one. Clock-driven, no sleeps.
  */
 class QuarantineReBootstrapTest {
 
@@ -97,7 +93,7 @@ class QuarantineReBootstrapTest {
         long readmitAt = T0 + 2_000 + 60_000;
         governor.admit(EDGE, readmitAt);
 
-        // Two post-readmission demotions: under the limit — the pre-quarantine demotions
+        // Two post-readmission demotions: under the limit - the pre-quarantine demotions
         // were cleared at quarantine time and must not double-trip.
         governor.onDemotion(EDGE,
                 new DemotionEvent(210, 200, DemotionEvent.REASON_ACK_LAG), readmitAt + 1_000);
@@ -142,7 +138,7 @@ class QuarantineReBootstrapTest {
         SlowConsumerGovernor governor =
                 new SlowConsumerGovernor(config(), probe, probe::onTransition);
         governor.onDemotion(EDGE,
-                new DemotionEvent(10, 5, DemotionEvent.REASON_ACK_LAG), T0); // → CATCHUP
+                new DemotionEvent(10, 5, DemotionEvent.REASON_ACK_LAG), T0); // -> CATCHUP
         Admission admission = governor.admit(EDGE, T0 + 1_000);
         assertEquals(AdmissionDecision.ALLOW, admission.decision(),
                 "CATCHUP is not a refusal state — the reconnect resumes normally");
@@ -165,14 +161,14 @@ class QuarantineReBootstrapTest {
     void aQuarantineClearsBothDemotionLaddersEvenInsideTheWindow() {
         // The quarantine's clean slate must come from the CLEAR, not merely from the
         // window pruning: with a cooldown SHORTER than the demote window, pre-quarantine
-        // demotions are still age-eligible after readmission — and must not re-trip.
+        // demotions are still age-eligible after readmission - and must not re-trip.
         RecordingPolicyProbe probe = new RecordingPolicyProbe();
         SlowConsumerPolicyConfig shortCooldown = new SlowConsumerPolicyConfig(
                 10_000L, 3, 3, 60_000L, 10_000L, 3, 3_600_000L, 3_600_000L, 4_096);
         SlowConsumerGovernor governor =
                 new SlowConsumerGovernor(shortCooldown, probe, probe::onTransition);
 
-        // 2 gap demotions (gapDemoteLimit 3 here) + 3 distress → quarantine via distress.
+        // 2 gap demotions (gapDemoteLimit 3 here) + 3 distress -> quarantine via distress.
         governor.onDemotion(EDGE, new DemotionEvent(1, 0, DemotionEvent.REASON_GAP), T0);
         governor.onDemotion(EDGE, new DemotionEvent(2, 0, DemotionEvent.REASON_GAP), T0 + 100);
         for (int i = 0; i < 3; i++) {
@@ -181,7 +177,7 @@ class QuarantineReBootstrapTest {
         }
         assertEquals(ConsumerState.QUARANTINED, governor.state(EDGE), "fixture");
 
-        // Readmit after the 10 s cooldown — well inside the 60 s demote window.
+        // Readmit after the 10 s cooldown - well inside the 60 s demote window.
         governor.admit(EDGE, T0 + 10_300);
         assertEquals(ConsumerState.CATCHUP, governor.state(EDGE));
 

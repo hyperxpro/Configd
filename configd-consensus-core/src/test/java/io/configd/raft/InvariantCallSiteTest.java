@@ -12,17 +12,17 @@ import java.util.Set;
 import static org.junit.jupiter.api.Assertions.*;
 
 /**
- * RR-089 closure: kills the PRODUCTION {@code invariantChecker.check(...)}
- * call-site removal mutants (PIT {@code VoidMethodCallMutator}).
+ * Guards against removal of the PRODUCTION {@code invariantChecker.check(...)}
+ * call sites.
  * <p>
  * The existing {@link AssertionTwinFiringTest} verifies each twin's EXPRESSION
  * is correctly phrased by forcing the condition false through a synthetic seam
  * ({@code fireInNodeTwinForTest}). That proves the check would fire on a real
  * violation, but it does NOT traverse the production call site, so deleting the
- * production {@code check(...)} call leaves it green (RR-089's documented gap).
+ * production {@code check(...)} call leaves it green (the documented gap was that no test triggered real call sites).
  * <p>
  * This test closes that gap with a checker that records EVERY {@code check(name,
- * …)} invocation regardless of condition, then drives the real protocol paths
+ * ...)} invocation regardless of condition, then drives the real protocol paths
  * (apply, election, follower append, reconfig) and asserts the production code
  * actually CALLED each named check. A {@code VoidMethodCall} removal of any of
  * those calls makes the recorded set miss that name -> this test fails. Unlike
@@ -70,9 +70,7 @@ class InvariantCallSiteTest {
         return node;
     }
 
-    // ====================================================================
-    // becomeLeader — election_safety / leader_completeness
-    // ====================================================================
+    // becomeLeader: election_safety / leader_completeness
 
     @Test
     void becomeLeaderInvokesElectionSafetyAndLeaderCompleteness() {
@@ -85,9 +83,7 @@ class InvariantCallSiteTest {
                 "becomeLeader must invoke the leader_completeness check");
     }
 
-    // ====================================================================
-    // applyCommitted — version_monotonicity / state_machine_safety
-    // ====================================================================
+    // applyCommitted: version_monotonicity / state_machine_safety
 
     @Test
     void applyCommittedInvokesVersionMonotonicityAndStateMachineSafety() {
@@ -104,9 +100,7 @@ class InvariantCallSiteTest {
                 "applyCommitted must invoke the state_machine_safety check on each apply");
     }
 
-    // ====================================================================
-    // handleAppendEntries — log_matching (follower side)
-    // ====================================================================
+    // handleAppendEntries: log_matching (follower side)
 
     @Test
     void followerAppendInvokesLogMatching() {
@@ -122,10 +116,8 @@ class InvariantCallSiteTest {
                 "a non-empty follower append must invoke the log_matching check");
     }
 
-    // ====================================================================
-    // proposeConfigChange — single_server_invariant / no_op_before_reconfig /
+    // proposeConfigChange: single_server_invariant / no_op_before_reconfig /
     // reconfig_safety
-    // ====================================================================
 
     @Test
     void proposeConfigChangeInvokesReconfigTwins() {
@@ -142,9 +134,7 @@ class InvariantCallSiteTest {
                 "proposeConfigChange must invoke reconfig_safety");
     }
 
-    // ====================================================================
-    // tickHeartbeat — inflight_window_progress (RR-103, per peer)
-    // ====================================================================
+    // tickHeartbeat: inflight_window_progress (per peer)
 
     @Test
     void leaderHeartbeatInvokesInflightWindowProgress() {
@@ -154,8 +144,8 @@ class InvariantCallSiteTest {
         RoutingCluster cluster = new RoutingCluster(3, Map.of(N1, checker));
         cluster.electFirst();
         checker.clear();
-        cluster.step(150); // ≥ 2 heartbeat intervals with quorum → the per-peer loop runs
-        // Kills the VoidMethodCall removal of the inflight_window_progress check (RR-103).
+        cluster.step(150); // >= 2 heartbeat intervals with quorum - the per-peer loop runs
+        // Kills the VoidMethodCall removal of the inflight_window_progress check.
         assertTrue(checker.observed("inflight_window_progress"),
                 "a leader heartbeat must invoke the inflight_window_progress check per peer");
     }

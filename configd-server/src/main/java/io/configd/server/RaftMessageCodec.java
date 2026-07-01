@@ -43,7 +43,7 @@ public final class RaftMessageCodec {
     /**
      * Hard upper bound on the number of entries in a single
      * AppendEntries RPC. Anything beyond this is taken as
-     * adversarial / corruption and rejected without allocation —
+     * adversarial / corruption and rejected without allocation -
      * blocks a "32-byte attacker frame, multi-GB heap" amplification.
      * The legitimate Raft path batches at most a few hundred entries.
      */
@@ -76,9 +76,9 @@ public final class RaftMessageCodec {
     public static final int MAX_SNAPSHOT_BLOB_LEN = 4 * 1024 * 1024;
 
     /**
-     * Multi-Raft Phase 1 (D2): hard upper bound on the number of groups in a single coalesced
-     * heartbeat — a defensive allocation bound on a hostile peer's count claim (mirrors
-     * {@link #MAX_ENTRIES_PER_APPEND}). The production ceiling is the shard count (≤16); 1024 is
+     * Hard upper bound on the number of groups in a single coalesced
+     * heartbeat - a defensive allocation bound on a hostile peer's count claim (mirrors
+     * {@link #MAX_ENTRIES_PER_APPEND}). The production ceiling is the shard count (<=16); 1024 is
      * generous headroom that still bounds the per-frame map allocation.
      */
     public static final int MAX_COALESCED_GROUPS = 1024;
@@ -194,7 +194,7 @@ public final class RaftMessageCodec {
             case INSTALL_SNAPSHOT -> decodeInstallSnapshot(frame);
             case INSTALL_SNAPSHOT_RESPONSE -> decodeInstallSnapshotResponse(frame);
             case TIMEOUT_NOW -> decodeTimeoutNow(frame);
-            // A coalesced heartbeat is NOT a RaftMessage (it bundles many groups) — it must be
+            // A coalesced heartbeat is NOT a RaftMessage (it bundles many groups) - it must be
             // decoded via decodeCoalescedHeartbeat() and demuxed per group. Surface a directional
             // error rather than the generic default so a misroute is loud, not silent.
             case RAFT_COALESCED_HEARTBEAT -> throw new IllegalArgumentException(
@@ -204,21 +204,21 @@ public final class RaftMessageCodec {
         };
     }
 
-    // ---- CoalescedHeartbeat (Multi-Raft Phase 1, D2) ----
+    // ---- CoalescedHeartbeat ----
 
     /**
-     * Encodes a coalesced heartbeat — the per-group empty {@link AppendEntriesRequest}s one node
-     * drained for a single peer in one tick — into ONE {@link MessageType#RAFT_COALESCED_HEARTBEAT}
+     * Encodes a coalesced heartbeat - the per-group empty {@link AppendEntriesRequest}s one node
+     * drained for a single peer in one tick - into ONE {@link MessageType#RAFT_COALESCED_HEARTBEAT}
      * frame. Dormant at N=1 (the drain there always has exactly one group and sends a plain
      * AppendEntries instead); emitted only at N&gt;1.
      *
-     * <p>The sending node's id is NOT in the payload — the transport already carries it as the
+     * <p>The sending node's id is NOT in the payload - the transport already carries it as the
      * sender-id prefix ({@code RaftWireProtocol}), so the receiver gets {@code from} from the
      * {@code InboundMessage}. The frame-header groupId/term are sentinels (0): the real per-group
      * ids/terms are in the payload, and the inbound demux dispatches this type by message type, never
      * by {@code frame.groupId()}.
      *
-     * @param groupHeartbeats per-group {@code groupId -> empty AppendEntriesRequest} (≥1 entry)
+     * @param groupHeartbeats per-group {@code groupId -> empty AppendEntriesRequest} (>=1 entry)
      * @return the encoded coalesced-heartbeat frame
      * @throws IllegalArgumentException if the map is empty, exceeds {@link #MAX_COALESCED_GROUPS}, or
      *                                  any entry carries a non-empty AppendEntries (only heartbeats
@@ -283,7 +283,7 @@ public final class RaftMessageCodec {
             throw new IllegalArgumentException(
                     "CoalescedHeartbeat group count " + n + " exceeds max " + MAX_COALESCED_GROUPS);
         }
-        // Reject up front if the declared count cannot fit in the remaining buffer — blocks a tiny
+        // Reject up front if the declared count cannot fit in the remaining buffer - blocks a tiny
         // adversary frame from triggering a large map allocation (mirrors decodeAppendEntries).
         if ((long) n * COALESCED_GROUP_RECORD > buf.remaining()) {
             throw new IllegalArgumentException(
@@ -368,7 +368,7 @@ public final class RaftMessageCodec {
         }
         // Each entry has a per-entry header of 8+8+4=20 bytes plus a
         // variable command. Reject up front if the declared count
-        // cannot possibly fit in the remaining buffer — blocks a
+        // cannot possibly fit in the remaining buffer - blocks a
         // tiny adversary frame from triggering a large ArrayList alloc.
         if ((long) numEntries * (8 + 8 + 4) > buf.remaining()) {
             throw new IllegalArgumentException(
@@ -485,7 +485,7 @@ public final class RaftMessageCodec {
             checkRemaining(buf, 4, "InstallSnapshot configData length");
             int configLen = buf.getInt();
             if (configLen < 0) {
-                // Reject explicitly — `configLen > 0` would silently
+                // Reject explicitly - `configLen > 0` would silently
                 // accept a negative as "no config" and discard the
                 // hostile peer's wire violation.
                 throw new IllegalArgumentException(

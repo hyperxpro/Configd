@@ -15,7 +15,7 @@ import static org.junit.jupiter.api.Assertions.fail;
 /**
  * Snapshot backwards-compatibility stub.
  *
- * <p>R-005 / §8.10: a wire/format change requires a deprecation cycle of
+ * <p>A wire/format change requires a deprecation cycle of
  * at least two releases. The same rule applies to the snapshot file
  * format because an upgrading node must be able to load the previous
  * release's snapshot.
@@ -36,7 +36,7 @@ import static org.junit.jupiter.api.Assertions.fail;
  *       from {@code ops/runbooks/upgrade.md}.</li>
  * </ol>
  *
- * <p>NOT pretending this passes — the {@link Disabled} annotation is
+ * <p>NOT pretending this passes - the {@link Disabled} annotation is
  * load-bearing, not decorative.
  */
 class SnapshotWireCompatStubTest {
@@ -49,8 +49,8 @@ class SnapshotWireCompatStubTest {
             "configd-consensus-core/src/test/resources", FIXTURE_RESOURCE);
 
     /**
-     * TODO(R-005): enable on first version bump. Today this test is a
-     * placeholder — disabling it is honest, leaving it in is a
+     * TODO: enable on first version bump. Today this test is a
+     * placeholder - disabling it is honest, leaving it in is a
      * commitment to wire it up before {@link DurableRaftState} or the
      * snapshot binary format changes.
      */
@@ -66,7 +66,7 @@ class SnapshotWireCompatStubTest {
         }
         assertNotNull(fixture);
         assertTrue(fixture.length > 0, "v0 snapshot fixture is empty");
-        // TODO(R-005): once DurableRaftState exposes a from-bytes loader,
+        // TODO: once DurableRaftState exposes a from-bytes loader,
         // call it here and assert the resulting state has the expected
         // term / commit-index / last-applied values from the v0 fixture.
         fail("Snapshot loader not yet wired up — see TODO above.");

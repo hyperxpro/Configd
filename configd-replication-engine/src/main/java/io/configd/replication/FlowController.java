@@ -19,7 +19,7 @@ import java.util.Objects;
  * <p>
  * Designed for single-threaded access from the Raft I/O thread.
  * No synchronization is used. Credit values are tracked in a plain
- * {@link HashMap} — no atomic operations are needed.
+ * {@link HashMap} - no atomic operations are needed.
  *
  * @see io.configd.raft.RaftNode
  */

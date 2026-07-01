@@ -6,14 +6,14 @@ import java.util.regex.Pattern;
 /**
  * Defensive helpers for log emission and metric labelling.
  *
- * <p>O7 (PA-5012/13/19) — production code paths must never log raw config
+ * <p>Production code paths must never log raw config
  * values, raw client IPs, raw auth tokens, or raw config keys with
  * unbounded cardinality. Two operators are provided:
  * <ul>
- *   <li>{@link #redact} — fingerprint a sensitive string for logs. The
+ *   <li>{@link #redact} - fingerprint a sensitive string for logs. The
  *       output is the SHA-256 prefix in lowercase hex; collisions are
  *       monitor-safe because the value is never reversed.</li>
- *   <li>{@link #cardinalityGuard} — reduce a high-cardinality string
+ *   <li>{@link #cardinalityGuard} - reduce a high-cardinality string
  *       (config key, user id) to one of a bounded set of buckets so it
  *       can safely become a Prometheus label value without exploding
  *       the metric series count.</li>
@@ -71,8 +71,8 @@ public final class SafeLog {
      * indices. Used to safely turn an unbounded user input (config key,
      * tenant id) into a bounded Prometheus label value.
      *
-     * @param value   the input — may be null (returns "unknown")
-     * @param buckets number of buckets — must be positive
+     * @param value   the input - may be null (returns "unknown")
+     * @param buckets number of buckets - must be positive
      * @return string of the form {@code bucket-NN}
      */
     public static String cardinalityGuard(String value, int buckets) {
@@ -92,7 +92,7 @@ public final class SafeLog {
     }
 
     /**
-     * Returns true if the given string is safe to log verbatim — short,
+     * Returns true if the given string is safe to log verbatim - short,
      * ASCII-printable, and within an allow-listed character class.
      * Use this for quick assertions on caller-supplied identifiers
      * before placing them in a log message.

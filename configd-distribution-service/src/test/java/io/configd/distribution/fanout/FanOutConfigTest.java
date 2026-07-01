@@ -6,9 +6,8 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
 /**
- * Validates {@link FanOutConfig} defaults and every guard (charter §6 rule 8 — named,
- * validated config). Each invalid-argument branch is exercised so the bounds are
- * mutation-tight (gate-3).
+ * Validates {@link FanOutConfig} defaults and every guard (named, validated config). Each
+ * invalid-argument branch is exercised so the bounds are mutation-tight.
  */
 class FanOutConfigTest {
 

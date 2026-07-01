@@ -14,11 +14,11 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
 /**
- * GATE (i): the checker self-test suite (design §11.3). The hand-written glue
- * (recorder + status→encoding mapping) is the project's named failure mode, so
- * it is NOT trusted until every synthetic history below produces its pinned
- * verdict through the <b>real</b> {@link io.configd.linz.history.PorcupineHistoryWriter}
- * → real Porcupine pipe — including every flip (info↔fail, info↔ok).
+ * The checker self-test suite. The hand-written glue (recorder + status encoding
+ * mapping) is the project's named failure mode, so it is NOT trusted until every
+ * synthetic history below produces its pinned verdict through the <b>real</b>
+ * {@link io.configd.linz.history.PorcupineHistoryWriter} -> real Porcupine pipe -
+ * including every flip (info/fail, info/ok).
  *
  * <p>Skipped unless {@code PORCUPINE_BIN} is set, so the default {@code ./mvnw test}
  * stays green/fast without a Go toolchain; the gate run sets it explicitly.
@@ -28,7 +28,7 @@ class CheckerSelfTest {
 
     private final PorcupineChecker checker = PorcupineChecker.fromEnvironment();
 
-    // ---- tiny builders (synthetic histories) -------------------------------
+    // tiny builders (synthetic histories)
     private static Op put(int c, String k, String tok, Op.Status s, long t) {
         return new Op(c, k, Op.Type.PUT, tok, s, t, t);
     }
@@ -134,13 +134,13 @@ class CheckerSelfTest {
                 "reusing a PUT token must fail the recorder precondition");
     }
 
-    // 7. THE ADR-0033 one: a 200 is now a COMMITTED write recorded as OK (was INFO when
-    //    200 was a leader-local-append lie). An OK PUT is a definite write — it must be
-    //    treated exactly as strongly as the register model treats any kept write.
+    // 7. A 200 is now a COMMITTED write recorded as OK (was INFO when 200 was a
+    //    leader-local-append lie). An OK PUT is a definite write - it must be treated
+    //    exactly as strongly as the register model treats any kept write.
     //    7a: an OK PUT observed by a later read -> GREEN (committed value is what's read).
     //    7b: an OK PUT of v2 confirmed, then a later linearizable read returns the
     //        superseded v1 -> RED (a committed write cannot be un-observed by a later
-    //        real-time read). This is the exact RR-004 read-your-writes guarantee.
+    //        real-time read). This is the read-your-writes guarantee.
     @Test
     void test7_committedOkWriteReadYourWrites() throws Exception {
         // 7a: OK PUT then OK read of the same token -> linearizable.
@@ -162,7 +162,7 @@ class CheckerSelfTest {
 
     // 8. 5xx-other on the WRITE path: an unknown server failure cannot guarantee the
     //    write did NOT commit, so the recorder must use INFO (indeterminate), never FAIL.
-    //    FAIL is the UNSAFE direction — it drops the write, so a read that observed it
+    //    FAIL is the UNSAFE direction - it drops the write, so a read that observed it
     //    would have no writer -> a FALSE RED that masks (or fabricates) an anomaly.
     //    8a: a 5xx-other write recorded INFO, later observed by an OK read -> GREEN
     //        (the write may have committed, and a read confirms it did).

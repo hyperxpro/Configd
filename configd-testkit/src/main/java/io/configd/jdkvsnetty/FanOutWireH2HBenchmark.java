@@ -18,34 +18,34 @@ import java.util.List;
 import java.util.concurrent.TimeUnit;
 
 /**
- * JDK-vs-Netty head-to-head — <b>surface 3: edge fan-out NOTIFY wire</b> (the highest per-op
- * allocation in the system, on the hottest push path: every committed delta → every
- * subscriber). Phase R measured the status-quo codec at up to 71 KB/op (signed, batch 64) and
+ * JDK-vs-Netty head-to-head - <b>surface 3: edge fan-out NOTIFY wire</b> (the highest per-op
+ * allocation in the system, on the hottest push path: every committed delta -> every
+ * subscriber). The baseline measurement measured the status-quo codec at up to 71 KB/op (signed, batch 64) and
  * claimed the dominant term is <em>codec-internal churn upstream of the transport</em>. This
  * benchmark tests that claim directly by decomposing the allocation and racing best-JDK vs
  * best-Netty. Run with {@code -prof gc} (B/op, CPU-count-independent).
  *
  * <h2>The decomposition (the heart of the verdict)</h2>
  * <ul>
- *   <li>{@code jdkStatusQuoEncode} — TOTAL today ({@link EdgeFrameCodec#encode}): intermediate
+ *   <li>{@code jdkStatusQuoEncode} - TOTAL today ({@link EdgeFrameCodec#encode}): intermediate
  *       {@code List<byte[]>}, a per-notification {@code ByteBuffer}, a payload array then a
  *       second {@code out} array, plus the message-building term below.</li>
- *   <li>{@code jdkBestEncodeInto} — BEST JDK: {@link H2HCodecs#encodeNotifyInto} single-pass
+ *   <li>{@code jdkBestEncodeInto} - BEST JDK: {@link H2HCodecs#encodeNotifyInto} single-pass
  *       into ONE reused heap buffer. Removes every intermediate/output array. Byte-identical
  *       to status quo (proven by {@code WireH2HCorrectnessTest}). No Netty.</li>
- *   <li>{@code messageBuildingFloor} — the CODEC-INTERNAL floor that NEITHER a reused JDK
+ *   <li>{@code messageBuildingFloor} - the CODEC-INTERNAL floor that NEITHER a reused JDK
  *       buffer NOR a pooled Netty {@code ByteBuf} can remove: per notification, the
  *       {@link CommandCodec#encodeBatch} blob + the {@link ConfigDelta#signature()} /
  *       {@link ConfigDelta#nonce()} defensive clones. This is the allocation "upstream of the
- *       wire" — the term Phase R said the transport layer cannot touch. Measuring it isolates
+ *       wire" - the term the baseline analysis said the transport layer cannot touch. Measuring it isolates
  *       exactly how much of the 71 KB is, and is not, a transport concern.</li>
- *   <li>{@code jdkDecodeNotify} — receive side, for completeness.</li>
+ *   <li>{@code jdkDecodeNotify} - receive side, for completeness.</li>
  * </ul>
  * The Netty leg ({@code nettyBestEncodePooled}, single pass into a pooled {@code ByteBuf})
  * lives in {@code FanOutWireNettyH2HBenchmark}, added once the Netty dependency is wired. The
- * race: if {@code jdkBestEncodeInto} ≈ {@code nettyBestEncodePooled} ≈ {@code
+ * race: if {@code jdkBestEncodeInto} ~ {@code nettyBestEncodePooled} ~ {@code
  * messageBuildingFloor}, the win over status quo is the single-pass rewrite (shared, no Netty),
- * and the residual floor is codec-internal — Netty addresses neither.
+ * and the residual floor is codec-internal - Netty addresses neither.
  */
 @BenchmarkMode(Mode.AverageTime)
 @OutputTimeUnit(TimeUnit.NANOSECONDS)
@@ -77,7 +77,7 @@ public class FanOutWireH2HBenchmark {
         for (int i = 0; i < VALUE_BYTES; i++) {
             value[i] = (byte) i;
         }
-        // Identical signed steady-state shape as the Phase R EdgeWireAllocBenchmark (apples-to-
+        // Identical signed steady-state shape as the EdgeWireAllocBenchmark (apples-to-
         // apples with the prior baseline): Ed25519 sig + non-zero epoch + 8-byte nonce.
         List<CommitNotification> notifications = new ArrayList<>(notifyCount);
         for (int i = 0; i < notifyCount; i++) {
@@ -117,7 +117,7 @@ public class FanOutWireH2HBenchmark {
      * BEST NETTY: single pass into a pooled, reference-counted direct {@code ByteBuf} from
      * {@code PooledByteBufAllocator.DEFAULT}, released each op. Byte-identical to status quo.
      * The pooled buffer is off-heap; {@code -prof gc} (heap B/op) therefore shows the
-     * message-building floor PLUS only the {@code ByteBuf} holder bookkeeping — directly
+     * message-building floor PLUS only the {@code ByteBuf} holder bookkeeping - directly
      * comparable to {@code jdkBestEncodeInto}. If the two match, Netty's pool buys nothing the
      * reused JDK buffer didn't.
      */
@@ -133,7 +133,7 @@ public class FanOutWireH2HBenchmark {
     }
 
     /**
-     * The CODEC-INTERNAL message-building floor — the allocation upstream of the wire that no
+     * The CODEC-INTERNAL message-building floor - the allocation upstream of the wire that no
      * transport (JDK reused buffer or Netty pooled ByteBuf) removes: per notification, the
      * encodeBatch blob + the signature/nonce defensive clones.
      */

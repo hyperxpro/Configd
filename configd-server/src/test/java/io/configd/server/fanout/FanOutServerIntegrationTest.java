@@ -33,14 +33,14 @@ import static org.junit.jupiter.api.Assertions.fail;
 
 /**
  * End-to-end integration test for the live {@link FanOutServer} over plaintext loopback: a real
- * single-node {@link ConfigdServer} (empty peers → self-elects), a raw {@link EdgeProtocolClient}
+ * single-node {@link ConfigdServer} (empty peers -> self-elects), a raw {@link EdgeProtocolClient}
  * speaking protocol v1, and committed writes driven through the real HTTP API. Verifies the full
- * C1 server path: SUBSCRIBE→SUBSCRIBE_OK, verbatim NOTIFY of committed deltas, CURSOR_ACK
- * flow-control, demotion→SNAPSHOT recovery when the edge stops acking, idle HEARTBEAT cadence,
+ * C1 server path: SUBSCRIBE->SUBSCRIBE_OK, verbatim NOTIFY of committed deltas, CURSOR_ACK
+ * flow-control, demotion->SNAPSHOT recovery when the edge stops acking, idle HEARTBEAT cadence,
  * and that the {@code edge_fanout_*} metrics actually move.
  *
- * <p>Deadline-polling only — no {@code sleep} as synchronization. Deadlines are generous for the
- * throttled 2-vCPU box (RR-094 lesson); a per-method {@link Timeout} is pure hang detection.
+ * <p>Deadline-polling only - no {@code sleep} as synchronization. Deadlines are generous for the
+ * throttled 2-vCPU box; a per-method {@link Timeout} is pure hang detection.
  */
 @Timeout(120)
 class FanOutServerIntegrationTest {
@@ -135,7 +135,7 @@ class FanOutServerIntegrationTest {
             assertEquals(begin.snapshotSeq(), end.snapshotSeq(), "BEGIN/END snapshot seq must match");
             assertEquals(begin.chunkCount(), chunks.size(), "all announced chunks must arrive");
             // The snapshot is taken at demotion time (when the bounded transport queue filled),
-            // which is a valid committed seq <= the final flood target — NOT necessarily near the
+            // which is a valid committed seq <= the final flood target - NOT necessarily near the
             // end, since the flood continues after the early overflow-demotion.
             assertTrue(end.snapshotSeq() > 0 && end.snapshotSeq() <= floodTarget,
                     "snapshot seq must be a valid committed seq in (0, floodTarget]: " + end.snapshotSeq());
@@ -184,7 +184,7 @@ class FanOutServerIntegrationTest {
             assertTrue(closed, "server must close the connection on a corrupt first frame");
         }
 
-        // The server is still alive — a fresh, well-behaved subscriber still works.
+        // The server is still alive - a fresh, well-behaved subscriber still works.
         try (EdgeProtocolClient edge2 = EdgeProtocolClient.connectPlaintext(edgePort, 10_000)) {
             edge2.subscribeFullStore("edge-2", 0L);
             assertNotNull(readUntil(edge2, EdgeFrame.SubscribeOk.class),
@@ -317,7 +317,7 @@ class FanOutServerIntegrationTest {
                         return Long.parseLong(m.group(1));
                     }
                 }
-                // 503/504 leader churn — retry.
+                // 503/504 leader churn - retry.
             } catch (IOException e) {
                 last = e;
             }

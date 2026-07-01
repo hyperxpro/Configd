@@ -21,7 +21,7 @@ class FanOutBufferTest {
     private static final List<ConfigMutation> MUTATIONS = List.of(
             new ConfigMutation.Put("key", "val".getBytes()));
 
-    /** Helper — creates a delta spanning fromVersion -> toVersion. */
+    /** Helper - creates a delta spanning fromVersion -> toVersion. */
     private static ConfigDelta delta(long from, long to) {
         return new ConfigDelta(from, to, MUTATIONS);
     }
@@ -411,7 +411,7 @@ class FanOutBufferTest {
                         startLatch.await();
                         while (!writeDone.await(0, TimeUnit.MILLISECONDS)) {
                             List<ConfigDelta> deltas = buf.deltasSince(0);
-                            // Verify each delta is structurally valid — no corrupt
+                            // Verify each delta is structurally valid - no corrupt
                             // data, no null fields, no impossible version pairs.
                             // Note: strict ordering across the full list is NOT
                             // guaranteed under concurrent writes because a reader

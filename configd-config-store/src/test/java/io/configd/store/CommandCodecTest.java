@@ -9,7 +9,7 @@ import java.util.List;
 import static org.junit.jupiter.api.Assertions.*;
 
 /**
- * Tests for {@link CommandCodec} — encode/decode roundtrip for all command types.
+ * Tests for {@link CommandCodec} - encode/decode roundtrip for all command types.
  */
 class CommandCodecTest {
 

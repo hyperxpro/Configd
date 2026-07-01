@@ -24,13 +24,13 @@ import java.util.List;
 import static org.junit.jupiter.api.Assertions.*;
 
 /**
- * Unit matrix for {@link EdgeClientCore} — the transport-agnostic C2 client engine.
+ * Unit matrix for {@link EdgeClientCore} - the transport-agnostic edge client engine.
  *
- * <p>Covers (CT-01/07/08/13/16/23/25 at unit level): the frame-handling matrix (SUBSCRIBE_OK
- * mode, NOTIFY verify→filter→apply + per-batch CURSOR_ACK, SNAPSHOT_* reassembly + cutover,
- * backward-snapshot refusal [C1(a)], HEARTBEAT frontier [ADR-0039] incl. {@code latestSeq >
- * cursor} never advancing it, ERROR_CLOSE handling), the tick CURSOR_ACK + heartbeat-silence
- * reconnect directive, and the INV-M1 read seam routing.
+ * <p>Covers the frame-handling matrix (SUBSCRIBE_OK mode, NOTIFY verify->filter->apply +
+ * per-batch CURSOR_ACK, SNAPSHOT_* reassembly + cutover, backward-snapshot refusal,
+ * HEARTBEAT covered-frontier including {@code latestSeq > cursor} never advancing it,
+ * ERROR_CLOSE handling), the tick CURSOR_ACK + heartbeat-silence reconnect directive,
+ * and the INV-M1 monotonic-read seam routing.
  */
 class EdgeClientCoreTest {
 
@@ -42,7 +42,7 @@ class EdgeClientCoreTest {
         void advance(long ms) { timeMs += ms; }
     }
 
-    /** Recording sink: captures every edge→server frame; offer always succeeds. */
+    /** Recording sink: captures every edge->server frame; offer always succeeds. */
     static final class RecordingSink implements EdgeClientCore.FrameSink {
         final List<EdgeFrame> sent = new ArrayList<>();
         boolean block; // when true, offer refuses (would-block)
@@ -75,7 +75,7 @@ class EdgeClientCoreTest {
         clock = new TestClock(1_000_000L);
         sink = new RecordingSink();
         metrics = new MetricsRegistry();
-        // testMode=true → an INV-M1 monotonic_read violation throws (fails the test).
+        // testMode=true -> an INV-M1 monotonic_read violation throws (fails the test).
         monitor = new InvariantMonitor(metrics, true);
         core = new EdgeClientCore(clock, monitor,
                 metrics.counter(StalenessTracker.IMPLAUSIBLE_METRIC),
@@ -135,7 +135,7 @@ class EdgeClientCoreTest {
     }
 
     // -----------------------------------------------------------------------
-    // NOTIFY: verify→filter→apply + per-batch CURSOR_ACK
+    // NOTIFY: verify->filter->apply + per-batch CURSOR_ACK
     // -----------------------------------------------------------------------
 
     @Nested
@@ -167,7 +167,7 @@ class EdgeClientCoreTest {
         void gapMidBatchIsRecordedAndAcksRealCursor() {
             core.onFrame(new EdgeFrame.Notify(List.of(
                     notif(1, 0, 1, clock.timeMs, "a", "1"),
-                    notif(3, 2, 3, clock.timeMs, "c", "3")))); // from=2 != current 1 → GAP
+                    notif(3, 2, 3, clock.timeMs, "c", "3")))); // from=2 != current 1 -> GAP
             assertEquals(1, core.cursor(), "cursor stops at the last contiguous applied seq");
             assertEquals(1, core.gapsDetected());
             assertEquals(1, sink.lastAck(), "ack reflects the real cursor, not the gapped seq");
@@ -176,7 +176,7 @@ class EdgeClientCoreTest {
         @Test
         void staleNotifyIsRecordedNotApplied() {
             core.onFrame(new EdgeFrame.Notify(List.of(notif(1, 0, 1, clock.timeMs, "a", "1"))));
-            // Re-deliver seq 1 (toVersion 1 <= current 1) → STALE_DELTA, no overwrite.
+            // Re-deliver seq 1 (toVersion 1 <= current 1) -> STALE_DELTA, no overwrite.
             core.onFrame(new EdgeFrame.Notify(List.of(notif(1, 0, 1, clock.timeMs, "a", "X"))));
             assertEquals(1, core.cursor());
             assertArrayEquals(bytes("1"), core.get("a").value(), "stale delta never overwrites");
@@ -193,7 +193,7 @@ class EdgeClientCoreTest {
     }
 
     // -----------------------------------------------------------------------
-    // ADR-0038 storage filter through the core
+    // Subscription storage filter through the core
     // -----------------------------------------------------------------------
 
     @Nested
@@ -274,7 +274,7 @@ class EdgeClientCoreTest {
 
         @Test
         void forwardSnapshotAfterGapHeals() {
-            // Create a gap: apply seq 1, then a seq-3 notify (from=2 != 1) → GAP.
+            // Create a gap: apply seq 1, then a seq-3 notify (from=2 != 1) -> GAP.
             core.onFrame(new EdgeFrame.Notify(List.of(notif(1, 0, 1, clock.timeMs, "a", "1"))));
             core.onFrame(new EdgeFrame.Notify(List.of(notif(3, 2, 3, clock.timeMs, "c", "3"))));
             assertEquals(1, core.gapsDetected());
@@ -299,7 +299,7 @@ class EdgeClientCoreTest {
     }
 
     // -----------------------------------------------------------------------
-    // HEARTBEAT: ADR-0039 frontier
+    // HEARTBEAT: covered-frontier staleness
     // -----------------------------------------------------------------------
 
     @Nested
@@ -331,7 +331,7 @@ class EdgeClientCoreTest {
         void behindHeartbeatDoesNotAdvanceFrontierAndShowsLag() {
             advanceCursorTo(5); // cursor = 5
             clock.advance(600); // would be STALE without a frontier advance
-            // Server says latestSeq=8 > cursor=5 — genuinely behind by 3.
+            // Server says latestSeq=8 > cursor=5 - genuinely behind by 3.
             core.onFrame(new EdgeFrame.Heartbeat(8, clock.currentTimeMillis()));
             assertEquals(0, core.frontierAdvances(), "behind heartbeat must not advance frontier");
             assertEquals(3, core.cursorLag());
@@ -369,7 +369,7 @@ class EdgeClientCoreTest {
             core.onFrame(new EdgeFrame.Heartbeat(0, clock.currentTimeMillis()));
             assertFalse(core.hasDirective());
 
-            // Stay silent past silenceFactor × heartbeatMs (8 × 250 = 2000ms).
+            // Stay silent past silenceFactor x heartbeatMs (8 x 250 = 2000ms).
             clock.advance(2001);
             core.tick(clock.currentTimeMillis());
 
@@ -400,7 +400,7 @@ class EdgeClientCoreTest {
             core.pollDirective();
 
             core.onReconnected();
-            // After reconnect, no heartbeat seen yet → no immediate re-trigger.
+            // After reconnect, no heartbeat seen yet -> no immediate re-trigger.
             clock.advance(5000);
             core.tick(clock.currentTimeMillis());
             assertFalse(core.hasDirective(),
@@ -409,7 +409,7 @@ class EdgeClientCoreTest {
     }
 
     // -----------------------------------------------------------------------
-    // C3: gap → resubscribe-with-cursor (design §1 / screen C3-1; CT-16 orchestration)
+    // Gap -> resubscribe-with-cursor
     // -----------------------------------------------------------------------
 
     @Nested
@@ -438,7 +438,7 @@ class EdgeClientCoreTest {
         @Test
         void gapIsSuppressedWhileAServerSnapshotIsAlreadyHealingUs() {
             core.onFrame(new EdgeFrame.Notify(List.of(notif(1, 0, 1, clock.timeMs, "a", "1"))));
-            // The server demoted us: a snapshot flow is owed — the in-session C1 heal is
+            // The server demoted us: a snapshot flow is owed - the in-session C1 heal is
             // already in progress, so a racing gap must NOT bounce the connection.
             core.onFrame(new EdgeFrame.ErrorClose(ErrorCode.DEMOTED_TO_CATCHUP, "ack-lag"));
             core.onFrame(new EdgeFrame.Notify(List.of(notif(5, 4, 5, clock.timeMs, "a", "5"))));
@@ -466,7 +466,7 @@ class EdgeClientCoreTest {
     }
 
     // -----------------------------------------------------------------------
-    // C3 / CT-06: DISCONNECTED entry → re-bootstrap resubscribe at the current cursor
+    // DISCONNECTED entry -> re-bootstrap resubscribe at the current cursor
     // -----------------------------------------------------------------------
 
     @Nested
@@ -507,7 +507,7 @@ class EdgeClientCoreTest {
         @Test
         void bootStateNeverFiresTheRebootstrap() {
             // The boot state IS DISCONNECTED (no frontier yet): process start is C5's
-            // bootstrap, not a re-bootstrap — ticking an idle fresh core fires nothing.
+            // bootstrap, not a re-bootstrap - ticking an idle fresh core fires nothing.
             assertEquals(StalenessTracker.State.DISCONNECTED, core.stalenessState());
             for (int i = 0; i < 5; i++) {
                 clock.advance(10_000);
@@ -527,7 +527,7 @@ class EdgeClientCoreTest {
             core.pollDirective();
             core.onReconnected();
 
-            // Heals (fresh apply advances the frontier), then stalls again → re-fires.
+            // Heals (fresh apply advances the frontier), then stalls again -> re-fires.
             core.onFrame(new EdgeFrame.Notify(List.of(notif(2, 1, 2, clock.timeMs, "a", "2"))));
             core.tick(clock.currentTimeMillis());
             assertEquals(StalenessTracker.State.CURRENT, core.stalenessState());
@@ -576,7 +576,7 @@ class EdgeClientCoreTest {
         @Test
         void cursorAheadOfStoreReturnsNotFoundAndFiresMonitor() {
             core.onFrame(new EdgeFrame.Notify(List.of(notif(1, 0, 1, clock.timeMs, "a", "1"))));
-            // testMode=true → a cursor ahead of the store throws via the INV-M1 seam.
+            // testMode=true -> a cursor ahead of the store throws via the INV-M1 seam.
             assertThrows(AssertionError.class,
                     () -> core.get("a", new VersionCursor(5, 0)));
             assertEquals(1L,
@@ -586,7 +586,7 @@ class EdgeClientCoreTest {
     }
 
     // -----------------------------------------------------------------------
-    // Inbound rejection of edge→server frames (mis-wired shell guard)
+    // Inbound rejection of edge->server frames (mis-wired shell guard)
     // -----------------------------------------------------------------------
 
     @Test
@@ -634,7 +634,7 @@ class EdgeClientCoreTest {
     }
 
     // -----------------------------------------------------------------------
-    // Silence-window boundary (exact threshold: silenceFactor × heartbeatMs)
+    // Silence-window boundary (exact threshold: silenceFactor x heartbeatMs)
     // -----------------------------------------------------------------------
 
     @Nested
@@ -643,7 +643,7 @@ class EdgeClientCoreTest {
         @Test
         void exactlyAtTheSilenceWindowDoesNotReconnect() {
             core.onFrame(new EdgeFrame.Heartbeat(0, clock.currentTimeMillis()));
-            // silenceFactor(8) × heartbeatMs(250) = 2000ms. The check is "> window", so
+            // silenceFactor(8) x heartbeatMs(250) = 2000ms. The check is "> window", so
             // exactly 2000ms of silence must NOT reconnect.
             clock.advance(2000);
             core.tick(clock.currentTimeMillis());
@@ -660,7 +660,7 @@ class EdgeClientCoreTest {
 
         @Test
         void neverConnectedSessionDoesNotReconnectOnSilence() {
-            // No heartbeat ever seen → the silence detector is dormant (connect is the shell's
+            // No heartbeat ever seen -> the silence detector is dormant (connect is the shell's
             // concern, not a silence reconnect). A long idle must NOT queue a directive.
             clock.advance(100_000);
             core.tick(clock.currentTimeMillis());
@@ -669,7 +669,7 @@ class EdgeClientCoreTest {
     }
 
     // -----------------------------------------------------------------------
-    // Signed-chain verification seam (F-0052 / CT-23 — the C2 process wiring)
+    // Signed-chain verification seam
     // -----------------------------------------------------------------------
 
     @Nested
@@ -677,9 +677,9 @@ class EdgeClientCoreTest {
 
         @Test
         void signedDeltaWithNoVerifierIsRejectedOnItsOwnCounterNotAsGap() {
-            // F-0052 fail-closed: a SIGNED delta on a core with no verifier configured is
-            // rejected. The rejection is a verification event, NOT a gap — edge_gaps_total
-            // must stay an honest gap signal.
+            // Fail-closed: a SIGNED delta on a core with no verifier configured is rejected.
+            // The rejection is a verification event, NOT a gap - edge_gaps_total must stay
+            // an honest gap signal.
             ConfigDelta signed = new ConfigDelta(0, 1,
                     List.of(new ConfigMutation.Put("a", bytes("1"))), new byte[64]);
             core.onFrame(new EdgeFrame.Notify(List.of(
@@ -731,8 +731,8 @@ class EdgeClientCoreTest {
     }
 
     // -----------------------------------------------------------------------
-    // CT-08 signal integrity: a legitimate snapshot cutover must NOT trip the
-    // implausibility counter (ADR-0028 bodies carry no commit timestamp)
+    // Snapshot-cutover signal integrity: must NOT trip the implausibility counter
+    // (snapshot bodies carry no commit timestamp)
     // -----------------------------------------------------------------------
 
     @Nested
@@ -745,7 +745,7 @@ class EdgeClientCoreTest {
             long before = metrics.counter(StalenessTracker.IMPLAUSIBLE_METRIC).get();
 
             // A forward snapshot arrives over the wire. EdgeSnapshotCodec bodies carry no
-            // commit timestamp (deserialize stamps 0 = unknown) — the cutover must record
+            // commit timestamp (deserialize stamps 0 = unknown) - the cutover must record
             // the version WITHOUT a frontier advance, never as an implausible sample.
             for (EdgeFrame f : snapshotFrames(snapshot(5, "a", "1", "b", "2"), 5)) {
                 core.onFrame(f);
@@ -755,7 +755,7 @@ class EdgeClientCoreTest {
                     "a legitimate snapshot cutover must not fire the CT-08 tripwire");
 
             // The frontier then heals from the post-snapshot tail (commitTs of the next
-            // NOTIFY) — staleness returns to CURRENT.
+            // NOTIFY) - staleness returns to CURRENT.
             core.onFrame(new EdgeFrame.Notify(List.of(notif(6, 5, 6, clock.timeMs, "c", "3"))));
             assertEquals(StalenessTracker.State.CURRENT, core.stalenessState());
         }

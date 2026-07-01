@@ -14,12 +14,12 @@ import java.util.List;
 import java.util.zip.CRC32C;
 
 /**
- * BEST-NETTY single-pass, into-{@link ByteBuf} encoders — the "Netty done properly" side of
+ * BEST-NETTY single-pass, into-{@link ByteBuf} encoders - the "Netty done properly" side of
  * the codec race. Each method writes the production wire bytes <b>directly into one pooled
  * {@code ByteBuf}</b> (the framework/caller obtains it from {@code PooledByteBufAllocator}),
  * exactly as a Netty {@code MessageToByteEncoder} with {@code preferDirect=true} would (see
- * {@code docs/jdk-vs-netty/netty42-api.md} §5.2). The CRC32C trailer is computed over a
- * zero-copy {@code nioBuffer} view of the written region — no intermediate {@code byte[]} for
+ * {@code docs/jdk-vs-netty/netty42-api.md} section 5.2). The CRC32C trailer is computed over a
+ * zero-copy {@code nioBuffer} view of the written region - no intermediate {@code byte[]} for
  * the framing.
  *
  * <p><b>Byte-identity is the contract.</b> {@code NettyWireH2HCorrectnessTest} proves these
@@ -27,7 +27,7 @@ import java.util.zip.CRC32C;
  * therefore of the best-JDK {@link H2HCodecs}). The Netty {@code ByteBuf} default byte order is
  * BIG_ENDIAN, matching the JDK {@code ByteBuffer} default the production codecs use.
  *
- * <p><b>What these encoders, like the JDK ones, do NOT remove:</b> the message-building term —
+ * <p><b>What these encoders, like the JDK ones, do NOT remove:</b> the message-building term - 
  * {@link CommandCodec#encodeBatch} blobs and {@link ConfigDelta#signature()} /
  * {@link ConfigDelta#nonce()} defensive clones. Those are heap allocations <em>upstream of the
  * wire</em>; a pooled {@code ByteBuf} (off-heap, direct) does not touch them. This is the crux
@@ -40,7 +40,7 @@ final class NettyWireEncoders {
     }
 
     /**
-     * A reused per-thread {@link CRC32C} — the strongest-Netty form. The JDK best-path's
+     * A reused per-thread {@link CRC32C} - the strongest-Netty form. The JDK best-path's
      * {@code new CRC32C()} is escape-analyzed to zero allocation (it never escapes the reused
      * heap buffer's scalar-replaced scope); the Netty path's does NOT get scalar-replaced (the
      * pooled direct buffer escapes into {@code release()}), so allocating one per op would
@@ -61,7 +61,7 @@ final class NettyWireEncoders {
      */
     static void encodeSendWireInto(ByteBuf out, int senderId, MessageType type,
                                    int groupId, long term, byte[] payload) {
-        out.writeInt(senderId); // ByteBuf defaults to BIG_ENDIAN → identical to the bit-shift wrap
+        out.writeInt(senderId); // ByteBuf defaults to BIG_ENDIAN -> identical to the bit-shift wrap
         int frameStart = out.writerIndex();
         int totalLength = FrameCodec.frameSize(payload.length);
         out.writeInt(totalLength);
@@ -69,7 +69,7 @@ final class NettyWireEncoders {
         out.writeByte((byte) type.code());
         out.writeInt(groupId);
         out.writeLong(term);
-        out.writeLong(0L); // v2/D1 reserved epoch — MBZ (dormant); byte-identical to FrameCodec.encode
+        out.writeLong(0L); // reserved epoch (dormant, must be zero); byte-identical to FrameCodec.encode
         out.writeBytes(payload);
         CRC32C crc = CRC.get();
         crc.reset();
@@ -82,7 +82,7 @@ final class NettyWireEncoders {
     // ---------------------------------------------------------------------
 
     /**
-     * BEST-NETTY NOTIFY encode into a pooled {@code ByteBuf} — single pass, no intermediate
+     * BEST-NETTY NOTIFY encode into a pooled {@code ByteBuf} - single pass, no intermediate
      * {@code List<byte[]>}, no per-notification buffer, no double payload/out array.
      * Byte-identical to {@link EdgeFrameCodec#encode(EdgeFrame)} for a NOTIFY frame.
      */

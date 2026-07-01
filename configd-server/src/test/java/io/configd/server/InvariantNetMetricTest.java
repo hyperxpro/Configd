@@ -18,8 +18,8 @@ import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.api.io.TempDir;
 
 /**
- * R-02 regression: the runtime invariant safety net must be ON in a RUNNING server (not NOOP) AND
- * observable — a real invariant violation must increment a NAMED counter visible in the live
+ * The runtime invariant safety net must be ON in a RUNNING server (not NOOP) AND
+ * observable - a real invariant violation must increment a NAMED counter visible in the live
  * Prometheus {@code /metrics} exposition. "A net that fires into an unwatched log is the NOOP we
  * just removed."
  *
@@ -54,7 +54,7 @@ class InvariantNetMetricTest {
             // pre-A1 W-2 race, or a snapshot-restore bug) would create: rewind the counter so the
             // next PUT to "k" computes a version <= the existing version. The invariant DETECTION,
             // metric increment, and Prometheus exposition that follow are all the REAL production
-            // path through the wired checker — only the precondition is injected.
+            // path through the wired checker - only the precondition is injected.
             Field scf = ConfigStateMachine.class.getDeclaredField("sequenceCounter");
             scf.setAccessible(true);
             scf.setLong(sm, 0L);
@@ -83,7 +83,7 @@ class InvariantNetMetricTest {
 
     /** Scrapes the running server's /metrics endpoint (public in the minimal, no-auth config). */
     private static String scrapeMetrics(ConfigdServer server) throws Exception {
-        // ADR-0043 M2: admin server is now Netty; the public bound-port accessor is transport-agnostic.
+        // Admin server is now Netty; the public bound-port accessor is transport-agnostic.
         int port = server.apiPort();
 
         HttpResponse<String> resp = HttpClient.newHttpClient().send(

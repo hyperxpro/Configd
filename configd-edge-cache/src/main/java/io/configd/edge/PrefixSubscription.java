@@ -9,7 +9,7 @@ import java.util.stream.Collectors;
 /**
  * Tracks which key prefixes this edge node is subscribed to.
  * <p>
- * Used by the distribution service to filter deltas — only mutations
+ * Used by the distribution service to filter deltas - only mutations
  * matching at least one subscribed prefix are forwarded to this edge node.
  * <p>
  * Thread safety: backed by a {@link CopyOnWriteArraySet}, so reads
@@ -83,7 +83,7 @@ public final class PrefixSubscription {
     /**
      * Returns an unmodifiable snapshot of the currently subscribed prefixes.
      * <p>
-     * The returned set is a point-in-time snapshot — subsequent subscribe or
+     * The returned set is a point-in-time snapshot - subsequent subscribe or
      * unsubscribe calls do not affect it.
      *
      * @return unmodifiable set of subscribed prefixes

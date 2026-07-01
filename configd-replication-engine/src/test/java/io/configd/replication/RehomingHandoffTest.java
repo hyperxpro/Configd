@@ -27,32 +27,31 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * Phase 0 — Workstream B — Stage 2 — M2: the H-4 group-REHOMING handoff proof.
+ * Group-rehoming handoff proof.
  *
- * <p>M1 generalized the tick to per-owner with STATIC assignment (a group's owner never changed). M2
- * makes a group able to MOVE between owner threads (rehoming) via a quiesce→publish→adopt handoff
- * ({@link MultiRaftDriver#rehomeGroup}), which makes {@code RaftNode.ownerThread} re-bindable
- * ({@code beginHandoff}→HANDOFF sentinel, {@code adoptOwnerThread}). This is the Stage-2 analogue of
- * H-3 — a new cross-thread-handoff race class the N=1 net never exercised. This test proves:
+ * <p>The rehoming mechanism makes a group able to MOVE between owner threads via a
+ * quiesce-then-publish-then-adopt handoff ({@link MultiRaftDriver#rehomeGroup}), which makes
+ * {@code RaftNode.ownerThread} re-bindable ({@code beginHandoff} to HANDOFF sentinel, then
+ * {@code adoptOwnerThread}). This test proves:
  *
  * <ul>
- *   <li><b>{@link #cleanRehome_preservesState_keepsCommitting_zeroFires()}</b> — a group rehomed
- *       A→B keeps its state (still LEADER) and keeps COMMITTING on the new owner (commitIndex grows
- *       past the pre-rehome baseline — non-vacuous, on B's epoch), with ZERO net fires; and a stale
- *       message routed to the OLD owner bounces to the new owner (check-and-bounce) without firing.</li>
- *   <li><b>{@link #accessOnLosingOwnerAfterHandoff_trips()}</b> — accessing the group on the LOSING
+ *   <li><b>{@link #cleanRehome_preservesState_keepsCommitting_zeroFires()}</b> - a group rehomed
+ *       A to B keeps its state (still LEADER) and keeps committing on the new owner (commitIndex
+ *       grows past the pre-rehome baseline - non-vacuous), with ZERO net fires; and a stale message
+ *       routed to the OLD owner bounces to the new owner without firing.</li>
+ *   <li><b>{@link #accessOnLosingOwnerAfterHandoff_trips()}</b> - accessing the group on the losing
  *       owner after {@code beginHandoff()} trips {@code raft_owner_thread} (the window is net-covered
  *       by the HANDOFF sentinel).</li>
- *   <li><b>{@link #accessOnGainingOwnerBeforeAdopt_trips()}</b> — accessing it on the GAINING owner
+ *   <li><b>{@link #accessOnGainingOwnerBeforeAdopt_trips()}</b> - accessing it on the gaining owner
  *       BEFORE {@code adoptOwnerThread()} trips {@code raft_owner_thread}.</li>
- *   <li><b>{@link #afterRehome_oldOwnerLockedOut_newOwnerOwns()}</b> — NO DOUBLE-OWNERSHIP: after the
- *       handoff completes, the OLD owner accessing the group trips, while the NEW owner does not.</li>
- *   <li><b>{@link #adoptOnNonMigratingNode_trips()}</b> — adopting a node that is not mid-handoff trips
- *       {@code raft_owner_adopt} (a double-adopt / wrong-state guard).</li>
+ *   <li><b>{@link #afterRehome_oldOwnerLockedOut_newOwnerOwns()}</b> - no double-ownership: after the
+ *       handoff completes, the old owner accessing the group trips, while the new owner does not.</li>
+ *   <li><b>{@link #adoptOnNonMigratingNode_trips()}</b> - adopting a node that is not mid-handoff
+ *       trips {@code raft_owner_adopt} (a double-adopt / wrong-state guard).</li>
  * </ul>
  *
- * <p>Production stays single-group and NEVER rehomes (the mechanism is dormant until Phase-1 placement);
- * this surface is test-only. See docs/phase0-B-stage2/m2-rehoming-handoff-design.md.
+ * <p>Production stays single-group and never rehomes (the mechanism is dormant); this surface is
+ * test-only.
  */
 class RehomingHandoffTest {
 
@@ -113,7 +112,7 @@ class RehomingHandoffTest {
     @Test
     @Timeout(30)
     void cleanRehome_preservesState_keepsCommitting_zeroFires() throws Exception {
-        OwnerExecutorPool pool = new OwnerExecutorPool(2); // group 0 → owner0 by floorMod
+        OwnerExecutorPool pool = new OwnerExecutorPool(2); // group 0 -> owner0 by floorMod
         CountingThrowingChecker checker = new CountingThrowingChecker();
         MultiRaftDriver driver = new MultiRaftDriver(LOCAL, Clock.system());
         driver.setOwnerPool(pool);
@@ -126,12 +125,12 @@ class RehomingHandoffTest {
         long baseline = g.monitorView().commitIndex();
         assertTrue(baseline > 0, "precondition: committed on the original owner");
 
-        // REHOME 0: owner0 → owner1.
+        // REHOME 0: owner0 -> owner1.
         driver.rehomeGroup(0, 1);
         assertEquals(1, driver.currentOwnerIndex(0), "after rehome, group 0 is owned by owner1");
         assertEquals(RaftRole.LEADER, g.role(), "rehome must preserve group state (still LEADER, no torn state)");
 
-        // Keep COMMITTING on the NEW owner (owner1) — non-vacuous: commitIndex grows past the baseline.
+        // Keep COMMITTING on the NEW owner (owner1) - non-vacuous: commitIndex grows past the baseline.
         driveCommits(pool, driver, 0, 20);
         long afterRehome = g.monitorView().commitIndex();
         assertTrue(afterRehome > baseline,
@@ -161,10 +160,10 @@ class RehomingHandoffTest {
         RaftNode g = buildLeaderBoundTo(pool, 0, checker);
         driver.addGroup(0, g);
 
-        // Partial handoff: detach on the losing owner (owner0). ownerThread → HANDOFF.
+        // Partial handoff: detach on the losing owner (owner0). ownerThread -> HANDOFF.
         pool.ownerByIndex(0).submit(g::beginHandoff).get(5, TimeUnit.SECONDS);
 
-        // INJECTED RACE (i): touch the group on the LOSING owner AFTER handoff — must trip.
+        // INJECTED RACE (i): touch the group on the LOSING owner AFTER handoff - must trip.
         ExecutionException ee = assertThrows(ExecutionException.class,
                 () -> pool.ownerByIndex(0).submit((Runnable) g::tick).get(5, TimeUnit.SECONDS),
                 "access on the losing owner after beginHandoff must trip the net");
@@ -188,7 +187,7 @@ class RehomingHandoffTest {
         // Detach on the losing owner; do NOT adopt yet.
         pool.ownerByIndex(0).submit(g::beginHandoff).get(5, TimeUnit.SECONDS);
 
-        // INJECTED RACE (ii): touch the group on the GAINING owner (owner1) BEFORE adopt — must trip.
+        // INJECTED RACE (ii): touch the group on the GAINING owner (owner1) BEFORE adopt - must trip.
         ExecutionException ee = assertThrows(ExecutionException.class,
                 () -> pool.ownerByIndex(1).submit((Runnable) g::tick).get(5, TimeUnit.SECONDS),
                 "access on the gaining owner before adoptOwnerThread must trip the net");
@@ -209,9 +208,9 @@ class RehomingHandoffTest {
         RaftNode g = buildLeaderBoundTo(pool, 0, checker);
         driver.addGroup(0, g);
 
-        driver.rehomeGroup(0, 1); // owner0 → owner1, fully (detach + adopt)
+        driver.rehomeGroup(0, 1); // owner0 -> owner1, fully (detach + adopt)
 
-        // NO DOUBLE-OWNERSHIP: the OLD owner (owner0) accessing the group must trip — it no longer owns it.
+        // NO DOUBLE-OWNERSHIP: the OLD owner (owner0) accessing the group must trip - it no longer owns it.
         ExecutionException ee = assertThrows(ExecutionException.class,
                 () -> pool.ownerByIndex(0).submit((Runnable) g::tick).get(5, TimeUnit.SECONDS),
                 "after rehome the OLD owner must be locked out (no double-ownership)");
@@ -257,16 +256,15 @@ class RehomingHandoffTest {
         OwnerExecutorPool pool = new OwnerExecutorPool(2);
         CountingThrowingChecker checker = new CountingThrowingChecker();
         MultiRaftDriver driver = new MultiRaftDriver(LOCAL, Clock.system());
-        driver.setOwnerPool(pool);                        // pool SET — the production wiring
+        driver.setOwnerPool(pool);                        // pool SET - the production wiring
         RaftNode g = buildLeaderBoundTo(pool, 0, checker); // bound to owner0, NEVER rehomed
         driver.addGroup(0, g);
 
-        // Red-team Defect 1 regression: a MISSED marshalling hop — routeMessage called DIRECTLY on a
-        // foreign (non-owner) thread, WITHOUT ownerExecutor(g).execute(...) — must STILL trip the net
-        // even though the owner pool is set. A never-rehomed group (every production group) must NOT
-        // auto-bounce, which would silently mask the missed hop. This is the §6.2 "test the tester"
-        // guarantee under the M2a check-and-bounce, and is the case the prior test left uncovered (its
-        // driver had no owner pool, so the bounce short-circuit never engaged).
+        // A MISSED marshalling hop - routeMessage called directly on a foreign (non-owner) thread,
+        // without ownerExecutor(g).execute(...) - must STILL trip the net even though the owner pool
+        // is set. A never-rehomed group (every production group) must NOT auto-bounce, which would
+        // silently mask the missed hop. This is the "test the tester" guarantee: the bounce only
+        // applies to rehome-affected groups, so a missed hop on an ordinary group still fires.
         java.util.concurrent.ExecutorService foreign = java.util.concurrent.Executors
                 .newSingleThreadExecutor(r -> new Thread(r, "foreign-missed-hop"));
         try {
@@ -296,10 +294,10 @@ class RehomingHandoffTest {
         assertEquals(1, driver.currentOwnerIndex(0), "precondition: rehomed to owner1");
 
         driver.removeGroup(0);
-        // Red-team Defect 2: a fresh group re-using the same id must start on its STATIC floorMod owner
-        // (0), not the leaked override (1). buildLeaderBoundTo binds the fresh node to floorMod owner0;
-        // if removeGroup leaked the override, currentOwnerIndex(0) would be 1 and the fresh node would be
-        // ticked off-owner.
+        // A fresh group re-using the same id must start on its static floorMod owner (0), not the
+        // leaked override (1). buildLeaderBoundTo binds the fresh node to floorMod owner0; if
+        // removeGroup leaked the override, currentOwnerIndex(0) would be 1 and the fresh node would
+        // be ticked off-owner.
         RaftNode fresh = buildLeaderBoundTo(pool, 0, checker);
         driver.addGroup(0, fresh);
         assertEquals(0, driver.currentOwnerIndex(0),

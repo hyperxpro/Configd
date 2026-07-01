@@ -12,19 +12,19 @@ import java.util.Set;
 
 /**
  * Strict, fail-closed codec between the {@code _acl/} config subtree (opaque {@code byte[]} values) and a
- * {@link ConfigPolicy} of Seam-1 {@link Role}/{@link Policy}/{@link PolicyRule} types plus principal→role
- * bindings (O-6 Seam 2a).
+ * {@link ConfigPolicy} of {@link Role}/{@link Policy}/{@link PolicyRule} types plus principal-to-role
+ * bindings.
  *
  * <h2>Why a text format</h2>
  * There is no JSON library in {@code src/main} and the codebase idiom is hand-rolled codecs. Authorization
  * policy is operator-authored and operator-inspected, so a small line-oriented <b>text</b> format is more
- * operable than binary (trivially diffable and hand-writable) and avoids adding a JSON parser — a parsing /
+ * operable than binary (trivially diffable and hand-writable) and avoids adding a JSON parser - a parsing /
  * attack surface this security path would otherwise have to clear. No new dependency.
  *
  * <h2>Key layout (flat-key prefix {@code _acl/})</h2>
  * <ul>
- *   <li>{@code _acl/roles/<roleName>}     — value lists the role's rules, one per line.</li>
- *   <li>{@code _acl/bindings/<principal>} — value lists the principal's role names, one per line.</li>
+ *   <li>{@code _acl/roles/<roleName>}     - value lists the role's rules, one per line.</li>
+ *   <li>{@code _acl/bindings/<principal>} - value lists the principal's role names, one per line.</li>
  * </ul>
  * The {@code <roleName>} / {@code <principal>} is the verbatim key suffix.
  *
@@ -32,7 +32,7 @@ import java.util.Set;
  * UTF-8 text split on {@code '\n'}; a single trailing {@code '\r'} per line is stripped; a {@link
  * String#isBlank() blank} line or a line whose first non-whitespace character is {@code '#'} is ignored.
  * <ul>
- *   <li><b>Role line:</b> {@code <effect> <caps> <prefix>} — {@code effect} ∈ {{@code allow},{@code deny}}
+ *   <li><b>Role line:</b> {@code <effect> <caps> <prefix>} - {@code effect} in {{@code allow},{@code deny}}
  *       (lowercase, exact); {@code caps} = comma-separated {@link AclService.Permission} names (exact, no
  *       spaces, non-empty); {@code prefix} = the VERBATIM remainder after the space following {@code caps}
  *       (so a literal flat-key prefix may contain spaces; it may also be empty, which matches every key).
@@ -54,8 +54,8 @@ import java.util.Set;
  * converge across multi-key writes that arrive in any order (and across the snapshot / WAL-suffix split).
  * <p>
  * This codec is PURE: it has no knowledge of reserved names (the loader applies reservation as a separate
- * validation pass), of the store, or of metrics — so it is unit-testable in isolation. It performs literal
- * {@code key.startsWith(prefix)} matching only; glob / segment-aware matching is DL-O3-02-deferred.
+ * validation pass), of the store, or of metrics - so it is unit-testable in isolation. It performs literal
+ * {@code key.startsWith(prefix)} matching only; glob / segment-aware matching is deferred.
  */
 public final class PolicySerializer {
 
@@ -68,11 +68,11 @@ public final class PolicySerializer {
     }
 
     /**
-     * Parses an {@code _acl/} subtree (full flat keys → raw value bytes) into a {@link ConfigPolicy}.
+     * Parses an {@code _acl/} subtree (full flat keys -> raw value bytes) into a {@link ConfigPolicy}.
      *
-     * @param aclSubtree the {@code _acl/}-prefixed key→value entries (non-null; values non-null)
+     * @param aclSubtree the {@code _acl/}-prefixed key->value entries (non-null; values non-null)
      * @return the parsed config-policy
-     * @throws PolicyParseException if any entry is structurally malformed (fail-closed — reject whole load)
+     * @throws PolicyParseException if any entry is structurally malformed (fail-closed - reject whole load)
      */
     public static ConfigPolicy parse(Map<String, byte[]> aclSubtree) {
         Objects.requireNonNull(aclSubtree, "aclSubtree must not be null");
@@ -139,7 +139,7 @@ public final class PolicySerializer {
             String capsToken;
             String prefix;
             if (sp2 < 0) {
-                capsToken = rest;   // no prefix field ⇒ empty prefix (matches every key)
+                capsToken = rest;   // no prefix field -> empty prefix (matches every key)
                 prefix = "";
             } else {
                 capsToken = rest.substring(0, sp2);

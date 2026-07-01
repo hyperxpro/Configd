@@ -19,40 +19,40 @@ import java.security.PublicKey;
 import java.security.spec.X509EncodedKeySpec;
 
 /**
- * The separately runnable edge node process (C2; the artifact RR-001 indicts the absence
- * of). A thin orchestrator, mirroring {@code ConfigdServer}: all protocol logic lives in
- * {@link EdgeClientCore} (configd-edge-cache — the same engine the simulator drives), the
- * socket shell is {@link EdgeStreamClient}, the read surface is {@link EdgeHttpServer}.
+ * The separately runnable edge node process. A thin orchestrator, mirroring
+ * {@code ConfigdServer}: all protocol logic lives in {@link EdgeClientCore} (configd-edge-cache
+ * — the same engine the simulator drives), the socket shell is {@link EdgeStreamClient}, the
+ * read surface is {@link EdgeHttpServer}.
  *
- * <h2>Wiring (ADR-0037/0038/0039)</h2>
+ * <h2>Wiring</h2>
  * <ul>
  *   <li>mTLS: the same {@link TlsConfig#mtls}/{@link TlsManager} classes as the control
- *       plane ("consistent with the control plane's" by construction); plaintext when the
+ *       plane (consistent with the control plane's by construction); plaintext when the
  *       TLS triple is absent (test / single-node), matching the server's policy;</li>
  *   <li>signed chain: {@code --verify-key} (Ed25519 public key, X.509/SPKI DER — produced
  *       by {@code io.configd.store.VerifyKeyExporter} from the leader's
  *       {@code signing-key.bin}). With a verifier every delta must verify; without one,
- *       SIGNED deltas are rejected fail-closed (F-0052) — so against a real (signing)
- *       control plane the flag is effectively mandatory;</li>
- *   <li>{@code --data-dir} holds ONLY the SEC-017 {@code epoch.lock} sidecar. Values —
- *       including {@code secure/} — are never written to disk by the edge (RR-098: the
- *       store-everything topology's exfiltration residual is bounded to process memory);</li>
- *   <li>the DISCONNECTED re-bootstrap trigger (CT-06) is REAL as of C3: each transition
- *       INTO DISCONNECTED counts {@code edge_rebootstrap_triggered_total} and invokes
+ *       SIGNED deltas are rejected fail-closed — so against a real (signing) control plane
+ *       the flag is effectively mandatory;</li>
+ *   <li>{@code --data-dir} holds ONLY the {@code epoch.lock} sidecar. Values — including
+ *       {@code secure/} — are never written to disk by the edge (the store-everything
+ *       topology's exfiltration residual is bounded to process memory);</li>
+ *   <li>the DISCONNECTED re-bootstrap trigger is real: each transition INTO DISCONNECTED
+ *       counts {@code edge_rebootstrap_triggered_total} and invokes
  *       {@link EdgeStreamClient#requestRebootstrap} — tear down the live connection (if
  *       any), cut the backoff short, re-SUBSCRIBE at the current cursor (the server's
  *       TAIL/SNAPSHOT_FIRST decision resolves replay vs re-bootstrap);</li>
- *   <li>ADR-0040 poison pill: bounded apply-failure retries
- *       ({@code --poison-max-retries}) → forced snapshot re-bootstrap → terminal
- *       fail-loud ({@code System.exit}({@value #EXIT_POISON_TERMINAL})).</li>
+ *   <li>poison pill: bounded apply-failure retries ({@code --poison-max-retries}) to forced
+ *       snapshot re-bootstrap to terminal fail-loud
+ *       ({@code System.exit}({@value #EXIT_POISON_TERMINAL})).</li>
  * </ul>
  */
 public final class EdgeNodeMain {
 
     /**
-     * ADR-0040 terminal fail-loud exit code: the poison-pill policy decided the edge can
-     * neither advance nor re-bootstrap. Distinct from the usage/config exit (1) so an
-     * operator can tell a poison death from a misconfiguration at a glance.
+     * Terminal fail-loud exit code: the poison-pill policy decided the edge can neither
+     * advance nor re-bootstrap. Distinct from the usage/config exit (1) so an operator can
+     * tell a poison death from a misconfiguration at a glance.
      */
     static final int EXIT_POISON_TERMINAL = 3;
 
@@ -104,10 +104,10 @@ public final class EdgeNodeMain {
 
     /**
      * Builds and starts an edge node with an explicit (possibly null) {@link TlsManager}
-     * and an injectable ADR-0040 terminal action ({@code null} = the production
-     * {@code System.exit}({@value #EXIT_POISON_TERMINAL})). The terminal-action seam
-     * mirrors the injectable-TlsManager seam: process tests pin the terminal fail-loud
-     * path with a recorder instead of killing the test JVM.
+     * and an injectable terminal action ({@code null} = the production
+     * {@code System.exit}({@value #EXIT_POISON_TERMINAL})). The terminal-action seam mirrors
+     * the injectable-TlsManager seam: process tests pin the terminal fail-loud path with a
+     * recorder instead of killing the test JVM.
      */
     public static EdgeNodeMain start(EdgeNodeConfig config, TlsManager tlsManager,
                                      Runnable terminalAction) {
@@ -124,16 +124,16 @@ public final class EdgeNodeMain {
 
         Clock clock = Clock.system();
         MetricsRegistry registry = new MetricsRegistry();
-        // S6/WS-A: JVM/process runtime gauges on the edge process too (runtime board + leak alerts).
+        // JVM/process runtime gauges on the edge process (runtime board + leak alerts).
         io.configd.observability.JvmMetrics.bind(registry);
         // Fail-open production monitor (the ConfigdServer policy): an invariant violation
         // increments invariant.violation.* and keeps serving — never throws in-process.
         InvariantMonitor invariantMonitor = new InvariantMonitor(registry, false);
         EdgeNodeMetrics metrics = new EdgeNodeMetrics(registry);
 
-        // CT-06 (C3): the DISCONNECTED re-bootstrap orchestration is EdgeStreamClient's
+        // The DISCONNECTED re-bootstrap orchestration is EdgeStreamClient's
         // requestRebootstrap, composed internally (null = no additional observer hook).
-        // ADR-0040: TERMINAL exits the process non-zero — fail loud, never a hot loop.
+        // TERMINAL exits the process non-zero — fail loud, never a hot loop.
         Runnable terminal = terminalAction != null ? terminalAction
                 : () -> System.exit(EXIT_POISON_TERMINAL);
         EdgeStreamClient streamClient = new EdgeStreamClient(
@@ -153,10 +153,10 @@ public final class EdgeNodeMain {
         }
         metrics.bind(core);
 
-        // ADR-0043 M1: the edge-read HTTP surface is served by Netty (io_uring→Epoll→NIO selected at
-        // start), replacing the JDK HttpServer (EdgeHttpServer). Byte-identical responses (both adapters
-        // delegate to EdgeReadHandler) at 8.7× less server-side allocation (docs/netty-migration/).
-        // S6/WS-A: publish the edge-read histogram bucket schedule so configd_edge_read_seconds renders
+        // The edge-read HTTP surface is served by Netty (io_uring to Epoll to NIO selected at start),
+        // replacing the JDK HttpServer. Byte-identical responses (both adapters delegate to
+        // EdgeReadHandler) at 8.7x less server-side allocation.
+        // Publish the edge-read histogram bucket schedule so configd_edge_read_seconds renders
         // the le buckets (0.001 / 0.005) the edge-read burn-rate alert queries.
         NettyEdgeHttpServer httpServer = new NettyEdgeHttpServer(config.apiPort(), core,
                 StrongReadKeyClass.DEFAULT,
@@ -205,7 +205,7 @@ public final class EdgeNodeMain {
         return core;
     }
 
-    /** The stream client (tests / diagnostics — the CT-06 re-bootstrap orchestration seam). */
+    /** The stream client (tests / diagnostics — the re-bootstrap orchestration seam). */
     EdgeStreamClient streamClient() {
         return streamClient;
     }

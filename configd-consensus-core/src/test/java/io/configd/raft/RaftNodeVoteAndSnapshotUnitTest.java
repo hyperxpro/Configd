@@ -17,9 +17,9 @@ import static org.junit.jupiter.api.Assertions.*;
  * ({@code triggerSnapshot}), and the joint-side voter-count bound of
  * {@code deserializeConfigChange}.
  * <p>
- * S2/mutation-gap (RR-085): {@code handleRequestVote} carried removed-conditional
- * survivors on the non-voter/stale-term/higher-term/can-vote branches;
- * {@code triggerSnapshot} carried boundary survivors on its "nothing new to
+ * {@code handleRequestVote} had untested removed-conditional
+ * gaps on the non-voter/stale-term/higher-term/can-vote branches;
+ * {@code triggerSnapshot} had untested boundary gaps on its "nothing new to
  * snapshot" and term-unknown guards. Each test pins one branch's observable
  * outcome (a vote granted or denied, a snapshot taken or skipped). Driven through
  * the public {@code handleMessage}/{@code triggerSnapshot} seams; deterministic.
@@ -60,9 +60,7 @@ class RaftNodeVoteAndSnapshotUnitTest {
         return new RequestVoteRequest(term, cand, lastIdx, lastTerm, false);
     }
 
-    // ====================================================================
-    // handleRequestVote — grant/deny decision
-    // ====================================================================
+    // handleRequestVote: grant/deny decision
 
     @Nested
     class VoteDecision {
@@ -120,7 +118,7 @@ class RaftNodeVoteAndSnapshotUnitTest {
                     List.of(new LogEntry(1, 2, new byte[]{1}), new LogEntry(2, 2, new byte[]{2})), 0));
             t.clear();
             // A candidate at a higher term but with a SHORTER/older log must be denied
-            // on the up-to-date check (§5.4.1). Kills the logOk branch wiring.
+            // on the up-to-date check (section 5.4.1). Kills the logOk branch wiring.
             node.handleMessage(vote(3, N3, 1, 1)); // lastLogTerm 1 < our 2
             List<RequestVoteResponse> resps = t.voteResponses();
             assertEquals(1, resps.size());
@@ -140,16 +138,14 @@ class RaftNodeVoteAndSnapshotUnitTest {
             long term = leader.currentTerm();
             // Reconfigure to include N2 so the leader is a voter that can consider the
             // request; simplest: a single-node leader is still a voter of {N1}. Send a
-            // higher-term vote from a node — the leader adopts the term and steps down.
+            // higher-term vote from a node - the leader adopts the term and steps down.
             leader.handleMessage(vote(term + 5, N1, 99, 99));
             assertEquals(term + 5, leader.currentTerm());
             assertEquals(RaftRole.FOLLOWER, leader.role());
         }
     }
 
-    // ====================================================================
-    // triggerSnapshot — boundary guards
-    // ====================================================================
+    // triggerSnapshot: boundary guards
 
     @Nested
     class SnapshotTrigger {
@@ -192,9 +188,7 @@ class RaftNodeVoteAndSnapshotUnitTest {
         }
     }
 
-    // ====================================================================
-    // deserializeConfigChange — joint-side voter-count bound
-    // ====================================================================
+    // deserializeConfigChange: joint-side voter-count bound
 
     @Nested
     class JointCodecBound {

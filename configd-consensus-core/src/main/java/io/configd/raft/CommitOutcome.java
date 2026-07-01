@@ -3,26 +3,26 @@ package io.configd.raft;
 /**
  * The outcome of a proposed entry, delivered to a
  * {@link RaftNode#whenCommitOutcome(long, long, java.util.function.Consumer)}
- * callback exactly once. RR-004 / ADR-0033.
+ * callback exactly once.
  * <p>
- * The predicates are deliberately conservative — only Raft-permanent facts are
+ * The predicates are deliberately conservative - only Raft-permanent facts are
  * reported as definite outcomes:
  * <ul>
- *   <li>{@link Kind#COMMITTED} — {@code lastApplied >= index} and the applied
+ *   <li>{@link Kind#COMMITTED} - {@code lastApplied >= index} and the applied
  *       entry at {@code index} carries the proposed {@code term}. By Raft Log
- *       Matching (§5.3), {@code (index, term)} uniquely identifies the entry's
+ *       Matching (section 5.3), {@code (index, term)} uniquely identifies the entry's
  *       content, so this is <em>this</em> proposal, now committed and applied.
  *       Carries {@code seq}, the applied-mutation sequence the state machine
  *       assigned to this entry (the client's read cursor).</li>
- *   <li>{@link Kind#LOST} — {@code lastApplied >= index} and the applied entry at
+ *   <li>{@link Kind#LOST} - {@code lastApplied >= index} and the applied entry at
  *       {@code index} carries a <em>different</em> term. Log Matching makes that
  *       slot permanent on every replica, so this proposal can never commit as
  *       this proposal. This is the ONLY definite-loss trigger. (Truncation
- *       without a replacement applied, and step-down, are NOT definitive — a
+ *       without a replacement applied, and step-down, are NOT definitive - a
  *       replica still holding the entry can win a later election and commit it;
  *       those resolve on a later apply at {@code index} or surface as
  *       Indeterminate at the service deadline.)</li>
- *   <li>{@link Kind#INDETERMINATE_LOCALLY} — an {@code InstallSnapshot} covering
+ *   <li>{@link Kind#INDETERMINATE_LOCALLY}  -  an {@code InstallSnapshot} covering
  *       {@code index} arrived on a node whose {@code lastApplied} had not reached
  *       {@code index}: the per-index term is unrecoverable from a snapshot, so
  *       this node can no longer decide the outcome locally. The service maps this

@@ -23,9 +23,9 @@ import java.util.List;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * CT-26 (charter §4 C1; ADR-0037 bounded per-subscriber queues). The unacked NOTIFY-frame
- * count NEVER exceeds {@code queueFrames}, under any publish/tick/ack interleaving — the
- * bounded outbound queue is a hard invariant (never an unbounded queue).
+ * The unacked NOTIFY-frame count NEVER exceeds {@code queueFrames}, under any
+ * publish/tick/ack interleaving - the bounded outbound queue is a hard invariant (never an
+ * unbounded queue).
  */
 class SubscriberQueueBoundTest {
 

@@ -13,17 +13,17 @@ import java.util.concurrent.TimeUnit;
 /**
  * Measures watch notification fan-out performance.
  * <p>
- * Exercises the full WatchService path: config change → coalescer →
- * prefix filter → fan-out to N watchers. Measures both the raw dispatch
+ * Exercises the full WatchService path: config change -> coalescer ->
+ * prefix filter -> fan-out to N watchers. Measures both the raw dispatch
  * cost and the per-watcher delivery overhead.
  * <p>
  * Three scenarios:
  * <ol>
- *   <li><b>dispatchToWatchers</b> — single mutation dispatched to all watchers
+ *   <li><b>dispatchToWatchers</b> - single mutation dispatched to all watchers
  *       (measures fan-out scaling with watcher count)</li>
- *   <li><b>prefixFilteredDispatch</b> — mutations across different prefixes;
+ *   <li><b>prefixFilteredDispatch</b> - mutations across different prefixes;
  *       half the watchers match (measures prefix filtering cost)</li>
- *   <li><b>coalescedBurstDispatch</b> — 100 rapid mutations coalesced into
+ *   <li><b>coalescedBurstDispatch</b> - 100 rapid mutations coalesced into
  *       a single event, then dispatched (measures coalescing + dispatch)</li>
  * </ol>
  */
@@ -46,13 +46,13 @@ public class WatchFanOutBenchmark {
     @Setup(Level.Trial)
     public void setUp() {
         clock = new BenchClock();
-        // 1ns window → immediate flush on tick
+        // 1ns window -> immediate flush on tick
         WatchCoalescer coalescer = new WatchCoalescer(clock, 1L, 100_000);
         service = new WatchService(coalescer);
         payload = new byte[128];
         versionCounter = 0;
 
-        // Register watchers — all watching everything (empty prefix)
+        // Register watchers - all watching everything (empty prefix)
         for (int i = 0; i < watcherCount; i++) {
             service.register("", event -> {});
         }
@@ -115,7 +115,7 @@ public class WatchFanOutBenchmark {
      */
     @Setup(Level.Trial)
     public void setUpPrefixWatchers() {
-        // Already set up in setUp() — this method exists for the
+        // Already set up in setUp() - this method exists for the
         // prefixFilteredDispatch benchmark's documentation.
         // The watchers watch "" (all), so prefix filtering is tested
         // by using a key that doesn't match all watchers in the

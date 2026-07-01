@@ -18,13 +18,11 @@ import static org.junit.jupiter.api.Assertions.*;
  * Comprehensive tests for the Raft consensus implementation.
  * <p>
  * Uses a deterministic in-memory transport and seeded random generator
- * for reproducible test runs (ADR-0007).
+ * for reproducible test runs.
  */
 class RaftNodeTest {
 
-    // ========================================================================
     // Test infrastructure
-    // ========================================================================
 
     /**
      * Captures messages sent by a RaftNode for inspection and delivery.
@@ -188,9 +186,7 @@ class RaftNodeTest {
         }
     }
 
-    // ========================================================================
     // Single-node tests
-    // ========================================================================
 
     @Nested
     class SingleNodeTests {
@@ -242,9 +238,7 @@ class RaftNodeTest {
         }
     }
 
-    // ========================================================================
     // Three-node cluster tests
-    // ========================================================================
 
     @Nested
     class ThreeNodeClusterTests {
@@ -312,7 +306,7 @@ class RaftNodeTest {
 
         @Test
         void commitRuleOnlyCurrentTermEntries() {
-            // Raft §5.4.2: Leader can only commit entries from its current term
+            // Raft section 5.4.2: Leader can only commit entries from its current term
             TestCluster cluster = new TestCluster(3);
 
             // Manually set up a situation: node 1 has an entry from term 1
@@ -324,7 +318,7 @@ class RaftNodeTest {
             RaftNode leader1 = cluster.nodes.get(NodeId.of(1));
             long term1 = leader1.currentTerm();
 
-            // Propose a command — but only deliver to node 2, not node 3
+            // Propose a command - but only deliver to node 2, not node 3
             leader1.propose(new byte[]{1});
             TestTransport t1 = cluster.transports.get(NodeId.of(1));
 
@@ -356,9 +350,7 @@ class RaftNodeTest {
         }
     }
 
-    // ========================================================================
     // Five-node cluster tests
-    // ========================================================================
 
     @Nested
     class FiveNodeClusterTests {
@@ -404,9 +396,7 @@ class RaftNodeTest {
         }
     }
 
-    // ========================================================================
     // PreVote tests
-    // ========================================================================
 
     @Nested
     class PreVoteTests {
@@ -492,9 +482,7 @@ class RaftNodeTest {
         }
     }
 
-    // ========================================================================
     // CheckQuorum tests
-    // ========================================================================
 
     @Nested
     class CheckQuorumTests {
@@ -511,7 +499,7 @@ class RaftNodeTest {
             // Tick the leader enough for heartbeat timeout + check-quorum failure
             cluster.transports.get(NodeId.of(1)).clear();
 
-            // Tick through one heartbeat interval — first heartbeat passes
+            // Tick through one heartbeat interval - first heartbeat passes
             // because peerActivity starts as TRUE
             for (int i = 0; i < 50; i++) {
                 leader.tick();
@@ -549,9 +537,7 @@ class RaftNodeTest {
         }
     }
 
-    // ========================================================================
     // Leadership transfer tests
-    // ========================================================================
 
     @Nested
     class LeadershipTransferTests {
@@ -589,7 +575,7 @@ class RaftNodeTest {
             // Propose and replicate an entry to create a state where the target
             // is NOT yet fully caught up (has pending entries)
             leader.propose(new byte[]{99});
-            // Do NOT deliver messages yet — node 2's matchIndex won't be caught up
+            // Do NOT deliver messages yet - node 2's matchIndex won't be caught up
 
             // Initiate transfer while node 2 is still behind
             leader.transferLeadership(NodeId.of(2));
@@ -619,9 +605,7 @@ class RaftNodeTest {
         }
     }
 
-    // ========================================================================
     // Log conflict resolution tests
-    // ========================================================================
 
     @Nested
     class LogConflictTests {
@@ -716,7 +700,7 @@ class RaftNodeTest {
             leader.propose(new byte[]{10});
             leader.propose(new byte[]{20});
 
-            // Deliver messages — leader will get rejections if logs don't match,
+            // Deliver messages - leader will get rejections if logs don't match,
             // and will retry with decremented nextIndex
             cluster.deliverAllMessages(20);
 
@@ -725,9 +709,7 @@ class RaftNodeTest {
         }
     }
 
-    // ========================================================================
     // Vote tracking tests
-    // ========================================================================
 
     @Nested
     class VoteTrackingTests {
@@ -756,7 +738,7 @@ class RaftNodeTest {
 
             transport1.clear();
 
-            // Node 3 requests vote in same term 1 — should be rejected
+            // Node 3 requests vote in same term 1 - should be rejected
             RequestVoteRequest req3 = new RequestVoteRequest(1, n3, 0, 0, false);
             node1.handleMessage(req3);
 
@@ -778,7 +760,7 @@ class RaftNodeTest {
             RandomGenerator rng1 = RandomGenerator.of("L64X128MixRandom");
             RaftNode node1 = new RaftNode(config1, log1, transport1, sm1, rng1);
 
-            // Node 2 requests vote in term 1 — twice
+            // Node 2 requests vote in term 1 - twice
             RequestVoteRequest req = new RequestVoteRequest(1, n2, 0, 0, false);
             node1.handleMessage(req);
             transport1.clear();
@@ -814,9 +796,7 @@ class RaftNodeTest {
         }
     }
 
-    // ========================================================================
     // Split vote and timeout tests
-    // ========================================================================
 
     @Nested
     class SplitVoteTests {
@@ -861,9 +841,7 @@ class RaftNodeTest {
         }
     }
 
-    // ========================================================================
     // Term handling tests
-    // ========================================================================
 
     @Nested
     class TermHandlingTests {
@@ -960,9 +938,7 @@ class RaftNodeTest {
         }
     }
 
-    // ========================================================================
     // RaftLog unit tests
-    // ========================================================================
 
     @Nested
     class RaftLogTests {
@@ -1091,9 +1067,7 @@ class RaftNodeTest {
         }
     }
 
-    // ========================================================================
     // State machine application tests
-    // ========================================================================
 
     @Nested
     class StateMachineApplicationTests {
@@ -1120,9 +1094,7 @@ class RaftNodeTest {
         }
     }
 
-    // ========================================================================
     // RaftConfig tests
-    // ========================================================================
 
     @Nested
     class RaftConfigTests {
@@ -1151,17 +1123,15 @@ class RaftNodeTest {
         }
     }
 
-    // ========================================================================
-    // RR-006: millisecond timing config -> tick-count conversion
+    // Millisecond timing config -> tick-count conversion.
     //
-    // Before RR-006 the ...Ms values were consumed directly as tick counts, so
-    // at the production 10ms tick period a documented 150-300ms election timeout
-    // ran for 150-300 ticks == 1.5-3.0s, and a 50ms heartbeat ran every 50 ticks
-    // == 500ms (10x every documented value; live re-election measured ~2.3s).
-    // These tests pin the conversion so the documented millisecond budgets are
-    // the budgets actually realized. They FAIL against the pre-fix code, which
-    // returns 150-300 / 50 ticks at tickPeriodMs=10 instead of 15-30 / 5.
-    // ========================================================================
+    // The ...Ms config values are real milliseconds. Without the conversion, at the
+    // production 10ms tick period a documented 150-300ms election timeout would run
+    // for 150-300 ticks == 1.5-3.0s, and a 50ms heartbeat would fire every 50 ticks
+    // == 500ms (10x every documented value). These tests pin the conversion so the
+    // documented millisecond budgets are the budgets actually realized. They FAIL
+    // against pre-conversion code, which returns 150-300 / 50 ticks at
+    // tickPeriodMs=10 instead of 15-30 / 5.
 
     @Nested
     class TimingConversionTests {
@@ -1175,7 +1145,7 @@ class RaftNodeTest {
             assertEquals(5, prod.heartbeatIntervalTicks(), "50ms / 10ms == 5 ticks");
 
             // Simulation tick period is 1ms: ms map one-to-one onto ticks, i.e.
-            // identical to the pre-RR-006 tick-domain values (no schedule drift).
+            // identical to the pre-conversion tick-domain values (no schedule drift).
             RaftConfig sim = RaftConfig.of(NodeId.of(1), Set.of(), 1);
             assertEquals(150, sim.electionTimeoutMinTicks());
             assertEquals(300, sim.electionTimeoutMaxTicks());
@@ -1233,9 +1203,7 @@ class RaftNodeTest {
         }
     }
 
-    // ========================================================================
     // LogEntry tests
-    // ========================================================================
 
     @Nested
     class LogEntryTests {
@@ -1262,9 +1230,7 @@ class RaftNodeTest {
         }
     }
 
-    // ========================================================================
     // Backpressure tests
-    // ========================================================================
 
     @Nested
     class BackpressureTests {
@@ -1346,16 +1312,14 @@ class RaftNodeTest {
             }
             assertEquals(RaftRole.LEADER, node.role());
 
-            // Propose many entries — they all commit immediately in single-node
+            // Propose many entries - they all commit immediately in single-node
             for (int i = 0; i < 100; i++) {
                 assertEquals(ProposalResult.ACCEPTED, node.propose(new byte[]{(byte) i}).result());
             }
         }
     }
 
-    // ========================================================================
     // Pipelining tests
-    // ========================================================================
 
     @Nested
     class PipeliningTests {

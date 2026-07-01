@@ -7,41 +7,39 @@ import java.util.logging.Level;
 import java.util.logging.Logger;
 
 /**
- * The ADR-0040 narrow poison-pill policy (C3; contract row CT-33). Decides what the edge
- * does when a frame that passed signature verification <b>throws during apply</b> — the one
- * genuinely real poison hazard in a system that stores opaque bytes (architecture §8's
- * schema-validation circuit breaker is descoped by ADR-0040; an invalid-<i>signature</i>
- * delta is NOT a poison pill — it is rejected fail-closed upstream in {@link DeltaApplier}
- * and never reaches this policy).
+ * Narrow poison-pill policy: decides what the edge does when a frame that passed
+ * signature verification <b>throws during apply</b> - the one genuinely real poison hazard
+ * in a system that stores opaque bytes. An invalid-<i>signature</i> delta is NOT a poison
+ * pill - it is rejected fail-closed upstream in {@link DeltaApplier} and never reaches
+ * this policy.
  *
- * <h2>The ladder (ADR-0040 §Decision 1)</h2>
+ * <h2>The ladder</h2>
  * <ol>
- *   <li><b>Bounded retries per seq</b> — failures are counted by the existing
+ *   <li><b>Bounded retries per seq</b> - failures are counted by the existing
  *       {@link PoisonPillDetector}, re-pointed at apply exceptions keyed by the
  *       applied-mutation seq (named config {@code edge.poisonpill.maxRetries}, default
  *       {@value #DEFAULT_MAX_RETRIES}; metric {@code edge_poison_retries_total}). Each
- *       retry is a {@link Action#RESUBSCRIBE resubscribe-at-cursor} — the server
+ *       retry is a {@link Action#RESUBSCRIBE resubscribe-at-cursor} - the server
  *       redelivers the same seq, healing a transient failure.</li>
- *   <li><b>Quarantine → forced snapshot re-bootstrap.</b> Skipping the bad seq is
- *       FORBIDDEN (a skipped seq is a silent chain break — divergence). On quarantine the
+ *   <li><b>Quarantine - forced snapshot re-bootstrap.</b> Skipping the bad seq is
+ *       FORBIDDEN (a skipped seq is a silent chain break - divergence). On quarantine the
  *       policy emits {@code configd.edge.poison_pill} + a structured log and directs a
- *       {@link Action#REBOOTSTRAP re-subscribe at cursor 0}: the server's TAIL /
+ *       {@link Action#REBOOTSTRAP re-subscribe at cursor 0}: the server's TAIL or
  *       SNAPSHOT_FIRST decision then sends a snapshot whose cumulative state already
  *       contains the poison seq's effect, so the bad delta is never re-applied.</li>
  *   <li><b>Terminal fail-loud.</b> If, after the forced re-bootstrap, the snapshot itself
- *       fails to apply — or the quarantined seq is redelivered as a delta and throws again
- *       (defense-in-depth: since C3's decideMode rule a cursor-0 subscriber always gets a
- *       snapshot when data exists, so a TAIL redelivery here means a server not honoring
- *       that rule — still a wedge, still loud) — the edge can neither advance nor
- *       re-bootstrap: {@link Action#TERMINAL}. The process must exit non-zero
- *       ({@code configd.edge.poison_pill_terminal} emitted first), never serve an
- *       ever-staler cache behind a green health check, and never hot-loop.</li>
+ *       fails to apply - or the quarantined seq is redelivered as a delta and throws again
+ *       (a cursor-0 subscriber always gets a snapshot when data exists; TAIL redelivery
+ *       here means a server not honoring that rule - still a wedge, still loud) - the edge
+ *       can neither advance nor re-bootstrap: {@link Action#TERMINAL}. The process must
+ *       exit non-zero ({@code configd.edge.poison_pill_terminal} emitted first), never
+ *       serve an ever-staler cache behind a green health check, and never hot-loop.</li>
  * </ol>
  *
  * <h2>Threading</h2>
  * Single-writer, like its caller {@link EdgeClientCore}: all methods must be invoked from
- * the session thread. Counters are lock-free; the local longs are for deterministic test /
- * sim reads.
+ * the session thread. Counters are lock-free; the local longs are for deterministic test
+ * and sim reads.
  */
 public final class PoisonPillPolicy {
 
@@ -52,7 +50,7 @@ public final class PoisonPillPolicy {
 
     /** Metric: apply-failure retries ({@code edge_poison_retries_total}). */
     public static final String RETRIES_METRIC = "edge.poison_retries";
-    /** Metric: quarantines — the §8 name, kept by ADR-0040 ({@code configd_edge_poison_pill_total}). */
+    /** Metric: quarantines ({@code configd_edge_poison_pill_total}). */
     public static final String POISON_PILL_METRIC = "configd.edge.poison_pill";
     /** Metric: terminal fail-loud, emitted before the process exits non-zero. */
     public static final String TERMINAL_METRIC = "configd.edge.poison_pill_terminal";
@@ -62,8 +60,8 @@ public final class PoisonPillPolicy {
         /** Bounded retry: re-subscribe at the CURRENT cursor; the failing seq is redelivered. */
         RESUBSCRIBE,
         /**
-         * Quarantined: force a snapshot re-bootstrap — re-subscribe at cursor 0 (ADR-0040;
-         * cursor 0 is reserved for suspected local poison, never for ordinary recovery).
+         * Quarantined: force a snapshot re-bootstrap - re-subscribe at cursor 0, which is
+         * reserved for suspected local poison, never for ordinary recovery.
          */
         REBOOTSTRAP,
         /** Cannot advance, cannot re-bootstrap: the process must exit non-zero, loudly. */
@@ -91,7 +89,7 @@ public final class PoisonPillPolicy {
     /** The seq of the most recent failure (for clearing the consecutive count on progress). */
     private long lastFailingSeq = -1L;
 
-    /** Latched on the first TERMINAL decision — the policy never un-decides death. */
+    /** Latched on the first TERMINAL decision - the policy never un-decides death. */
     private volatile boolean terminal;
 
     /** Policy with default retries and no registry counters (sim / unit wiring). */
@@ -122,7 +120,7 @@ public final class PoisonPillPolicy {
 
     /**
      * Reports an apply-time failure of the delta at {@code seq} (a {@link RuntimeException}
-     * out of the verified apply path — NOT a signature rejection, which is handled
+     * out of the verified apply path - NOT a signature rejection, which is handled
      * fail-closed upstream and is deliberately invisible here).
      *
      * @param seq   the applied-mutation seq of the failing delta
@@ -136,8 +134,8 @@ public final class PoisonPillPolicy {
         if (quarantinedSeq >= 0) {
             if (seq == quarantinedSeq) {
                 // The forced re-bootstrap redelivered the poison as a DELTA (the server
-                // chose TAIL — young ring, nothing evicted) and it threw again: the edge
-                // cannot advance and cannot be given a snapshot. Die visibly (ADR-0040 §1.3).
+                // chose TAIL -- young ring, nothing evicted) and it threw again: the edge
+                // cannot advance and cannot be given a snapshot. Die visibly.
                 return decideTerminal(seq, "quarantined seq redelivered as a delta and "
                         + "threw again after the forced re-bootstrap (server chose TAIL)", cause);
             }
@@ -151,9 +149,9 @@ public final class PoisonPillPolicy {
 
     /**
      * Reports a snapshot reassembly/cutover failure at snapshot seq {@code seq}.
-     * During a forced re-bootstrap this is the ADR-0040 §1.3 terminal condition verbatim
-     * ("if the snapshot itself fails to apply"); outside one it gets the same bounded
-     * retry ladder (the server re-sends a lost/corrupt snapshot — C1's self-healing).
+     * During a forced re-bootstrap this is the terminal condition (the snapshot itself
+     * failed to apply); outside one it gets the same bounded retry ladder (the server
+     * re-sends a lost/corrupt snapshot -- self-healing re-send).
      *
      * @param seq   the failing snapshot's seq
      * @param cause the reassembly/cutover failure
@@ -171,7 +169,7 @@ public final class PoisonPillPolicy {
     }
 
     /**
-     * Reports apply progress (the cursor advanced — a delta applied or a snapshot cut
+     * Reports apply progress (the cursor advanced - a delta applied or a snapshot cut
      * over). Clears the in-flight failure count once the failing seq is passed, and ends a
      * forced re-bootstrap once the quarantined seq is covered (recovery: the snapshot's
      * cumulative state contains the poison seq's effect).
@@ -205,8 +203,8 @@ public final class PoisonPillPolicy {
                     + "max " + maxRetries + " before quarantine)", cause);
             return Action.RESUBSCRIBE;
         }
-        // Quarantine: the §8 metric name (kept by ADR-0040) + structured log, then the
-        // forced snapshot re-bootstrap. Skipping the seq is forbidden (chain break).
+        // Quarantine: emit the metric + structured log, then direct the forced snapshot
+        // re-bootstrap. Skipping the seq is forbidden (chain break).
         quarantines++;
         increment(poisonPillCounter);
         quarantinedSeq = seq;
@@ -220,9 +218,9 @@ public final class PoisonPillPolicy {
         terminal = true;
         terminals++;
         increment(terminalCounter);
-        // The structured fail-loud event (ADR-0040 §1.3): emitted BEFORE the process exit
-        // the caller performs. An edge that cannot advance and cannot re-bootstrap must
-        // die visibly, never serve an ever-staler cache behind a green health check.
+        // Emit the structured fail-loud event BEFORE the process exit the caller performs.
+        // An edge that cannot advance and cannot re-bootstrap must die visibly, never serve
+        // an ever-staler cache behind a green health check.
         LOG.log(Level.SEVERE, "POISON PILL TERMINAL: quarantinedSeq=" + quarantinedSeq
                 + " failingSeq=" + seq + " — " + why
                 + "; the edge cannot advance and cannot re-bootstrap; the process must "
@@ -257,7 +255,7 @@ public final class PoisonPillPolicy {
         return quarantines;
     }
 
-    /** Total terminal decisions (0 or 1 — latched). */
+    /** Total terminal decisions (0 or 1 - latched). */
     public long terminals() {
         return terminals;
     }

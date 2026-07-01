@@ -7,42 +7,42 @@ import io.configd.observability.MetricsRegistry;
 import java.util.Objects;
 
 /**
- * Measures edge-cache staleness against the <b>covered frontier</b> (ADR-0039).
+ * Measures edge-cache staleness against the <b>covered frontier</b>.
  * <p>
- * Staleness is {@code wall_now − frontier}, where the frontier is the latest point
+ * Staleness is {@code wall_now - frontier}, where the frontier is the latest point
  * in the commit stream the edge <em>knows</em> it has fully covered:
  * <pre>
  *   frontier = max( commit_ts(last applied notification),
  *                   server_now(last HEARTBEAT h where h.latestSeq == cursor) )
- *   staleness = wall_now − frontier
+ *   staleness = wall_now - frontier
  * </pre>
- * State transitions (thresholds unchanged from the contract §2 table):
+ * State transitions (thresholds from the contract section 2 table):
  * <pre>
- *   CURRENT ──(&gt;500ms)──► STALE ──(&gt;5s)──► DEGRADED ──(&gt;30s)──► DISCONNECTED
+ *   CURRENT --(&gt;500ms)--&gt; STALE --(&gt;5s)--&gt; DEGRADED --(&gt;30s)--&gt; DISCONNECTED
  * </pre>
  *
- * <h2>Why frontier, not idle time (ADR-0039)</h2>
- * The pre-ADR-0039 implementation measured <em>idle time since the last update</em>
- * ({@code nanoTime() − lastUpdateNanos}). That is unsound on a quiet system: with no
- * commits for 30s — entirely normal for a configuration workload — a perfectly
- * fresh, fully-caught-up edge marches CURRENT → STALE → DEGRADED → DISCONNECTED and
+ * <h2>Why frontier, not idle time</h2>
+ * The prior implementation measured <em>idle time since the last update</em>
+ * ({@code nanoTime() - lastUpdateNanos}). That is unsound on a quiet system: with no
+ * commits for 30s - entirely normal for a configuration workload - a perfectly
+ * fresh, fully-caught-up edge marches CURRENT to STALE to DEGRADED to DISCONNECTED and
  * triggers a needless re-bootstrap storm. The frontier fixes this: a heartbeat that
  * attests {@code latestSeq == cursor} ("there is nothing you have not seen as of my
  * clock T") advances the frontier, so an idle-but-heartbeating edge stays CURRENT
  * indefinitely. The idle-time proxy measurement is <b>deleted</b>, not kept alongside
  * (two staleness numbers is how dashboards lie).
  *
- * <h2>Heartbeat discipline (ADR-0039 §Decision 2)</h2>
+ * <h2>Heartbeat discipline</h2>
  * {@link #recordFrontier(long, long, long)} advances the frontier to
  * {@code serverNowMillis} <b>iff</b> {@code heartbeatLatestSeq == cursor}. When
  * {@code heartbeatLatestSeq > cursor} the edge is genuinely behind: the heartbeat is
  * the cursor-lag signal (recorded by the caller as {@code edge_fanout_cursor_lag}),
- * NOT a frontier advance — data age is real lag and must surface.
+ * NOT a frontier advance - data age is real lag and must surface.
  *
- * <h2>Implausibility tripwire (ADR-0039 §Decision 5 / CT-08)</h2>
+ * <h2>Implausibility tripwire</h2>
  * A frontier in the future beyond the documented {@value #SKEW_ALLOWANCE_MS}ms NTP-skew
  * allowance, or a frontier that would jump <em>backwards</em>, is flagged on a dedicated
- * counter ({@value #IMPLAUSIBLE_METRIC}) and the offending sample is clamped — never
+ * counter ({@value #IMPLAUSIBLE_METRIC}) and the offending sample is clamped - never
  * silently trusted. A skewed or lying clock must be visible.
  *
  * <h2>Thread safety</h2>
@@ -52,29 +52,28 @@ import java.util.Objects;
  */
 public final class StalenessTracker {
 
-    /** Staleness state thresholds in milliseconds (contract §2; unchanged by ADR-0039). */
+    /** Staleness state thresholds in milliseconds (contract section 2). */
     private static final long STALE_THRESHOLD_MS = 500;
     private static final long DEGRADED_THRESHOLD_MS = 5_000;
     private static final long DISCONNECTED_THRESHOLD_MS = 30_000;
 
     /**
-     * Documented NTP-skew allowance (ADR-0035 handoff item 4 / ADR-0039 §5). A frontier
-     * up to this far in the future is tolerated as clock skew (staleness clamped to 0);
-     * beyond it the implausibility tripwire fires.
+     * Documented NTP-skew allowance. A frontier up to this far in the future is tolerated
+     * as clock skew (staleness clamped to 0); beyond it the implausibility tripwire fires.
      */
     static final long SKEW_ALLOWANCE_MS = 50;
 
     /**
-     * Dedicated counter for implausible frontier samples (ADR-0039 §5 / CT-08). Named
-     * to match the contract metric series {@code edge_staleness_implausible_total}; the
-     * {@link MetricsRegistry} key is {@value} and the Prometheus exporter maps the dots
-     * to underscores and appends {@code _total} for counters.
+     * Dedicated counter for implausible frontier samples. Named to match the contract
+     * metric series {@code edge_staleness_implausible_total}; the {@link MetricsRegistry}
+     * key is {@value} and the Prometheus exporter maps the dots to underscores and appends
+     * {@code _total} for counters.
      */
     public static final String IMPLAUSIBLE_METRIC = "edge.staleness.implausible";
 
     /**
      * Staleness states, ordered by severity. Ordinals are load-bearing for the sim
-     * determinism digest fold — do not reorder.
+     * determinism digest fold - do not reorder.
      */
     public enum State {
         /** Frontier is within 500ms of wall-now: the edge is up to date. */
@@ -100,16 +99,16 @@ public final class StalenessTracker {
     private volatile long lastVersion;
 
     /**
-     * Optional invariant monitor (F-0073) for INV-S1 staleness-bound violations. May be
-     * null — if so, threshold violations are not reported through the monitor (the
-     * frontier measurement itself is unaffected).
+     * Optional invariant monitor for INV-S1 staleness-bound violations. May be null - if
+     * so, threshold violations are not reported through the monitor (the frontier
+     * measurement itself is unaffected).
      */
     private final InvariantMonitor invariantMonitor;
 
     /**
-     * Optional implausibility counter (ADR-0039 §5 / CT-08). May be null — if so,
-     * implausible samples are still clamped, just not counted. Production wiring supplies
-     * the process {@link MetricsRegistry}; tests can read {@link #implausibleCount()}.
+     * Optional implausibility counter. May be null - if so, implausible samples are still
+     * clamped, just not counted. Production wiring supplies the process
+     * {@link MetricsRegistry}; tests can read {@link #implausibleCount()}.
      */
     private final MetricsRegistry.Counter implausibleCounter;
 
@@ -125,8 +124,8 @@ public final class StalenessTracker {
     }
 
     /**
-     * Creates a tracker with an {@link InvariantMonitor} wired in (F-0073 / INV-S1). No
-     * implausibility counter (use the three-arg constructor for CT-08 metric wiring).
+     * Creates a tracker with an {@link InvariantMonitor} wired in for INV-S1 checking. No
+     * implausibility counter (use the three-arg constructor for implausibility metric wiring).
      */
     public StalenessTracker(Clock clock, InvariantMonitor invariantMonitor) {
         this(clock, invariantMonitor, null);
@@ -137,7 +136,7 @@ public final class StalenessTracker {
      *
      * @param clock              the wall clock for the staleness measurement (non-null)
      * @param invariantMonitor   optional INV-S1 staleness-bound monitor (may be null)
-     * @param implausibleCounter optional CT-08 implausible-frontier counter (may be null)
+     * @param implausibleCounter optional implausible-frontier counter (may be null)
      */
     public StalenessTracker(Clock clock, InvariantMonitor invariantMonitor,
                             MetricsRegistry.Counter implausibleCounter) {
@@ -145,7 +144,7 @@ public final class StalenessTracker {
         this.clock = clock;
         this.invariantMonitor = invariantMonitor;
         this.implausibleCounter = implausibleCounter;
-        // No frontier yet → initial state is DISCONNECTED (the edge has covered nothing).
+        // No frontier yet -> initial state is DISCONNECTED (the edge has covered nothing).
         this.frontierMillis = Long.MIN_VALUE;
         this.lastVersion = 0;
     }
@@ -158,14 +157,14 @@ public final class StalenessTracker {
     }
 
     /**
-     * Records a successfully applied update (ADR-0039: the commit-timestamp clock is now
-     * load-bearing). Advances the covered frontier to {@code commitTimestampMillis} (the
-     * leader's wall clock at commit/apply, ADR-0035 §2) — this is the data-age term of
-     * the frontier. The frontier is monotonic: a {@code commitTimestampMillis} that would
-     * move it backwards trips the implausibility guard and is clamped.
+     * Records a successfully applied update. Advances the covered frontier to
+     * {@code commitTimestampMillis} (the leader's wall clock at commit/apply) - this is
+     * the data-age term of the frontier. The frontier is monotonic: a
+     * {@code commitTimestampMillis} that would move it backwards trips the implausibility
+     * guard and is clamped.
      *
      * @param version               the applied-mutation seq of this update
-     * @param commitTimestampMillis the leader commit timestamp (the §2 staleness clock)
+     * @param commitTimestampMillis the leader commit timestamp (the covered-frontier clock)
      */
     public void recordUpdate(long version, long commitTimestampMillis) {
         this.lastVersion = version;
@@ -174,13 +173,13 @@ public final class StalenessTracker {
 
     /**
      * Records an applied version WITHOUT a frontier advance. Used for snapshot cutover
-     * when the snapshot carries no commit timestamp (ADR-0028 bodies encode
-     * {@code [seq][entries]} only — {@code ConfigSnapshot.timestamp() == 0} after
+     * when the snapshot carries no commit timestamp (snapshot bodies encode
+     * {@code [seq][entries]} only - {@code ConfigSnapshot.timestamp() == 0} after
      * {@code EdgeSnapshotCodec.deserialize}): fabricating a frontier of 0 would either
-     * regress the frontier or trip the CT-08 implausibility counter on every legitimate
+     * regress the frontier or trip the implausibility counter on every legitimate
      * cutover, polluting the skew tripwire with false positives. The frontier instead
      * heals from the first post-snapshot NOTIFY commit timestamp or cursor-matched
-     * HEARTBEAT (ADR-0039).
+     * HEARTBEAT.
      *
      * @param version the applied-mutation seq of the loaded snapshot
      */
@@ -189,16 +188,16 @@ public final class StalenessTracker {
     }
 
     /**
-     * Records a HEARTBEAT-carried frontier (ADR-0039 §Decision 2). Advances the covered
-     * frontier to {@code serverNowMillis} <b>iff</b> {@code heartbeatLatestSeq == cursor}
-     * — i.e. the server attests "nothing you have not seen as of my clock T". When
+     * Records a HEARTBEAT-carried frontier. Advances the covered frontier to
+     * {@code serverNowMillis} <b>iff</b> {@code heartbeatLatestSeq == cursor} - i.e. the
+     * server attests "nothing you have not seen as of my clock T". When
      * {@code heartbeatLatestSeq > cursor} the edge is genuinely behind, so the frontier is
      * NOT advanced (data age is real lag); the heartbeat is then the cursor-lag signal,
      * which the caller records separately.
      * <p>
      * The cursor-match check is performed <b>inside</b> this method (the caller passes the
-     * heartbeat's {@code latestSeq} and its own {@code cursor}) so the ADR-0039 frontier
-     * law lives in one place and cannot be bypassed by a mis-wired caller.
+     * heartbeat's {@code latestSeq} and its own {@code cursor}) so the frontier law lives
+     * in one place and cannot be bypassed by a mis-wired caller.
      *
      * @param heartbeatLatestSeq the heartbeat's {@code latestSeq} (server's highest seq)
      * @param cursor             the edge's current applied cursor
@@ -208,9 +207,9 @@ public final class StalenessTracker {
      */
     public boolean recordFrontier(long heartbeatLatestSeq, long cursor, long serverNowMillis) {
         if (heartbeatLatestSeq != cursor) {
-            // latestSeq > cursor: genuinely behind — cursor-lag signal, NOT a frontier
+            // latestSeq > cursor: genuinely behind - cursor-lag signal, NOT a frontier
             // advance. (latestSeq < cursor cannot happen on a monotonic stream, but if a
-            // skewed/lagging relay sends it we likewise refuse to advance — the edge's own
+            // skewed/lagging relay sends it we likewise refuse to advance - the edge's own
             // applied frontier already dominates.)
             return false;
         }
@@ -220,11 +219,11 @@ public final class StalenessTracker {
 
     /**
      * Advances the frontier to {@code candidateMillis}, enforcing monotonicity and the
-     * implausibility tripwire (ADR-0039 §5 / CT-08):
+     * implausibility tripwire:
      * <ul>
      *   <li>A candidate in the future beyond {@value #SKEW_ALLOWANCE_MS}ms (negative
-     *       staleness beyond NTP skew) is implausible → counted + clamped to wall-now.</li>
-     *   <li>A candidate that would move the frontier backwards is implausible → counted +
+     *       staleness beyond NTP skew) is implausible - counted and clamped to wall-now.</li>
+     *   <li>A candidate that would move the frontier backwards is implausible - counted and
      *       the frontier is held (never regresses).</li>
      * </ul>
      */
@@ -242,7 +241,7 @@ public final class StalenessTracker {
 
         // Regression tripwire: the covered frontier must be monotonic. A candidate below
         // the current frontier (e.g. a re-ordered heartbeat, or a commitTs from a skewed
-        // node behind a clock we already advanced past) is implausible — count it and hold
+        // node behind a clock we already advanced past) is implausible - count it and hold
         // the frontier. current == Long.MIN_VALUE is the "no frontier yet" sentinel and is
         // never a regression.
         if (current != Long.MIN_VALUE && candidateMillis < current) {
@@ -269,8 +268,8 @@ public final class StalenessTracker {
 
     /**
      * Returns {@code true} if the current frontier staleness exceeds {@code thresholdMs}.
-     * Routes the decision through {@link InvariantMonitor} when one was supplied (F-0073 /
-     * INV-S1) so threshold violations increment
+     * Routes the decision through {@link InvariantMonitor} when one was supplied (INV-S1)
+     * so threshold violations increment
      * {@code configd.invariant.violation.staleness_bound}.
      *
      * @param thresholdMs the staleness upper bound (usually {@code STALE_THRESHOLD_MS})
@@ -287,7 +286,7 @@ public final class StalenessTracker {
     }
 
     /**
-     * Returns the current staleness state based on the frontier (ADR-0039).
+     * Returns the current staleness state based on the covered frontier.
      */
     public State currentState() {
         long staleMs = stalenessMs();
@@ -304,15 +303,15 @@ public final class StalenessTracker {
     }
 
     /**
-     * Returns {@code wall_now − frontier} in milliseconds (ADR-0039). Before any frontier
-     * is known the edge has covered nothing, so this returns a value past the DISCONNECTED
-     * threshold (initial state DISCONNECTED). The result is never negative: a frontier
-     * ahead of wall-now (within the skew allowance) clamps to 0.
+     * Returns {@code wall_now - frontier} in milliseconds. Before any frontier is known
+     * the edge has covered nothing, so this returns a value past the DISCONNECTED threshold
+     * (initial state DISCONNECTED). The result is never negative: a frontier ahead of
+     * wall-now (within the skew allowance) clamps to 0.
      */
     public long stalenessMs() {
         long frontier = frontierMillis;
         if (frontier == Long.MIN_VALUE) {
-            // No frontier yet → maximally stale (DISCONNECTED until the first update/frontier).
+            // No frontier yet -> maximally stale (DISCONNECTED until the first update/frontier).
             return DISCONNECTED_THRESHOLD_MS + 1;
         }
         long staleMs = clock.currentTimeMillis() - frontier;
@@ -327,7 +326,7 @@ public final class StalenessTracker {
     }
 
     /**
-     * Returns the number of implausible frontier samples observed (ADR-0039 §5 / CT-08).
+     * Returns the number of implausible frontier samples observed.
      * Reads the wired counter; 0 when no counter was supplied.
      */
     public long implausibleCount() {

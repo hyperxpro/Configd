@@ -9,7 +9,7 @@ import org.junit.jupiter.api.Test;
 import static org.junit.jupiter.api.Assertions.*;
 
 /**
- * Tests for {@link DurableRaftState} — persistence of currentTerm and votedFor.
+ * Tests for {@link DurableRaftState} - persistence of currentTerm and votedFor.
  */
 class DurableRaftStateTest {
 

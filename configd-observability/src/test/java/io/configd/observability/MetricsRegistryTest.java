@@ -10,7 +10,7 @@ import java.util.concurrent.atomic.AtomicLong;
 import static org.junit.jupiter.api.Assertions.*;
 
 /**
- * Tests for {@link MetricsRegistry} — counters, gauges, and histograms.
+ * Tests for {@link MetricsRegistry} - counters, gauges, and histograms.
  */
 class MetricsRegistryTest {
 

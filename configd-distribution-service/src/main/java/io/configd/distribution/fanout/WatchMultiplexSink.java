@@ -11,20 +11,19 @@ import java.util.List;
 import java.util.function.LongSupplier;
 
 /**
- * The watch multiplex/filter veneer (RFC §2, the heart of §3.2): a {@link TransportSink}
- * <b>decorator</b> placed between the untouched {@link FanOutSessionCore} and the real
- * transport sink. The core drains the single connection-level signed chain forward exactly
- * as today (one shard at N=1, one cursor, one ack, connection-level snapshot / heartbeat /
- * backpressure — the W8-6 per-connection shared fate); this decorator <b>translates</b> the
- * core's structured output frames into <b>per-watch</b> {@code WATCH_*} frames, each
- * <b>filtered by its target</b>.
+ * The watch multiplex/filter veneer: a {@link TransportSink} <b>decorator</b> placed
+ * between the untouched {@link FanOutSessionCore} and the real transport sink. The core
+ * drains the single connection-level signed chain forward exactly as before (one shard at
+ * N=1, one cursor, one ack, connection-level snapshot / heartbeat / backpressure - the W8-6
+ * per-connection shared fate); this decorator <b>translates</b> the core's structured output
+ * frames into <b>per-watch</b> {@code WATCH_*} frames, each <b>filtered by its target</b>.
  *
  * <h2>Two modes (one decorator, always installed)</h2>
  * <ul>
  *   <li><b>Legacy passthrough</b> ({@code watchConnection == false}, the default): every
  *       {@code offer}/{@code close} delegates verbatim. A legacy {@code SUBSCRIBE}-first
  *       connection never flips the flag, so its {@code SUBSCRIBE_OK}/{@code NOTIFY}/
- *       {@code HEARTBEAT}/{@code SNAPSHOT_*}/{@code ERROR_CLOSE} pass through unchanged —
+ *       {@code HEARTBEAT}/{@code SNAPSHOT_*}/{@code ERROR_CLOSE} pass through unchanged -
  *       the {@code 0x01} byte-identity guarantee.</li>
  *   <li><b>Watch translation</b> ({@code watchConnection == true}): the core's structured
  *       frames are mapped per the translation table below.</li>
@@ -41,19 +40,19 @@ import java.util.function.LongSupplier;
  *                                         latestSeq (the W5-7 upper-bound / no-silent-gap clamp)
  *   SNAPSHOT_{BEGIN,CHUNK,END}         -&gt; WATCH_SNAPSHOT_{BEGIN,CHUNK,END}(snapshotOwner, 0, ...)
  *                                         (the connection-level catch-up maps to the FIXED drain-
- *                                         owning watch — captured once, not per-frame, W5-5/F2;
+ *                                         owning watch - captured once, not per-frame, W5-5/F2;
  *                                         the snapshot BYTES are pre-filtered to that watch's
  *                                         target by FilteringReplaySource, W5-10/W7-4; v1
  *                                         single-snapshotting-watch boundary)
  *   ERROR_CLOSE(DEMOTED_TO_CATCHUP)    -&gt; passthrough (the connection-level demotion notice the
- *                                         core offers; W8-6 — a driver MUST tolerate it)
+ *                                         core offers; W8-6 - a driver MUST tolerate it)
  *   close(code, msg)                   -&gt; per live watch: WATCH_CANCELED(watchId, code, -, msg)
  *                                         (surfaces a connection-level terminal, incl.
  *                                         GAP_UNRECOVERABLE, as a per-watch terminal, W5-9/W6-4),
  *                                         then delegate.close
  * </pre>
- * The per-watch terminals that originate in the <b>router</b> — {@code NOT_AUTHORIZED} rejects
- * and subsequent-watch {@code WATCH_CREATED} acks — are NOT produced here; the driver emits
+ * The per-watch terminals that originate in the <b>router</b> - {@code NOT_AUTHORIZED} rejects
+ * and subsequent-watch {@code WATCH_CREATED} acks - are NOT produced here; the driver emits
  * them directly via {@link #offerWatchFrame(EdgeFrame)} (which bypasses translation).
  *
  * <h2>v1 boundary (W8-6 shared drain)</h2>
@@ -61,38 +60,38 @@ import java.util.function.LongSupplier;
  * backpressure fate. The connection drain starts at the <b>first</b> watch's resume cursor;
  * a watch that needs to resume from an independent position MUST use a separate connection.
  * Backpressure is per-connection ({@code CURSOR_ACK} is a connection-level scalar), so a
- * single slow/greedy watch can demote every sibling — head-of-line blocking inherent to one
+ * single slow/greedy watch can demote every sibling - head-of-line blocking inherent to one
  * shared mTLS transport. Per-watch flow-control / fairness is the named v2 extension W10-8.
  *
  * <h2>Threading</h2>
  * {@code watchConnection} is set by the reader thread (the first {@code WATCH_CREATE} decides
  * the connection type) and read by the session thread in {@link #offer}; it is therefore
  * {@code volatile}. Everything else ({@code pendingCreateWatchId}, the registry, all
- * translation) is session-thread-confined — the core only calls {@code offer}/{@code close}
+ * translation) is session-thread-confined - the core only calls {@code offer}/{@code close}
  * on its single session-loop thread, and the driver posts the router state changes as session
  * commands.
  */
 final class WatchMultiplexSink implements TransportSink {
 
-    /** The single-shard group id at N=1 (RFC §2 W3-5: the one-element vector is {@code (0, S)}). */
+    /** The single-shard group id at N=1 (W3-5: the one-element vector is {@code (0, S)}). */
     private static final int GID_0 = 0;
 
     private final TransportSink delegate;
     private final WatchRegistry registry;
 
     /**
-     * The core's drained cursor supplier — {@code () -> session.cursor()}. Read lazily (only
+     * The core's drained cursor supplier - {@code () -> session.cursor()}. Read lazily (only
      * during translation, long after construction) so it can be wired before the session is
      * constructed. It is the W5-7 clamp source: the seq the edge has actually drained
      * (verified + filtered), never the raw {@code HEARTBEAT.latestSeq} which may run ahead.
      */
     private final LongSupplier drainedCursor;
 
-    /** Reader-set, session-read: false ⇒ legacy passthrough (byte-identical), true ⇒ translate. */
+    /** Reader-set, session-read: false means legacy passthrough (byte-identical), true means translate. */
     private volatile boolean watchConnection;
 
     /**
-     * Session-thread-only: the watch awaiting the connection-level {@code SUBSCRIBE_OK} → its
+     * Session-thread-only: the watch awaiting the connection-level {@code SUBSCRIBE_OK} to its
      * {@code WATCH_CREATED}. Set by the driver immediately before it drives the first
      * authorized watch's {@code onSubscribe}; consumed by the next {@code SUBSCRIBE_OK}.
      */
@@ -100,11 +99,11 @@ final class WatchMultiplexSink implements TransportSink {
 
     /**
      * Session-thread-only: the watch that <b>owns the shared connection drain</b> (the first
-     * authorized watch, whose {@code onSubscribe} started the drain) — the id every
+     * authorized watch, whose {@code onSubscribe} started the drain) - the id every
      * {@code WATCH_SNAPSHOT_*} frame is tagged with. Captured ONCE when the drain starts, NOT
      * re-evaluated per frame: a connection-level snapshot transfer pauses across ticks on
      * backpressure, and if the owner cancels mid-transfer, {@code firstLiveWatchId()} would flip to
-     * a sibling that was acked {@code TAIL} — mis-attributing the snapshot to a watch promised none
+     * a sibling that was acked {@code TAIL} - mis-attributing the snapshot to a watch promised none
      * (W2-8 / W5-5). Tagging the fixed owner means a snapshot to a since-canceled owner is simply
      * discarded by the client (its watch is gone), never mis-delivered to a live sibling.
      */
@@ -120,7 +119,7 @@ final class WatchMultiplexSink implements TransportSink {
     }
 
     // -----------------------------------------------------------------------
-    // Router-facing controls (driver, session thread — except setWatchConnection)
+    // Router-facing controls (driver, session thread - except setWatchConnection)
     // -----------------------------------------------------------------------
 
     /** Flips this connection to watch translation (reader thread, on the first WATCH_CREATE). */
@@ -162,13 +161,13 @@ final class WatchMultiplexSink implements TransportSink {
     }
 
     // -----------------------------------------------------------------------
-    // TransportSink — the core's outbound boundary
+    // TransportSink - the core's outbound boundary
     // -----------------------------------------------------------------------
 
     @Override
     public boolean offer(EdgeFrame frame) {
         if (!watchConnection) {
-            return delegate.offer(frame); // legacy passthrough — byte-identical
+            return delegate.offer(frame); // legacy passthrough - byte-identical
         }
         return translate(frame);
     }
@@ -205,7 +204,7 @@ final class WatchMultiplexSink implements TransportSink {
             case EdgeFrame.SnapshotEnd se -> delegate.offer(new EdgeFrame.WatchSnapshotEnd(
                     snapshotOwnerWatchId, GID_0, se.snapshotSeq()));
             // The only ErrorClose the core OFFERS is the non-fatal DEMOTED_TO_CATCHUP notice
-            // (terminal closes go via close()). Forward it verbatim — a driver MUST tolerate
+            // (terminal closes go via close()). Forward it verbatim - a driver MUST tolerate
             // the connection-level demotion (W8-6); the WATCH_SNAPSHOT_* catch-up follows.
             case EdgeFrame.ErrorClose ec -> delegate.offer(ec);
             // Defensive: any other frame (none expected from the core on a watch connection)
@@ -224,7 +223,7 @@ final class WatchMultiplexSink implements TransportSink {
 
     private boolean translateNotify(EdgeFrame.Notify n) {
         // Fan one connection-level NOTIFY out to each live watch, filtered by its target. One
-        // WATCH_EVENT per (matching) shard-commit (W5-6) — never split, never coalesced. A
+        // WATCH_EVENT per (matching) shard-commit (W5-6) - never split, never coalesced. A
         // refused delegate.offer is the W8-6 shared-fate backpressure: return false so the core
         // demotes (clears in-flight, snapshots); the undelivered tail is re-driven and the
         // driver dedups by S (W6-1). Iterate watches outer / notifications inner so each
@@ -234,12 +233,12 @@ final class WatchMultiplexSink implements TransportSink {
             for (CommitNotification cn : n.notifications()) {
                 List<EdgeFrame.WatchChange> changes = filter(cn, target);
                 if (changes.isEmpty()) {
-                    continue; // no matching key for this watch — cursor advances via the next event / progress
+                    continue; // no matching key for this watch - cursor advances via the next event / progress
                 }
                 EdgeFrame.WatchEvent event = new EdgeFrame.WatchEvent(
                         entry.watchId(), GID_0, cn.seq(), cn.commitTimestampMillis(), changes);
                 if (!delegate.offer(event)) {
-                    return false; // would block — core demotes (W8-6); remaining events via snapshot resync
+                    return false; // would block - core demotes (W8-6); remaining events via snapshot resync
                 }
             }
         }
@@ -248,7 +247,7 @@ final class WatchMultiplexSink implements TransportSink {
 
     private boolean translateHeartbeat(EdgeFrame.Heartbeat hb) {
         // The bookmark (W5-7): carry the drained cursor (verified + filtered frontier), clamped
-        // to never exceed it — NOT the raw HEARTBEAT.latestSeq, which can run ahead of what the
+        // to never exceed it - NOT the raw HEARTBEAT.latestSeq, which can run ahead of what the
         // edge has examined (a bookmark past unexamined commits would be a silent gap, W6-1).
         long drainedS = Math.max(0L, drainedCursor.getAsLong());
         WatchCursor cursor = WatchCursor.of(GID_0, drainedS);
@@ -261,9 +260,9 @@ final class WatchMultiplexSink implements TransportSink {
     }
 
     /**
-     * The per-watch routing filter (RFC §2 §5 / W5-6): the matching changes of one shard-commit
-     * for one target. Distinct from authorization (the gate already authorized the whole
-     * target) — this is pure routing over the already-verified, server-authoritative stream.
+     * The per-watch routing filter (W5-6): the matching changes of one shard-commit for one
+     * target. Distinct from authorization (the gate already authorized the whole target) -
+     * this is pure routing over the already-verified, server-authoritative stream.
      */
     private static List<EdgeFrame.WatchChange> filter(CommitNotification cn, WatchTarget target) {
         List<ConfigMutation> mutations = cn.delta().mutations();

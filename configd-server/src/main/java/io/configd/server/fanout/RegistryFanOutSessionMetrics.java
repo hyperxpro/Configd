@@ -9,29 +9,28 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 
 /**
- * {@link FanOutSessionMetrics} backed by the server's {@link MetricsRegistry} (C1 design §4
- * metric table; charter §6 rule 8). Mirrors the leaf-module metrics-sink idiom: the
+ * {@link FanOutSessionMetrics} backed by the server's {@link MetricsRegistry}. Mirrors the leaf-module metrics-sink idiom: the
  * distribution-service stays observability-free behind the {@link FanOutSessionMetrics}
  * interface, and the live server bridges each callback to a registry counter / gauge here.
  *
- * <h2>Eager registration (RR-013)</h2>
- * Every series this class can ever write is registered in the constructor — including the
- * per-reason demotion / close counters and the connected-subscribers / queue-depth gauges —
+ * <h2>Eager registration</h2>
+ * Every series this class can ever write is registered in the constructor - including the
+ * per-reason demotion / close counters and the connected-subscribers / queue-depth gauges -
  * so {@code PrometheusExporter} emits a zero-valued time series from the first scrape rather
- * than a metric that only blinks into existence after the first event (the RR-013 lesson: no
+ * than a metric that only blinks into existence after the first event (no
  * metric that production code never writes, and conversely no metric a scrape can't find until
  * it first fires).
  *
  * <h2>Label encoding</h2>
  * {@link MetricsRegistry} has no native label support, so the design's
  * {@code edge_fanout_demotions_total{reason=ack_lag}} becomes a distinct counter per reason
- * (e.g. {@code edge.fanout.demotions.ack_lag} → {@code edge_fanout_demotions_ack_lag_total}).
+ * (e.g. {@code edge.fanout.demotions.ack_lag} -> {@code edge_fanout_demotions_ack_lag_total}).
  * An unknown reason falls back to an {@code other} bucket so a new reason can never silently
  * vanish.
  *
  * <h2>Per-session gauges</h2>
  * {@code edge_fanout_queue_depth} is process-wide here (the max observed across live sessions),
- * not per-session — the registry is a flat process registry with no per-session label. The
+ * not per-session - the registry is a flat process registry with no per-session label. The
  * connected-subscribers gauge is the live count. Both are honest process-level aggregates; a
  * per-session breakdown would need a label-capable backend (priced, not built).
  *
@@ -54,7 +53,7 @@ public final class RegistryFanOutSessionMetrics implements FanOutSessionMetrics 
     private final MetricsRegistry.Counter subscribeTail;
     private final MetricsRegistry.Counter subscribeSnapshotFirst;
 
-    // --- C4 slow-consumer policy counters (SlowConsumerGovernor; design §2) ---
+    // --- Slow-consumer policy counters (SlowConsumerGovernor) ---
     private final MetricsRegistry.Counter slowTransitions;
     private final MetricsRegistry.Counter quarantines;
     private final MetricsRegistry.Counter unhealthy;
@@ -66,8 +65,7 @@ public final class RegistryFanOutSessionMetrics implements FanOutSessionMetrics 
     private final AtomicInteger connectedSubscribers = new AtomicInteger(0);
     private final AtomicLong subscribeHorizonDistance = new AtomicLong(0);
 
-    // C4: per-state tracked-identity tallies (the design's consumer_state{state} gauge,
-    // per-suffix encoded for the label-free registry).
+    // Per-state tracked-identity tallies (per-suffix encoded for the label-free registry).
     private final AtomicInteger consumersHealthy = new AtomicInteger(0);
     private final AtomicInteger consumersSlow = new AtomicInteger(0);
     private final AtomicInteger consumersCatchup = new AtomicInteger(0);
@@ -75,14 +73,14 @@ public final class RegistryFanOutSessionMetrics implements FanOutSessionMetrics 
     private final AtomicInteger consumersUnhealthy = new AtomicInteger(0);
 
     public RegistryFanOutSessionMetrics(MetricsRegistry registry) {
-        // Counters / histogram — registering them touches the registry so the series exists.
+        // Counters / histogram - registering them touches the registry so the series exists.
         this.heartbeats = registry.counter("edge.fanout.heartbeats");
         this.slowConsumerWarnings = registry.counter("edge.fanout.slow_consumer_warnings");
         this.notifyBatches = registry.counter("edge.fanout.notify_batches");
         this.notifyBatchSize = registry.histogram("edge.fanout.notify_batch_size");
         this.snapshotTransfers = registry.counter("edge.fanout.snapshot_transfers");
 
-        // Pre-register one demotion + close counter per known reason (RR-013: no metric that
+        // Pre-register one demotion + close counter per known reason (no metric that
         // only appears after the first event). The DemotionEvent reasons are the canonical set.
         this.demotionsByReason = Map.of(
                 DemotionEvent.REASON_QUEUE_OVERFLOW,
@@ -108,7 +106,7 @@ public final class RegistryFanOutSessionMetrics implements FanOutSessionMetrics 
                 "transport_gone", registry.counter("edge.fanout.sessions_closed.transport_gone"));
         this.closedOther = registry.counter("edge.fanout.sessions_closed.other");
 
-        // C4 slow-consumer policy series (eager, RR-013). One counter per governor
+        // Slow-consumer policy series (eagerly registered). One counter per governor
         // transition family: SLOW promotion, quarantine, unhealthy escalation, cooldown
         // refusal, cooldown readmission.
         this.slowTransitions = registry.counter("edge.fanout.slow_transitions");
@@ -117,10 +115,10 @@ public final class RegistryFanOutSessionMetrics implements FanOutSessionMetrics 
         this.reconnectsRefused = registry.counter("edge.fanout.reconnects_refused");
         this.readmissions = registry.counter("edge.fanout.readmissions");
 
-        // Admission-bound refusals (hard rule 4: edge.fanout.transport.maxSessions).
+        // Admission-bound refusals (edge.fanout.transport.maxSessions).
         this.sessionsRefused = registry.counter("edge.fanout.sessions_refused");
 
-        // C3: the subscribe-time replay-vs-re-bootstrap decision (per-reason-suffix
+        // The subscribe-time replay-vs-re-bootstrap decision (per-reason-suffix
         // convention) + the horizon-distance input as a last-decision gauge.
         this.subscribeTail = registry.counter("edge.fanout.subscribe.tail");
         this.subscribeSnapshotFirst = registry.counter("edge.fanout.subscribe.snapshot_first");
@@ -130,7 +128,7 @@ public final class RegistryFanOutSessionMetrics implements FanOutSessionMetrics 
         registry.gauge("edge.fanout.connected_subscribers", connectedSubscribers::get);
         registry.gauge("edge.fanout.subscribe.horizon_distance", subscribeHorizonDistance::get);
 
-        // C4: per-state consumer tallies (design §2 consumer_state gauge, per-suffix).
+        // Per-state consumer tallies (per-suffix encoded).
         registry.gauge("edge.fanout.consumer_state.healthy", consumersHealthy::get);
         registry.gauge("edge.fanout.consumer_state.slow", consumersSlow::get);
         registry.gauge("edge.fanout.consumer_state.catchup", consumersCatchup::get);
@@ -207,7 +205,7 @@ public final class RegistryFanOutSessionMetrics implements FanOutSessionMetrics 
         subscribeHorizonDistance.set(horizonDistance);
     }
 
-    // --- C4 slow-consumer policy (SlowConsumerGovernor) ---
+    // --- Slow-consumer policy (SlowConsumerGovernor) ---
 
     @Override
     public void onSlowTransition() {

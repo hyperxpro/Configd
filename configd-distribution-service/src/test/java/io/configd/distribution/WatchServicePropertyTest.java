@@ -23,7 +23,7 @@ class WatchServicePropertyTest {
 
     private static WatchService createService() {
         TestClock clock = new TestClock();
-        // 0-delay coalescing for property tests — immediate flush
+        // 0-delay coalescing for property tests - immediate flush
         WatchCoalescer coalescer = new WatchCoalescer(clock, 1L, 10_000);
         return new WatchService(coalescer);
     }
@@ -121,7 +121,7 @@ class WatchServicePropertyTest {
     }
 
     /**
-     * INV-W4: Coalescing preserves all mutations — no mutations are lost.
+     * INV-W4: Coalescing preserves all mutations - no mutations are lost.
      * The union of mutations across all events for a watcher equals the
      * set of matching committed mutations.
      */
@@ -130,7 +130,7 @@ class WatchServicePropertyTest {
             @ForAll @IntRange(min = 1, max = 50) int numMutations) {
 
         TestClock clock = new TestClock();
-        // 100ms window — forces coalescing
+        // 100ms window - forces coalescing
         WatchCoalescer coalescer = new WatchCoalescer(clock, 100_000_000L, 10_000);
         WatchService service = new WatchService(coalescer);
 

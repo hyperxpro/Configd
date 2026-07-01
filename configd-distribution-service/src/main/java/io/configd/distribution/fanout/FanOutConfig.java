@@ -1,13 +1,12 @@
 package io.configd.distribution.fanout;
 
 /**
- * Named, validated configuration for a {@link FanOutSessionCore} (C1 design §4; charter
- * §6 rule 8 — every policy threshold is a named config with a metric). Defaults match
- * the design §4 table; see {@link #defaults()}.
+ * Named, validated configuration for a {@link FanOutSessionCore}. Every policy
+ * threshold is a named config with a metric. Defaults: see {@link #defaults()}.
  *
  * @param queueFrames           bounded outbound queue depth: max NOTIFY frames offered
  *                              but not yet acknowledged before overflow demotion
- *                              (design §4 {@code edge.fanout.session.queueFrames}, default 256;
+ *                              ({@code edge.fanout.session.queueFrames}, default 256;
  *                              metric {@code edge_fanout_queue_depth})
  * @param queueWarnPct          slow-consumer warning threshold as a percent of
  *                              {@code queueFrames} (default 80; metric
@@ -24,7 +23,7 @@ package io.configd.distribution.fanout;
  * @param heartbeatMs           heartbeat cadence when otherwise idle
  *                              ({@code edge.fanout.heartbeatMs}, default 250;
  *                              metric {@code edge_fanout_heartbeats_total})
- * @param idlePollMs            adaptive idle-poll backoff cap (design §4; default 5)
+ * @param idlePollMs            adaptive idle-poll backoff cap (default 5)
  * @param snapshotChunkBytes    snapshot chunk payload size (default 1 MiB; bounded at
  *                              {@link io.configd.distribution.wire.EdgeFrameCodec#MAX_SNAPSHOT_CHUNK_BYTES})
  */
@@ -79,7 +78,7 @@ public record FanOutConfig(
         }
     }
 
-    /** The design §4 defaults: 256 / 80% / 64 / 256 KiB / 8192 / 250 ms / 5 ms / 1 MiB. */
+    /** Defaults: 256 / 80% / 64 / 256 KiB / 8192 / 250 ms / 5 ms / 1 MiB. */
     public static FanOutConfig defaults() {
         return new FanOutConfig(
                 256,        // queueFrames

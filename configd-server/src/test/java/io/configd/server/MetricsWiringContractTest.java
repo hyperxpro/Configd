@@ -32,18 +32,18 @@ import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * S6/WS-A KEYSTONE — proves the control-plane SLO metric series are RECORDED with real data when
+ * S6/WS-A KEYSTONE - proves the control-plane SLO metric series are RECORDED with real data when
  * their real paths execute, closing the S1 "9 SLO metrics hardwired to zero" defect that survived
  * the F5/H-001 closure (which built the <em>registration</em> but never the <em>wire-up</em>: every
  * record handle was dead and the raft-pending gauge was literally {@code () -> 0L}).
  *
  * <p>Unlike {@code ConfigdMetricsTest} (which records samples directly onto the metric handles),
- * each test here drives the REAL production seam — the commit-confirmed {@code raftProposer} and the
- * {@code ConfigStateMachine} apply path wired through {@link ServerStateMachineMetrics} — then scrapes
+ * each test here drives the REAL production seam - the commit-confirmed {@code raftProposer} and the
+ * {@code ConfigStateMachine} apply path wired through {@link ServerStateMachineMetrics} - then scrapes
  * via a production-configured {@link PrometheusExporter} (with {@code histogramSchedules()}, so the
  * {@code _bucket{le=...}} series the burn-rate alerts query actually render) and asserts the series
  * moved off zero. Several methods double as the "alert fires when its condition is injected" tests
- * required by the charter (availability → write_commit_failed; 429-rate → write_rejected_overloaded).
+ * required by the charter (availability -> write_commit_failed; 429-rate -> write_rejected_overloaded).
  */
 class MetricsWiringContractTest {
 
@@ -76,7 +76,7 @@ class MetricsWiringContractTest {
         return io.configd.store.CommandCodec.encodePut(key, value.getBytes(StandardCharsets.UTF_8));
     }
 
-    /** Minimal raft state machine for the forced-leader cases (nothing ever commits → never applies). */
+    /** Minimal raft state machine for the forced-leader cases (nothing ever commits -> never applies). */
     private static final class NoopSM implements StateMachine {
         @Override public long apply(long index, long term, byte[] command) { return StateMachine.NON_MUTATING; }
         @Override public byte[] snapshot() { return new byte[0]; }
@@ -141,7 +141,7 @@ class MetricsWiringContractTest {
             assertTrue(seriesValue(scrape, "configd_write_commit_seconds_count") >= 1.0,
                     "end-to-end commit latency must be recorded (write_commit_seconds)");
             // The exact bucket series the WriteCommitFastBurn alert queries MUST render (proves the
-            // exporter was given histogramSchedules — the third blind-dashboard defect this closes).
+            // exporter was given histogramSchedules - the third blind-dashboard defect this closes).
             assertTrue(scrape.contains("configd_write_commit_seconds_bucket{le=\"0.150\"}"),
                     "the le=0.150 bucket the burn-rate alert queries must be emitted:\n" + scrape);
             assertTrue(seriesValue(scrape, "configd_apply_seconds_count") >= 1.0,
@@ -180,7 +180,7 @@ class MetricsWiringContractTest {
 
     @Test
     void overloadedWriteRecordsRejectCounter() throws Exception {
-        // 429-rate alert "fires" test (RR-110 / D-1): a bounded-queue shed must increment the
+        // 429-rate alert "fires" test: a bounded-queue shed must increment the
         // overload-reject counter that backs the Retry-After 429 path.
         ScheduledExecutorService exec = raftExecutor();
         try {
@@ -208,7 +208,7 @@ class MetricsWiringContractTest {
     @Test
     void gaugesAndElectionsCounterAreNotHardwiredToZero() {
         // Proves the raft_pending_apply_entries gauge reads its supplier (NOT the old () -> 0L), and
-        // the elections counter + subscription gauge render real values — the dashboard panels 4/5/6.
+        // the elections counter + subscription gauge render real values - the dashboard panels 4/5/6.
         MetricsRegistry registry = new MetricsRegistry();
         AtomicLong pendingApply = new AtomicLong(42);
         ConfigdMetrics metrics = new ConfigdMetrics(registry, pendingApply::get);

@@ -43,10 +43,10 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 /**
- * Multi-Raft Phase 1 — Seam D: the LIVE write/read routing proof. Drives the REAL production seams
+ * The LIVE write/read routing proof. Drives the REAL production seams
  * ({@link ConfigdServer#raftProposer(MultiRaftDriver, StaticShardMap, long, ConfigdMetrics)} and
  * {@link ConfigdServer#shardedConfigReader}) over N real single-node groups (built via the Seam-C
- * {@code buildRaftGroup} + owner pool), so this is live routing — not a sim.
+ * {@code buildRaftGroup} + owner pool), so this is live routing - not a sim.
  *
  * <ul>
  *   <li><b>Write routing + isolation (S2/S4):</b> a write for key k routes to {@code shardFor(GLOBAL,k)}'s
@@ -125,7 +125,7 @@ class ShardedRoutingTest {
             assertInstanceOf(ConfigWriteService.ProposeCommitResult.Committed.class,
                     proposer.propose(SCOPE, List.of(key), put(key, "val-" + key)));
         }
-        // The reader resolves the SAME shard the writer used → every committed key is visible.
+        // The reader resolves the SAME shard the writer used -> every committed key is visible.
         for (String key : keys) {
             io.configd.store.ReadResult rr = reader.get(key);
             assertTrue(rr.found(), "sharded reader must find committed key '" + key + "'");
@@ -165,7 +165,7 @@ class ShardedRoutingTest {
         // Find two keys that resolve to DIFFERENT shards.
         String[] spanning = twoKeysOnDifferentShards(fx.shardMap);
         var result = proposer.propose(SCOPE, List.of(spanning[0], spanning[1]),
-                put(spanning[0], "x")); // command body is irrelevant — rejected pre-append
+                put(spanning[0], "x")); // command body is irrelevant - rejected pre-append
         var rejected = assertInstanceOf(ConfigWriteService.ProposeCommitResult.CrossShardRejected.class,
                 result, "a multi-key write spanning shards must be rejected (DISCLAIM)");
         assertTrue(rejected.reason().contains("cross-shard"),
@@ -189,7 +189,7 @@ class ShardedRoutingTest {
             io.configd.raft.RaftNode owner = fx.driver.getGroup(fx.shardMap.shardFor(scope, key));
             return owner != null ? owner.leaderId() : null;
         };
-        // Every group is its own single-node leader (NODE), so the hint for ANY key is NODE — but the
+        // Every group is its own single-node leader (NODE), so the hint for ANY key is NODE - but the
         // point is that it is resolved on the OWNING shard's node, not a captured group-0 node.
         for (String key : List.of("alpha", "bravo", "charlie", "delta", "echo")) {
             int shard = fx.shardMap.shardFor(SCOPE, key);
@@ -212,7 +212,7 @@ class ShardedRoutingTest {
         // Stale path doesn't confirm leadership, but the service requires a (now keyed+scoped) confirmer.
         ConfigReadService readService = new ConfigReadService(reader, (scope, key) -> true);
 
-        // A key on a shard k≠0 — so reading the captured GROUP-0 store (the pre-fix bug) would 404.
+        // A key on a shard k!=0 - so reading the captured GROUP-0 store (the pre-fix bug) would 404.
         String key = keyOnNonZeroShard(fx.shardMap);
         int shard = fx.shardMap.shardFor(SCOPE, key);
         assertNotEquals(0, shard, "test key must be on a non-zero shard for non-vacuity");
@@ -252,7 +252,7 @@ class ShardedRoutingTest {
                 ConfigdServer.shardedConfigReader(fx.shardMap, fx.runtimesByGid, fx.runtimes, ConfigScope.GLOBAL);
         ConfigReadService readService = new ConfigReadService(reader, (scope, key) -> true);
 
-        // For EVERY scope, a write to (scope, key) is read back from (scope, key). At N=1 every scope ⇒
+        // For EVERY scope, a write to (scope, key) is read back from (scope, key). At N=1 every scope =>
         // group 0, so read-your-writes holds and is byte-identical regardless of scope (the increment is
         // a no-op on routing at N=1).
         for (ConfigScope scope : ConfigScope.values()) {
@@ -283,13 +283,13 @@ class ShardedRoutingTest {
         int globalShard = fx.shardMap.shardFor(ConfigScope.GLOBAL, key);
         assertNotEquals(globalShard, regionalShard, "vacuity: the test key must route differently per scope");
 
-        // Write under REGIONAL → lands in REGIONAL's shard.
+        // Write under REGIONAL -> lands in REGIONAL's shard.
         assertInstanceOf(ConfigWriteService.WriteResult.Committed.class,
                 writeService.put(key, "regional-value".getBytes(StandardCharsets.UTF_8), ConfigScope.REGIONAL));
 
         // Read-your-writes holds ONLY for the matching scope: a REGIONAL read hits its shard; a GLOBAL
         // read routes to a DIFFERENT shard and misses. This proves the read path actually routes by the
-        // caller's scope (not vacuously GLOBAL) — the core read-your-writes-per-scope guarantee at N>1.
+        // caller's scope (not vacuously GLOBAL) - the core read-your-writes-per-scope guarantee at N>1.
         io.configd.store.ReadResult matched = reader.get(ConfigScope.REGIONAL, key);
         assertTrue(matched.found(), "a REGIONAL read of a REGIONAL write must hit its shard " + regionalShard);
         assertEquals("regional-value", new String(matched.value(), StandardCharsets.UTF_8));

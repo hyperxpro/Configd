@@ -9,20 +9,20 @@ import org.openjdk.jcstress.annotations.State;
 import org.openjdk.jcstress.infra.results.I_Result;
 
 /**
- * Phase 0 — Workstream B — the JMM micro-race behind the H-3 monitoring snapshot.
+ * Pins the JMM micro-race behind the monitoring snapshot publication.
  *
- * <p>H-3 (the monitoring-read hazard): once owners are bound and {@code tick()} fans out, a metrics
- * scrape no longer runs on the group's owner, so the old direct reads of non-volatile consensus state
- * ({@code currentTerm}, {@code log().commitIndex()}, …) become off-owner races. The resolution
+ * <p>Once owners are bound and {@code tick()} fans out, a metrics scrape no longer runs on the
+ * group's owner, so the old direct reads of non-volatile consensus state
+ * ({@code currentTerm}, {@code log().commitIndex()}, ...) become off-owner races. The resolution
  * ({@code RaftNode.monitorView()}) is the same primitive {@link VersionedConfigStoreReadTest} relies
  * on: the owner publishes an <b>immutable snapshot</b> through a <b>single volatile reference</b>, and
  * any thread reads it with one volatile load. The macro proof (a real {@code RaftNode} +
  * {@code RaftMonitorViewConcurrencyTest}) shows coherence end-to-end; this file pins the underlying
- * memory-model fact: <b>a multi-field snapshot published this way can never be observed torn</b> — and,
+ * memory-model fact: <b>a multi-field snapshot published this way can never be observed torn</b> - and,
  * via the control, that the immutable-record discipline is what makes it so.
  *
  * <p>Both states mirror the mechanism (a {@code volatile} reference to an immutable carrier vs. plain
- * per-field publication), not the whole {@code RaftMetrics} record — the property under test is a
+ * per-field publication), not the whole {@code RaftMetrics} record - the property under test is a
  * property of the publication primitive, exactly as {@link RaftOwnerThreadGuardTest} mirrors the
  * tripwire field rather than importing {@code RaftNode}.
  */
@@ -32,9 +32,9 @@ public final class RaftMonitorViewPublicationTest {
     }
 
     private static final int COHERENT = 1;
-    private static final int TORN = 99;   // any cross-publication splice — surfaces as a distinct outcome
+    private static final int TORN = 99;   // any cross-publication splice - surfaces as a distinct outcome
 
-    /** Immutable multi-field carrier — the {@code RaftMetrics} stand-in. By construction every instance
+    /** Immutable multi-field carrier - the {@code RaftMetrics} stand-in. By construction every instance
      *  satisfies {@code b == a + 1 && c == a + 2}; a reader that ever sees that relation broken has
      *  observed a torn read. */
     static final class View {
@@ -46,11 +46,11 @@ public final class RaftMonitorViewPublicationTest {
     }
 
     /**
-     * GATED / CLEAN — the load-bearing H-3 property: an immutable snapshot published through one
+     * The load-bearing property: an immutable snapshot published through one
      * {@code volatile} reference is <b>never observed torn</b>. The owner republishes a new {@code View}
      * (the end-of-tick {@code publishMonitorView()}); the foreign reader does one volatile load and
-     * checks the carrier's internal relation. It can only ever see the seed or the published instance —
-     * each internally coherent — so {@link #TORN} is JMM-unreachable. If jcstress ever reports TORN, the
+     * checks the carrier's internal relation. It can only ever see the seed or the published instance -
+     * each internally coherent - so {@link #TORN} is JMM-unreachable. If jcstress ever reports TORN, the
      * monitorView() publication has a visibility hole and every "monitoring read is coherent" claim
      * downstream is worthless.
      */
@@ -69,16 +69,16 @@ public final class RaftMonitorViewPublicationTest {
 
         @Actor
         public void reader(I_Result r) {
-            View v = view;                   // one volatile load — the monitorView() read
+            View v = view;                   // one volatile load - the monitorView() read
             r.r1 = v.coherent() ? COHERENT : TORN;
         }
     }
 
     /**
-     * NOT GATED — intentionally tear-exposing ("test the tester"): proves the immutable-record discipline
+     * Intentionally tear-exposing ("test the tester"): proves the immutable-record discipline
      * is load-bearing. Here the same three fields are published <b>per-field</b> (plain writes, no
      * immutable carrier, no single-reference publish). A reader can observe a later field updated while an
-     * earlier one is not — the relation breaks — so {@link #TORN} is an <b>expected</b> outcome. This is
+     * earlier one is not - the relation breaks - so {@link #TORN} is an <b>expected</b> outcome. This is
      * the corruption the published-immutable-snapshot prevents, and the reason monitors must read
      * {@code monitorView()} rather than a bag of separately-updated fields. Excluded from the gate batch
      * (a tear here is correct), like {@link RaftOwnerThreadGuardTest.UnboundGuardIsInertAndRaces} and

@@ -97,7 +97,7 @@ public final class RateLimiter {
                 newPermitsScaled = (long) (elapsedNanos * permitsPerSecond / 1_000_000_000.0 * SCALE);
                 if (newPermitsScaled > 0) {
                     // Try to claim this refill window. If another thread already
-                    // advanced the clock, discard our computed permits — they were
+                    // advanced the clock, discard our computed permits - they were
                     // already credited by the winning thread. Without this guard,
                     // concurrent losers double-count the same time window.
                     if (!lastRefillNanos.compareAndSet(lastRefill, now)) {
@@ -123,7 +123,7 @@ public final class RateLimiter {
             if (storedPermitsScaled.compareAndSet(currentScaled, afterAcquire)) {
                 return true;
             }
-            // CAS failed — another thread modified the state; retry
+            // CAS failed - another thread modified the state; retry
         }
     }
 

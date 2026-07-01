@@ -23,14 +23,13 @@ import java.util.random.RandomGeneratorFactory;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * First-class bounded-progress LIVENESS verdict for the consensus plane (Session 4 /
- * Workstream A2, EXP-002). Closes the asymmetry the RR-095 work exposed: safety had
+ * First-class bounded-progress LIVENESS verdict for the consensus plane. Closes the asymmetry the prior stall work exposed: safety had
  * 10k-seed sweep coverage, liveness had only anecdotes.
  * <p>
  * Safety sweeps ask "is anything incorrect ever observed". This sweep asks the dual
  * liveness question with a DEADLINE, which is the only honest way to tell a benign
- * never-healed-schedule stall (RR-095 — no recovery was ever possible) apart from a
- * recoverable-but-stuck defect (RR-103 class — the network healed but the cluster did not
+ * never-healed-schedule stall (no recovery was ever possible) apart from a
+ * recoverable-but-stuck defect (the network healed but the cluster did not
  * recover in bounded time). The bound is applied ONLY after the fault clears, so a
  * never-healed schedule is correctly NOT a violation.
  * <p>
@@ -38,14 +37,14 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * <ol>
  *   <li><b>Bootstrap liveness:</b> a fresh 5-node cluster must elect a leader within
  *       {@link #ELECT_BOUND} ticks and commit a baseline write.</li>
- *   <li><b>Shatter:</b> partition into sub-quorum components (no group ≥ 3) — the cluster
+ *   <li><b>Shatter:</b> partition into sub-quorum components (no group >= 3) - the cluster
  *       MUST stop having a leader within an election timeout (non-vacuity: the disruption is
- *       real; this is the temporary analog of an RR-095 never-healed schedule).</li>
+ *       real; this is the temporary analog of a never-healed schedule).</li>
  *   <li><b>Post-heal election (bounded progress):</b> heal fully; a leader MUST be
  *       (re-)elected within {@link #RECOVER_BOUND} ticks of the heal.</li>
  *   <li><b>Post-heal propagation (bounded progress):</b> a write proposed on the recovered
  *       leader MUST commit and propagate to ALL nodes within {@link #PROPAGATE_BOUND} ticks
- *       — the consensus-plane counterpart of "committed write propagates within the
+ *       -  the consensus-plane counterpart of "committed write propagates within the
  *       staleness bound after edge reconnect".</li>
  * </ol>
  * A deadline miss fails the test WITH the seed (deterministic replay/shrink handle), exactly
@@ -213,8 +212,8 @@ class LivenessBoundedProgressSweepTest {
             worstReElect = Math.max(worstReElect, reElectTicks);
             // Soak the partition: the majority leader keeps committing writes the minority
             // can't see AND keeps heartbeating the two dropped minority peers for >10
-            // heartbeat intervals — so its per-peer inflight window toward each pins at the
-            // cap. This is the precondition RR-103 makes permanent; without it the partition
+            // heartbeat intervals - so its per-peer inflight window toward each pins at the
+            // cap. This precondition caps the partition
             // is too short to pin the window and the leak never triggers.
             for (int t = 0; t < 700; t++) {
                 c.step();
@@ -226,9 +225,9 @@ class LivenessBoundedProgressSweepTest {
             }
             long preHealCommit = c.maxCommitIndex(); // committed only on the majority
 
-            // (3) Heal → the minority rejoins and the WHOLE cluster must return to full
+            // (3) Heal -> the minority rejoins and the WHOLE cluster must return to full
             //     service (a write committed on ALL N nodes) within a bound. This is the
-            //     propagation-after-reconnect liveness check — and exactly the path RR-103
+            //     propagation-after-reconnect liveness check - and exactly the path
             //     broke (the new leader's inflight window toward the rejoining minority).
             c.net.healAll();
             c.net.setDropRate(0.0);

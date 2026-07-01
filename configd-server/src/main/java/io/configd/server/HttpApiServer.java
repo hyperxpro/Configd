@@ -31,10 +31,9 @@ import java.util.function.BiFunction;
  * {@link HttpServer} (or {@link HttpsServer} when TLS is configured) and is a <b>thin transport
  * shell</b>: it maps each {@link HttpExchange} to an {@link AdminApiHandler.AdminRequest}, delegates
  * the decision to the shared {@link AdminApiHandler}, and writes back the returned
- * {@link AdminApiHandler.AdminResponse}. All S7 decision logic (authn/authz/audit/replay/429/
+ * {@link AdminApiHandler.AdminResponse}. All security decision logic (authn/authz/audit/replay/429/
  * strong-read, the {@code /metrics} bearer gate, routing, method validation) lives in
- * {@link AdminApiHandler} so it is proven once and re-proven identically on the Netty adapter
- * (ADR-0043 M2; DR-N2 equivalence-by-construction).
+ * {@link AdminApiHandler} so it is proven once and re-proven identically on the Netty adapter.
  *
  * <p>Endpoints: {@code GET /health/live}, {@code GET /health/ready}, {@code GET /metrics},
  * {@code GET|PUT|DELETE /v1/config/{key}}.
@@ -55,7 +54,7 @@ public final class HttpApiServer {
      * @param readService    config read service for linearizable reads (may be null)
      * @param authInterceptor auth interceptor, or null if auth disabled
      * @param aclService     ACL service, or null if ACLs disabled
-     * @param strongReadPolicy strong-read key-class policy (ADR-0030 INV-1 / RR-020); must not be null
+     * @param strongReadPolicy strong-read key-class policy; must not be null
      * @param leaderHintSupplier supplies the currently-known leader NodeId for
      *                       {@code X-Leader-Hint} (may return null when unknown); must not be null
      */
@@ -76,11 +75,10 @@ public final class HttpApiServer {
     }
 
     /**
-     * Full constructor adding the S7 security controls. Both are optional:
+     * Full constructor adding the security controls. Both are optional:
      *
      * @param auditLog     tamper-evident audit log; may be null to disable auditing
-     * @param replayGuard  replay protection; may be null (default off — opt-in
-     *                     for pre-production back-compat, charter D-3)
+     * @param replayGuard  replay protection; may be null (default off, opt-in for pre-production back-compat)
      */
     public HttpApiServer(int port,
                          SSLContext sslContext,
@@ -107,7 +105,7 @@ public final class HttpApiServer {
                 writeService, readService, authInterceptor, aclService, strongReadPolicy,
                 leaderHintSupplier, auditLog, replayGuard);
 
-        // A single root context: the shared handler does its own exact-match routing (DR-N4),
+        // A single root context: the shared handler does its own exact-match routing,
         // so a suffix variant of a fixed endpoint cannot be served by a prefix-matched context.
         server.createContext("/", new RootHandler(handler));
         server.setExecutor(Executors.newVirtualThreadPerTaskExecutor());

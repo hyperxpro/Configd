@@ -28,27 +28,26 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * Phase 0 — Workstream B — Stage 2 — M2b S1: the three DEFERRED rehoming sub-mechanisms the H-4 safety
- * proofs depend on, built additively (dormant in prod / inert at N=1, D-016). M2a built the handoff
- * mechanism (quiesce→publish→adopt) but deferred:
+ * Unit tests for the three deferred rehoming sub-mechanisms that the handoff safety model depends on.
+ * The core handoff mechanism (quiesce - publish - adopt) was built first; this covers:
  *
  * <ul>
- *   <li><b>quiesce</b> — {@link RaftNode#quiesceForHandoff()} force-syncs buffered entries on the LOSING
- *       owner BEFORE the routing flip + detach, so the gaining owner adopts a clean, durable state
+ *   <li><b>quiesce</b> - {@link RaftNode#quiesceForHandoff()} force-syncs buffered entries on the
+ *       LOSING owner BEFORE the routing flip and detach, so the gaining owner adopts a clean,
+ *       durable state
  *       ({@link #quiesce_flushesBufferedEntriesDurableAcrossRehome()}).</li>
- *   <li><b>FlushScheduler retarget</b> — {@link MultiRaftDriver#dispatchFlush} re-resolves the group's
- *       CURRENT owner (rehoming-aware), and {@link RaftNode#flushDurable()} is now owner-guarded, so a
- *       stale flush dispatched onto the OLD owner after a rehome FIRES the net instead of silently racing
+ *   <li><b>FlushScheduler retarget</b> - {@link MultiRaftDriver#dispatchFlush} re-resolves the
+ *       group's CURRENT owner (rehoming-aware), and {@link RaftNode#flushDurable()} is owner-guarded,
+ *       so a stale flush dispatched onto the OLD owner after a rehome FIRES the net instead of
+ *       silently racing
  *       ({@link #flushRetarget_dispatchAfterRehome_runsOnNewOwner_noFire()},
  *       {@link #flushRetarget_offOwnerFlush_firesGuard()}).</li>
- *   <li><b>abortHandoff</b> — if the gaining owner cannot adopt after the losing owner detached,
- *       {@link MultiRaftDriver#rehomeGroup} rolls the handoff back to the losing owner with no torn state
- *       ({@link #abortHandoff_gainingOwnerUnavailable_rollsBackToLosingOwner()}).</li>
+ *   <li><b>abortHandoff</b> - if the gaining owner cannot adopt after the losing owner detached,
+ *       {@link MultiRaftDriver#rehomeGroup} rolls the handoff back to the losing owner with no torn
+ *       state ({@link #abortHandoff_gainingOwnerUnavailable_rollsBackToLosingOwner()}).</li>
  * </ul>
  *
- * <p>Production stays single-group and never rehomes; this surface is test-only. The M2a proofs
- * ({@code RehomingHandoffTest}, incl. the missed-hop detector) are re-run UNCHANGED to confirm these
- * additions did not regress them. See docs/phase0-B-stage2-m2b/.
+ * <p>Production stays single-group and never rehomes; this surface is test-only.
  */
 class RehomingSubMechanismsTest {
 
@@ -103,14 +102,12 @@ class RehomingSubMechanismsTest {
 
     @FunctionalInterface private interface RunnableEx { void run() throws Exception; }
 
-    // ---------------------------------------------------------------------------------------------
-    // (1) quiesce — force-sync buffered entries on the losing owner before the handoff point.
-    // ---------------------------------------------------------------------------------------------
+    // (1) quiesce - force-sync buffered entries on the losing owner before the handoff point.
 
     @Test
     @Timeout(30)
     void quiesce_flushesBufferedEntriesDurableAcrossRehome() throws Exception {
-        OwnerExecutorPool pool = new OwnerExecutorPool(2); // group 0 → owner0 by floorMod
+        OwnerExecutorPool pool = new OwnerExecutorPool(2); // group 0 -> owner0 by floorMod
         CountingThrowingChecker checker = new CountingThrowingChecker();
         MultiRaftDriver driver = new MultiRaftDriver(LOCAL, Clock.system());
         driver.setOwnerPool(pool);
@@ -119,9 +116,9 @@ class RehomingSubMechanismsTest {
 
         // Switch to a DEFERRED flush scheduler: from now on, scheduled flushes are PARKED in `pending`
         // and never auto-run, so a freshly-proposed entry stays BUFFERED (durableIndex behind lastIndex)
-        // and therefore cannot commit (the leader may not count a not-yet-fsynced self-copy — the S7.5
+        // and therefore cannot commit (the leader may not count a not-yet-fsynced self-copy - the
         // group-commit durability gate). The only thing that can make it durable is a DIRECT flushDurable
-        // — which is exactly what quiesceForHandoff() does during the rehome.
+        // - which is exactly what quiesceForHandoff() does during the rehome.
         Deque<Runnable> pending = new ArrayDeque<>();
         g.setGroupCommit((flush, delayMicros) -> pending.add(flush), 4096, 0);
 
@@ -135,8 +132,8 @@ class RehomingSubMechanismsTest {
         assertEquals(base, commitIndexVia(pool, driver, g, 0),
                 "the buffered entry must NOT commit while its flush is parked (durableIndex gate)");
 
-        // REHOME 0 → 1. The handoff's quiesce step force-syncs the buffered entry on the LOSING owner
-        // (owner0) BEFORE detaching, so it becomes durable and commits — carried across to owner1.
+        // REHOME 0 -> 1. The handoff's quiesce step force-syncs the buffered entry on the LOSING owner
+        // (owner0) BEFORE detaching, so it becomes durable and commits - carried across to owner1.
         driver.rehomeGroup(0, 1);
         assertEquals(1, driver.currentOwnerIndex(0), "rehomed to owner1");
 
@@ -161,9 +158,7 @@ class RehomingSubMechanismsTest {
         return g.monitorView().commitIndex();
     }
 
-    // ---------------------------------------------------------------------------------------------
-    // (2) FlushScheduler retarget — the dispatched flush targets the CURRENT owner; flushDurable guarded.
-    // ---------------------------------------------------------------------------------------------
+    // (2) FlushScheduler retarget - the dispatched flush targets the CURRENT owner; flushDurable guarded.
 
     @Test
     @Timeout(30)
@@ -182,8 +177,8 @@ class RehomingSubMechanismsTest {
         Runnable flushTask = captured.get();
         assertNotNull(flushTask, "propose must schedule a flush we can capture");
 
-        // REHOME 0 → 1. dispatchFlush must re-resolve the CURRENT owner (owner1) and run the flush there
-        // WITHOUT firing — a flush scheduled before/after a rehome lands on the new owner.
+        // REHOME 0 -> 1. dispatchFlush must re-resolve the CURRENT owner (owner1) and run the flush there
+        // WITHOUT firing - a flush scheduled before/after a rehome lands on the new owner.
         driver.rehomeGroup(0, 1);
         driver.dispatchFlush(0, flushTask, 0);
         onOwner(pool, 1, () -> { }); // drain owner1 so the dispatched flush completed
@@ -213,7 +208,7 @@ class RehomingSubMechanismsTest {
 
         driver.rehomeGroup(0, 1); // group now owned by owner1
 
-        // The HAZARD the retarget closes: a flush that runs on the OLD owner (owner0) after the rehome —
+        // The hazard the retarget closes: a flush that runs on the OLD owner (owner0) after the rehome -
         // exactly what a closure that CAPTURED owner0 would do. flushDurable is now owner-guarded, so this
         // off-owner flush FIRES the net (throw in test/sim, metric in prod) instead of silently racing the
         // unsynchronised log. This is why dispatchFlush re-resolving the owner is load-bearing.
@@ -236,9 +231,7 @@ class RehomingSubMechanismsTest {
         assertTrue(pool.awaitTermination(10, TimeUnit.SECONDS));
     }
 
-    // ---------------------------------------------------------------------------------------------
-    // (3) abortHandoff — roll a partial handoff back to the losing owner if the gaining owner is dead.
-    // ---------------------------------------------------------------------------------------------
+    // (3) abortHandoff - roll a partial handoff back to the losing owner if the gaining owner is dead.
 
     @Test
     @Timeout(30)
@@ -252,13 +245,13 @@ class RehomingSubMechanismsTest {
         long base = commitIndexVia(pool, driver, g, 0);
 
         // Make the GAINING owner (owner1) unavailable: its executor rejects new tasks. The handoff will
-        // quiesce + publish + DETACH on owner0, then fail to ADOPT on owner1 — and must roll back to owner0.
+        // quiesce + publish + DETACH on owner0, then fail to ADOPT on owner1 - and must roll back to owner0.
         pool.ownerByIndex(1).shutdownNow();
 
         assertThrows(RejectedExecutionException.class, () -> driver.rehomeGroup(0, 1),
                 "rehoming to a dead owner must surface the failure (after rolling back)");
 
-        // ROLLBACK: routing restored to owner0 (no leaked override), and owner0 re-adopted — the group is
+        // ROLLBACK: routing restored to owner0 (no leaked override), and owner0 re-adopted - the group is
         // back on its original owner, not wedged on the HANDOFF sentinel.
         assertEquals(0, driver.currentOwnerIndex(0), "abort must restore routing to the losing owner (owner0)");
         assertEquals(RaftRole.LEADER, g.role(), "rollback preserves group state (still LEADER, no torn state)");

@@ -7,7 +7,7 @@ import static org.junit.jupiter.api.Assertions.*;
 
 class NodeIdTest {
 
-    // ── of() factory method ─────────────────────────────────────────────
+    // of() factory method
 
     @Nested
     class OfFactory {
@@ -36,7 +36,7 @@ class NodeIdTest {
         }
     }
 
-    // ── compareTo ordering ──────────────────────────────────────────────
+    // compareTo ordering
 
     @Nested
     class CompareTo {
@@ -70,7 +70,7 @@ class NodeIdTest {
         }
     }
 
-    // ── equals and hashCode ─────────────────────────────────────────────
+    // equals and hashCode
 
     @Nested
     class EqualsAndHashCode {
@@ -108,7 +108,7 @@ class NodeIdTest {
         }
     }
 
-    // ── toString ────────────────────────────────────────────────────────
+    // toString
 
     @Nested
     class ToStringFormat {

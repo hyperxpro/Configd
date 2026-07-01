@@ -147,7 +147,7 @@ class TlsManagerTest {
 
         latch.await(5, java.util.concurrent.TimeUnit.SECONDS);
 
-        // All reads returned a non-null context — no torn reads
+        // All reads returned a non-null context - no torn reads
         assertFalse(readResults.isEmpty());
         for (SSLContext ctx : readResults) {
             assertNotNull(ctx);

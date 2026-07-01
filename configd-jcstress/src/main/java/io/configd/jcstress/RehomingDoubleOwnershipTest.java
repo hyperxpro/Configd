@@ -10,34 +10,32 @@ import org.openjdk.jcstress.infra.results.II_Result;
 import org.openjdk.jcstress.infra.results.I_Result;
 
 /**
- * Phase 0 — Workstream B — Stage 2 — M2b: the JMM no-double-ownership proof that CLOSES H-4's first
- * failure mode. This is the crux artifact of M2b: a no-double-ownership claim is a Java Memory Model
- * property — concurrency ABSENCE — which a macro/sim test cannot establish (the M2a red-team confirmed
- * the unit test could not deterministically expose the race; it was caught only ~2/3 of runs). Only
+ * JMM no-double-ownership proof for the group-rehoming handoff. A no-double-ownership claim is a
+ * Java Memory Model property - concurrency ABSENCE - which a macro/sim test cannot establish. Only
  * jcstress, hammering the exact field declarations under aggressive reordering, can.
  *
- * <p>The rehoming handoff ({@code MultiRaftDriver.rehomeGroup}) moves a group A→B by re-binding one
- * {@code volatile Thread ownerThread}: the losing owner A detaches ({@code beginHandoff()} →
- * {@code HANDOFF} sentinel), then — ORDERED AFTER by the coordinator's executor {@code .get()} barrier —
- * the gaining owner B adopts ({@code adoptOwnerThread()} → B's thread). The owner-only entry guard
+ * <p>The rehoming handoff ({@code MultiRaftDriver.rehomeGroup}) moves a group A to B by re-binding
+ * one {@code volatile Thread ownerThread}: the losing owner A detaches ({@code beginHandoff()} ->
+ * {@code HANDOFF} sentinel), then, ORDERED AFTER by the coordinator's executor {@code .get()} barrier,
+ * the gaining owner B adopts ({@code adoptOwnerThread()} -> B's thread). The owner-only entry guard
  * ({@code assertOwnerThread()}) reads {@code ownerThread} ONCE and proceeds; "double-ownership" is the
  * hazard that two distinct real threads both pass that guard (both read {@code ownerThread==self}) and
  * both touch the unsynchronised node at once.
  *
- * <p>This file pins three JMM facts, mirroring the R-01' field declarations VERBATIM (the property is a
- * property of those exact declarations, not of the surrounding protocol):
+ * <p>This file pins three JMM facts, mirroring the owner-thread field declarations verbatim (the
+ * property is a property of those exact declarations, not of the surrounding protocol):
  * <ol>
- *   <li><b>{@link CleanHandoffNoDoubleOwnership}</b> (GATED / clean) — with the volatile field AND the
+ *   <li><b>{@link CleanHandoffNoDoubleOwnership}</b> - with the volatile field AND the
  *       barrier (B adopts only after observing A's detach, the happens-before the executor {@code .get()}
  *       provides), the losing and gaining owners' critical sections can NEVER overlap. Double-ownership is
  *       unreachable.</li>
- *   <li><b>{@link BrokenHandoffDoubleOwnership}</b> (intentionally FORBIDDEN-hitting, NOT in the gate) —
+ *   <li><b>{@link BrokenHandoffDoubleOwnership}</b> (intentionally FORBIDDEN-hitting) -
  *       DROP the barrier (B adopts without waiting for A's detach) and the two critical sections overlap:
  *       both owners pass their (stale) guard read and double-own. This is the {@link HarnessSelfTest}
- *       twin — it proves the harness can actually SEE a double-ownership window, so the clean verdict is
+ *       twin - it proves the harness can actually SEE a double-ownership window, so the clean verdict is
  *       not vacuous, and proves the barrier discipline is load-bearing.</li>
- *   <li><b>{@link PostAdoptGuardNoFalseNegative}</b> (GATED / clean) — re-binding the owner across a
- *       handoff (HANDOFF → B) must not open a false NEGATIVE: once B is in service, an off-owner caller
+ *   <li><b>{@link PostAdoptGuardNoFalseNegative}</b> - re-binding the owner across a
+ *       handoff (HANDOFF -> B) must not open a false NEGATIVE: once B is in service, an off-owner caller
  *       still observes B and the guard fires. The bound-once net property survives the re-bind.</li>
  * </ol>
  *
@@ -49,7 +47,7 @@ public final class RehomingDoubleOwnershipTest {
     private RehomingDoubleOwnershipTest() {
     }
 
-    /** A never-started Thread that equals no running thread — the "owned by nobody" handoff sentinel
+    /** A never-started Thread that equals no running thread - the "owned by nobody" handoff sentinel
      *  (verbatim mirror of {@code RaftNode.HANDOFF}). */
     private static final Thread HANDOFF = new Thread("raft-owner-handoff-sentinel");
 
@@ -60,19 +58,19 @@ public final class RehomingDoubleOwnershipTest {
     private static final int NOT_ADOPTED = 2;  // the gainer never observed the handoff (did not adopt)
 
     /**
-     * GATED / CLEAN. No double-ownership under the volatile field + the barrier.
+     * No double-ownership under the volatile field + the barrier.
      *
      * <p>{@code loser} (A) becomes the owner, runs a guarded owner-work critical section (snapshotting
      * {@code ownerThread} ONCE, exactly as {@code assertOwnerThread()} does), then DETACHES
      * ({@code ownerThread = HANDOFF}, a volatile release). {@code gainer} (B) adopts ONLY after observing
-     * the HANDOFF sentinel (a volatile acquire — the happens-before the executor {@code .get()} barrier
+     * the HANDOFF sentinel (a volatile acquire - the happens-before the executor {@code .get()} barrier
      * provides between A's detach and B's adopt), then runs its own guarded critical section.
      *
      * <p>Because A's critical section is program-ordered before its detach, the detach happens-before B's
      * observation of HANDOFF, and B's critical section is program-ordered after that observation, A's
      * critical section TRANSITIVELY happens-before B's. So {@code loserInCrit} is set and cleared before
      * {@code gainerInCrit} is ever set: neither owner can observe the other active. The {@link #OVERLAP},
-     * {@link #OVERLAP} outcome — both owners in their critical sections at once — is the double-ownership
+     * {@link #OVERLAP} outcome - both owners in their critical sections at once - is the double-ownership
      * window, and it must be unreachable.
      */
     @JCStressTest
@@ -97,7 +95,7 @@ public final class RehomingDoubleOwnershipTest {
                 sawGainer = gainerInCrit ? OVERLAP : NO_OVERLAP;
                 loserInCrit = false;
             }
-            ownerThread = HANDOFF;                        // A detaches (volatile release — the barrier publish)
+            ownerThread = HANDOFF;                        // A detaches (volatile release - the barrier publish)
             r.r1 = sawGainer;
         }
 
@@ -122,13 +120,13 @@ public final class RehomingDoubleOwnershipTest {
     }
 
     /**
-     * NOT GATED — intentionally FORBIDDEN-hitting ("test the tester"). DROP the barrier: {@code gainer}
+     * Intentionally FORBIDDEN-hitting ("test the tester"). DROP the barrier: {@code gainer}
      * adopts IMMEDIATELY without waiting for A's detach (a broken handoff with a missing happens-before
-     * edge — the design §6 "un-ordered re-bind"). Now A's and B's critical sections are unordered: each
-     * writes the owner field and snapshots its OWN write before the other overwrites, so BOTH pass their
-     * (now stale) guard read and enter their critical section together — double-ownership. A correct
-     * harness MUST observe {@link #OVERLAP}, {@link #OVERLAP}; marking it FORBIDDEN makes a standalone run
-     * report it FAILED, which is the captured proof the detector works (like {@link HarnessSelfTest.KnownRacyCounter}).
+     * edge - the un-ordered re-bind). Now A's and B's critical sections are unordered: each writes the
+     * owner field and snapshots its OWN write before the other overwrites, so BOTH pass their (now stale)
+     * guard read and enter their critical section together - double-ownership. A correct harness MUST
+     * observe {@link #OVERLAP}, {@link #OVERLAP}; marking it FORBIDDEN makes a standalone run report it
+     * FAILED, which is the captured proof the detector works (like {@link HarnessSelfTest.KnownRacyCounter}).
      * Run standalone, NEVER in the curated/gate batch.
      */
     @JCStressTest
@@ -146,7 +144,7 @@ public final class RehomingDoubleOwnershipTest {
         public void loser(II_Result r) {
             ownerThread = Thread.currentThread();        // A claims ownership
             int sawGainer = DID_NOT_OWN;
-            if (ownerThread == Thread.currentThread()) { // snapshot guard (may be stale — that is the hazard)
+            if (ownerThread == Thread.currentThread()) { // snapshot guard (may be stale - that is the hazard)
                 loserInCrit = true;
                 sawGainer = gainerInCrit ? OVERLAP : NO_OVERLAP;
                 loserInCrit = false;
@@ -172,13 +170,13 @@ public final class RehomingDoubleOwnershipTest {
     private static final int FALSE_NEGATIVE = 2;  // in service as B, yet the guard saw null/self (forbidden)
 
     /**
-     * GATED / CLEAN. Re-binding the owner across a handoff must not open a false NEGATIVE. {@code handoff}
-     * stands in for the full barrier-ordered handoff completing (A detaches → B adopts) and then publishes
+     * Re-binding the owner across a handoff must not open a false NEGATIVE. {@code handoff}
+     * stands in for the full barrier-ordered handoff completing (A detaches -> B adopts) and then publishes
      * {@code inService} (B is wired into the serving path). A {@code foreign} off-owner caller that arrives
-     * after that publish must observe B (a non-null owner that is not itself) and FIRE the guard — never
+     * after that publish must observe B (a non-null owner that is not itself) and FIRE the guard - never
      * read null/self ({@link #FALSE_NEGATIVE}), which would let an off-owner access escape AFTER a re-bind.
      * This is {@link RaftOwnerThreadGuardTest.OwnerGuardNoFalseNegativeInService} carried across the
-     * HANDOFF → B re-bind: the bound-once net property survives rehoming.
+     * HANDOFF -> B re-bind: the bound-once net property survives rehoming.
      */
     @JCStressTest
     @State

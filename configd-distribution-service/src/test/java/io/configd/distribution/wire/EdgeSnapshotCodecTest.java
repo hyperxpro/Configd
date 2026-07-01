@@ -27,10 +27,9 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
 /**
- * Proves {@link EdgeSnapshotCodec} reuses the ADR-0028 snapshot byte format faithfully
- * (open decision 3, draft-confirmed): the bytes a {@link ConfigSnapshot} serializes to
- * are accepted by {@code ConfigStateMachine.restoreSnapshot} (the canonical ADR-0028
- * consumer), and the chunk/reassemble path is lossless.
+ * Proves {@link EdgeSnapshotCodec} reuses the same snapshot byte format as the Raft
+ * state machine: the bytes a {@link ConfigSnapshot} serializes to are accepted by
+ * {@code ConfigStateMachine.restoreSnapshot}, and the chunk/reassemble path is lossless.
  */
 class EdgeSnapshotCodecTest {
 
@@ -47,7 +46,7 @@ class EdgeSnapshotCodecTest {
 
         byte[] body = EdgeSnapshotCodec.serialize(snap);
 
-        // The ADR-0028 consumer must accept our body as a (trailer-less / legacy) snapshot.
+        // The state-machine consumer must accept our body as a (trailer-less / legacy) snapshot.
         VersionedConfigStore store = new VersionedConfigStore(CLOCK);
         ConfigStateMachine sm = new ConfigStateMachine(store, CLOCK);
         sm.restoreSnapshot(body);
@@ -147,7 +146,7 @@ class EdgeSnapshotCodecTest {
                 }));
     }
 
-    /** Keeps CommandCodec import warm — the codec reuse story is the point of this module. */
+    /** Keeps CommandCodec import warm - the codec reuse story is the point of this module. */
     @SuppressWarnings("unused")
     private static final Class<?> KEEP = CommandCodec.class;
 }

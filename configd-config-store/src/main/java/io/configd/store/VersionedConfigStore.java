@@ -23,7 +23,7 @@ import java.util.Objects;
  * <ul>
  *   <li>Write methods ({@link #put}, {@link #delete}, {@link #applyBatch})
  *       must be called from a single thread. No internal synchronization is
- *       provided for writes — the caller must ensure single-writer semantics.</li>
+ *       provided for writes - the caller must ensure single-writer semantics.</li>
  *   <li>Read methods ({@link #get(String)}, {@link #currentVersion()},
  *       {@link #snapshot()}) may be called from any thread at any time.</li>
  * </ul>
@@ -76,10 +76,6 @@ public final class VersionedConfigStore {
     public VersionedConfigStore() {
         this(ConfigSnapshot.EMPTY, Clock.system());
     }
-
-    // -----------------------------------------------------------------------
-    // Writer methods (single-threaded — called from Raft apply thread)
-    // -----------------------------------------------------------------------
 
     /**
      * Inserts or updates a config key.
@@ -166,7 +162,7 @@ public final class VersionedConfigStore {
      * store state. The volatile write ensures that concurrent readers will
      * observe the new snapshot on their next read.
      * <p>
-     * <b>Caller must ensure single-writer semantics</b> — this method is
+     * <b>Caller must ensure single-writer semantics</b> - this method is
      * intended to be called from the Raft apply thread only.
      *
      * @param snapshot the new snapshot to install (non-null)
@@ -176,15 +172,11 @@ public final class VersionedConfigStore {
         this.currentSnapshot = snapshot;
     }
 
-    // -----------------------------------------------------------------------
-    // Reader methods (any thread, lock-free, zero allocation on miss, ~24 B on hit)
-    // -----------------------------------------------------------------------
-
     /**
      * Reads the current value for a key.
      * <p>
      * Returns {@link ReadResult#NOT_FOUND} (pre-allocated singleton) if the
-     * key is absent — zero allocation on miss.
+     * key is absent - zero allocation on miss.
      */
     public ReadResult get(String key) {
         Objects.requireNonNull(key, "key must not be null");
@@ -219,10 +211,9 @@ public final class VersionedConfigStore {
      * wrapper. Writes the value bytes into {@code dst} starting at offset 0
      * and stores the version at {@code versionOut[0]}.
      * <p>
-     * See VDR-0001: this API exists for throughput-critical internal callers
-     * (delta propagation, bulk replay) that want strict zero allocation on
-     * both hit and miss paths. External consumers should keep using
-     * {@link #get(String)} for ergonomics.
+     * This API exists for throughput-critical internal callers (delta propagation, bulk replay)
+     * that want strict zero allocation on both hit and miss paths. External consumers should
+     * use {@link #get(String)} for ergonomics.
      *
      * @param key        the config key (non-null)
      * @param dst        destination buffer; must be at least as large as the value
@@ -276,18 +267,18 @@ public final class VersionedConfigStore {
      * A {@link #getPrefixVersioned prefix scan} paired with the store version it observed.
      *
      * @param version the store version of the snapshot the scan read
-     * @param entries the matched key → value entries (insertion-ordered)
+     * @param entries the matched key-to-value entries (insertion-ordered)
      */
     public record PrefixScan(long version, Map<String, ReadResult> entries) {
     }
 
     /**
-     * Like {@link #getPrefix} but also returns the store version of the <b>same snapshot</b> the scan
-     * observed — both derived from a <b>single</b> volatile read of {@code currentSnapshot}, so the version
-     * and the entries are mutually consistent (no read-skew). Callers that publish a derived view can use
-     * the returned version to order their publishes monotonically (e.g. {@code AclConfigPolicyLoader} →
-     * {@code AclService.publishConfigPolicy(version, …)}, so an out-of-order rebuild never clobbers a newer
-     * one). Same O(N) full-snapshot scan cost as {@link #getPrefix}.
+     * Like {@link #getPrefix} but also returns the store version of the same snapshot the scan
+     * observed - both derived from a single volatile read of {@code currentSnapshot}, so the
+     * version and the entries are mutually consistent (no read-skew). Callers that publish a
+     * derived view can use the returned version to order their publishes monotonically, so an
+     * out-of-order rebuild never clobbers a newer one. Same O(N) full-snapshot scan cost as
+     * {@link #getPrefix}.
      */
     public PrefixScan getPrefixVersioned(String prefix) {
         Objects.requireNonNull(prefix, "prefix must not be null");
@@ -308,7 +299,7 @@ public final class VersionedConfigStore {
 
     /**
      * Returns the current immutable snapshot. Safe to hold and read from
-     * any thread — it will never change.
+     * any thread - it will never change.
      */
     public ConfigSnapshot snapshot() {
         return currentSnapshot;

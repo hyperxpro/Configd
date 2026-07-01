@@ -13,17 +13,17 @@ import java.util.Set;
 import static org.junit.jupiter.api.Assertions.*;
 
 /**
- * Test-the-tester (charter §4.2): proves the de-vacuated sweep's invariant
+ * Test-the-tester (charter section 4.2): proves the de-vacuated sweep's invariant
  * checking actually catches a real safety violation, rather than passing
  * vacuously. Mandatory capture lives at
  * {@code docs/session-2/captures/rr-012-test-the-tester.txt}.
  * <p>
  * <b>The injected violation.</b> We re-introduce the downstream symptom of the
- * RR-085 named mutant — deletion of the §5.4.2 current-term commit guard
+ * A named mutant - deletion of the section 5.4.2 current-term commit guard
  * ({@code RaftNode.maybeAdvanceCommitIndex}: {@code if (log.termAt(n) != currentTerm)
  * continue;}). That guard, removed, lets a leader commit a prior-term entry by
  * replication count alone; the observable consequence is two committed replicas
- * disagreeing on the term at the same committed index — a <b>Log Matching</b> /
+ * disagreeing on the term at the same committed index - a <b>Log Matching</b> /
  * <b>State Machine Safety</b> violation. Because production {@code RaftNode} is
  * owned by another agent this round and must not be edited, we inject the
  * <em>identical observable corruption</em> at the simulation layer: after a value
@@ -32,7 +32,7 @@ import static org.junit.jupiter.api.Assertions.*;
  * continuous {@link SimInvariants} checker MUST then RED on the very next
  * {@code checkAll()}.
  * <p>
- * This is a switchable, test-only utility — gated on
+ * This is a switchable, test-only utility - gated on
  * {@code -Dconfigd.testTheTester=true} so it never runs in the normal suite. It
  * mutates only test-scope simulation state ({@code RaftLog}); it does not touch
  * production code.
@@ -118,7 +118,7 @@ class SeedSweepTestTheTesterTest {
         }
 
         // INJECT: rewrite the committed entry at `idx` on `follower` to a bogus
-        // term — the exact divergence a guard-less §5.4.2 leader would create.
+        // term - the exact divergence a guard-less section 5.4.2 leader would create.
         RaftLog corruptLog = cluster.log(follower);
         long origTerm = corruptLog.termAt(idx);
         byte[] cmd = encodePut("ttt-key", "ttt-val");
@@ -128,7 +128,7 @@ class SeedSweepTestTheTesterTest {
 
         try {
             inv[0].checkAll();
-            return new Outcome(true, false, null); // NOT caught — checker is vacuous
+            return new Outcome(true, false, null); // NOT caught - checker is vacuous
         } catch (SimInvariants.SafetyViolation v) {
             return new Outcome(true, true, v.getMessage());
         }

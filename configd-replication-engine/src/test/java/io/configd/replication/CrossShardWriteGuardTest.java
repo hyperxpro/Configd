@@ -13,9 +13,9 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * Unit tests for {@link CrossShardWriteGuard} / {@link CrossShardBatchException} — the D-C DISCLAIM guard.
- * Co-located keys (one shard) pass; a cross-shard multi-key write is rejected with a clear, named error;
- * under N=1 the guard never rejects (whole-keyspace atomic BATCH retained).
+ * Unit tests for {@link CrossShardWriteGuard} / {@link CrossShardBatchException}.
+ * Co-located keys (one shard) pass; a cross-shard multi-key write is rejected with a clear,
+ * named error; under N=1 the guard never rejects (whole-keyspace atomic BATCH retained).
  */
 class CrossShardWriteGuardTest {
 
@@ -60,7 +60,7 @@ class CrossShardWriteGuardTest {
         StaticShardMap map = new StaticShardMap(8);
         List<String> keys = new ArrayList<>();
         for (int i = 0; i < 40; i++) {
-            keys.add("svc/cfg/key-" + i); // 40 keys over 8 shards → guaranteed to span > 1
+            keys.add("svc/cfg/key-" + i); // 40 keys over 8 shards - guaranteed to span > 1
         }
         assertFalse(CrossShardWriteGuard.isSingleShard(map, SCOPE, keys));
         assertThrows(CrossShardBatchException.class,

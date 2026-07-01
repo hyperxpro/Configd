@@ -27,9 +27,7 @@ import static org.junit.jupiter.api.Assertions.*;
  */
 class InstallSnapshotTest {
 
-    // ========================================================================
     // Test infrastructure (mirrors RaftNodeTest patterns)
-    // ========================================================================
 
     static final class TestTransport implements RaftTransport {
         private final List<SentMessage> messages = new ArrayList<>();
@@ -195,9 +193,7 @@ class InstallSnapshotTest {
         }
     }
 
-    // ========================================================================
     // Direct InstallSnapshot RPC tests
-    // ========================================================================
 
     @Nested
     class DirectInstallSnapshotTests {
@@ -320,7 +316,7 @@ class InstallSnapshotTest {
             transport2.clear();
             sm2.restoredFrom = null; // Reset
 
-            // Second snapshot at index 5 (older) — should be ignored
+            // Second snapshot at index 5 (older) - should be ignored
             node2.handleMessage(new InstallSnapshotRequest(
                     1, n1, 5, 1, 0, "older".getBytes(), true));
 
@@ -368,9 +364,7 @@ class InstallSnapshotTest {
         }
     }
 
-    // ========================================================================
     // Snapshot trigger tests
-    // ========================================================================
 
     @Nested
     class SnapshotTriggerTests {
@@ -417,14 +411,12 @@ class InstallSnapshotTest {
             RandomGenerator rng = new java.util.Random(42);
             RaftNode node = new RaftNode(config, log, transport, sm, rng);
 
-            // No entries applied — nothing to snapshot
+            // No entries applied - nothing to snapshot
             assertFalse(node.triggerSnapshot());
         }
     }
 
-    // ========================================================================
     // Integration: lagging follower receives snapshot
-    // ========================================================================
 
     @Nested
     class LaggingFollowerIntegrationTests {
@@ -459,7 +451,7 @@ class InstallSnapshotTest {
             // Leader should have committed entries
             assertTrue(leader.log().commitIndex() >= 5);
 
-            // Now trigger snapshot on leader — this compacts the log
+            // Now trigger snapshot on leader - this compacts the log
             assertTrue(leader.triggerSnapshot());
             assertTrue(leader.log().snapshotIndex() > 0);
 
@@ -534,7 +526,7 @@ class InstallSnapshotTest {
                 cluster.deliverMessagesTo(activeNodes);
             }
 
-            // Now deliver everything — node 3 should receive snapshot + new entries
+            // Now deliver everything - node 3 should receive snapshot + new entries
             cluster.deliverAllMessages(20);
             cluster.tickLeaderHeartbeatAndDeliver();
 
@@ -545,9 +537,7 @@ class InstallSnapshotTest {
         }
     }
 
-    // ========================================================================
     // Leader handles InstallSnapshotResponse
-    // ========================================================================
 
     @Nested
     class InstallSnapshotResponseHandlingTests {
@@ -629,9 +619,7 @@ class InstallSnapshotTest {
         }
     }
 
-    // ========================================================================
     // Metrics tests
-    // ========================================================================
 
     @Nested
     class MetricsTests {
@@ -659,7 +647,7 @@ class InstallSnapshotTest {
 
             RaftNode leader = cluster.nodes.get(NodeId.of(1));
 
-            // Propose entries but don't deliver — followers will lag
+            // Propose entries but don't deliver - followers will lag
             leader.propose(new byte[]{1});
             leader.propose(new byte[]{2});
 
@@ -706,9 +694,7 @@ class InstallSnapshotTest {
         }
     }
 
-    // ========================================================================
     // ReadIndex integration tests via RaftNode
-    // ========================================================================
 
     @Nested
     class ReadIndexIntegrationTests {

@@ -18,11 +18,11 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * Tests for {@link AclService#effectiveRules} — the gate's rule-assembly step that feeds the dormant
- * whole-target predicates {@link AclService#authorizesWatch} / {@link AclService#coversTarget} (RFC §02
- * W7-2a). {@code effectiveRules} assembles the principal's complete unioned rule set (own ∪ imperative-role
- * ∪ config-role) resolving the three sources <b>exactly</b> as {@link AclService#isAllowed} does, so that
- * {@code authorizesWatch(effectiveRules(p, roles), key)} agrees with the single-key
+ * Tests for {@link AclService#effectiveRules} - the gate's rule-assembly step that feeds the dormant
+ * whole-target predicates {@link AclService#authorizesWatch} / {@link AclService#coversTarget}.
+ * {@code effectiveRules} assembles the principal's complete unioned rule set (own union imperative-role
+ * union config-role) resolving the three sources <b>exactly</b> as {@link AclService#isAllowed} does, so
+ * that {@code authorizesWatch(effectiveRules(p, roles), key)} agrees with the single-key
  * {@code isAllowed(p, roles, key, WATCH)} on every concrete key (with the documented whole-subtree
  * interior-DENY strengthening that {@code isAllowed} structurally cannot see).
  */
@@ -55,7 +55,7 @@ class AclServiceEffectiveRulesTest {
             acl.grant("a.", "alice", Set.of(READ, WATCH));
             acl.grant("a.b.", "alice", Set.of(WRITE));
             acl.deny("a.secret.", "alice", Set.of(READ));
-            acl.grant("z.", "bob", Set.of(READ)); // a DIFFERENT principal — must not leak into alice's set
+            acl.grant("z.", "bob", Set.of(READ)); // a DIFFERENT principal - must not leak into alice's set
 
             Collection<PolicyRule> rules = acl.effectiveRules("alice", Set.of());
             assertEquals(3, rules.size(), "alice's three own prefixes, none of bob's");

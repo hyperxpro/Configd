@@ -14,7 +14,7 @@ import java.util.Set;
  * Tracks connection state per peer: connected, disconnected, or backing off.
  * When a connection fails, exponential backoff prevents reconnection storms.
  * <p>
- * This class manages logical state only — actual socket/channel management
+ * This class manages logical state only - actual socket/channel management
  * is delegated to the transport implementation (e.g., Netty).
  * <p>
  * Thread safety: designed for single-threaded access from the transport

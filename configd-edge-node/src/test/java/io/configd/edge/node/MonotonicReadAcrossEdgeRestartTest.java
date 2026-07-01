@@ -32,19 +32,17 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.fail;
 
 /**
- * CT-13, the C3 (process-level) half: per-session monotonic reads <b>across a REAL edge
- * process restart</b>. The SIM half (testkit {@code MonotonicReadAcrossEdgeRestartTest},
- * C2) pins the property at the INV-M1 seam; this leg restarts a real {@link EdgeNodeMain}
- * — the cache is lost (an edge is a cache; only the SEC-017 {@code epoch.lock} sidecar
- * survives in {@code --data-dir}) — while a client HOLDS its pre-restart cursor:
+ * Per-session monotonic reads <b>across a REAL edge process restart</b>. The sim counterpart
+ * in configd-testkit pins the property at the engine seam; this leg restarts a real
+ * {@link EdgeNodeMain} — the cache is lost (an edge is a cache; only the {@code epoch.lock}
+ * sidecar survives in {@code --data-dir}) — while a client HOLDS its pre-restart cursor:
  * <ul>
- *   <li>every read at the held cursor during the restart/re-bootstrap window is the
- *       consistent refusal ({@code 404 + X-Configd-Refused: cursor-behind}) — the edge
- *       NEVER serves pre-crash data and never serves below the cursor (contract §3, the
- *       C2-4 amended clause);</li>
- *   <li>the C3 re-bootstrap (fresh SUBSCRIBE at cursor 0; the server's TAIL/SNAPSHOT_FIRST
+ *   <li>every read at the held cursor during the restart/re-bootstrap window is the consistent
+ *       refusal ({@code 404 + X-Configd-Refused: cursor-behind}) — the edge NEVER serves
+ *       pre-crash data and never serves below the cursor;</li>
+ *   <li>the re-bootstrap (fresh SUBSCRIBE at cursor 0; the server's TAIL/SNAPSHOT_FIRST
  *       decision) catches the fresh process up; the held-cursor read is then served at a
- *       version ≥ the cursor with the post-restart authoritative bytes.</li>
+ *       version >= the cursor with the post-restart authoritative bytes.</li>
  * </ul>
  */
 @Timeout(120)
@@ -97,8 +95,8 @@ class MonotonicReadAcrossEdgeRestartTest {
         assertEquals("v2", served.body());
 
         // KILL the edge process (cache gone) and restart it on the SAME data dir. The
-        // data dir may hold ONLY the SEC-017 epoch sidecar — never values (RR-098; the
-        // disk sweep is pinned by EdgeStrongReadFailClosedTest).
+        // data dir may hold ONLY the epoch sidecar — never values (the disk sweep is
+        // pinned by EdgeStrongReadFailClosedTest).
         edge.shutdown();
         try (var entries = Files.list(edgeDataDir)) {
             assertTrue(entries.allMatch(p -> p.getFileName().toString().startsWith("epoch.lock")),
@@ -110,8 +108,7 @@ class MonotonicReadAcrossEdgeRestartTest {
         // The fresh incarnation starts at version 0: the FIRST held-cursor read in the
         // window (before re-bootstrap completes) must be the consistent refusal — and
         // pollUntilServed asserts EVERY response on the way is either that refusal or a
-        // version >= the held cursor. The dropped clause CT-13 names ("never serve
-        // pre-crash old data") is enforced on each iteration.
+        // version >= the held cursor ("never serve pre-crash old data" is enforced on each iteration).
         HttpResponse<String> afterRestart = pollUntilServed(edgeBase2, "svc/k", heldCursor);
         assertEquals("v2", afterRestart.body(),
                 "post-re-bootstrap state serves the authoritative bytes");
@@ -128,7 +125,7 @@ class MonotonicReadAcrossEdgeRestartTest {
         assertEquals("v3", pollUntilServed(edgeBase2, "svc/k", seq3).body());
     }
 
-    // --- helpers (the EdgeNodeIntegrationTest deadline-polling discipline) ---
+    // Helpers (deadline-polling; no sleep-as-sync)
 
     private EdgeNodeMain startEdge(Path dataDir, Path verifyKey) {
         return EdgeNodeMain.start(new EdgeNodeConfig(

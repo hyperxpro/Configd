@@ -29,33 +29,33 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.locks.LockSupport;
 
 /**
- * End-to-end consensus-send head-to-head — the <b>sender</b>. Settles the one thing the
+ * End-to-end consensus-send head-to-head - the <b>sender</b>. Settles the one thing the
  * encode-only {@code ConsensusWireH2HBenchmark} did not measure: the <b>write path</b>, where the
- * "Netty's off-heap {@code ByteBuf} avoids a heap→kernel copy" argument lives. Races, over a real
+ * "Netty's off-heap {@code ByteBuf} avoids a heap->kernel copy" argument lives. Races, over a real
  * TCP connection to {@link ConsensusDrainServerMain}, four variants:
  *
  * <ul>
- *   <li><b>jdk</b> — production-style: reused heap buffer, {@code Socket.getOutputStream().write},
+ *   <li><b>jdk</b> - production-style: reused heap buffer, {@code Socket.getOutputStream().write},
  *       per-message write-through (one syscall/msg).</li>
- *   <li><b>jdk-batched</b> — same, wrapped in {@code BufferedOutputStream}, flush every 64
- *       (batched syscalls) — the fair throughput peer to netty-idiomatic.</li>
- *   <li><b>netty</b> — manual: main-thread {@code alloc.directBuffer} + {@code writeAndFlush} per
+ *   <li><b>jdk-batched</b> - same, wrapped in {@code BufferedOutputStream}, flush every 64
+ *       (batched syscalls) - the fair throughput peer to netty-idiomatic.</li>
+ *   <li><b>netty</b> - manual: main-thread {@code alloc.directBuffer} + {@code writeAndFlush} per
  *       message (the non-idiomatic path; kept to show the WriteTask/cross-thread artifacts).</li>
- *   <li><b>netty-idiomatic</b> — in-pipeline {@code MessageToByteEncoder} (encode/alloc/release on
+ *   <li><b>netty-idiomatic</b> - in-pipeline {@code MessageToByteEncoder} (encode/alloc/release on
  *       the event loop, Recycler works, {@code internalNioBuffer} CRC), {@code write} + batched
  *       flush.</li>
  * </ul>
  *
  * <p><b>Each variant builds its connection ONCE and runs warmup AND measurement on that same
- * connection</b> — so the measured window runs on a <em>warm</em> event loop / socket (populated
+ * connection</b> - so the measured window runs on a <em>warm</em> event loop / socket (populated
  * allocator-arena caches, Recycler stacks, JIT), exactly as a long-lived transport would. (An
- * earlier version rebuilt the event loop for the measured call, starting it cold — that inflated
+ * earlier version rebuilt the event loop for the measured call, starting it cold - that inflated
  * Netty's numbers and was corrected.)
  *
- * <p><b>Plaintext on purpose</b> — the best case for the off-heap-{@code ByteBuf} argument; TLS
+ * <p><b>Plaintext on purpose</b> - the best case for the off-heap-{@code ByteBuf} argument; TLS
  * forces an {@code SSLEngine} copy on both stacks and shrinks any Netty edge. Allocation isolation:
  * the drain receiver is a separate process; this JVM's {@code getTotalThreadAllocatedBytes()} delta
- * over N sends ÷ N is the sender-side per-message allocation (captures the Netty event-loop thread).
+ * over N sends / N is the sender-side per-message allocation (captures the Netty event-loop thread).
  *
  * <pre>java --enable-preview --enable-native-access=ALL-UNNAMED -cp benchmarks.jar \
  *   io.configd.jdkvsnetty.ConsensusSendE2EMain &lt;host&gt; &lt;port&gt; &lt;payloadBytes&gt; &lt;warmupN&gt; &lt;measureN&gt;</pre>
@@ -111,9 +111,9 @@ public final class ConsensusSendE2EMain {
 
     /**
      * Drives writes FROM the event loop, so {@code AbstractChannelHandlerContext.write} takes its
-     * {@code inEventLoop()} inline branch — <b>no per-message {@code WriteTask}</b> (the source: the
+     * {@code inEventLoop()} inline branch - <b>no per-message {@code WriteTask}</b> (the source: the
      * WriteTask is allocated only on the off-loop {@code else} branch). A single reused,
-     * self-rescheduling {@link Runnable} writes a chunk inline, flushes, and re-submits itself —
+     * self-rescheduling {@link Runnable} writes a chunk inline, flushes, and re-submits itself - 
      * no per-message and no per-chunk lambda allocation. This is exactly how a real transport sends
      * timer-driven heartbeats (`eventLoop.scheduleAtFixedRate` runs on the loop) or batched appends.
      */
@@ -158,7 +158,7 @@ public final class ConsensusSendE2EMain {
         }
     }
 
-    /** Reused, self-rescheduling event-loop writer — writes inline (no WriteTask), no per-op lambda. */
+    /** Reused, self-rescheduling event-loop writer - writes inline (no WriteTask), no per-op lambda. */
     private static final class Drainer implements Runnable {
         private static final int CHUNK = 256;
         private final Channel ch;
@@ -177,7 +177,7 @@ public final class ConsensusSendE2EMain {
         public void run() {
             int c = 0;
             while (remaining > 0 && c < CHUNK && ch.isWritable()) {
-                ch.write(msg, ch.voidPromise()); // ON the event loop → inline, NO WriteTask
+                ch.write(msg, ch.voidPromise()); // ON the event loop -> inline, NO WriteTask
                 remaining--;
                 c++;
             }

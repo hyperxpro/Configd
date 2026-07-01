@@ -164,9 +164,9 @@ final class FileStorageTest {
     }
 
     /**
-     * Regression test for FIND-0006: put() must use atomic rename so that a
-     * crash between truncation and write completion does not corrupt the file.
-     * Verifies that a temp file is created and atomically renamed.
+     * Verifies that put() uses atomic rename so that a crash between truncation
+     * and write completion does not corrupt the file. Checks that a temp file is
+     * created and atomically renamed.
      */
     @Test
     void putUsesAtomicRename() throws Exception {
@@ -185,7 +185,7 @@ final class FileStorageTest {
         assertFalse(Files.exists(tmpFile),
                 "temp file must not exist after successful put (atomic rename cleans it up)");
 
-        // Overwriting must also be atomic — verify data integrity
+        // Overwriting must also be atomic - verify data integrity
         storage.put("raft-state", "term=6".getBytes());
         assertArrayEquals("term=6".getBytes(), Files.readAllBytes(datFile));
         assertFalse(Files.exists(tmpFile));
@@ -223,16 +223,12 @@ final class FileStorageTest {
     }
 
     /**
-     * Regression test for F-0011: WAL recovery must not crash on a truncated
-     * trailing entry.
+     * WAL recovery must not crash on a truncated trailing entry.
      * <p>
      * A crash during appendToLog() can leave a partially written entry at the
      * end of the WAL file (length header written, but data and/or CRC incomplete).
-     * Before the fix, readLog() threw IOException on insufficient remaining bytes,
-     * which prevented server restart entirely.
-     * <p>
-     * After the fix, truncated trailing entries are silently discarded. Previously
-     * read entries with valid CRCs are preserved.
+     * readLog() must silently discard such trailing fragments and return the
+     * previously committed (complete, CRC-valid) entries intact.
      */
     @Test
     void walRecoveryDiscardsTruncatedTrailingEntry() throws Exception {
@@ -255,7 +251,7 @@ final class FileStorageTest {
         Path walFile = storeDir.resolve("recovery-log.wal");
         long originalSize = Files.size(walFile);
 
-        // Remove the last 3 bytes — this makes the second entry's CRC incomplete,
+        // Remove the last 3 bytes - this makes the second entry's CRC incomplete,
         // simulating a crash during the write of the second entry.
         try (FileChannel channel = FileChannel.open(walFile, StandardOpenOption.WRITE)) {
             channel.truncate(originalSize - 3);
@@ -274,10 +270,10 @@ final class FileStorageTest {
                 "The first (complete) entry should be preserved intact");
     }
 
-    // RR-005 (2): the WAL recovery read must FAIL LOUD on a >= 2 GiB log rather than
-    // silently mis-size the buffer via the (int) fileSize cast (which truncates/wraps and
-    // reads garbage — silent committed-entry loss). Tested at the extracted size check so no
-    // 2 GiB file is needed.
+    // The WAL recovery read must FAIL LOUD on a >= 2 GiB log rather than silently mis-size
+    // the buffer via the (int) fileSize cast (which truncates/wraps and reads garbage -
+    // silent committed-entry loss). Tested at the extracted size check so no 2 GiB file
+    // is needed.
     @Test
     void checkedLogReadSizePassesBelowLimitAndFailsLoudAtOrAboveJvmArrayCap() {
         assertEquals(0, FileStorage.checkedLogReadSize("raft-log", 0L));
@@ -286,13 +282,13 @@ final class FileStorageTest {
                 FileStorage.checkedLogReadSize("raft-log", FileStorage.MAX_READABLE_LOG_BYTES),
                 "exactly at the limit still reads (no truncation)");
 
-        long twoGiB = 1L << 31; // 2_147_483_648 > MAX_READABLE_LOG_BYTES — wraps negative under (int)
+        long twoGiB = 1L << 31; // 2_147_483_648 > MAX_READABLE_LOG_BYTES - wraps negative under (int)
         IllegalStateException ex = assertThrows(IllegalStateException.class,
                 () -> FileStorage.checkedLogReadSize("raft-log", twoGiB),
                 "a >= 2 GiB WAL must refuse to load loudly, not silently truncate via the int cast");
         assertTrue(ex.getMessage().contains("raft-log") && ex.getMessage().contains("RR-005"),
                 "the failure must name the log and the root cause: " + ex.getMessage());
-        // Sanity: (int) 2GiB wraps negative — the exact silent-corruption cast the guard replaces.
+        // Sanity: (int) 2GiB wraps negative - the exact silent-corruption cast the guard replaces.
         assertTrue((int) twoGiB < 0, "(int) 2GiB wraps negative");
     }
 }

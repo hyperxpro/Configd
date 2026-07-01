@@ -10,21 +10,21 @@ import java.util.Map;
 
 /**
  * Continuous, cross-node safety-invariant checker for the deterministic
- * simulation (adversarial-sim-design §3, group B). One instance is bound to a
+ * simulation (adversarial-sim-design section 3, group B). One instance is bound to a
  * {@link ConsistencyPropertyTests.ClusterHarness} and {@link #checkAll()} is
  * called <em>after every tick</em>; any violated predicate throws
  * {@link SafetyViolation}, which fails the seed with full replay context.
  * <p>
  * Two complementary seams cover the charter invariant list:
  * <ul>
- *   <li><b>In-node, per-event</b> — {@link RaftNode.InvariantChecker} wired via the
+ *   <li><b>In-node, per-event</b> - {@link RaftNode.InvariantChecker} wired via the
  *       7-arg ctor by {@link ConsistencyPropertyTests.ClusterHarness}; supplies
  *       {@code election_safety}, {@code leader_completeness}, {@code log_matching},
  *       {@code state_machine_safety}, {@code version_monotonicity},
  *       {@code single_server_invariant}, {@code no_op_before_reconfig},
  *       {@code reconfig_safety}, {@code durable_prefix_no_gap} at their exact
  *       mutation sites. See {@link #throwingNodeChecker()}.</li>
- *   <li><b>Sim-level, cross-node</b> — this class, which needs a global view of all
+ *   <li><b>Sim-level, cross-node</b> - this class, which needs a global view of all
  *       nodes: single-leader-per-term, log-matching across replicas, state-machine
  *       safety across replicas, per-observer version monotonicity, and no-stale
  *       overwrite.</li>
@@ -36,7 +36,7 @@ import java.util.Map;
  * <em>recorded, never failed</em> (charter: liveness findings are registered, not
  * hidden).
  * <p>
- * Not thread-safe; the simulation is single-threaded (R-01).
+ * Not thread-safe; the simulation is single-threaded.
  */
 final class SimInvariants {
 
@@ -53,7 +53,7 @@ final class SimInvariants {
     private final long seed;
     private final int nodeCount;
 
-    /** Highest store version observed per node — guards monotonicity per observer. */
+    /** Highest store version observed per node - guards monotonicity per observer. */
     private final long[] lastVersionPerNode;
 
     /**
@@ -97,7 +97,7 @@ final class SimInvariants {
         checkStateMachineSafetyAcrossReplicas();
     }
 
-    /** ≤1 LEADER per term across the whole cluster (Election Safety, global view). */
+    /** <=1 LEADER per term across the whole cluster (Election Safety, global view). */
     private void checkSingleLeaderPerTerm() {
         // term -> the first leader id seen for it this tick
         Map<Long, Integer> leaderByTerm = new HashMap<>();
@@ -156,9 +156,9 @@ final class SimInvariants {
     /**
      * State Machine Safety / no-stale-overwrite at the committed-prefix level: a
      * committed index, once observed with a given (term) identity, must never be
-     * seen with a different one — neither across replicas nor across time. We use
+     * seen with a different one - neither across replicas nor across time. We use
      * (index@term) as the command identity because Log Matching guarantees that an
-     * equal (index,term) implies an equal command (Raft §5.3), so a mismatch here
+     * equal (index,term) implies an equal command (Raft section 5.3), so a mismatch here
      * is a genuine divergent-commit / stale-overwrite RED.
      */
     private void checkStateMachineSafetyAcrossReplicas() {
@@ -168,7 +168,7 @@ final class SimInvariants {
             for (long idx = from; idx <= log.commitIndex(); idx++) {
                 long term = log.termAt(idx);
                 if (term < 0) {
-                    continue; // not present locally (e.g. compacted) — skip
+                    continue; // not present locally (e.g. compacted) - skip
                 }
                 String identity = idx + "@" + term;
                 String prior = committedCommandByIndex.putIfAbsent(idx, identity);

@@ -58,15 +58,15 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.fail;
 
 /**
- * ADR-0043 M3 transport-equivalence contract for the edge fan-out endpoint. The SAME mTLS admission,
- * mTLS-attack rejection, slow-consumer / quarantine policy, admission-bound, S2–S4 propagation, and
+ * Transport-equivalence contract for the edge fan-out endpoint. The SAME mTLS admission,
+ * mTLS-attack rejection, slow-consumer / quarantine policy, admission-bound, S2-S4 propagation, and
  * protocol-violation behaviour is proven against EVERY {@link FanOutEndpoint} implementation by
  * varying ONLY server construction ({@link #newServer}); the assertions, deadlines, injected clocks,
  * and keytool fixtures are transcribed verbatim from the per-transport JDK tests this folds in
  * ({@code FanOutServerMtlsTest}, {@code FanOutServerMtlsAttackTest}, {@code FanOutServerQuarantineTest},
  * {@code FanOutServerAdmissionBoundTest}, and the {@code FanOutServerIntegrationTest} corruption legs).
  *
- * <h2>RR-094 fixture discipline</h2>
+ * <h2>Test fixture discipline</h2>
  * The expensive keytool keystore/cert generation (many subprocesses, merged here from the mTLS +
  * mTLS-attack fixtures) is hoisted into one {@code @BeforeAll static} fixture (cached temp dir,
  * {@code @AfterAll} cleanup), which JUnit runs once per concrete subclass and does NOT subject to the
@@ -135,11 +135,11 @@ abstract class AbstractFanOutServerContract {
         exportCert(serverKeyStore, "server", serverCert);
         exportCert(clientKeyStore, "client", clientCert);
 
-        // Rogue client cert — self-signed, NOT imported into the server trust store.
+        // Rogue client cert - self-signed, NOT imported into the server trust store.
         genKeyPair(rogueKeyStore, "rogue", "CN=rogue-edge,O=attacker", "-validity", "1");
 
         // CA + CA-signed expired END-ENTITY: a self-signed expired LEAF would be accepted as a trust
-        // anchor (RFC 5280 §6.1 does not check an anchor's own validity), so the CA layer is what
+        // anchor (RFC 5280 section 6.1 does not check an anchor's own validity), so the CA layer is what
         // makes notAfter enforceable on the leaf.
         genCa(caKeyStore, "CN=configd-test-ca,O=configd-test");
         exportCert(caKeyStore, "ca", caCert);
@@ -287,7 +287,7 @@ abstract class AbstractFanOutServerContract {
         return new FanOutConfig(2, 50, 1, 262_144, 1_000_000L, 250L, 5L, 1_048_576);
     }
 
-    /** demoteLimit=2 → the second distress demotion quarantines; 60 s cooldown. */
+    /** demoteLimit=2 -> the second distress demotion quarantines; 60 s cooldown. */
     private static SlowConsumerPolicyConfig policyConfig() {
         return new SlowConsumerPolicyConfig(
                 10_000L, 2, 10, 60_000L, 60_000L, 3, 3_600_000L, 3_600_000L, 4_096);
@@ -348,7 +348,7 @@ abstract class AbstractFanOutServerContract {
         int port = startServer();
 
         // --- Phase 1: quarantine. Subscribe, never ack; every 3 publishes overflow the
-        // 2-frame queue → demotion. The 2nd demotion trips demoteLimit → QUARANTINED →
+        // 2-frame queue -> demotion. The 2nd demotion trips demoteLimit -> QUARANTINED ->
         // ERROR_CLOSE code 8 + socket close.
         try (EdgeProtocolClient edge = EdgeProtocolClient.connectPlaintext(port, 10_000)) {
             edge.subscribeFullStore(EDGE_ID, 0L);
@@ -358,21 +358,21 @@ abstract class AbstractFanOutServerContract {
 
             publish("k/1", "a");
             publish("k/2", "b");
-            publish("k/3", "c"); // 3rd unacked frame → queue_overflow demotion #1
+            publish("k/3", "c"); // 3rd unacked frame -> queue_overflow demotion #1
             awaitGovernorState(ConsumerState.CATCHUP, "first demotion feeds the governor");
             // Wire-level sync: wait for the demotion snapshot to COMPLETE before the next
-            // burst — the governor flips to CATCHUP at demote time, but the snapshot is
+            // burst - the governor flips to CATCHUP at demote time, but the snapshot is
             // taken on the next session tick; publishing earlier would fold the second
             // burst into the first snapshot and no second demotion could ever occur.
             readUntil(edge, EdgeFrame.SnapshotEnd.class);
 
             publish("k/4", "d");
             publish("k/5", "e");
-            publish("k/6", "f"); // → demotion #2 → demoteLimit(2) → QUARANTINED
+            publish("k/6", "f"); // -> demotion #2 -> demoteLimit(2) -> QUARANTINED
 
             // The wire evidence: ERROR_CLOSE QUARANTINED (code 8), then the socket closes.
-            // (The best-effort bye can race the writer thread mid-frame — the pre-existing
-            // teardown pattern — so a torn final read is tolerated; the governor state and
+            // (The best-effort bye can race the writer thread mid-frame - the pre-existing
+            // teardown pattern - so a torn final read is tolerated; the governor state and
             // the refusal leg below pin the policy authoritatively either way.)
             boolean sawQuarantineClose = drainUntilQuarantinedOrClosed(edge);
             assertTrue(sawQuarantineClose,
@@ -382,7 +382,7 @@ abstract class AbstractFanOutServerContract {
         assertEquals(1, governorMetrics.quarantines.get(),
                 "edge_fanout_quarantines_total must move exactly once");
 
-        // --- Phase 2: reconnect during the cooldown → REFUSED at SUBSCRIBE with code 8.
+        // --- Phase 2: reconnect during the cooldown -> REFUSED at SUBSCRIBE with code 8.
         try (EdgeProtocolClient edge = EdgeProtocolClient.connectPlaintext(port, 10_000)) {
             edge.subscribeFullStore(EDGE_ID, 6L);
             EdgeFrame.ErrorClose refusal =
@@ -398,7 +398,7 @@ abstract class AbstractFanOutServerContract {
         assertEquals(ConsumerState.QUARANTINED, governor.state(EDGE_ID),
                 "a refusal must not mutate the state");
 
-        // --- Phase 3: the cooldown elapses (clock advance, no sleep) → readmitted with
+        // --- Phase 3: the cooldown elapses (clock advance, no sleep) -> readmitted with
         // the re-bootstrap FORCED: SNAPSHOT_FIRST despite the high resume cursor.
         clock.advance(60_001);
         try (EdgeProtocolClient edge = EdgeProtocolClient.connectPlaintext(port, 10_000)) {
@@ -413,7 +413,7 @@ abstract class AbstractFanOutServerContract {
             assertEquals(ConsumerState.CATCHUP, governor.state(EDGE_ID));
 
             // The snapshot lands at the published head (seq 6); acking it resolves
-            // CATCHUP → HEALTHY (the snapshot+resume-ok exit).
+            // CATCHUP -> HEALTHY (the snapshot+resume-ok exit).
             EdgeFrame.SnapshotEnd end =
                     (EdgeFrame.SnapshotEnd) readUntil(edge, EdgeFrame.SnapshotEnd.class);
             assertEquals(6L, end.snapshotSeq(), "the re-bootstrap snapshot is the head");
@@ -426,9 +426,9 @@ abstract class AbstractFanOutServerContract {
     /**
      * The C4 sign-off P1 (C4-A) regression leg: the LIVE session loop's time-driven
      * evaluation must actually fire. Before the fix, the eval-cadence sentinel
-     * ({@code Long.MIN_VALUE}) was compared by SUBTRACTION — which overflows negative for
-     * any real clock value — so {@code governor.evaluate()} never ran on this loop and
-     * HEALTHY→SLOW (the §7 warn tier, CT-27's transition) was unreachable at runtime.
+     * ({@code Long.MIN_VALUE}) was compared by SUBTRACTION - which overflows negative for
+     * any real clock value - so {@code governor.evaluate()} never ran on this loop and
+     * HEALTHY->SLOW (the section 7 warn tier, CT-27's transition) was unreachable at runtime.
      * This test drives the promotion end-to-end at the server: a subscriber holds its
      * queue at/above warn, the injected clock advances past
      * {@code edge.fanout.policy.queueWarnWindowMs}, and the SESSION LOOP (no direct
@@ -444,7 +444,7 @@ abstract class AbstractFanOutServerContract {
             readUntil(edge, EdgeFrame.SubscribeOk.class);
 
             // One unacked frame puts the queue at/above warn (threshold 1 of 2) without
-            // ever reaching overflow — pure sustained pressure, no demotion.
+            // ever reaching overflow - pure sustained pressure, no demotion.
             publish("k/warn", "w");
             readUntil(edge, EdgeFrame.Notify.class);
             assertEquals(ConsumerState.HEALTHY, governor.state(EDGE_ID),
@@ -459,7 +459,7 @@ abstract class AbstractFanOutServerContract {
                     "edge_fanout_slow_transitions_total must move exactly once");
 
             // And the SLOW exit also rides the live loop: acking drains the queue below
-            // warn → the pressure edge resolves the identity back to HEALTHY.
+            // warn -> the pressure edge resolves the identity back to HEALTHY.
             edge.cursorAck(seq);
             awaitGovernorState(ConsumerState.HEALTHY,
                     "ack progress at the live server resolves SLOW");
@@ -468,7 +468,7 @@ abstract class AbstractFanOutServerContract {
 
     /**
      * The CT-30 closing condition at the wire: the {@code quarantineLimit}-th quarantine
-     * escalates to UNHEALTHY through a LIVE server — exercising the
+     * escalates to UNHEALTHY through a LIVE server - exercising the
      * {@code onDemotionEvent} UNHEALTHY teardown arm (previously only the
      * QUARANTINED half was process-proven), the unhealthy-cooldown refusal at the wire,
      * and the C4-3 automatic readmission after {@code unhealthyCooldownMs}.
@@ -486,13 +486,13 @@ abstract class AbstractFanOutServerContract {
             readUntil(edge, EdgeFrame.SubscribeOk.class);
             publish("u/1", "a");
             publish("u/2", "b");
-            publish("u/3", "c"); // 3rd unacked frame → overflow → quarantine #1
+            publish("u/3", "c"); // 3rd unacked frame -> overflow -> quarantine #1
             drainUntilQuarantinedOrClosed(edge);
         }
         awaitGovernorState(ConsumerState.QUARANTINED, "first quarantine");
         assertEquals(1, governorMetrics.quarantines.get());
 
-        // --- Readmission, then quarantine #2 → UNHEALTHY through the live teardown arm.
+        // --- Readmission, then quarantine #2 -> UNHEALTHY through the live teardown arm.
         clock.advance(60_001);
         try (EdgeProtocolClient edge = EdgeProtocolClient.connectPlaintext(port, 10_000)) {
             edge.subscribeFullStore(EDGE_ID, 0L);
@@ -503,7 +503,7 @@ abstract class AbstractFanOutServerContract {
 
             publish("u/4", "d");
             publish("u/5", "e");
-            publish("u/6", "f"); // overflow → quarantine #2 → quarantineLimit(2) → UNHEALTHY
+            publish("u/6", "f"); // overflow -> quarantine #2 -> quarantineLimit(2) -> UNHEALTHY
             assertTrue(drainUntilQuarantinedOrClosed(edge),
                     "the UNHEALTHY escalation must disconnect at the wire (code 8 + close)");
         }
@@ -638,14 +638,14 @@ abstract class AbstractFanOutServerContract {
     }
 
     // =======================================================================
-    // S2–S4 propagation (NEW; the C1 server path end-to-end without ConfigdServer)
+    // S2-S4 propagation (NEW; the C1 server path end-to-end without ConfigdServer)
     // =======================================================================
 
     /**
      * The full C1/C2/C3/C4 server path over a direct plaintext {@link FanOutEndpoint} (no
-     * {@code ConfigdServer}, no HTTP API): SUBSCRIBE→SUBSCRIBE_OK(TAIL) on an empty buffer; verbatim,
+     * {@code ConfigdServer}, no HTTP API): SUBSCRIBE->SUBSCRIBE_OK(TAIL) on an empty buffer; verbatim,
      * strictly-increasing-seq NOTIFY of two committed deltas (version monotonicity / no stale
-     * overwrite), each with byte-identical key+value; CURSOR_ACK flow-control; demotion→chunked
+     * overwrite), each with byte-identical key+value; CURSOR_ACK flow-control; demotion->chunked
      * SNAPSHOT recovery once the edge stops acking under a flood; and resumed TAIL past the snapshot
      * seq. Publishes go through the SAME {@code publish(key,value)} helper the quarantine legs use, so
      * the replay snapshot stays authoritative at the published head and seqs stay monotonic.
@@ -712,7 +712,7 @@ abstract class AbstractFanOutServerContract {
             assertEquals(begin.snapshotSeq(), end.snapshotSeq(), "BEGIN/END snapshot seq must match");
             assertEquals(begin.chunkCount(), chunks.size(), "all announced chunks must arrive");
             // The snapshot is taken at demotion time (when the bounded transport queue filled), a
-            // valid committed seq <= the final flood target — NOT necessarily near the end, since the
+            // valid committed seq <= the final flood target - NOT necessarily near the end, since the
             // flood continues after the early overflow-demotion.
             assertTrue(end.snapshotSeq() > 0 && end.snapshotSeq() <= floodTarget,
                     "snapshot seq must be a valid committed seq in (0, floodTarget]: " + end.snapshotSeq());
@@ -749,7 +749,7 @@ abstract class AbstractFanOutServerContract {
             assertTrue(closed, "server must close the connection on a corrupt first frame");
         }
 
-        // The server is still alive — a fresh, well-behaved subscriber still works.
+        // The server is still alive - a fresh, well-behaved subscriber still works.
         try (EdgeProtocolClient edge2 = EdgeProtocolClient.connectPlaintext(port, 10_000)) {
             edge2.subscribeFullStore("edge-2", 0L);
             assertNotNull(readUntil(edge2, EdgeFrame.SubscribeOk.class),
@@ -831,7 +831,7 @@ abstract class AbstractFanOutServerContract {
         boolean rejected = false;
         try {
             sock.startHandshake();
-            // Handshake "succeeded" on the client side — try to use the connection. A rejected
+            // Handshake "succeeded" on the client side - try to use the connection. A rejected
             // client must NOT receive a SUBSCRIBE_OK; the I/O fails or the stream EOFs.
             try (EdgeProtocolClient edge = new EdgeProtocolClient(sock)) {
                 edge.subscribeFullStore("rejected", 0L);
@@ -870,7 +870,7 @@ abstract class AbstractFanOutServerContract {
      * Reads up to {@code maxFrames} server frames looking for SUBSCRIBE_OK; null if none. Returns null
      * on EOF, SO_TIMEOUT, OR a codec exception: when the server rejects (e.g. responds with a TLS
      * alert record to a plaintext or downgraded client) the bytes the client reads are NOT a valid
-     * edge frame, so {@code EdgeFrameCodec} throws — which is, definitionally, "no SUBSCRIBE_OK was
+     * edge frame, so {@code EdgeFrameCodec} throws - which is, definitionally, "no SUBSCRIBE_OK was
      * served". Catching it here keeps the assertion the secure observation: a SUBSCRIBE_OK is the only
      * thing that proves acceptance.
      */
@@ -1017,7 +1017,7 @@ abstract class AbstractFanOutServerContract {
 
     /**
      * Drains frames until an {@code ERROR_CLOSE(QUARANTINED)} arrives or the stream ends (EOF / reset /
-     * torn final frame — the best-effort bye may race the writer). Returns true once the connection
+     * torn final frame - the best-effort bye may race the writer). Returns true once the connection
      * demonstrably ended in either form.
      */
     private static boolean drainUntilQuarantinedOrClosed(EdgeProtocolClient edge) throws IOException {
@@ -1029,7 +1029,7 @@ abstract class AbstractFanOutServerContract {
             } catch (java.net.SocketTimeoutException e) {
                 continue;
             } catch (IOException | EdgeFrameCodec.CodecException e) {
-                return true; // reset or torn bye — the socket is gone
+                return true; // reset or torn bye - the socket is gone
             }
             if (f == null) {
                 return true; // EOF

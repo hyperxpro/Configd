@@ -36,13 +36,13 @@ import java.util.logging.Level;
 import java.util.logging.Logger;
 
 /**
- * The live mTLS edge fan-out endpoint (C1 design §2 FanOutServer layer; ADR-0037). It accepts
+ * The live mTLS edge fan-out endpoint. It accepts
  * long-lived edge subscriber connections on {@code --edge-port} and drives the SAME
- * {@link FanOutSessionCore} the simulator drives — no logic exists only on this path.
+ * {@link FanOutSessionCore} the simulator drives - no logic exists only on this path.
  *
- * <h2>Stack (ADR-0037: no Netty)</h2>
+ * <h2>Stack</h2>
  * JDK {@link ServerSocket} / {@link SSLServerSocket} via {@link TlsManager} (the identical
- * mTLS classes the Raft transport uses — {@code setNeedClientAuth(true)}, TLSv1.3, bounded
+ * mTLS classes the Raft transport uses - {@code setNeedClientAuth(true)}, TLSv1.3, bounded
  * handshake), virtual-thread-per-connection. When the server has no {@link TlsManager} it
  * accepts plaintext (test / single-node), exactly mirroring the Raft transport's TLS policy.
  *
@@ -51,13 +51,13 @@ import java.util.logging.Logger;
  *   <li><b>reader</b>: decodes inbound frames via {@link EdgeFrameCodec} (peekLength
  *       discipline). The first frame MUST be {@code SUBSCRIBE}; the edge identity is bound to
  *       the mTLS client-cert principal (see {@link #resolveEdgeIdentity}). Subsequent frames
- *       are {@code CURSOR_ACK}s routed to the session. Any garbage → close with the mapped
- *       {@link ErrorCode} ({@code FRAME_CORRUPT} / {@code PROTOCOL_VIOLATION} / …).</li>
+ *       are {@code CURSOR_ACK}s routed to the session. Any garbage -> close with the mapped
+ *       {@link ErrorCode} ({@code FRAME_CORRUPT} / {@code PROTOCOL_VIOLATION} / ...).</li>
  *   <li><b>writer</b>: drains a per-connection <b>bounded</b> {@link ArrayBlockingQueue}
  *       ({@code edge.fanout.transport.queueFrames}, default 64) of encoded frames onto the
  *       socket. The {@link TransportSink#offer} is {@code queue.offer} (non-blocking; a full
  *       queue returns {@code false}, which the session reads as transport backpressure and
- *       demotes — never an unbounded buffer, never a blocked apply path).</li>
+ *       demotes - never an unbounded buffer, never a blocked apply path).</li>
  *   <li><b>session</b>: drives {@code session.tick(clock.millis())} with the
  *       {@link FanOutConfig#idlePollMs()} adaptive backoff (busy re-poll while data flows,
  *       park up to {@code idlePollMs} when idle). It PULLS via {@code readSince}/replay only.</li>
@@ -76,7 +76,7 @@ public final class FanOutServer implements FanOutEndpoint {
     /** Bounded TLS handshake timeout (ms), mirroring {@code TcpRaftTransport.HANDSHAKE_TIMEOUT_MS}. */
     static final int HANDSHAKE_TIMEOUT_MS = 2_000;
 
-    /** Named config: per-connection outbound transport queue depth (frames). Design §4. */
+    /** Named config: per-connection outbound transport queue depth (frames). Design section 4. */
     public static final int DEFAULT_TRANSPORT_QUEUE_FRAMES = 64;
 
     /**
@@ -100,8 +100,8 @@ public final class FanOutServer implements FanOutEndpoint {
     private final Clock clock;
 
     /**
-     * The RFC §2 watch-authorization gate (W7), or {@code null} when no watch capability is wired (the
-     * driver then fails CLOSED: every {@code WATCH_CREATE} → {@code NOT_AUTHORIZED}). The pre-watch
+     * The watch-authorization gate, or {@code null} when no watch capability is wired (the
+     * driver then fails CLOSED: every {@code WATCH_CREATE} -> {@code NOT_AUTHORIZED}). The pre-watch
      * constructors pass {@code null}; {@code ConfigdServer} threads a real authorizer. The legacy
      * SUBSCRIBE fan-out path is unaffected regardless.
      */
@@ -162,7 +162,7 @@ public final class FanOutServer implements FanOutEndpoint {
     }
 
     /**
-     * Full constructor with the RFC §2 watch-authorization gate ({@code authorizer}, W7). A
+     * Full constructor with the watch-authorization gate ({@code authorizer}). A
      * {@code null} authorizer fails CLOSED (watches rejected {@code NOT_AUTHORIZED}); the legacy
      * SUBSCRIBE fan-out path is unaffected regardless. {@code ConfigdServer} threads the
      * {@code AclServiceWatchAuthorizer} here. The JDK transport is retained as a drop-in
@@ -196,7 +196,7 @@ public final class FanOutServer implements FanOutEndpoint {
         this.governor = java.util.Objects.requireNonNull(governor, "governor");
         this.metrics = java.util.Objects.requireNonNull(metrics, "metrics");
         this.clock = java.util.Objects.requireNonNull(clock, "clock");
-        this.authorizer = authorizer; // nullable ⇒ no watch capability ⇒ driver fails closed
+        this.authorizer = authorizer; // nullable => no watch capability => driver fails closed
     }
 
     /** The slow-consumer governor this endpoint enforces (C4; for tests/diagnostics). */
@@ -246,7 +246,7 @@ public final class FanOutServer implements FanOutEndpoint {
             try {
                 Socket socket = serverSocket.accept();
                 // Admission bound BEFORE the handshake (hard rule 4): beyond
-                // maxSessions the socket is closed immediately — half-open
+                // maxSessions the socket is closed immediately - half-open
                 // handshakes count, so they cannot exhaust fds/threads.
                 if (liveSockets.size() >= maxSessions) {
                     metrics.onSessionRefused();
@@ -274,7 +274,7 @@ public final class FanOutServer implements FanOutEndpoint {
         String edgeIdentity;
         try {
             if (socket instanceof SSLSocket ssl) {
-                // Bounded handshake (no deadline-less blocking — RR-002 discipline).
+                // Bounded handshake (no deadline-less blocking).
                 ssl.setSoTimeout(HANDSHAKE_TIMEOUT_MS);
                 ssl.startHandshake();
                 ssl.setSoTimeout(0);
@@ -292,20 +292,20 @@ public final class FanOutServer implements FanOutEndpoint {
     }
 
     // -----------------------------------------------------------------------
-    // Cert identity binding (review condition)
+    // Cert identity binding
     // -----------------------------------------------------------------------
 
     /**
      * Resolves the AUTHORITATIVE edge identity for a connection.
      *
-     * <h3>Decision (review condition): the mTLS client-cert principal is authoritative</h3>
+     * <h3>Decision: the mTLS client-cert principal is authoritative</h3>
      * Over an mTLS connection the identity is the verified client-certificate Subject DN
      * ({@code SSLSession.getPeerPrincipal()}). The {@code SUBSCRIBE.edgeId} carried on the wire
      * is attacker-controllable and is therefore treated as <b>advisory only</b>: the server
      * binds the session to the cert principal and, if the wire {@code edgeId} differs, records
      * the cert principal as authoritative (never trusts the wire field for authorization). This
-     * is the secure choice — the certificate is verified by the TLS layer against the trust
-     * store; the wire field is not. Plaintext mode (no TLS — test/single-node) has no cert, so
+     * is the secure choice - the certificate is verified by the TLS layer against the trust
+     * store; the wire field is not. Plaintext mode (no TLS - test/single-node) has no cert, so
      * the wire {@code edgeId} is used as-is.
      *
      * @return the authoritative edge identity (cert Subject DN, or {@code "plaintext"} marker)
@@ -367,9 +367,9 @@ public final class FanOutServer implements FanOutEndpoint {
 
     /**
      * One edge subscriber connection: owns the socket, the reader / writer / session virtual
-     * threads, and the bounded outbound queue. All session logic — inbound routing, cert-identity
-     * binding, C4 admission, the tick + governor-feed loop, demotion handling — lives in the shared
-     * {@link FanOutConnectionDriver}, identical to the Netty fan-out transport's (DR-N11). This
+     * threads, and the bounded outbound queue. All session logic - inbound routing, cert-identity
+     * binding, C4 admission, the tick + governor-feed loop, demotion handling - lives in the shared
+     * {@link FanOutConnectionDriver}, identical to the Netty fan-out transport's. This
      * class is the JDK-socket <em>body</em>; the driver is the transport-agnostic <em>brain</em>.
      */
     private final class Connection implements TransportSink {
@@ -383,19 +383,19 @@ public final class FanOutServer implements FanOutEndpoint {
         private volatile FanOutConnectionDriver driver;
 
         /**
-         * Negotiated OUTBOUND edge wire version (W1-3 / §6a). Default {@code 0x01} (legacy); flipped to
+         * Negotiated OUTBOUND edge wire version. Default {@code 0x01} (legacy); flipped to
          * {@code 0x02} by the reader when the FIRST inbound frame is a {@code WATCH_CREATE} (a watch
          * connection), so {@link #offer} stamps {@code 0x02} and a {@code 0x02} client can decode the
-         * server's {@code WATCH_*} frames (W5-11). Written by the reader thread, read by the session
-         * thread (in {@code offer}) and teardown ⇒ {@code volatile}. A legacy connection never flips it
-         * ⇒ stays {@code 0x01} ⇒ byte-identical.
+         * server's {@code WATCH_*} frames. Written by the reader thread, read by the session
+         * thread (in {@code offer}) and teardown -> {@code volatile}. A legacy connection never flips it
+         * -> stays {@code 0x01} -> byte-identical.
          */
         private volatile byte wireVersion = EdgeFrameCodec.EDGE_WIRE_VERSION;
 
         /**
-         * The negotiated INBOUND wire version pin, or {@code 0} until the first frame establishes it
-         * (W5-11). Reader-thread-only. The first frame is decoded accepting either version, then pinned
-         * to its stamp; subsequent frames decode under the pin (a mismatched version → BAD_WIRE_VERSION).
+         * The negotiated INBOUND wire version pin, or {@code 0} until the first frame establishes it.
+         * Reader-thread-only. The first frame is decoded accepting either version, then pinned
+         * to its stamp; subsequent frames decode under the pin (a mismatched version -> BAD_WIRE_VERSION).
          */
         private byte inboundNegotiatedVersion;
 
@@ -444,12 +444,12 @@ public final class FanOutServer implements FanOutEndpoint {
                     }
                     if (!firstFrameRouted) {
                         firstFrameRouted = true;
-                        // §6a outbound flip: a WATCH_CREATE-first connection is a 0x02 watch connection,
-                        // so offer() must stamp 0x02 for the client to decode the server's WATCH_* frames
-                        // (W5-11). A SUBSCRIBE-first legacy connection stays 0x01 (byte-identical). The
+                        // Outbound flip: a WATCH_CREATE-first connection is a 0x02 watch connection,
+                        // so offer() must stamp 0x02 for the client to decode the server's WATCH_* frames.
+                        // A SUBSCRIBE-first legacy connection stays 0x01 (byte-identical). The
                         // flip happens-before any outbound watch frame the session thread later produces
                         // (it is posted as a session command AFTER this flip). (A WATCH_CREATE is always
-                        // 0x02-stamped — the codec forbids WATCH_* under 0x01 — so the type-based flip and
+                        // 0x02-stamped - the codec forbids WATCH_* under 0x01 - so the type-based flip and
                         // the stamp-based inbound pin agree for every real connection.)
                         if (frame instanceof EdgeFrame.WatchCreate) {
                             wireVersion = EdgeFrameCodec.EDGE_WIRE_VERSION_V2;
@@ -460,7 +460,7 @@ public final class FanOutServer implements FanOutEndpoint {
             } catch (EdgeFrameCodec.CodecException e) {
                 close(e.code(), "decode error: " + e.getMessage());
             } catch (IOException e) {
-                // Socket closed / reset — normal teardown path.
+                // Socket closed / reset - normal teardown path.
                 if (alive.get()) {
                     LOG.fine(() -> "edge reader I/O end: " + e.getMessage());
                 }
@@ -478,7 +478,7 @@ public final class FanOutServer implements FanOutEndpoint {
             } catch (EOFException eof) {
                 return null; // clean stream end
             }
-            // Bounds-check the declared length BEFORE allocating (ADR-0037 / peekLength).
+            // Bounds-check the declared length BEFORE allocating (peekLength-bounded).
             byte[] header4 = new byte[]{
                     (byte) (length >>> 24), (byte) (length >>> 16),
                     (byte) (length >>> 8), (byte) length};
@@ -490,12 +490,12 @@ public final class FanOutServer implements FanOutEndpoint {
             frameBytes[3] = header4[3];
             in.readFully(frameBytes, 4, total - 4);
             if (inboundNegotiatedVersion == 0) {
-                // First frame: accept either version (CRC-validated), then PIN to its stamp (W5-11).
+                // First frame: accept either version (CRC-validated), then PIN to its stamp.
                 EdgeFrame frame = EdgeFrameCodec.decode(frameBytes);
                 inboundNegotiatedVersion = EdgeFrameCodec.peekVersion(frameBytes); // known 0x01/0x02
                 return frame;
             }
-            // Pinned: a frame stamped with the OTHER accepted version → BAD_WIRE_VERSION (fail closed).
+            // Pinned: a frame stamped with the OTHER accepted version -> BAD_WIRE_VERSION (fail closed).
             return EdgeFrameCodec.decode(frameBytes, inboundNegotiatedVersion);
         }
 
@@ -533,7 +533,7 @@ public final class FanOutServer implements FanOutEndpoint {
             }
             byte[] encoded;
             try {
-                // Stamp the connection's negotiated wire version (W1-3 / §6a): 0x01 legacy
+                // Stamp the connection's negotiated wire version: 0x01 legacy
                 // (byte-identical), 0x02 on a watch connection so the client can decode WATCH_* frames.
                 encoded = EdgeFrameCodec.encode(frame, wireVersion);
             } catch (EdgeFrameCodec.CodecException e) {
@@ -560,7 +560,7 @@ public final class FanOutServer implements FanOutEndpoint {
             FanOutSessionCore s = (d != null) ? d.session() : null;
             if (s != null && s.state() != FanOutSessionCore.SessionState.CLOSED) {
                 // Best-effort: try to push a final ERROR_CLOSE before the socket dies. Stamp the
-                // connection's negotiated version so a 0x02 watch client can decode the bye (W5-11).
+                // connection's negotiated version so a 0x02 watch client can decode the bye.
                 try {
                     byte[] bye = EdgeFrameCodec.encode(new EdgeFrame.ErrorClose(code, message), wireVersion);
                     socket.getOutputStream().write(bye);

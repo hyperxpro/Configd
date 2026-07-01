@@ -9,7 +9,7 @@ import java.util.concurrent.atomic.AtomicLong;
 /**
  * A faithful, socket-free model of {@code TcpRaftTransport.PeerConnection}'s
  * concurrent shared state and control flow, for jcstress race-testing of the
- * RR-002 transport threading change.
+ * transport threading change.
  *
  * <p><b>Why a model and not the real class?</b> {@code PeerConnection} drives real
  * {@link java.net.Socket}s and a {@code ScheduledExecutorService}; running it
@@ -65,7 +65,7 @@ public final class PeerModel {
     public final AtomicInteger pendingConnects = new AtomicInteger();
     /** A monotonic id generator for published streams. */
     private final AtomicInteger streamIds = new AtomicInteger();
-    /** "running" flag — true for the lifetime of a test (close() flips closed, not this). */
+    /** "running" flag - true for the lifetime of a test (close() flips closed, not this). */
     private final AtomicBoolean running = new AtomicBoolean(true);
 
     public PeerModel(int capacity) {
@@ -81,9 +81,7 @@ public final class PeerModel {
         return out;
     }
 
-    // -----------------------------------------------------------------------
-    // enqueueOrDrop — verbatim algorithm from PeerConnection.enqueueOrDrop
-    // -----------------------------------------------------------------------
+    // enqueueOrDrop - verbatim algorithm from PeerConnection.enqueueOrDrop
     public void enqueueOrDrop(byte[] wire) {
         if (closed.get()) {
             framesDropped.incrementAndGet();
@@ -101,9 +99,7 @@ public final class PeerModel {
         }
     }
 
-    // -----------------------------------------------------------------------
-    // scheduleConnect — verbatim CAS gate
-    // -----------------------------------------------------------------------
+    // scheduleConnect - verbatim CAS gate
     public void scheduleConnect() {
         if (closed.get() || !running.get()) {
             return;
@@ -133,7 +129,7 @@ public final class PeerModel {
             // Publish BEFORE starting the writer (source order: this.socket=s; this.out=o;)
             this.socket = s;
             this.out = o;
-            // "submit writer" — model it inline: the writer reads the published o.
+            // "submit writer" - model it inline: the writer reads the published o.
             startWriter(o);
             connected = true;
         } finally {
@@ -155,7 +151,7 @@ public final class PeerModel {
             if (closed.get() || !running.get()) {
                 return;
             }
-            // createClientSocket throws — nothing published.
+            // createClientSocket throws - nothing published.
         } finally {
             connectInFlight.set(false);
             if (!connected && !closed.get() && running.get() && !queue.isEmpty()) {
@@ -173,27 +169,23 @@ public final class PeerModel {
         writersStarted.incrementAndGet();
     }
 
-    // -----------------------------------------------------------------------
-    // teardown — verbatim identity guard
-    // -----------------------------------------------------------------------
+    // teardown - verbatim identity guard
     public void teardown(StreamRef s) {
         boolean wasLive = (this.socket == s);     // identity guard
         if (wasLive) {
             this.out = null;
             this.socket = null;
         }
-        // closeQuietly(s) — no-op in the model
+        // closeQuietly(s) - no-op in the model
         if (wasLive && !closed.get()) {
-            // markDisconnected — modelled by the reschedule decision only
+            // markDisconnected - modelled by the reschedule decision only
             if (!queue.isEmpty() && running.get()) {
                 scheduleConnect();
             }
         }
     }
 
-    // -----------------------------------------------------------------------
-    // close — verbatim
-    // -----------------------------------------------------------------------
+    // close - verbatim
     public void close() {
         closed.set(true);
         // closeQuietly(out/socket)
