@@ -94,10 +94,12 @@ public final class NettyFanOutServer implements FanOutEndpoint {
     private final int workerThreads;
 
     /**
-     * The watch-authorization gate, or {@code null} when no watch capability is wired -
-     * the driver then fails CLOSED (every {@code WATCH_CREATE} -> {@code NOT_AUTHORIZED}). The
-     * pre-watch constructors pass {@code null}, so existing callers (the contract, the testkit main)
-     * compile and behave unchanged; {@code ConfigdServer} threads a real authorizer.
+     * The authorization gate, or {@code null} when no principal model is wired. It gates both
+     * {@code WATCH_CREATE} (per-target) and the legacy full-store {@code SUBSCRIBE} (whole-store READ).
+     * A {@code null} authorizer fails CLOSED for watches (every {@code WATCH_CREATE} ->
+     * {@code NOT_AUTHORIZED}) but admits {@code SUBSCRIBE} (auth off), so existing callers (the
+     * contract, the testkit main) behave as an unauthenticated deployment; {@code ConfigdServer}
+     * threads a real authorizer.
      */
     private final WatchAuthorizer authorizer;
 
@@ -152,10 +154,10 @@ public final class NettyFanOutServer implements FanOutEndpoint {
     }
 
     /**
-     * Full constructor with the watch-authorization gate ({@code authorizer}). A
-     * {@code null} authorizer fails CLOSED (watches rejected {@code NOT_AUTHORIZED}); the legacy
-     * SUBSCRIBE fan-out path is unaffected regardless. {@code ConfigdServer} threads the
-     * {@code AclServiceWatchAuthorizer} here.
+     * Full constructor with the authorization gate ({@code authorizer}). A {@code null} authorizer
+     * fails CLOSED for watches (rejected {@code NOT_AUTHORIZED}) and admits the legacy full-store
+     * {@code SUBSCRIBE} (auth off); a wired authorizer additionally gates {@code SUBSCRIBE} on
+     * whole-store READ. {@code ConfigdServer} threads the {@code AclServiceWatchAuthorizer} here.
      */
     public NettyFanOutServer(InetSocketAddress bindAddress,
                              TlsManager tlsManager,

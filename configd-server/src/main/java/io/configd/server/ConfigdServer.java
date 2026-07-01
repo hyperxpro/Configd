@@ -934,11 +934,14 @@ public final class ConfigdServer {
                     new io.configd.distribution.fanout.SlowConsumerGovernor(
                             io.configd.distribution.fanout.SlowConsumerPolicyConfig.defaults(),
                             fanOutMetrics);
-            // The watch-authorization gate. The adapter bridges the fan-out plane's WatchAuthorizer SPI
-            // to the SAME in-core AclService the HTTP admin path uses (so the watch gate and the admin
-            // gate decide identically). When auth is OFF (aclService == null) the authorizer is null ->
-            // the driver fails CLOSED (every WATCH_CREATE -> NOT_AUTHORIZED); the legacy SUBSCRIBE
-            // fan-out path is unaffected either way.
+            // The authorization gate. The adapter bridges the fan-out plane's WatchAuthorizer SPI to the
+            // SAME in-core AclService the HTTP admin path uses (so the edge gate and the admin gate decide
+            // identically). When auth is ON (aclService present) it gates BOTH edge surfaces: WATCH_CREATE
+            // over its whole target and the legacy full-store SUBSCRIBE over whole-store READ - so the edge
+            // hydration identity (the edge node's cert-DN) MUST hold READ over the root prefix or SUBSCRIBE
+            // is refused NOT_AUTHORIZED. When auth is OFF (aclService == null) the authorizer is null: the
+            // driver fails CLOSED for watches (every WATCH_CREATE -> NOT_AUTHORIZED) but admits SUBSCRIBE
+            // (an unauthenticated deployment has no principal model to evaluate).
             io.configd.distribution.fanout.WatchAuthorizer watchAuthorizer =
                     (aclService != null)
                             ? new io.configd.server.fanout.AclServiceWatchAuthorizer(aclService)

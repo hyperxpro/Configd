@@ -120,6 +120,12 @@ Source of truth for the gate set: the readiness review, [section 4](../archive/r
   fan-out on the wire - any on-path attacker reads/forges config traffic and edge
   deltas. With TLS off, the edge port serves **plaintext** (`Edge port : <port>
   (PLAINTEXT)`, `ConfigdServer.java:1018`).
+- **Edge hydration grant (auth ON):** with auth on, the whole-store `SUBSCRIBE`
+  fan-out is gated at admission on a **whole-store READ cover**, so the edge /
+  hydration identity (the edge node's mTLS cert-DN) MUST hold **`READ` over the
+  root prefix `""`** or its `SUBSCRIBE` is refused `NOT_AUTHORIZED` and edge
+  hydration never starts. Out-of-the-box only `root` holds that grant. See
+  [`deployer-must-know.md` section 2](deployer-must-know.md).
 
 ## Gate 3 - Audit log ON (auto-tied to Auth)
 
@@ -237,9 +243,10 @@ behavioral probe** (not merely by a config flag being present) and the always-on
 controls show their startup lines. Record the verifying command output per gate.
 
 Then read [`deployer-must-know.md`](deployer-must-know.md) -- six system-boundary
-requirements (secrets, legacy-SUBSCRIBE segregation, single-scope, snapshot cap,
-leadership placement, cross-identity policy alignment) that the server does **not**
-enforce for you.
+requirements (secrets, edge-hydration root-READ grant, single-scope, snapshot cap,
+leadership placement, cross-identity policy alignment); most are conditions the
+server does **not** enforce for you (the edge-hydration grant it now does gate at
+admission).
 
 ## Cross-references
 

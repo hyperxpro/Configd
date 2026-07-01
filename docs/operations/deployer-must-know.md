@@ -34,35 +34,47 @@ measurement doc.
   [section 4](../archive/readiness/v1-go-no-go-2026-07-01.md), item 4,
   and the "Encryption at rest -- ABSENT - v2" row.)
 
-## 2. Segregate legacy-SUBSCRIBE from watch clients -- LOUD: this is an authz bypass if missed
+## 2. Grant the edge hydration identity whole-store READ -- SUBSCRIBE is gated on it
 
-- **Requirement.** If you enable `--edge-port`, you MUST **segregate watch clients
-  from edge-cache subscribers at the network boundary.** The server does **not**
-  enforce this.
-- **Why it matters (concrete bypass).** The same `--edge-port` also serves the
-  pre-existing **whole-store `SUBSCRIBE` fan-out** -- the trusted server-to-edge
-  backbone (ADR-0038) -- which has **NO per-key ACL**. **Any cert that completes
-  the mTLS handshake can pull the ENTIRE store via `SUBSCRIBE`, bypassing the
-  watch-authorization gate.** The per-key watch gate (`AclServiceWatchAuthorizer`,
-  `configd-server/.../fanout/AclServiceWatchAuthorizer.java`) only constrains
-  clients that **cannot reach** the legacy `SUBSCRIBE` path; a legacy
-  `SUBSCRIBE`-first connection never enters the authorizing veneer at all
-  (`WatchMultiplexSink.java:25-26`). This is documented as the deployment security
-  model in
-  [`known-limitations.md` section 2](known-limitations.md) (lines 49-58: "A cert that
-  completes the mTLS handshake can obtain the whole store via SUBSCRIBE, bypassing
-  the watch gate").
-- **Not reachable in the default config -- but load-bearing the moment you grant a
-  non-root watch.** Out-of-the-box only `root` can watch, and `root` already holds
-  the whole store, so nothing is leaked *by default*. The bypass becomes real the
-  instant you grant a **non-root** watch on a **shared** edge port: that principal
-  can sidestep its per-key grant by opening a raw `SUBSCRIBE`.
-- **What to do.** Deploy watch clients **segregated** from edge-cache subscribers --
-  a **separate trust anchor** for edge-cache subscribers, or the intended
-  server-to-edge-to-client topology where clients cannot reach the raw `SUBSCRIBE`
-  listener. Gating/segregating the legacy `SUBSCRIBE` path is a **tracked v1/v2
-  hardening follow-up**, **not a server-enforced control in v1**. Until then,
-  network segregation is mandatory before any non-root watch grant.
+- **Requirement.** If you enable `--edge-port` with auth ON, the **edge / hydration
+  identity** (the edge node's mTLS cert-DN) MUST hold **`READ` over the root prefix
+  `""`** -- otherwise its whole-store `SUBSCRIBE` is refused `NOT_AUTHORIZED` at
+  admission and edge hydration never starts.
+- **Rollout ordering (this is a breaking change with auth ON).** The gate is new:
+  existing edge certs that lack root READ are now **refused `NOT_AUTHORIZED` at
+  SUBSCRIBE**. Grant the edge / hydration identities root READ **before** upgrading,
+  or hydration breaks on restart.
+- **Why it matters.** The same `--edge-port` serves the pre-existing **whole-store
+  `SUBSCRIBE` fan-out** -- the trusted server-to-edge backbone (ADR-0038). It is now
+  gated at admission on a **whole-store READ cover** (a root-prefix `READ` grant with
+  no intersecting `READ` deny anywhere; `WATCH` is not required -- a `SUBSCRIBE` is a
+  read feed, not a watch), enforced by `AclServiceWatchAuthorizer`
+  (`configd-server/.../fanout/AclServiceWatchAuthorizer.java`). A cert that completes
+  the mTLS handshake but lacks root READ is refused before any frame flows. This
+  **closes the prior watch-gate bypass**: a watch-only principal (subtree
+  `READ  and  WATCH`, no root READ) can no longer escalate to the whole store by opening
+  a raw `SUBSCRIBE`. See
+  [`known-limitations.md` section 2](known-limitations.md) ("Co-resident legacy
+  SUBSCRIBE (now authorized)").
+- **Authentication is not authorization -- mTLS ON but auth OFF still leaks the whole
+  store.** The gate is active **only when ACL/auth is enabled** (an `--auth-token` is
+  set), and auth is **decoupled from TLS** (`ServerConfig.authEnabled()` vs
+  `tlsEnabled()`). In the **mTLS-REQUIRED-but-no-auth-token** posture the authorizer is
+  absent, so **any valid edge cert still pulls the whole store** -- the transport is
+  authenticated but nothing is authorized. There, **per-cert trust** (who you issue edge
+  certs to) **plus network segregation** of the raw `SUBSCRIBE` listener from untrusted
+  clients remains your **only** control -- do not drop it in that posture. Over a
+  **plaintext** edge port with auth ON, the identity is the literal `"plaintext"`,
+  denied unless `"plaintext"` holds root READ.
+- **A whole-store-READ grant IS a whole-store read (including a live change stream).**
+  Granting an identity root READ authorizes it to pull the entire store via `SUBSCRIBE`
+  **and** to receive a **live `NOTIFY` change stream of the whole store** -- not just a
+  point-in-time snapshot (`WATCH` capability is not required for this). That is the
+  feed's purpose, not a bypass. Do not grant root READ to a principal you intend to
+  restrict to a subtree; use a per-subtree grant, and reserve root READ for the
+  edge/hydration backbone (and `root`).
+- **Default config.** Out-of-the-box only `root` holds the root grant (and `root`
+  already holds the whole store), so nothing is over-exposed by default.
 
 ## 3. `scope` is NOT a tenant-isolation boundary at N=1
 
@@ -183,7 +195,7 @@ measurement doc.
 | # | MUST-KNOW | The failure if ignored | Enforced by server? |
 |---|-----------|------------------------|---------------------|
 | 1 | Don't store secrets (integrity-only at rest) | Plaintext secrets readable from disk/snapshot/backup | No -- deployment choice |
-| 2 | Segregate legacy-SUBSCRIBE | Whole-store read bypasses per-key watch ACL | No -- network boundary |
+| 2 | Grant edge hydration identity root READ | Edge SUBSCRIBE refused NOT_AUTHORIZED (auth on); whole-store read requires root READ | Yes -- gated at admission (auth on) |
 | 3 | `scope` is not tenant isolation | Cross-tenant read/write via scope-blind gate | No -- scope is metadata |
 | 4 | Snapshot < 4 MiB | Follower wedges permanently on >4 MiB InstallSnapshot | Cap enforced; **alerting is on you** |
 | 5 | Place one leader per box | Aggregate collapses to single-box plateau | No -- no auto-balancer in v1 |

@@ -185,4 +185,63 @@ class AclServiceWatchAuthorizerTest {
         assertTrue(authz(acl, "p", prefix("svc.")),
                 "a role granting READ∧WATCH over svc. authorizes the subtree watch");
     }
+
+    // ---- legacy full-store SUBSCRIBE: the whole-store READ cover (READ-only, root prefix) ----
+
+    private static boolean authzSubscribe(AclService acl, String principal) {
+        return new AclServiceWatchAuthorizer(acl).authorizeSubscribe(principal, Set.of());
+    }
+
+    @Test
+    @DisplayName("SUBSCRIBE — a root-prefix READ grant authorizes the whole-store feed")
+    void subscribeRootReadAllowed() {
+        AclService acl = new AclService();
+        acl.grant("", "edge", Set.of(READ));
+        assertTrue(authzSubscribe(acl, "edge"), "a root READ grant covers the whole store");
+    }
+
+    @Test
+    @DisplayName("SUBSCRIBE — a subtree-only grant does not cover the whole store")
+    void subscribeSubtreeGrantRejected() {
+        AclService acl = new AclService();
+        acl.grant("a.", "edge", Set.of(READ)); // a strict subset of the root
+        assertFalse(authzSubscribe(acl, "edge"), "a subtree READ grant cannot cover the root prefix");
+    }
+
+    @Test
+    @DisplayName("SUBSCRIBE — any READ deny anywhere blocks the whole-store feed")
+    void subscribeRootReadWithAnyDenyRejected() {
+        AclService acl = new AclService();
+        acl.grant("", "edge", Set.of(READ));
+        acl.deny("a.secret.", "edge", Set.of(READ)); // a hole carved anywhere under the root
+        assertFalse(authzSubscribe(acl, "edge"),
+                "at the root, every deny matches the interior term, so any READ deny blocks SUBSCRIBE");
+    }
+
+    @Test
+    @DisplayName("SUBSCRIBE — WATCH is not sufficient; READ is what a streaming read requires")
+    void subscribeWatchOnlyRootRejected() {
+        AclService acl = new AclService();
+        acl.grant("", "edge", Set.of(WATCH)); // WATCH over the root but no READ
+        assertFalse(authzSubscribe(acl, "edge"), "SUBSCRIBE authorizes on READ, not WATCH");
+    }
+
+    @Test
+    @DisplayName("SUBSCRIBE — a root READ carried by a role authorizes the feed")
+    void subscribeRoleCarriedRootReadAllowed() {
+        AclService acl = new AclService();
+        acl.defineRole(new Role("hydrator",
+                List.of(new Policy("edge", List.of(new PolicyRule("", Set.of(READ), Set.of()))))));
+        acl.assignRole("edge", "hydrator");
+        assertTrue(authzSubscribe(acl, "edge"),
+                "a role granting root READ authorizes the whole-store feed (effectiveRules unions roles)");
+    }
+
+    @Test
+    @DisplayName("SUBSCRIBE — an ungranted principal is denied the whole-store feed")
+    void subscribeUngrantedRejected() {
+        AclService acl = new AclService();
+        acl.grant("", "edge", Set.of(READ)); // edge holds root READ; mallory does not
+        assertFalse(authzSubscribe(acl, "mallory"), "an ungranted principal cannot open the feed");
+    }
 }

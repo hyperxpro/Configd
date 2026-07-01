@@ -34,10 +34,13 @@ import java.util.function.Consumer;
  *       principal is authoritative and the wire {@code edgeId} is advisory; plaintext uses the wire
  *       {@code edgeId}. The transport supplies only the verified principal. The same
  *       {@code edgeIdentity} is the watch-authorization principal (W8-6).</li>
- *   <li><b>Admission</b> at SUBSCRIBE (quarantine/unhealthy REFUSE -> teardown with the on-wire
- *       {@link ErrorCode#QUARANTINED}; post-cooldown ALLOW_FORCE_SNAPSHOT rebinds the cursor to 0 so
- *       {@code decideMode} forces the re-bootstrap) and the demotion -> QUARANTINED/UNHEALTHY
- *       teardown arm ({@link #onDemotionEvent}).</li>
+ *   <li><b>Admission</b> at SUBSCRIBE: authorize the whole-store feed (whole-store READ via the
+ *       optional {@link WatchAuthorizer}; deny -> {@link ErrorCode#NOT_AUTHORIZED} teardown with zero
+ *       data frames; a {@code null} authorizer admits it as an auth-off deployment), then the governor
+ *       gate (quarantine/unhealthy REFUSE -> teardown with the on-wire {@link ErrorCode#QUARANTINED};
+ *       post-cooldown ALLOW_FORCE_SNAPSHOT rebinds the cursor to 0 so {@code decideMode} forces the
+ *       re-bootstrap) and the demotion -> QUARANTINED/UNHEALTHY teardown arm
+ *       ({@link #onDemotionEvent}).</li>
  *   <li><b>The watch veneer</b> (RFC section 2): a {@link WatchMultiplexSink} decorator wraps the
  *       transport sink (always installed; passthrough until the connection is a watch connection =>
  *       legacy byte-identical), and a per-connection {@link WatchRegistry} tracks the multiplexed
@@ -82,10 +85,12 @@ public final class FanOutConnectionDriver {
     private final CommitNotificationSource source;
 
     /**
-     * The watch-authorization gate (W7), or {@code null} when no watch capability is wired
-     * (fail-closed: every {@code WATCH_CREATE} is rejected {@code NOT_AUTHORIZED}). The existing
-     * 9-arg constructor passes {@code null}, so the JDK/Netty/sim callers compile and behave
-     * unchanged until the server wiring increment threads a real authorizer.
+     * The authorization gate (W7), or {@code null} when no principal model is wired. It gates both
+     * {@code WATCH_CREATE} (per-target) and the legacy full-store {@code SUBSCRIBE} (whole-store
+     * READ). A {@code null} authorizer fails CLOSED for watches (every
+     * {@code WATCH_CREATE} rejected {@code NOT_AUTHORIZED}) but admits {@code SUBSCRIBE} (auth-off
+     * deployment): the existing 9-arg constructor passes {@code null}, so the JDK/Netty/sim callers
+     * behave as an unauthenticated deployment until the server wiring threads a real authorizer.
      */
     private final WatchAuthorizer authorizer;
 
@@ -167,10 +172,13 @@ public final class FanOutConnectionDriver {
     }
 
     /**
-     * @param authorizer the watch-authorization gate (W7), or {@code null} for no watch
-     *                   capability - every {@code WATCH_CREATE} is then rejected {@code NOT_AUTHORIZED}
-     *                   (fail-closed). The legacy {@code SUBSCRIBE} fan-out path is unaffected
-     *                   regardless of this argument.
+     * @param authorizer the authorization gate (W7), or {@code null} when no principal model is wired.
+     *                   With an authorizer every {@code WATCH_CREATE} is authorized over its whole
+     *                   target and every legacy full-store {@code SUBSCRIBE} is authorized over the
+     *                   root-prefix READ cover, both fail-closed (a {@code false} verdict or any
+     *                   throwable denies). A {@code null} authorizer rejects every {@code WATCH_CREATE}
+     *                   {@code NOT_AUTHORIZED} but admits the {@code SUBSCRIBE} feed (an
+     *                   unauthenticated deployment has no principal model to evaluate).
      */
     public FanOutConnectionDriver(CommitNotificationSource source, ReplaySource replaySource,
                                   TransportSink sink, FanOutConfig config, FanOutSessionMetrics metrics,
@@ -257,9 +265,24 @@ public final class FanOutConnectionDriver {
         }
     }
 
-    /** The legacy SUBSCRIBE admission path. */
+    /**
+     * The legacy SUBSCRIBE admission path. The order is load-bearing: bind the cert identity,
+     * <b>authorize the whole-store feed</b>, then run governor admission. A full-store SUBSCRIBE is a
+     * streaming read of everything, so it must never expose what a whole-store READ could not; the
+     * authorization gate runs BEFORE any session command is posted, so a denied feed emits zero data
+     * frames.
+     */
     private void admitLegacySubscribe(EdgeFrame.Subscribe sub) {
         EdgeFrame.Subscribe bound = bindIdentity(sub);
+        // Authorize the whole-store feed on the verified identity BEFORE governor admission and before
+        // any session command is posted. A denied feed never enters the governor ledger and never
+        // drains, so not a single data frame flows. A null authorizer means the deployment wired no
+        // principal model (auth off), so the feed is admitted exactly as it was before this gate.
+        if (!authorizeSubscribe()) {
+            teardownHook.accept(ErrorCode.NOT_AUTHORIZED,
+                    "subscribe refused: " + edgeIdentity + " lacks whole-store READ");
+            return;
+        }
         // Admission rules on the BOUND identity (the cert principal - a reconnect storm cannot
         // dodge it by re-dialing). REFUSE -> QUARANTINED + teardown; post-cooldown readmission
         // rebinds resume cursor to 0 so decideMode forces the snapshot.
@@ -536,6 +559,26 @@ public final class FanOutConnectionDriver {
             return authorizer.authorizeWatch(edgeIdentity, Set.of(), target);
         } catch (Throwable t) {
             return false; // fail-closed on ANY throwable (W7 / SPI contract)
+        }
+    }
+
+    /**
+     * The legacy full-store SUBSCRIBE authorization gate. Unlike the watch {@link #authorize} gate this
+     * does NOT short-circuit the {@code "plaintext"} identity: a {@code null} authorizer (no principal
+     * model wired) admits the feed as an unauthenticated deployment, and a wired authorizer evaluates
+     * {@code "plaintext"} against its grants like any other principal (normally none => denied). The
+     * verified transport identity {@code edgeIdentity} is authoritative - over mTLS it is the cert
+     * principal, so an attacker cannot self-assert an authorized {@code edgeId} in the wire frame. A
+     * {@code false} verdict or any throwable denies (fail-closed, the same contract as the watch gate).
+     */
+    private boolean authorizeSubscribe() {
+        if (authorizer == null) {
+            return true; // auth off: no principal model to evaluate, admit as before this gate existed
+        }
+        try {
+            return authorizer.authorizeSubscribe(edgeIdentity, Set.of());
+        } catch (Throwable t) {
+            return false; // fail-closed on ANY throwable (same contract as the watch gate)
         }
     }
 

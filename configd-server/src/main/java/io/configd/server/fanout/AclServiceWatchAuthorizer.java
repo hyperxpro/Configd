@@ -86,6 +86,21 @@ public final class AclServiceWatchAuthorizer implements WatchAuthorizer {
     }
 
     /**
+     * Authorizes a legacy full-store {@code SUBSCRIBE} - the server-to-edge whole-store hydration feed
+     * (ADR-0038) - against the degenerate whole-target {@code READ} cover over the root prefix
+     * {@code ""}. A full-store {@code SUBSCRIBE} is a streaming read of everything, so it is authorized
+     * ONLY by a root-prefix {@code READ} grant with no intersecting {@code READ} deny anywhere (at
+     * target {@code ""} every deny matches the interior term, so any {@code READ} deny blocks it). This
+     * is the {@code READ} half of the {@code full_chain_verify} branch above; {@code WATCH} is
+     * deliberately NOT required because a {@code SUBSCRIBE} is a read feed, not a watch. Reject, not
+     * filter: the whole store is covered or the feed is denied.
+     */
+    @Override
+    public boolean authorizeSubscribe(String principal, Set<String> roles) {
+        return AclService.coversTarget(aclService.effectiveRules(principal, roles), "", Permission.READ);
+    }
+
+    /**
      * The live {@code AclService} config-policy version (the {@code _acl/} reload version) - the
      * bounded-revocation trigger. It is {@link Long#MIN_VALUE} until the first
      * {@code _acl/} policy is published and advances on every reload, so the veneer re-authorizes live
