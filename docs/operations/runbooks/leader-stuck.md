@@ -45,3 +45,17 @@
 - Tune `electionTimeoutMinMs` and `electionTimeoutMaxMs` to be well above network RTT (default 150-300ms).
 - Ensure `heartbeatIntervalMs` (default 50ms) is significantly less than `electionTimeoutMinMs`.
 - Monitor disk latency on `FileStorage` paths -- slow fsync in `DurableRaftState.persist()` delays vote persistence.
+
+## Leadership transfer (operator-initiated)
+
+Move a group's leader onto a specific node with an ADMIN-gated request:
+```bash
+curl -X POST 'https://<leader>:8080/v1/admin/groups/<group-id>/transfer-leadership?target=<node-id>' \
+     -H 'Authorization: Bearer <admin-token>'
+```
+
+The response is `200 initiated` as soon as the transfer is ACCEPTED -- the actual leader move is asynchronous (the leader sends TimeoutNow once the target has caught up). A 200 therefore does NOT confirm the move: a transfer to a far-lagging target returns 200 but does not take effect until that node catches up. If the target cannot catch up within about one election timeout, the transfer AUTO-ABORTS and the current leader resumes (Raft dissertation section 3.10). Writes are NEVER blocked while a transfer is pending -- the group stays write-available throughout, and the abort restores normal proposals if the transfer stalls.
+
+There is no dedicated status endpoint yet. To confirm a transfer took effect, re-read the leader: `configd_raft_role{role="LEADER"}` (or `RaftNode.leaderId()`) should report the target as the new leader.
+
+A transfer requested against a node that is not the group's leader returns `503` with an `X-Leader-Hint` header pointing at the current leader -- retry against that node.
