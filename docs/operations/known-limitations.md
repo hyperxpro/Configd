@@ -213,17 +213,25 @@ items rather than pre-GA gates:
   AppendEntries from the leader's oldest retained entry. If the
   leader has compacted past entries the follower needs, that
   follower is permanently behind.
-- v0.2 will implement chunked InstallSnapshot via the `offset` /
-  `done` fields (already in the wire format, currently ignored by
-  the leader). v0.1 ships with the cap.
-- **Mitigation in v0.1:** tune snapshot policy so state stays
+- A later release will implement chunked InstallSnapshot via the
+  `offset` / `done` fields (already in the wire format, currently
+  ignored by the leader), lifting the cap so a large snapshot ships
+  in chunks instead of being dropped - which makes this > 4 MiB drop
+  unreachable. v1 ships with the cap.
+- **Mitigation in v1:** tune snapshot policy so state stays
   under 4 MiB at snapshot time. Monitor per-follower `matchIndex`
   lag against leader `commitIndex` as a proxy for "follower is
   stuck because snapshot install rejected".
 - **Operator-visible signal:** stderr line
   `"Dropping InstallSnapshot to ... (codec rejected - snapshot too
-  large for v1 wire)"`. No Prometheus metric exports this yet
-  (W5 carryover).
+  large for v1 wire)"` (from `RaftNode.sendInstallSnapshot`, the
+  catch around line 2009). **No Prometheus metric exports this** -
+  detection is log-watch only. In particular the receiver-side
+  `ConfigdSnapshotInstallStalled` alert does **NOT** cover this drop:
+  it fires on `configd_snapshot_install_failed_total`, which is
+  incremented at the follower when a snapshot it *received* fails to
+  install; the over-cap frame never reaches the follower, so that
+  counter never moves for this failure mode.
 
 ### Wire-version mismatch alerting
 
@@ -244,8 +252,19 @@ items rather than pre-GA gates:
 - This prevents the cluster-wide outage that pass-3 / pass-4
   identified, but **no metric counter exports drop frequency** -
   it's stderr only. Operators must scrape logs.
-- **W5 carryover** wires `ConfigdMetrics.raftOutboundDrop({type, reason})`
-  in a separate observability pass.
+- No outbound-drop counter exists today, and none is planned as a
+  standalone item: the consensus core (`RaftNode`) has no event-counter
+  sink (only an `InvariantChecker`, which throws in test/sim and is
+  wrong for an *expected* operational drop, and an immutable
+  point-in-time `RaftMetrics` gauge record). A real counter would need
+  a metrics seam threaded through the server-layer transport
+  (`RaftTransportAdapter`, which is where the encoder `IllegalArgumentException`
+  originates) - genuine cross-module surface. For the dominant
+  (snapshot) case the chunked-InstallSnapshot cap-lift removes the drop
+  path entirely, so the burn-in instrumentation to build first is the
+  proactive pair the burn-in contract names - a snapshot-size-bytes
+  gauge and a per-follower `matchIndex`-lag gauge - not a reactive
+  drop counter (`docs/operations/burn-in-contract.md`, section 2C).
 
 ### Test-coverage instrumentation
 

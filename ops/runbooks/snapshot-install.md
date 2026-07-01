@@ -9,6 +9,20 @@ failure means the follower will eventually fall outside the leader's log
 retention window and be excluded from quorum until manual intervention,
 leaving the cluster one voter closer to losing quorum.
 
+> **Scope -- what this alert does NOT cover.** `configd_snapshot_install_failed_total`
+> is a **receiver-side** counter: it moves only when a follower fails to *install* a
+> snapshot it already *received*. It does **not** cover the **leader-side over-cap
+> drop** -- a snapshot whose blob exceeds `MAX_SNAPSHOT_BLOB_LEN` (4 MiB) is rejected by
+> the codec at `send` time, so it never leaves the leader and never reaches any
+> follower. That failure increments **no metric** and this alert **cannot fire on it**.
+> Its only signal is the leader stderr line `Dropping InstallSnapshot to ... (codec
+> rejected -- snapshot too large for v1 wire)` (`RaftNode.sendInstallSnapshot`). If a
+> follower is stuck and this alert is **silent**, grep the leader logs for that string
+> before diagnosing below -- see
+> [`known-limitations.md` "Snapshot size cap"](../../docs/operations/known-limitations.md)
+> and [`deployer-must-know.md` section 4](../../docs/operations/deployer-must-know.md).
+> Detection for the over-cap case is log-watch only; keep snapshot state under 4 MiB.
+
 ## Symptom
 
 - `ConfigdSnapshotInstallStalled` warns after ≥ 3 failures in 15 min.
