@@ -1,119 +1,100 @@
 # Docker
 
-Configd provides two Dockerfiles in the `docker/` directory:
+Configd ships two Dockerfiles under `docker/`, plus a ready-to-run Compose topology under
+`deploy/compose/`.
 
-| File | Purpose | Base Image |
-|------|---------|------------|
-| `Dockerfile.build` | CI/CD — build and test in a hermetic container | `eclipse-temurin:21-jdk-noble` |
-| `Dockerfile.runtime` | Distroless runtime base for service modules | `gcr.io/distroless/java21-debian12:nonroot` |
+| File | Purpose | Base image |
+|---|---|---|
+| `docker/Dockerfile.build` | CI/CD -- build and run the full test suite in a hermetic container | `eclipse-temurin:25-jdk-noble` |
+| `docker/Dockerfile.runtime` | Minimal runtime image that runs the control-plane server | builds on `eclipse-temurin:25-jdk-noble`, runs on `eclipse-temurin:25-jre-noble` |
 
-## Why Two Images?
+Both build with Maven and Java 25. Configd is no longer library-only: the runtime image runs a real
+control-plane server (`io.configd.server.ConfigdServer`), and the edge reader
+(`io.configd.edge.node.EdgeNodeMain`) is packaged alongside it.
 
-Configd is currently a **library** — there is no standalone server binary. The build image compiles and tests the library. The runtime image packages the JARs into a minimal distroless container that downstream services can extend when a main class is added.
+## Build image
 
-## Build Image
-
-Builds all modules and runs the test suite.
+Compiles all modules and runs `mvn clean verify` (the default command).
 
 ```bash
 # Build the image
 docker build -f docker/Dockerfile.build -t configd-build .
 
-# Run build + tests
+# Build + run the full test suite
 docker run --rm configd-build
 
-# Run build without tests
-docker run --rm configd-build ./gradlew build -x test --no-daemon
+# Build without tests
+docker run --rm configd-build mvn clean install -DskipTests -B
 
-# Run only a specific module's tests
-docker run --rm configd-build ./gradlew :configd-consensus-core:test --no-daemon
+# Run one module's tests
+docker run --rm configd-build mvn -pl configd-consensus-core test -B
 ```
 
-### Extracting JARs
+Artifacts are written to `/workspace/*/target/` inside the container.
 
-```bash
-docker create --name configd-out configd-build ./gradlew build -x test --no-daemon
-docker start -a configd-out
-docker cp configd-out:/workspace/configd-common/build/libs/ ./out/common/
-docker cp configd-out:/workspace/configd-consensus-core/build/libs/ ./out/consensus/
-docker cp configd-out:/workspace/configd-config-store/build/libs/ ./out/store/
-docker cp configd-out:/workspace/configd-edge-cache/build/libs/ ./out/edge/
-docker cp configd-out:/workspace/configd-transport/build/libs/ ./out/transport/
-docker rm configd-out
-```
+## Runtime image
 
-## Runtime Image (Distroless)
-
-Multi-stage build that compiles Configd, then copies the JARs into a distroless Java 21 container.
+A multi-stage build: it compiles with the JDK 25 image (`mvn clean package -DskipTests`), collects
+every runtime jar into `/app/libs`, and packages them onto a minimal Temurin JRE 25 image. The image
+runs as a non-root `configd` user, exposes the API and Raft ports, and starts the control-plane
+server under generational ZGC.
 
 ```bash
 docker build -f docker/Dockerfile.runtime -t configd-runtime .
+
+docker run --rm \
+  -p 8080:8080 -p 9090:9090 \
+  -v configd-data:/data \
+  configd-runtime \
+  --node-id 1 --data-dir /data \
+  --bind-port 9090 --api-port 8080 --edge-port 7070 \
+  --peer-addresses 1=host1:9090,2=host2:9090,3=host3:9090
 ```
 
-### What Is Distroless?
+Details of the image:
 
-[Distroless images](https://github.com/GoogleContainerTools/distroless) contain only the application and its runtime dependencies — no shell, no package manager, no OS utilities. This minimizes the attack surface and image size.
+- **Entrypoint** runs `io.configd.server.ConfigdServer` with
+  `--enable-preview -XX:+UseZGC -XX:MaxRAMPercentage=50.0 -XX:+ExitOnOutOfMemoryError`. Heap is a
+  percentage of the container memory, so size it with `docker run -m`; override JVM options via
+  `JAVA_OPTS`. Note `-XX:+ZGenerational` is deliberately not passed (removed in JDK 24; generational
+  is the only ZGC on Java 25).
+- **Ports:** `EXPOSE 8080 9090` -- 8080 is the control-plane/admin API, 9090 is the inter-node Raft
+  wire. Add `-p 7070:7070` if you serve edge fan-out from this node (`--edge-port`).
+- **Healthcheck:** the runtime image probes `http://localhost:8080/health/live`. When TLS is enabled
+  (as in the Compose topology below), the probe is the HTTPS variant.
+- **Edge node:** its shaded jar is in `/app/libs` too. To run the edge reader instead of the server,
+  override the entrypoint to launch `io.configd.edge.node.EdgeNodeMain`. The Compose topology uses
+  purpose-built slim images for that.
 
-The Configd runtime image uses `gcr.io/distroless/java21-debian12:nonroot`, which:
+## Compose cluster (deploy/compose)
 
-- Runs as a non-root user (UID 65534)
-- Contains only the JRE 21 and required system libraries
-- Has no shell (`/bin/sh` does not exist)
-
-### Extending for a Service Module
-
-When the control plane API or another service module is implemented, extend the runtime image:
-
-```dockerfile
-FROM configd-runtime
-
-COPY my-service/build/libs/my-service.jar /app/my-service.jar
-
-ENTRYPOINT ["java", \
-    "--enable-preview", \
-    "-XX:+UseZGC", \
-    "-XX:+ZGenerational", \
-    "-cp", "/app/libs/*:/app/my-service.jar", \
-    "io.configd.controlplane.Main"]
-```
-
-### Inspecting the Image
-
-Since distroless has no shell, use `docker export` or a debug variant:
+`deploy/compose/` brings up a three-node control-plane cluster (`cp1`, `cp2`, `cp3`) plus edge readers,
+wired end to end with mTLS. It uses its own slim Dockerfiles (`Dockerfile.server`, `Dockerfile.edge`,
+both on `eclipse-temurin:25-jre-noble`) and a secrets bundle.
 
 ```bash
-# List files in the image
-docker create --name tmp configd-runtime true
-docker export tmp | tar tf - | grep /app/
-docker rm tmp
+cd deploy/compose
 
-# Use the debug variant for troubleshooting (has busybox shell)
-# Replace :nonroot with :debug-nonroot in Dockerfile.runtime, rebuild,
-# then: docker run --rm -it configd-runtime-debug sh
+# Generate the mTLS keystores/truststores and the signing key (one-time)
+./setup-secrets.sh
+
+# Bring up the cluster
+docker compose -f compose.yaml up --build
 ```
 
-## Docker Compose (CI Example)
+Each control-plane node is launched with
+`--bind-address 0.0.0.0 --bind-port 9090 --api-port 8080 --edge-port 7070 --peer-addresses 1=cp1:9090,2=cp2:9090,3=cp3:9090`
+and the TLS/signing flags from the secrets bundle; each edge node connects over mTLS with a
+certificate DN identity (for example `--edge-id CN=edge-1`). The API ports are published on the loopback
+interface (for example `127.0.0.1:18081` for `cp1`). The signing key is mounted read-only from a trust
+boundary separate from the data volume, satisfying the fail-closed co-location rule (ADR-0044).
 
-```yaml
-services:
-  build:
-    build:
-      context: .
-      dockerfile: docker/Dockerfile.build
-    volumes:
-      - gradle-cache:/root/.gradle
-    command: ["./gradlew", "build", "--no-daemon"]
+Kubernetes bootstrap scaffolding lives in `deploy/kubernetes/`.
 
-volumes:
-  gradle-cache:
-```
+## Layer caching
 
-## Layer Caching
+Both Dockerfiles copy the POM files first and run `mvn dependency:resolve` before copying the source,
+so dependency downloads are cached across builds as long as the POMs do not change:
 
-Both Dockerfiles are structured for optimal layer caching:
-
-1. **Gradle wrapper** — changes very rarely
-2. **Build scripts** (`build.gradle.kts`, `settings.gradle.kts`) — changes sometimes; triggers dependency re-download
-3. **Source code** — changes frequently; only recompiles
-
-This means dependency downloads are cached across builds as long as your build scripts don't change.
+1. POM files -- change sometimes; a change re-resolves dependencies.
+2. Source -- changes often; only recompiles.

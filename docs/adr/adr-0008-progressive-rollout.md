@@ -10,7 +10,7 @@ Three Cloudflare outages in 4 months (November 2025, December 2025, February 202
 Config changes traverse deterministic deployment stages with health-mediated gates, enforced at the **protocol level** (not application-layer policy):
 
 ```
-CANARY (1 node) → 1% → 10% → 50% → 100%
+CANARY (1 node) -> 1% -> 10% -> 50% -> 100%
 ```
 
 ### Mechanism
@@ -23,8 +23,8 @@ CANARY (1 node) → 1% → 10% → 50% → 100%
 7. At each stage, the set of target nodes expands according to consistent hashing of node IDs.
 
 ### Health Signals
-- **Application-level:** Error rate, latency p99, panic/crash count — reported by edge nodes via metrics stream.
-- **System-level:** CPU, memory, disk — collected via standard monitoring.
+- **Application-level:** Error rate, latency p99, panic/crash count - reported by edge nodes via metrics stream.
+- **System-level:** CPU, memory, disk - collected via standard monitoring.
 - **Config-specific:** Validation callbacks registered per key prefix. Edge node runs callback before applying config; failure = rejection + metric.
 
 ### Emergency Override
@@ -46,6 +46,6 @@ Quicksilver's "within seconds" propagation is a liability, not a feature, when t
 - **Risks and mitigations:** Canary selection bias (canary always the same node) mitigated by deterministic hash rotation per change ID. Health signal lag mitigated by configurable bake time per stage.
 
 ## Reviewers
-- principal-distributed-systems-architect: ✅
-- site-reliability-engineer: ✅
-- chaos-engineer: ✅
+- principal-distributed-systems-architect: yes
+- site-reliability-engineer: yes
+- chaos-engineer: yes

@@ -1,17 +1,17 @@
 # ADR-0015: Multi-Region Topology with Region Tiers and Scope-Aware Placement
 
 ## Status
-**Superseded by ADR-0030** (write topology) — 2026-06-06. Previously: Accepted.
+**Superseded by ADR-0030** (write topology) - 2026-06-06. Previously: Accepted.
 
 The *write* topology in this ADR (global 5-voter cross-region Raft group, per-region write groups,
 closed-timestamp side-transport) is rejected by
-`adr-0030-quicksilver-shaped-topology.md` on cross-region write-latency (§0.1 `< 150 ms`) and
-operational-complexity grounds; it was never implemented (`docs/STATE-OF-REALITY.md §4.1`). The
+`adr-0030-quicksilver-shaped-topology.md` on cross-region write-latency (section 0.1 `< 150 ms`) and
+operational-complexity grounds; it was never implemented. The
 *read-locality concept* (follower reads via a safe/closed timestamp) is retained in spirit but
 delivered via async edge copies rather than in-Raft non-voting replicas.
 
 ## Context
-The system must support global deployment across 5+ regions with < 150ms p99 cross-region write commit, < 500ms p99 edge staleness, and < 1ms p99 edge reads. ZooKeeper was never designed for WAN deployment — ensemble across DCs requires RTT < 100ms p99, and observers cannot be auto-promoted or improve write throughput (gap-analysis.md section 2.5). Consul's WAN federation requires average RTT <= 50ms with p99 <= 100ms, eliminating intercontinental federation for many deployments (gap-analysis.md section 4.1). A single global Raft group imposes cross-region RTT on every write, making 10K/s throughput unachievable with realistic payloads.
+The system must support global deployment across 5+ regions with < 150ms p99 cross-region write commit, < 500ms p99 edge staleness, and < 1ms p99 edge reads. ZooKeeper was never designed for WAN deployment - ensemble across DCs requires RTT < 100ms p99, and observers cannot be auto-promoted or improve write throughput (the gap analysis). Consul's WAN federation requires average RTT <= 50ms with p99 <= 100ms, eliminating intercontinental federation for many deployments (the gap analysis). A single global Raft group imposes cross-region RTT on every write, making 10K/s throughput unachievable with realistic payloads.
 
 ## Decision
 We adopt a **three-tier multi-region topology** with scope-aware Raft group placement:
@@ -22,7 +22,7 @@ We adopt a **three-tier multi-region topology** with scope-aware Raft group plac
 |---|---|---|---|---|
 | **Core** (3 regions) | Global Raft voters. Full dataset. | Global group voters + regional group voters | Full (all scopes) | us-east-1, eu-west-1, us-west-2 |
 | **Regional** (N regions) | Regional Raft groups. Non-voting global replicas. | Regional group voters + global group non-voters | Full regional + stale global | ap-northeast-1, ap-southeast-1, sa-east-1 |
-| **Edge** (10K-1M nodes) | Plumtree consumers. Working set only. | None — zero Raft participation | Subscribed prefixes only | CDN PoPs, edge servers |
+| **Edge** (10K-1M nodes) | Plumtree consumers. Working set only. | None - zero Raft participation | Subscribed prefixes only | CDN PoPs, edge servers |
 
 ### Scope-Aware Shard Placement
 
@@ -41,7 +41,7 @@ Each config key has a declared **scope** that determines which Raft group handle
 
 ### Non-Voting Replicas for Remote Reads
 Inspired by CockroachDB's closed timestamp mechanism:
-1. Each Raft leader periodically advances a **closed timestamp** — a promise that no new writes will occur at or below that timestamp.
+1. Each Raft leader periodically advances a **closed timestamp** - a promise that no new writes will occur at or below that timestamp.
 2. Non-voting replicas in remote regions track this closed timestamp.
 3. Reads at timestamps <= closed timestamp served locally without leader contact.
 4. Default closed timestamp target: 3 seconds behind real time.
@@ -61,7 +61,7 @@ Inspired by CockroachDB's closed timestamp mechanism:
 ## Influenced by
 - **CockroachDB Multi-Region:** ZONE survival (2-5ms), REGION survival (20-30ms), GLOBAL tables with non-voting replicas everywhere. Closed timestamp mechanism enables bounded-staleness follower reads without leader contact. Documented trade-offs between latency and survival guarantees.
 - **TiKV Multi-Raft:** Per-range Raft groups with independent leaders. Epoch-based stale request detection. Batched Raft I/O across groups sharing one RocksDB (we share one WAL per shard group).
-- **Cloudflare Quicksilver:** Hierarchical fan-out from core to edge — demonstrates the need for tiered topology. But static tree + 30s failover is insufficient (ADR-0011).
+- **Cloudflare Quicksilver:** Hierarchical fan-out from core to edge - demonstrates the need for tiered topology. But static tree + 30s failover is insufficient (ADR-0011).
 - **Spanner TrueTime:** Global consistency via hardware clocks. We achieve similar bounded-staleness guarantees via HLC + closed timestamps without TrueTime hardware dependency.
 
 ## Reasoning
@@ -70,7 +70,7 @@ Inspired by CockroachDB's closed timestamp mechanism:
 A flat topology (all regions equal) requires either: (a) all regions participate in global Raft, which limits the write quorum to the slowest region (220ms RTT to ap-southeast-1), or (b) every region runs independent Raft groups with cross-region replication, creating O(R^2) replication links. Three tiers match the natural hierarchy: a small set of core regions for global consistency, regional groups for fast local writes, and edges for read-only consumption.
 
 ### Why scope-aware placement instead of uniform replication?
-Config workload analysis from gap-analysis.md:
+Config workload analysis:
 - **Global config (~1% of keys, ~10% of writes):** Must be globally consistent. Worth paying 68ms cross-region commit.
 - **Regional config (~30% of keys, ~60% of writes):** Only needs regional consistency. 2-5ms commit. No reason to replicate across all regions.
 - **Local config (~69% of keys, ~30% of writes):** Node-specific. Zero replication cost.
@@ -78,7 +78,7 @@ Config workload analysis from gap-analysis.md:
 Uniform replication would impose 68ms latency on 90% of writes (regional + local) that do not require it. Scope-aware placement reduces the average write commit latency to: (0.1 x 68) + (0.6 x 3.5) + (0.3 x 0.5) = 6.8 + 2.1 + 0.15 = **~9ms weighted average**, vs 68ms for uniform global replication.
 
 ### Why 5 voters for global group, not 3?
-With 3 voters across 3 regions, loss of any single region loses quorum. With 5 voters across 3 core regions (2+2+1), loss of any single region still has 3 or 4 voters surviving — quorum maintained. This provides REGION survival for global config at the cost of slightly higher commit latency (68ms vs potentially 57ms with 3 voters in 2 regions).
+With 3 voters across 3 regions, loss of any single region loses quorum. With 5 voters across 3 core regions (2+2+1), loss of any single region still has 3 or 4 voters surviving - quorum maintained. This provides REGION survival for global config at the cost of slightly higher commit latency (68ms vs potentially 57ms with 3 voters in 2 regions).
 
 ### Why non-voting replicas instead of independent read replicas?
 Non-voting replicas participate in Raft log replication (they receive AppendEntries) but do not vote. This means they are always at most one Raft heartbeat behind the leader. Independent read replicas would need a separate replication mechanism (e.g., polling), adding complexity and increasing staleness. The non-voting replica model is proven in CockroachDB and TiKV.
@@ -86,15 +86,15 @@ Non-voting replicas participate in Raft log replication (they receive AppendEntr
 ## Rejected Alternatives
 - **Single global Raft group (all regions):** Every write pays cross-region RTT (~220ms to ap-southeast-1). At 10K writes/s with 220ms commit: 2,200 in-flight writes. Pipeline depth creates head-of-line blocking and makes the 150ms p99 target impossible when leader is distant from writer.
 - **Flat multi-Raft (no region tiers):** All regions treated equally. Requires either uniform replication (wasteful for regional/local config) or a placement driver that rediscovers the hierarchical pattern we've defined explicitly. CockroachDB and TiKV both evolved toward region-aware placement, validating that flat topology is insufficient for WAN.
-- **ZooKeeper observers for remote regions:** Observers cannot be auto-promoted to voters. Observers do not improve write throughput. No built-in bounded-staleness mechanism — observers are eventually consistent with unbounded lag. Documentation warns against cross-DC deployment.
-- **Consul WAN federation:** Requires RTT <= 50ms average, <= 100ms p99 — eliminates us-east to ap-southeast (220ms). KV data not replicated by default. `consul-replicate` daemon is not transactional, not ordered, can lose updates on crash.
+- **ZooKeeper observers for remote regions:** Observers cannot be auto-promoted to voters. Observers do not improve write throughput. No built-in bounded-staleness mechanism - observers are eventually consistent with unbounded lag. Documentation warns against cross-DC deployment.
+- **Consul WAN federation:** Requires RTT <= 50ms average, <= 100ms p99 - eliminates us-east to ap-southeast (220ms). KV data not replicated by default. `consul-replicate` daemon is not transactional, not ordered, can lose updates on crash.
 
 ## Consequences
 - **Positive:** 60% of writes (regional) commit in 2-5ms. Global writes commit in ~68ms (within 150ms target). Edge reads served from local HAMT at < 1ms. Non-voting replicas enable low-latency reads in remote regions. Single region failure does not affect global write availability.
 - **Negative:** Topology is more complex than single-group deployment. Requires PlacementDriver to manage group membership and tier assignments. Cross-group ordering not guaranteed (disclaimed in consistency-contract.md section 5).
-- **Risks and mitigations:** Region misconfiguration (wrong tier assignment) mitigated by PlacementDriver validation rules — core regions must have >= 3, total voters must be odd. Network asymmetry between regions mitigated by adaptive leader placement — leader migrated to region with lowest aggregate RTT to other voters. Region promotion (regional to core) requires careful Raft membership change — mitigated by TLA+-verified reconfiguration protocol (ADR-0007).
+- **Risks and mitigations:** Region misconfiguration (wrong tier assignment) mitigated by PlacementDriver validation rules - core regions must have >= 3, total voters must be odd. Network asymmetry between regions mitigated by adaptive leader placement - leader migrated to region with lowest aggregate RTT to other voters. Region promotion (regional to core) requires careful Raft membership change - mitigated by TLA+-verified reconfiguration protocol (ADR-0007).
 
 ## Reviewers
-- principal-distributed-systems-architect: ✅
-- distributed-systems-researcher: ✅
-- site-reliability-engineer: ✅
+- principal-distributed-systems-architect: yes
+- distributed-systems-researcher: yes
+- site-reliability-engineer: yes

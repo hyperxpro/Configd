@@ -32,4 +32,4 @@ A JVM heap dump (triggered by OOM, `-XX:+HeapDumpOnOutOfMemoryError`, or `jcmd`)
 
 ## Non-Goals
 
-Configd is not a secrets manager (PROMPT.md Section 0.2). Dedicated secrets management should use purpose-built systems (HashiCorp Vault, AWS Secrets Manager, etc.). This policy addresses incidental exposure of operational config that may contain sensitive data.
+Configd is not a secrets manager. Dedicated secrets management should use purpose-built systems (HashiCorp Vault, AWS Secrets Manager, etc.). This policy addresses incidental exposure of operational config that may contain sensitive data.

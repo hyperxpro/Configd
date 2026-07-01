@@ -5,7 +5,7 @@ Accepted (2026-04-11)
 
 ## Context
 
-The original rewrite plan (docs/rewrite-plan.md) specified Gradle with Kotlin DSL as the build system, citing parallel task execution, incremental compilation, build cache, and type-safe configuration as benefits.
+The original rewrite plan specified Gradle with Kotlin DSL as the build system, citing parallel task execution, incremental compilation, build cache, and type-safe configuration as benefits.
 
 During implementation, Maven was chosen instead. This ADR documents the rationale.
 

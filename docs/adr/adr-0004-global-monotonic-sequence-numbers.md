@@ -20,7 +20,7 @@ Edge nodes track `last_applied_seq` per subscribed Raft group. Gap detection is 
 ### Option 1: Global monotonic sequence number (CHOSEN)
 - **Pro:** Simple. One comparison determines ordering. Gap detection trivial. Fits single-source-of-truth model. No per-key overhead (critical for 10^9 key ceiling). Fan-out subscription is position-based (like Kafka consumer groups).
 - **Con:** Sequence is per Raft group, not globally unique across groups. Cross-group ordering requires HLC fallback.
-- **Impact on §0.1 targets:** At 10K writes/s, sequence numbers increment at 10K/s — 64-bit counter won't overflow for ~58 million years.
+- **Impact on section 0.1 targets:** At 10K writes/s, sequence numbers increment at 10K/s - 64-bit counter won't overflow for ~58 million years.
 
 ### Option 2: Per-key version
 - **Pro:** More granular. Enables per-key conflict detection.
@@ -38,6 +38,6 @@ Edge nodes track `last_applied_seq` per subscribed Raft group. Gap detection is 
 - **Risks and mitigations:** Sequence number per group means a multi-group deployment has multiple independent sequences. Mitigated by HLC for cross-group ordering and by the consistency contract explicitly disclaiming cross-group total order.
 
 ## Reviewers
-- principal-distributed-systems-architect: ✅
-- distributed-systems-researcher: ✅
-- formal-methods-engineer: ✅
+- principal-distributed-systems-architect: yes
+- distributed-systems-researcher: yes
+- formal-methods-engineer: yes

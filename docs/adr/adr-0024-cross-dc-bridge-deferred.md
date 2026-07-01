@@ -37,7 +37,7 @@ supports exactly one DC per cluster.
 - Clusters are single-DC. Multi-DC deployments require N independent
   clusters and application-layer routing.
 - The capacity table notes "1 cluster per DC" as a hard rule.
-- v0.2 cross-DC ADR will revisit the consistency model — this ADR
+- v0.2 cross-DC ADR will revisit the consistency model - this ADR
   fixes the v0.1 surface as single-DC.
 
 ## Migration Plan
@@ -47,13 +47,13 @@ supports exactly one DC per cluster.
 
 ## Related
 
-- R-07 (cross-DC bridge — gap-closure §5)
+- R-07 (cross-DC bridge - deferred to v0.2)
 - ADR-0015 (multi-region topology)
 - `runbooks/disaster-recovery.md` (single-DC failure mode)
 
 ## Verification
 
-Verification: NOT YET WIRED — would require a `CrossDcBridgeTest` exercising async replication between independent clusters. The single-DC restriction is enforced operationally by the deployment manifest (`deploy/kubernetes/configd-statefulset.yaml`) which assumes a single Kubernetes namespace per cluster; tracked as iter-2 follow-up if v0.2 work begins.
+Verification: NOT YET WIRED - would require a `CrossDcBridgeTest` exercising async replication between independent clusters. The single-DC restriction is enforced operationally by the deployment manifest (`deploy/kubernetes/configd-statefulset.yaml`) which assumes a single Kubernetes namespace per cluster; tracked as iter-2 follow-up if v0.2 work begins.
 
 - **Invalidated by:** any v0.1 deployment that places a Raft voter in a different datacenter from the leader (would WAN-stretch the consensus group).
 - **Operator check:** `kubectl get nodes -o jsonpath='{.items[*].metadata.labels.topology\.kubernetes\.io/zone}'` for the configd StatefulSet reports voters from a single failure domain; cross-DC traffic is achieved only via separate clusters with application-layer routing.

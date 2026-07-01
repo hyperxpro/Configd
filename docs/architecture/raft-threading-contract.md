@@ -1,421 +1,184 @@
-# Phase 0 — Threading Contract (the R-01 Replacement Specification)
+# Raft owner-thread threading contract
 
-> **Status:** DRAFT — spec written *before* the re-threading code, per session §4.3.
-> **Replaces:** R-01 ("a single `configd-tick` thread owns every `RaftNode`").
-> **Authority of record:** the runtime `assertOwnerThread()` tripwire + the concurrent
-> stress harness — NOT this document. Line numbers below are as-of-current-`HEAD` and are
-> navigational; the classification (O / M / S) is the durable content.
-> **Prime directive:** no re-threading (Workstream B) is blessed until the harness that
-> encodes this contract exists and is *proven to catch an injected off-owner-thread access*
-> (the captured red). This doc is the specification that harness asserts.
+This is the concurrency specification for `RaftNode`. It is a load-bearing invariant: a future
+consensus maintainer must follow it, because `RaftNode` carries all of its consensus state with **no
+locks and no atomics**, and its safety rests entirely on single-thread ownership.
 
----
+The authority of record is the runtime owner-thread assertion (`assertOwnerThread`) plus the
+concurrency stress harness that exercises it -- not this prose. This document is the specification
+those mechanisms enforce. Method names below are navigational; the classification (owner-only /
+marshalled / safe) is the durable content.
 
-## 0. Provenance (verified against source)
+## The invariant
 
-| Fact | Source |
-|---|---|
-| `RaftNode` has no synchronization; single-thread access by design | `RaftNode.java:15–37` |
-| Volatile cross-thread fields are exactly `role`, `leaderId` (+ `lastRecordedSeq`) | `RaftNode.java:53–57` |
-| `MultiRaftDriver` holds a plain `HashMap`, "must be accessed from a single thread only" | `MultiRaftDriver.java:22–23,41` |
-| One `configd-tick` single-thread executor drives consensus | `ConfigdServer.java:367–371` |
-| R-01 invariant: ALL RaftNode access on the tick thread; inbound/read/flush *marshal* onto it | `ConfigdServer.java:362–366,400–408,427–430` |
-| The tick thread is **not** consensus-only — also watch/plumtree/propagation/compactor + metric reads | `ConfigdServer.java:779–809` |
-| `RaftNode` has the `InvariantChecker` seam already (throws in sim, metric in prod) | `RaftNode.java:219–224,260–269` |
-| The owner-thread tripwire pattern to mirror | `ConfigStateMachine.java:271–286` (RR-029/W-1) |
-| `FlushScheduler` seam (INLINE default; prod dispatches onto the tick executor) | `RaftNode.java:159,164,176`; `ConfigdServer.java:400–408` |
-| Single-group throughput ceiling is this thread, not fsync/CPU | RR-113, `docs/readiness-register.md`; `docs/session-7.5/throughput-part2.md` |
+> For each group `g`, every owner-only entry point of its `RaftNode` executes on `g`'s single owner
+> executor thread, and it does so for the entire life of the process.
 
----
+Different groups may make progress on different threads (this is the multi-shard throughput unlock).
+The same group never does (this is the safety preservation). One group, one owner thread, forever.
 
-## 1. What R-01 is today (the thing being replaced)
+## Why RaftNode is unsynchronized
 
-`RaftNode` (≈2475 lines) carries all consensus state **with no locks and no atomics**, except
-`role`/`leaderId`/`lastRecordedSeq` which are `volatile` purely so HTTP threads can read them.
-Safety rests on a single fact: **exactly one thread ever touches a `RaftNode`.** That thread is
-the process-wide `configd-tick` thread. Everything that is not naturally on it is *marshalled*
-onto it:
+`RaftNode` holds all consensus state -- term, vote, log, commit/apply indices, election and
+heartbeat timers, callback maps, cluster configuration -- with no synchronization at all, **except a
+small, closed set of volatile fields** that exist purely so other threads can read a few values
+safely. The design is sound only because exactly one thread ever touches a given node's
+non-volatile state. Remove that guarantee and every field becomes an undetected data race.
 
-- `MultiRaftDriver.tick()` loops every group's `RaftNode.tick()` inline on the tick thread.
-- Inbound Raft messages: the transport inbound handler does `tickExecutor.execute(() -> driver.routeMessage(...))`.
-- Linearizable reads: `readDispatchExecutor` hops to `tickExecutor` before touching the node.
-- Group-commit flush: `FlushScheduler` dispatches `flushDurable` onto `tickExecutor`.
-- Proposes: `ConfigWriteService` marshals onto `tickExecutor` before `driver.propose(...)`.
+The single global tick thread that once provided this guarantee has been replaced by one owner
+thread per group, so the guarantee is now stated and enforced per node rather than assumed.
 
-**Enforcement = marshalling discipline + a comment-only contract.** There is *no runtime guard*
-on `RaftNode` (unlike `ConfigStateMachine`, which has `assertOwnerThread()`). A single missed hop
-is an undetected data race in the consensus core.
+## The safe cross-thread set
 
-**Why this caps throughput (RR-113):** one thread serializes propose + per-proposal broadcast +
-apply + inbound + heartbeat. Above ~800–1000 writes/s the heartbeat slips the election timeout →
-leadership churn → throughput inverts. Measured **not** fsync-bound (`iostat f/s`=0 on NVMe) and
-**not** aggregate-CPU-bound (86% idle). The fix to this thread *is* the throughput fix — which is
-why Phase 0 exists.
+The only `RaftNode` fields any thread may read directly are:
 
----
+- `role`
+- `leaderId`
+- `lastRecordedSeq`
+- `nodeId` (immutable identity/config)
 
-## 2. The new model — one *owner* thread per group, from a pool
+These are volatile or immutable. **The set is closed and small.** Anything else read from a
+`RaftNode` off its owner thread is a violation. Widening this set is a deliberate act, not a
+convenience: each addition must be genuinely volatile or immutable and must be justified.
 
-```
-ownerExecutor(groupId) = pool[ groupId % poolSize ]     // STATIC for the life of the process
-```
+## monitorView() -- the one safe monitoring read
 
-- Each owner is a single-thread executor. Each group is bound to exactly **one** owner thread.
-- All **OWNER-ONLY** entry points for a group execute on that group's owner thread — so the
-  per-group single-writer invariant is preserved and `RaftNode` *stays unsynchronized*.
-- Different groups may progress on different threads (the throughput unlock at N>1); the same
-  group never does (the safety preservation).
-- **Static mapping, v1:** a group's owner never changes. Dynamic resharding (which would require
-  re-binding an owner) is **v2, explicitly out of scope** (`adr-multiraft-sharding-deferred`,
-  `adr-multiraft-topology`).
-- **At N=1 this is still a win:** the pool is size 1, but coalesced heartbeats + group-commit
-  flush + batching (Workstream B) move heartbeat/flush *off the contended path*, and the
-  owner-thread guard is identical. The decision gate (Workstream C) measures N=1-with-fix.
+Monitoring and metrics need more than the four safe fields (term, log indices, cluster
+configuration, a `RaftMetrics` snapshot), and all of that is non-volatile owner-only state. Rather
+than let a scrape thread read it directly, the owner **publishes an immutable `RaftMetrics` snapshot
+through a single volatile reference at the end of every `tick()`**. Any thread reads it with one
+volatile load via `monitorView()`.
 
-**R-01 → the new invariant (R-01′):** *For each group g, every OWNER-ONLY entry point of its
-`RaftNode` executes on `ownerExecutor(g)`'s thread, and that is proven by a runtime tripwire that
-throws in test/sim and counts-a-metric in production.*
+`monitorView()` is the single safe cross-thread monitoring read. It:
 
----
+- never tears and is never partially observed (immutable object behind one volatile publish),
+- never blocks the owner,
+- is at most one tick stale.
 
-## 3. Entry-point classification
+Every non-volatile accessor that monitoring might otherwise reach -- `currentTerm()`, `votedFor()`,
+`log()`, `transferTarget()`, `clusterConfig()`, `metrics()` -- is owner-only and guarded. Off-owner
+callers use `monitorView()` instead.
 
-Every entry point is exactly one of:
+## Entry-point classification
 
-- **O — OWNER-ONLY.** Mutates or reads *non-volatile* `RaftNode`/`RaftLog` state. MUST run on the
+Every entry point is exactly one of three kinds.
+
+- **Owner-only (O).** Mutates or reads non-volatile `RaftNode`/`RaftLog` state. MUST run on the
   group's owner thread. Guarded by `assertOwnerThread()`.
-- **M — MARSHALLED-EXTERNAL.** Callable from any thread, but its *only* action on the caller
-  thread is to enqueue work onto `ownerExecutor(g)`. It never touches `RaftNode` state inline.
-  **The hop is the safety boundary** — and the place bugs hide.
-- **S — SAFE-CROSS-THREAD.** May be read from any thread because the field is `volatile` or
-  immutable. **The S set is closed and small:** `role()`, `leaderId()`, `lastRecordedSeq`, and
-  immutable config/identity (`nodeId`). Anything else read cross-thread is a violation.
+- **Marshalled-external (M).** Callable from any thread, but its only action on the caller thread is
+  to enqueue work onto the group's owner executor. It never touches `RaftNode` state inline. The hop
+  is the safety boundary -- and the place bugs hide.
+- **Safe cross-thread (S).** The closed volatile/immutable set above, plus the published
+  `monitorView()`.
 
-### 3.1 `MultiRaftDriver` — the routing seam (`MultiRaftDriver.java`)
+### Owner-only entry points
 
-| Entry point | line | Class | Contract note |
-|---|---|---|---|
-| `tick()` | 100 | **O→fan-out** | Today loops inline. New: submit each `node.tick()` to `ownerExecutor(gid)`; the driver's own loop becomes a fan-out, not an executor of consensus. |
-| `maybeCompact(t)` | 117 | **O→fan-out** | Same fan-out per group. |
-| `routeMessage(gid,msg)` | 134 | **M** | Enqueue `node.handleMessage(msg)` onto `ownerExecutor(gid)`. Today the *caller* (inbound handler) marshals onto the single tick executor; new target is the group's owner. |
-| `propose(gid,cmd)` | 154 | **M** | ⚠ **H-1**: returns `ProposeOutcome(index,term)` **synchronously** — the result crosses the marshalling boundary. See §6 H-1. |
-| `addGroup` / `removeGroup` | 68 / 83 | **O (driver)** | Mutates the `groups` map. See §4.3 — the map itself becomes shared. |
-| `getGroup`/`groupIds`/`groupCount` | 173–193 | **S** | Reads of `groups` — requires a concurrent/snapshot map (§4.3). |
-| `localNode`/`clock` | 200–211 | **S** | Immutable. |
+The public mutator and callback surface is owner-only and guarded: `tick`, `handleMessage`,
+`propose`, `maybeCompact`, `readIndex`, `whenCommitOutcome`, `cancelCommitOutcome`, `metrics`,
+`transferLeadership`, `triggerSnapshot`, `isReadReady`, `completeRead`, `whenReadReady`,
+`proposeConfigChange`. The read-only accessors that touch non-volatile state -- `currentTerm`,
+`votedFor`, `log`, `transferTarget`, `clusterConfig` -- are also owner-only and guarded; off-owner
+monitoring uses `monitorView()`.
 
-### 3.2 `RaftNode` public API (`RaftNode.java`)
+The message handlers (`handleAppendEntries`, `handleAppendEntriesResponse`, `handleRequestVote`,
+`handlePreVoteRequest`, `handleRequestVoteResponse`, `handlePreVoteResponse`, `handleTimeoutNow`,
+`handleInstallSnapshot`, `handleInstallSnapshotResponse`) are all owner-only, reachable only through
+`handleMessage`; the guard there covers them. The internal state-machine helpers
+(`tickElection`, `startElection`, `becomeLeader`, `broadcastAppendEntries`, `applyCommitted`,
+`fireReadyCallbacks`, and the rest) are private and inherit the owner from their caller. `RaftLog`
+mutators (`append`, `setCommitIndex`, `setLastApplied`, `syncWal`, `compact`, ...) are owner-only,
+reachable only from `RaftNode`.
 
-All **O** unless marked. Reached either directly on the owner thread (tick path) or via an **M**
-hop (inbound/propose/read).
+### The durability flush seam
 
-| Entry point | line | Class | Note |
-|---|---|---|---|
-| `tick()` | 375 | **O** | The bind point (§4.1). |
-| `handleMessage(msg)` | 398 | **O** | Entry from `routeMessage` (M). |
-| `propose(cmd)` | 422 | **O** | Entry from `MultiRaftDriver.propose` (M); see H-1. |
-| `transferLeadership(t)` | 477 | **O** | |
-| `triggerSnapshot()` | 507 | **O** | |
-| `maybeCompact(t)` | 568 | **O** | |
-| `readIndex()` | 616 | **O** | Entry from read-dispatch (M); see H-2. |
-| `isReadReady` / `completeRead` / `whenReadReady` | 641 / 715 / 736 | **O** | F-0010 callback maps are tick-thread-only. |
-| `whenCommitOutcome` / `cancelCommitOutcome` | 854 / 875 | **O** | RR-004 callback maps are tick-thread-only. |
-| `proposeConfigChange(voters)` | 1023 | **O** | |
-| `clusterConfig()` | 1146 | **O (now guarded)** | **H-3 CLOSED.** Owner-only; also unsafe off-owner via its lazy `peersCache` HashMap (§6 H-3). Monitors read `monitorView()`. |
-| `metrics()` | 1292 | **O** | Guarded; builds an immutable `RaftMetrics`. **H-3 CLOSED:** off-owner scrapes read `monitorView()`, never `metrics()` directly. |
-| `monitorView()` | (B) | **S — published** | ⭐ The owner-published immutable `RaftMetrics` snapshot (volatile ref, republished at end of `tick()`). The ONE safe cross-thread monitoring read — never tears/partial, never blocks the owner, ≤ 1 tick stale. |
-| `role()` / `leaderId()` / `nodeId()` | 1321–1326 | **S** | `volatile` / immutable. |
-| `currentTerm()` / `votedFor()` / `log()` / `transferTarget()` | 1322–1327 | **O (now guarded)** | **H-3 CLOSED.** Non-volatile — owner-thread-only, `assertOwnerThread()` added; monitors use `monitorView()`. |
+`scheduleFlush()` and `flushDurable()` are owner-only. The flush scheduler's inline default runs on
+the calling owner thread (owner-safe); in production the flush is dispatched onto the group's owner
+executor, never a shared executor. The one exception is `setGroupCommit(...)`, a pure wiring mutator
+called exactly once during construction before the owner is bound -- it is intentionally outside the
+owner-thread contract because it never runs concurrently with consensus.
 
-### 3.3 Message handlers — all **O**, reachable only via `handleMessage` (O)
+### Marshalled seams
 
-`handleAppendEntries`(1348), `handleAppendEntriesResponse`(1415), `handleRequestVote`(1458),
-`handlePreVoteRequest`(1500), `handleRequestVoteResponse`(1528), `handlePreVoteResponse`(1557),
-`handleTimeoutNow`(1577), `handleInstallSnapshot`(2163), `handleInstallSnapshotResponse`(2327).
-No external thread reaches these except through the `handleMessage` (O) entry; the guard there
-suffices.
+Every path that reaches a `RaftNode` from another thread hops onto the group's owner first:
 
-### 3.4 Internal state-machine helpers — all **O** (private; inherit owner from caller)
+- **Inbound messages** -- routing demultiplexes by `groupId` before dispatch, then enqueues
+  `handleMessage` onto the group's owner.
+- **Propose** -- marshalled onto the owner; the `(index, term)` result is captured inside the
+  marshalled task so it does not cross the boundary raw.
+- **Linearizable reads** -- the ReadIndex confirm path hops to the owner before touching the node.
+- **Group-commit flush** -- dispatched to the owner.
 
-`tickElection`, `tickHeartbeat`, `startPreVote`, `startElection`, `becomeFollower`, `becomeLeader`,
-`broadcastAppendEntries`, `sendAppendEntries`, `sendInstallSnapshot`, `maybeAdvanceCommitIndex`,
-`applyCommitted`, `fireReadyCallbacks`, `fireCommitOutcomes`, `recordAppliedSeq`,
-`recomputeConfigFromLog`, `handleCommittedConfigChange`, `buildActiveSetAndReset`,
-`confirmPendingReads`, `maybeSendTimeoutNow`, `resetElectionTimeout`, `decideCommitOutcome`.
-These are private; the public-entry guard covers them. They are listed so the harness can confirm
-none is exposed as a new cross-thread entry by the re-threading.
+Each is an M boundary. The harness proves that none of them ever leaks an inline `RaftNode` touch;
+remove a hop and the assertion trips.
 
-### 3.5 The durability flush seam — **O**, but dispatched (`RaftNode.java:159,164,176,1938,1962`)
+## The owner-executor model
 
-| Entry point | line | Class | Note |
-|---|---|---|---|
-| `scheduleFlush()` | 1938 | **O** | Called from tick/propose (owner). |
-| `flushDurable()` | 1962 | **O via FlushScheduler** | `FlushScheduler` INLINE default runs it on the caller thread (an owner thread → owner-safe in tests). Production must dispatch to `ownerExecutor(gid)`, **not** the single `tickExecutor`. See §4.4. |
-| `setGroupCommit(sched,…)` | 176 | **wiring (pre-bind)** | The one public *mutator* deliberately NOT guarded: called exactly once during construction/wiring (`ConfigdServer:400`), before the owner is bound, so it is **out of the owner-thread contract** (the tripwire is inert pre-bind by design). Not a coverage hole — it never runs concurrently with consensus. |
-
-### 3.6 `RaftLog` mutators — all **O**, reachable only from `RaftNode` (O)
-
-`appendNoSync`, `appendEntries`, `append`, `setCommitIndex`, `setLastApplied`, `syncWal`,
-`compact`, and the non-volatile getters (`commitIndex`, `lastApplied`, `lastIndex`,
-`snapshotIndex`). No independent external entry; inherits owner from `RaftNode`.
-
-### 3.7 Co-tenant tick work — today on the tick thread (`ConfigdServer.java:779–809`)
-
-These are **not** `RaftNode` entry points but they currently share its thread and so are part of
-the contract surface the re-threading must re-home:
-
-| Work | line | New home (to be specified in Workstream B) |
-|---|---|---|
-| `driver.maybeCompact(...)` (Raft) | 800 | O, fan-out per owner. |
-| `propagationMonitor.checkAll()` | 801 | ⚠ **H-4** — needs an explicit executor; reads consensus-derived state. |
-| `watchService.tick()` | 802 | ⚠ **H-4** |
-| `plumtreeNode.tick()` | 803 | ⚠ **H-4** |
-| `compactor.compact()` (every ~10s) | 808 | ⚠ **H-4** |
-| inline metric reads (`tickNode.log()`, `currentTerm()`) | 786–795 | O — must run on the group's owner (see H-3). |
-
----
-
-## 4. Enforcement mechanism (concrete — the R-01 replacement)
-
-### 4.1 Owner-thread tripwire on `RaftNode` (mirror of `ConfigStateMachine`)
-
-Add to `RaftNode`, modeled exactly on `ConfigStateMachine.assertOwnerThread()` (`:271–286`):
-
-```java
-private volatile Thread ownerThread;   // bound once on the owner thread; never reassigned in v1
-
-/** Bind explicitly as the FIRST task on the owner executor (NOT during construction,
- *  which runs on the wiring thread and legitimately touches state). */
-void bindOwnerThread() { this.ownerThread = Thread.currentThread(); }
-
-private void assertOwnerThread() {
-    Thread owner = ownerThread;
-    if (owner == null) return;          // INERT until explicitly bound — NOT lazy-bind: a
-                                        // pre-bind off-thread call must not capture a wrong owner
-    Thread cur = Thread.currentThread();
-    if (owner != cur) {
-        // No metrics call: RaftNode has no metrics sink (verified :240–364). The PROD
-        // InvariantChecker records the metric + SEVERE; the test/harness checker throws.
-        // One seam, both modes.
-        invariantChecker.check("raft_owner_thread", false,
-            "RaftNode entry off owner thread: bound '" + owner.getName()
-            + "' but called from '" + cur.getName() + "' — R-01′ violated");
-    }
-}
+```
+ownerExecutor(groupId) = pool[groupId % poolSize]   // static for the life of the process
 ```
 
-> **As-built (increment 2 — Workstream A closeout):** `volatile ownerThread`; **inert until
-> `bindOwnerThread()`** (no lazy-bind, so production — not yet wired to bind — and existing
-> single-threaded tests are unaffected). `bindOwnerThread()` is now a **public** wiring API (the
-> owner-executor pool in Workstream B and the deterministic-sim harness both call it).
-> `assertOwnerThread()` now guards the **complete mutator/callback O entry-point surface — all 14**:
-> the core 7 (`tick`, `handleMessage`, `propose`, `maybeCompact`, `readIndex`, `whenCommitOutcome`,
-> `metrics` — the H-1/H-3 + compaction vectors) **plus the 7 review-H2 orphaned riders**
-> (`transferLeadership`, `triggerSnapshot`, `isReadReady`, `completeRead`, `whenReadReady`,
-> `cancelCommitOutcome`, `proposeConfigChange`). Review-H2 is **CLOSED**.
->
-> **The H-3 reader surface — now CLOSED in Workstream B.** The read-only O accessors
-> `currentTerm()`, `votedFor()`, `log()`, `transferTarget()`, `clusterConfig()` (commented
-> "tests and monitoring") were the **H-3** off-owner-read hazard. A left them unguarded so they would
-> not fire against the then-legitimate on-tick-thread monitoring reads. B resolved H-3 with an
-> owner-published immutable snapshot (`monitorView()`), retargeted the one live reader
-> (`ConfigdServer` scrape) onto it, and **then guarded all five** with `assertOwnerThread()` — so the
-> former blind spot is now net-covered (any off-owner read trips `raft_owner_thread`). The S set
-> (`role()`, `leaderId()`, `nodeId()`) stays unguarded by design (volatile / immutable), joined by the
-> new published `monitorView()`. See §6 H-3 and `docs/phase0-B/h3-monitor-view-design.md`.
+- Each owner is a single-thread executor. Each group binds to exactly one owner thread.
+- The pool size is `configd.raft.ownerPoolSize` (default 1). At N=1 the pool is size 1 and the
+  behavior is identical to the earlier single-thread model, with heartbeat coalescing and
+  group-commit flush layered on.
+- The mapping is **static in v1**: a group's owner never changes. Dynamic resharding -- which would
+  require re-binding an owner -- is a v2 concern (ADR-multiraft-topology), and its group-rehoming
+  handoff mechanism ships dormant. If a future placement policy ever activates it, that mechanism
+  must be re-verified live before use; the dormant-state proofs do not transfer to live rehoming.
 
-- Call `assertOwnerThread()` at the **top of every O public entry point** in §3.2/§3.3
-  (`tick`, `handleMessage`, `propose`, `readIndex`, `whenCommitOutcome`, `maybeCompact`,
-  `transferLeadership`, `proposeConfigChange`, `flushDurable`, `metrics`, …).
-- Route through the **existing `invariantChecker`** (`RaftNode.java:224`): the harness injects a
-  throwing checker (red on violation); production injects the metric/SEVERE one. **No new
-  verification plumbing** — it reuses the seam that already drives the 9 in-node invariants.
-- **Binding rule:** bind explicitly via `bindOwnerThread()` submitted as the first task to
-  `ownerExecutor(gid)` at wiring. Construction must *not* bind (it runs on `main` and legitimately
-  reads log/config — `RaftNode.java:330`).
+## Enforcement
 
-### 4.2 Owner-executor pool
+`assertOwnerThread()` sits at the top of every owner-only entry point. It routes through the
+existing invariant checker: the test/sim checker **throws** on a violation; the production checker
+records a metric and a `SEVERE` log. One seam, both modes, no separate verification plumbing.
 
-`MultiRaftDriver` gains `ownerExecutor(gid) = pool[gid % poolSize]`. `tick()`/`maybeCompact()`
-fan out by submitting per-group; `routeMessage`/`propose` target the group's owner. The single
-`configd-tick` executor is decomposed; `poolSize=1` reproduces today's behavior (the N=1 decision-
-gate config) with heartbeat/flush coalescing layered on.
+**The guard is per-node, not per-pool.** Each `RaftNode` checks against its own bound owner thread.
+A group whose entry point is invoked on a different owner thread from the same pool still trips the
+guard -- co-tenancy in one pool is not co-ownership of one group.
 
-> **As-built — Stage 1B (R-01 DELETED @ N=1, `682cbcf`; pool added in Stage 1A `4a1e3da`):**
-> `OwnerExecutorPool(Integer.getInteger("configd.raft.ownerPoolSize", 1))`; the driver exposes
-> `ownerExecutor(gid)` + per-owner `tickOwner(i)`/`maybeCompactOwner(i)` and holds `groups` as a
-> `ConcurrentHashMap` (H-5). `ConfigdServer` removed the single `configd-tick` executor: the tick loop
-> runs `driver.tickOwner(0)` on owner[0]; the four marshalling hops (inbound / propose / read
-> double-hop / flush) target `driver.ownerExecutor(DEFAULT_RAFT_GROUP)`; `bindOwnerThread()` is the
-> FIRST task submitted to owner[0] (H-6). At N=1 this is exact R-01 cadence/FIFO; the per-owner
-> fan-out generalizes and the co-tenant riders (still on owner[0]) decompose to a housekeeping thread
-> at **Stage 2 (N>1)**.
->
-> **As-built — Stage 2 M1 (per-owner tick generalization, `a3c5b7f`+`2666f01`):** the tick loop is now
-> `for i in [0,N): ownerByIndex(i).scheduleAtFixedRate(() -> { tickOwner(i); if(i==0){H-3 scrape};
-> maybeCompactOwner(i); if(i==0){riders + ~10s snapshot-compact} })`. Each owner[i] drives only its own
-> groups (`floorMod(gid,N)==i`), so `assertOwnerThread()` holds per group and a cross-group access trips
-> the **per-node** net — proven by `OwnerIsolationMultiOwnerTest` (N=3: clean run zero-fire + commitIndex
-> GROWTH on a group bound to every owner; group B's entry points on group A's REAL owner thread trip;
-> control shows on-owner access stays silent). The N=1 operation order is order-exact to Stage-1B.
-> **Revision of the earlier "decompose riders to a housekeeping thread" plan:** the co-tenant riders
-> (watch/plumtree/propagation/compactor) + the H-3 scrape STAY on owner[0] as singleton work — recon
-> (D-013) and the M1 red-team confirm they hold no `RaftNode` reference (`configd-distribution-service`/
-> `observability` don't even depend on `configd-consensus-core`), so owner[0] is a safe single home; a
-> dedicated housekeeping executor is a cleanliness option, not a correctness requirement (deferred).
-> Production stays single-group; the N>1 multi-group surface is test-only until Phase-1 sharding.
+## Binding rule
 
-### 4.3 `groups` map safety
+Bind the owner explicitly, as the **first task submitted to the group's owner executor**, via
+`bindOwnerThread()`. Never bind in the constructor: construction runs on the wiring thread and
+legitimately reads log and configuration, so binding there would capture the wrong owner.
 
-`MultiRaftDriver.groups` (plain `HashMap`, `:41`) is read by every owner thread once tick fans
-out. It becomes shared state. Required: a `ConcurrentHashMap` (or a copy-on-write snapshot taken
-on the fan-out thread). `addGroup`/`removeGroup` are infrequent (config change) — marshal them onto
-a driver-owner or guard with the same discipline; they must not race iteration.
+Until a node is bound, the assertion is inert (it returns without firing). This is deliberate and is
+not lazy-binding: a pre-bind, off-thread call must not capture a wrong owner. The node becomes
+guarded the moment its owner runs `bindOwnerThread()`, and stays guarded thereafter.
 
-### 4.4 Flush dispatch retarget
+## The rule for future maintainers
 
-`setGroupCommit` wiring (`ConfigdServer:400–408`) must dispatch `flushDurable` onto
-`ownerExecutor(gid)` for the group, not the global `tickExecutor`. The INLINE test default stays
-owner-safe (runs on the calling owner thread).
+This is the part that matters when you add code:
 
-### 4.5 Marshalling points preserved, retargeted
+> **Any new `RaftNode` method that touches non-volatile state MUST either assert the owner thread
+> (if it is owner-only) or read only through `monitorView()` / the safe set (if it must be reachable
+> cross-thread).**
 
-Inbound handler (`ConfigdServer:427–430`), read dispatch, and ConfigWriteService propose all keep
-their hop — but the target changes from the single `tickExecutor` to `ownerExecutor(gid)`. Each is
-an **M** boundary the harness must prove never leaks an inline `RaftNode` touch.
+A new cross-thread read of non-volatile state is a data race, full stop. If you need a value for
+monitoring, publish it in the tick-end snapshot and read it via `monitorView()`. If you add a field
+to the safe set, prove it is genuinely volatile or immutable first. When in doubt, make the method
+owner-only and marshal callers onto the owner.
 
----
+## Co-tenant housekeeping
 
-## 5. Verification obligations (what the harness in §A.1 must prove)
+Watch, Plumtree, propagation-health, and compaction housekeeping ride the primary owner thread as
+singleton work. They hold no `RaftNode` reference (the distribution-service and observability modules
+do not even depend on the consensus-core module), so a single home is safe. Moving them to a
+dedicated housekeeping executor is a cleanliness option, not a correctness requirement.
 
-1. **Tripwire fires.** Inject an off-owner-thread call to each O entry point → `raft_owner_thread`
-   check goes red. (The §A.2 *prove-it-catches-a-race* capture.)
-2. **No O reachable from an M caller without the hop.** Drive `routeMessage`/`propose`/read/flush
-   concurrently from foreign threads; assert zero inline `RaftNode` touches (tripwire silent under
-   correct marshalling, red when a hop is removed).
-3. **The S set is exactly `{role, leaderId, lastRecordedSeq}` + immutable.** No other field is read
-   cross-thread (static check + runtime scrape audit for H-3).
-4. **Invariants hold under concurrent drive.** All 9 in-node checks (`RaftNode.java:683–702`) + the
-   4 cross-node (`SimInvariants`) green while tick + inbound + propose + commit-callback +
-   flush + compaction + ReadIndex + metric-read race.
-5. **Coalesced-heartbeat property** (Workstream B — ✅ DONE, Stage 2 M3): heartbeat traffic flat in
-   group count. **As-built:** a per-group `CoalescingRaftTransport` decorator buffers each group's empty
-   AppendEntries (its heartbeat) into the owner's `HeartbeatCoalescer` during the tick window; `tickOwner`
-   drains one message per peer at tick end (1 group ⇒ a plain AppendEntries, wire unchanged at N=1; >1 ⇒ a
-   `CoalescedHeartbeat`, demuxed by `routeCoalescedHeartbeat`). Proven: (1) **cost flat in N** — one message
-   per peer per tick independent of group count, un-coalesced baseline scales with G
-   (`HeartbeatCoalescingTest`); (2) **no spurious election** under idle / low / sustained load with
-   coalescing active, the broken-drain test-the-testers (DROP / DELAY-past-timeout / single-peer) all churn
-   (`CoalescedHeartbeatLivenessTest`, + the 20,001-seed `SeedSweepTest` green WITH coalescing wired into the
-   sim); (3) **correctness preserved** — demux delivers per-group liveness, the full S2–S4 surface
-   re-closes. RaftNode UNTOUCHED. Addresses RR-113 heartbeat starvation; the THROUGHPUT NUMBER is
-   Workstream C on hardware, not claimed here. D-020/D-021; `docs/phase0-B-stage2-m3/`.
+## Verification
 
----
+The contract is enforced, not just asserted:
 
-## 6. Open hazards (the things that will bite — each gets a red/green in Workstream B)
+- **Runtime assertion** on every guarded owner-only entry point (above).
+- **Concurrency stress harness** proven to catch an injected off-owner access at every guarded entry
+  point, under concurrent tick + inbound + propose + commit-callback + flush + compaction +
+  ReadIndex + metric-read.
+- **JMM-level checks** that the published `monitorView()` snapshot never tears, and that an unbound
+  guard genuinely races to a lost update (so binding is demonstrably mandatory, not decorative).
+- **Deterministic simulation** binds each node's owner to its drive thread and rides the same
+  throwing checker as the in-node invariants, across large seed sweeps and adversarial schedules,
+  with an injected off-thread access proven to fail the seed.
 
-- **H-1 — `propose()` return crosses the boundary.** `(index,term)` is assigned on the owner
-  thread but the caller wants it synchronously. Resolution options: (a) submit-and-await on the
-  owner executor; (b) make the propose path fully callback-based via the existing
-  `whenCommitOutcome` seam and return only an accept/reject + a ticket. Must be chosen and
-  red/greened before propose is re-threaded.
-- **H-2 — ReadIndex confirm path.** `readIndex()`/`whenReadReady` today hop read-dispatch→tick;
-  retarget to the owner and prove the linearizable-read safety checks (`RaftNode.java:780–791`)
-  still hold under concurrency.
-- **H-3 — monitoring reads of non-volatile state. ✅ CLOSED (Workstream B).** The five read-only
-  accessors (`currentTerm`/`votedFor`/`log`/`transferTarget`/`clusterConfig`) and `metrics()` read
-  non-volatile consensus state, safe under R-01 only because the scrape ran inline on the tick thread;
-  once owners bind and `tick()` fans out, that scrape runs off the group's owner.
-  **Mechanism:** the owner publishes an immutable `RaftMetrics` snapshot through one `volatile`
-  reference (`monitorView`) at the end of every `tick()`; any thread reads it via `monitorView()` with
-  a single volatile load — never tears, never partial, never blocks the owner, ≤ 1 tick stale. The one
-  live reader (`ConfigdServer` scrape) was retargeted onto `monitorView()`; `AdminService`'s
-  `ClusterStateProvider` (latent — unwired) is recorded to do the same. The five accessors were then
-  **guarded** (`assertOwnerThread()`), converting the blind spot into net-covered surface.
-  **Evidence:** `configd-jcstress` `RaftMonitorViewPublicationTest.PublishedSnapshotNeverTears` (JMM:
-  immutable-via-volatile never observed torn; `PerFieldPublishCanTear` control shows the naïve
-  alternative tears) + `RaftMonitorViewConcurrencyTest` (macro: coherent/monotonic/non-null/non-block
-  under concurrent publish; the five accessors trip off-owner while `monitorView()`/S-set stay safe).
-  Design: `docs/phase0-B/h3-monitor-view-design.md`.
-- **H-4 — co-tenant rehoming.** Two distinct concerns travel under this label:
-  - *(a) co-tenant tick work* (watch / plumtree / propagation / compactor): when Raft tick fans out,
-    these lose their implicit thread. **Resolved at M1 (D-015):** they hold no `RaftNode` reference
-    (verified — `configd-distribution-service`/`observability` don't even depend on
-    `configd-consensus-core`), so they ride owner[0] as singleton housekeeping; a dedicated
-    housekeeping executor is a cleanliness option, not a correctness requirement (deferred).
-  - *(b) group rehoming* — a group MOVING between owner threads (the Stage-2 brief's H-4; the analogue
-    of H-3): a cross-thread handoff of unsynchronised state with a double-ownership / lost-message /
-    torn-state hazard. **✅ CLOSED (Stage 2 M2a + M2b — D-016/D-017/D-018/D-019).**
-    **Mechanism (additive + DORMANT in production, inert at N=1):** quiesce→publish→adopt
-    (`MultiRaftDriver.rehomeGroup`) — the losing owner force-syncs (`quiesceForHandoff`), PUBLISHES the
-    routing flip (`groupOwner→target`) and DETACHES (`beginHandoff` → the never-started `HANDOFF`
-    sentinel); the gaining owner ADOPTS (`adoptOwnerThread`), ordered after the detach by the coordinator's
-    **UNINTERRUPTIBLE** executor `.get()` barriers; marshalled work (inbound/propose/flush) uses
-    check-and-bounce; a failed handoff rolls back to the losing owner (`abortHandoff`) or stays LOUDLY
-    wedged on HANDOFF (never silently mis-owned); the production flush is retargeted through
-    `dispatchFlush` and `flushDurable` is owner-guarded; a wedged group's inbound/flush FIRE once (loud),
-    never livelock (`isDetached`). **All three failure modes proven impossible under concurrent fault:**
-    (1) *no double-ownership* — the JMM jcstress proof `RehomingDoubleOwnershipTest` (one volatile
-    `ownerThread` + the detach→adopt barrier; FORBIDDEN unreachable across ~116M samples; the broken
-    control hits it at 0.05–1% — non-vacuous) + 0 off-owner fires across tens of thousands of injected
-    rehomes (`RehomingInjectedSweepTest`, 54 seeds); (2) *no lost/misrouted message* — check-and-bounce
-    re-queues (never drops); the missed-hop detector still fires for never-rehomed groups (M2a Defect-1,
-    preserved); commits keep flowing across rehomes; (3) *no torn state* — `quiesceForHandoff` force-syncs
-    before detach + the `.get()` barriers publish A's final state; groups stay durable + commit across
-    handoffs. **Net non-vacuous across all four violation classes** (off-owner / cross-group /
-    rehoming-race / double-ownership), each demonstrated RED on a deliberate violation.
-    **⚠ D-016 ACTIVATION CAVEAT:** the mechanism ships DORMANT and these are dormant-state proofs —
-    **Phase 1 MUST re-verify the rehoming mechanism when it is ACTUALLY ACTIVATED by a placement policy**
-    (the dormant-state proofs do not transfer to live use). Design:
-    `docs/phase0-B-stage2/m2-rehoming-handoff-design.md`; evidence: `docs/phase0-B-stage2-m2b/captures/`
-    (`s1-submechanisms-net-catch.md`, `s2-jcstress-no-double-ownership.md`, `s3-rehoming-injected-sweep.md`).
-- **H-5 — `groups` map** concurrent iteration vs. add/remove (§4.3).
-- **H-6 — bind timing.** Construction touches state on `main`; binding must happen on the owner
-  executor's first task, never during the constructor.
-
----
-
-## 7. Definition of "contract satisfied"
-
-- [x] `assertOwnerThread()` at EVERY **mutator/callback** O public entry point — **all 14 done**
-      (core 7: tick, handleMessage, propose, maybeCompact, readIndex, whenCommitOutcome, metrics;
-      review-H2 7: transferLeadership, triggerSnapshot, isReadReady, completeRead, whenReadReady,
-      cancelCommitOutcome, proposeConfigChange). Review-H2 CLOSED. The read-only O accessors
-      (currentTerm/votedFor/log/transferTarget/clusterConfig) — formerly the **H-3** monitoring-read
-      hazard — are now ALSO guarded (Workstream B), with the owner-published `monitorView()` snapshot
-      as the safe cross-thread read. **H-3 CLOSED** — see §6 H-3 + `docs/phase0-B/h3-monitor-view-design.md`.
-- [x] Concurrent stress harness (`RaftNodeConcurrencyStressTest`) encodes obligations §5.1–§5.4 and
-      is **proven to catch an injected off-owner-thread access across all 14 guarded entry points**
-      (the off-owner fire-test covers the complete surface; captured red — see
-      `captures/harness-catches-injected-race.md`) before any Workstream B re-threading is blessed.
-- [x] **JMM micro-race** (`configd-jcstress` `RaftOwnerThreadGuardTest`): the guard's `volatile`
-      publication has **no false negative once a node is in service** (gated/clean), and an *unbound*
-      guard genuinely **races to a lost update** (forbidden-hitting control, observed ≈34% — proving
-      binding is mandatory). Complements the macro harness with memory-model rigor.
-- [x] **Sim integration**: the tripwire is bound across the deterministic sim
-      (`ClusterHarness`/`AdversarialSim` bind each node's owner to the drive thread) and rides the
-      same throwing checker as the in-node invariants — **20,001 seed-sweep + adversarial schedules
-      green** (no spurious fire), and `OwnerThreadSimIntegrationTest` proves an injected
-      off-drive-thread access fails the seed (§5.4).
-- [x] Owner-executor pool wired; `poolSize=1` reproduces today's single-group behavior. **(Stage 1B
-      `682cbcf` — R-01 deleted @ N=1; behaviourally exact-R-01; the net is now ACTIVE in production.)**
-- [x] H-1, H-2, H-4, H-5, H-6 — resolved: **H-1** ((index,term) captured inside the marshalled
-      task — preserved), **H-2** (read double-hop retargeted to the owner), **H-5** (`groups` →
-      `ConcurrentHashMap`, Stage 1A), **H-6** (`bindOwnerThread()` first task on owner[0]). **H-4 ✅ CLOSED
-      at Stage 2** — (a) co-tenant riders ride owner[0] safely (M1/D-015); (b) GROUP REHOMING — the
-      quiesce→publish→adopt mechanism (M2a) + the M2b proofs (jcstress JMM no-double-ownership +
-      rehoming-injected S2–S4 sweep + the deferred sub-mechanisms) close all three failure modes; DORMANT
-      in prod, Phase-1 re-verifies on activation (§6 H-4; D-016/D-017/D-018/D-019). **H-3 ✅ CLOSED** —
-      `monitorView()` snapshot + five accessors guarded.
-- [x] S2–S4 invariant surface re-runs green under the new threading **at N=1**: 2052-seed sim sweep +
-      consistency/failover + `OwnerThreadSimIntegrationTest` (0 fail, 0 unintended `raft_owner_thread`),
-      server suite 165/0, and the net RE-PROVEN to catch off-owner inbound under the pool
-      (`OwnerNetCatchesOffOwnerInboundTest`). **Stage 2 M1 (`a3c5b7f`+`2666f01`):** the **multi-owner
-      (N>1)** owner-isolation surface is now CLOSED — per-owner ticking generalized; the net re-proven
-      non-vacuous for the CROSS-GROUP class at N=3 (`OwnerIsolationMultiOwnerTest`); S2–S4 sim subset
-      174/0 + server 165/0 green. H-4 rehoming (M2) + coalesced heartbeats (M3) remain.
-
-**Workstream A (the verification net) is CLOSED.** The remaining unchecked boxes are Workstream B
-(the re-threading the net now guards).
-
-*This contract is the spec. The harness is the enforcement. The captured red is the proof.*
+This contract is the specification. The runtime assertion and the stress harness are the
+enforcement. A captured, deliberately-injected violation firing red is the proof.

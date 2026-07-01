@@ -1,37 +1,42 @@
 # Integration Guide
 
-Configd is an embeddable library. This guide covers how to integrate each layer into your Java application.
+Configd ships runnable services (see [Getting Started](Getting-Started.md)), but the modules are also
+embeddable libraries. This guide covers embedding each layer in your Java application. If you want a
+turnkey control plane, run `configd-server` instead of hand-wiring the consensus core.
 
 ## Important v1 limitations (read first)
 
-- **No change-subscription / "watch" API.** v1 is **pull / delta-apply only**: read via
-  `LocalConfigStore.get(...)` (edge) or the control-plane `GET`, and apply deltas from your replication
-  layer (below). For change-subscription (**watches**), the **RFC §2 watch protocol is now implemented
-  server-side** (N=1) on the edge endpoint — but a **conforming client driver is the next deliverable**,
-  so until one ships, clients **poll** (edge reads are in-process and sub-millisecond). N>1 multi-shard
-  watch is **v3**. See [known-limitations §2](../known-limitations.md) for the watch guarantees, the
-  deployment security model (segregate watch clients from the legacy SUBSCRIBE path), and the boundaries.
-- **No encryption at rest.** Configd stores values **plaintext** (integrity-checked only — HMAC,
-  ADR-0042; **not** encrypted). The `secure/` key prefix is a **read-freshness** guarantee
-  (always-linearizable, fail-closed for security-critical keys), **not** confidentiality. **Do not store
-  secrets** (passwords, tokens, private keys) in Configd — use a dedicated secret manager and keep only
-  non-secret references here. At-rest encryption is a **v2** item (RR-098).
+- **Watches: server-side only, no shipped client driver yet.** For change-subscription (watches), the
+  RFC section 2 watch protocol is implemented server-side (N=1) on the edge endpoint, but a conforming
+  client driver is the next deliverable - so until one ships, clients poll (edge reads are in-process
+  and sub-millisecond). Read via `LocalConfigStore.get(...)` (edge) or the control-plane `GET`, and
+  apply deltas from your replication layer (below). N>1 multi-shard watch is v3. See
+  [known-limitations section 2](../operations/known-limitations.md) for the watch guarantees, the
+  deployment security model (segregate watch clients from the legacy SUBSCRIBE path), and the
+  boundaries.
+- **No encryption at rest.** Configd stores values plaintext (integrity-checked only - HMAC, ADR-0042;
+  not encrypted). The `secure/` key prefix is a read-freshness guarantee (always-linearizable,
+  fail-closed for security-critical keys), not confidentiality. Do not store secrets (passwords,
+  tokens, private keys) in Configd - use a dedicated secret manager and keep only non-secret references
+  here. At-rest encryption is a v2 item (RR-098).
 
-See `docs/known-limitations.md` for the complete, current list.
+See [`../operations/known-limitations.md`](../operations/known-limitations.md) for the complete,
+current list.
 
-## Choosing Your Integration Level
+## Choosing your integration level
 
-| Level | Modules Needed | Use Case |
-|-------|---------------|----------|
-| **Edge reads only** | common, config-store, edge-cache | Application reads config from a local store that receives deltas from elsewhere |
-| **Full consensus** | All core modules | Application participates in the Raft cluster and manages its own config |
-| **Testing/simulation** | All + testkit | Deterministic simulation of multi-node clusters |
+| Level | Modules needed | Use case |
+|---|---|---|
+| Edge reads only | common, config-store, edge-cache | Application reads config from a local store fed by deltas from elsewhere |
+| Full consensus | the core modules (or just run `configd-server`) | Application participates in the Raft cluster and manages its own config |
+| Testing / simulation | the above plus testkit | Deterministic simulation of multi-node clusters |
 
-## Edge-Only Integration (Most Common)
+## Edge-only integration (most common)
 
-Most applications only need to read config. A separate control plane manages writes and pushes deltas to edge nodes.
+Most applications only need to read config. A separate control plane manages writes and pushes deltas
+to edge nodes.
 
-### 1. Create the Local Store
+### 1. Create the local store
 
 ```java
 import io.configd.edge.LocalConfigStore;
@@ -41,10 +46,10 @@ import io.configd.store.ReadResult;
 LocalConfigStore store = new LocalConfigStore();
 ```
 
-### 2. Read Config Values
+### 2. Read config values
 
 ```java
-// Zero-allocation read — safe from any thread
+// Zero-allocation read - safe from any thread
 ReadResult result = store.get("feature.flags.dark-mode");
 if (result.found()) {
     byte[] value = result.value();
@@ -53,7 +58,7 @@ if (result.found()) {
 }
 ```
 
-### 3. Apply Deltas (From Your Replication Layer)
+### 3. Apply deltas (from your replication layer)
 
 A single writer thread applies incoming deltas:
 
@@ -74,7 +79,7 @@ ConfigDelta delta = new ConfigDelta(
 store.applyDelta(delta);
 ```
 
-### 4. Enforce Monotonic Reads
+### 4. Enforce monotonic reads
 
 Use `VersionCursor` to prevent reading stale data after observing a newer version:
 
@@ -89,7 +94,7 @@ ReadResult next = store.get("some.key", cursor);
 // Returns NOT_FOUND if the store has fallen behind the cursor
 ```
 
-### 5. Monitor Staleness
+### 5. Monitor staleness
 
 ```java
 import io.configd.edge.StalenessTracker;
@@ -97,25 +102,29 @@ import io.configd.edge.StalenessTracker;
 StalenessTracker tracker = new StalenessTracker();
 
 // Call after each successful delta application. In real usage pass the LEADER-assigned
-// commit timestamp carried on the notification (ADR-0035 §2) — staleness is measured
+// commit timestamp carried on the notification (ADR-0035 section 2) - staleness is measured
 // against that frontier (ADR-0039); the local clock here is illustrative only and would
-// understate real data age on a quiet/lagging link.
+// understate real data age on a quiet or lagging link.
 tracker.recordUpdate(store.currentVersion(), System.currentTimeMillis());
 
 // Check health
 switch (tracker.currentState()) {
     case CURRENT     -> { /* healthy */ }
-    case STALE       -> { /* >500ms behind — log warning */ }
-    case DEGRADED    -> { /* >5s behind — alert */ }
-    case DISCONNECTED -> { /* >30s — circuit break / fail open */ }
+    case STALE       -> { /* >500ms behind - log warning */ }
+    case DEGRADED    -> { /* >5s behind - alert */ }
+    case DISCONNECTED -> { /* >30s - circuit break / fail open */ }
 }
 ```
 
-## Control Plane Integration
+## Control-plane integration
 
-For applications that participate in the Raft cluster directly.
+For applications that participate in the Raft cluster directly. The turnkey option is to run
+`configd-server` (main class `io.configd.server.ConfigdServer`), which wires all of the below for you,
+including the owner-thread binding. Embed the consensus core directly only if you need low-level
+control - and if you do, you MUST honor the owner-thread threading contract
+([`../architecture/raft-threading-contract.md`](../architecture/raft-threading-contract.md)).
 
-### 1. Configure the Raft Node
+### 1. Configure the Raft node
 
 ```java
 import io.configd.common.NodeId;
@@ -133,40 +142,52 @@ RaftLog log = new RaftLog();
 // You must implement RaftTransport for your network layer
 RaftTransport transport = new MyNettyTransport();
 
-// You must implement StateMachine — this is where committed entries
-// are applied to your VersionedConfigStore
+// You must implement StateMachine - this is where committed entries
+// are applied to your VersionedConfigStore (long apply(index, term, command))
 StateMachine stateMachine = (index, term, command) -> {
-    // Deserialize command, apply to VersionedConfigStore
+    // Deserialize command, apply to VersionedConfigStore, return the applied seq
+    return index;
 };
 
 RaftNode raft = new RaftNode(config, log, transport, stateMachine, new Random());
 ```
 
-### 2. Drive the Raft Node
+### 2. Drive the Raft node on a single owner thread
 
-Configd's Raft implementation is tick-driven, not threaded. You call `tick()` at a regular interval from your I/O thread:
+Configd's Raft implementation is tick-driven and single-owner: every entry point for a given node
+must run on that node's one owner thread. Bind the owner as the FIRST task submitted to that executor
+(never in the constructor), then drive `tick()` from it.
 
 ```java
-// On your dedicated Raft I/O thread (single-threaded — no synchronization needed)
-ScheduledExecutorService raftThread = Executors.newSingleThreadScheduledExecutor();
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.TimeUnit;
 
-raftThread.scheduleAtFixedRate(() -> {
-    raft.tick();
-}, 0, 1, TimeUnit.MILLISECONDS);
+// One single-thread executor owns this RaftNode for the life of the process
+ScheduledExecutorService owner = Executors.newSingleThreadScheduledExecutor();
 
-// When messages arrive from peers:
-transport.onMessage(message -> raft.handleMessage(message));
+// Bind ownership as the first task on the owner thread
+owner.execute(raft::bindOwnerThread);
+
+// Drive the tick loop on the owner thread
+owner.scheduleAtFixedRate(raft::tick, 0, 1, TimeUnit.MILLISECONDS);
+
+// Marshal inbound peer messages onto the owner thread - never call handleMessage inline
+transport.onMessage(message -> owner.execute(() -> raft.handleMessage(message)));
 ```
 
-### 3. Propose Writes
+### 3. Propose writes
 
 ```java
+// propose() is an owner-only entry point - marshal onto the owner thread
 byte[] command = serialize(new PutCommand("my.key", valueBytes));
-boolean accepted = raft.propose(command);
-// accepted == false if this node is not the leader
+owner.execute(() -> {
+    ProposeOutcome outcome = raft.propose(command);
+    // outcome indicates accept/reject; a non-leader rejects
+});
 ```
 
-### 4. Use the Versioned Store
+### 4. Use the versioned store
 
 The `VersionedConfigStore` is the control plane's MVCC store:
 
@@ -175,18 +196,18 @@ import io.configd.store.VersionedConfigStore;
 
 VersionedConfigStore store = new VersionedConfigStore();
 
-// Writer thread (Raft apply thread)
+// Writer thread (the Raft apply path)
 store.put("my.key", valueBytes, sequenceNumber);
 
 // Reader threads (any thread, lock-free)
 ReadResult result = store.get("my.key");
 ```
 
-## Thread Safety Summary
+## Thread-safety summary
 
 | Component | Writer | Readers | Synchronization |
-|-----------|--------|---------|-----------------|
-| `RaftNode` | Single I/O thread | None (query via getters) | None — single-threaded by design |
-| `VersionedConfigStore` | Single apply thread | Any thread | Volatile pointer to immutable snapshot |
-| `LocalConfigStore` | Single delta applier | Any thread | Volatile pointer to immutable snapshot |
+|---|---|---|---|
+| `RaftNode` | Single owner thread per group | `monitorView()` / the safe volatile set only | None inside the node - owner-thread ownership (see the threading contract) |
+| `VersionedConfigStore` | Single apply thread | Any thread | Volatile pointer to an immutable snapshot |
+| `LocalConfigStore` | Single delta applier | Any thread | Volatile pointer to an immutable snapshot |
 | `StalenessTracker` | Single delta applier | Any thread | Volatile fields |

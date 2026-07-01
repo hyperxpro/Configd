@@ -7,7 +7,7 @@ Superseded (see ADR-0022 for the Java 25 upgrade)
 > originally written targeting Java 21 with a Netty/gRPC/Spring Boot
 > implementation stack. The actual implementation (see ADR-0010, ADR-0016
 > notes) uses plain Java TCP sockets + `com.sun.net.httpserver` + custom
-> framed protocol — no Netty, no gRPC-java, no Spring Boot. The Agrona and
+> framed protocol - no Netty, no gRPC-java, no Spring Boot. The Agrona and
 > JCTools dependencies declared in the root `pom.xml` are historical; grep
 > for imports returns zero hits in `.java` sources (see F-0075). The
 > "Thread Model" diagram and "Why not GraalVM" section in this ADR
@@ -35,40 +35,40 @@ The system has strict latency requirements: < 1ms p99 edge reads, < 5ms p999. JV
 
 ### Thread Model
 ```
-┌─────────────────────┐
-│ Raft I/O Thread     │ ← Single thread per Raft group, drives consensus
-│ (Platform thread,   │   AppendEntries, elections, log persistence
-│  pinned to core)    │
-├─────────────────────┤
-│ Apply Thread        │ ← Single thread, applies committed entries to
-│ (Platform thread)   │   state machine, triggers distribution
-├─────────────────────┤
-│ Distribution        │ ← Virtual threads, one per gRPC stream to
-│ Threads (Virtual)   │   edge nodes, fan-out from apply thread
-├─────────────────────┤
-│ gRPC Server         │ ← Netty event loop (platform threads) +
-│ Threads             │   virtual thread per RPC for control plane
-├─────────────────────┤
-│ Reader Threads      │ ← Any thread. Zero synchronization.
-│ (Application)       │   Single volatile read of HAMT pointer.
-└─────────────────────┘
++---------------------+
+| Raft I/O Thread     | <- Single thread per Raft group, drives consensus
+| (Platform thread,   |   AppendEntries, elections, log persistence
+|  pinned to core)    |
++---------------------+
+| Apply Thread        | <- Single thread, applies committed entries to
+| (Platform thread)   |   state machine, triggers distribution
++---------------------+
+| Distribution        | <- Virtual threads, one per gRPC stream to
+| Threads (Virtual)   |   edge nodes, fan-out from apply thread
++---------------------+
+| gRPC Server         | <- Netty event loop (platform threads) +
+| Threads             |   virtual thread per RPC for control plane
++---------------------+
+| Reader Threads      | <- Any thread. Zero synchronization.
+| (Application)       |   Single volatile read of HAMT pointer.
++---------------------+
 ```
 
 ## Influenced by
-- **ClickHouse Keeper:** Replaced ZK (JVM) with C++ Raft. 4.5× memory reduction, p99 latency 15s → 2s. Demonstrates JVM overhead is real.
+- **ClickHouse Keeper:** Replaced ZK (JVM) with C++ Raft. 4.5x memory reduction, p99 latency 15s -> 2s. Demonstrates JVM overhead is real.
 - **Netty:** Event-loop model for high-performance networking. Used by TiKV (via gRPC), CockroachDB (via Go equivalent).
 - **Agrona:** Aeron's off-heap primitives. Used in production for sub-microsecond messaging.
 - **JCTools:** Lock-free queues used by Netty, LMAX Disruptor.
 
 ## Reasoning
 ### Why ZGC over Shenandoah?
-Both offer sub-ms pauses. ZGC has broader production track record (Oracle, LinkedIn, Twitter). ZGC's colored pointers provide better scaling characteristics for large heaps. Shenandoah is a valid alternative — the choice is not critical.
+Both offer sub-ms pauses. ZGC has broader production track record (Oracle, LinkedIn, Twitter). ZGC's colored pointers provide better scaling characteristics for large heaps. Shenandoah is a valid alternative - the choice is not critical.
 
 ### Why not GraalVM Native Image?
 Native image eliminates GC but restricts reflection, dynamic class loading, and JNI. Spring Boot (used for control plane API) has GraalVM support but with significant startup time savings we don't need (long-running service). Virtual threads are not fully supported in all native image configurations.
 
 ### Why virtual threads for I/O but not hot paths?
-Virtual threads excel at I/O-bound blocking operations (waiting for network responses). They are NOT faster for CPU-bound work — they still need platform thread carriers. The read path is CPU-bound (HAMT traversal, ~50ns) and should not incur virtual thread scheduling overhead.
+Virtual threads excel at I/O-bound blocking operations (waiting for network responses). They are NOT faster for CPU-bound work - they still need platform thread carriers. The read path is CPU-bound (HAMT traversal, ~50ns) and should not incur virtual thread scheduling overhead.
 
 ## Consequences
 - **Positive:** Sub-ms GC pauses. Virtual threads handle 10K+ concurrent connections without thread pool exhaustion. Off-heap data avoids GC pressure for large datasets. Lock-free queues eliminate contention at hand-off points.
@@ -76,6 +76,6 @@ Virtual threads excel at I/O-bound blocking operations (waiting for network resp
 - **Risks and mitigations:** Virtual thread pinning (synchronized blocks pin carrier threads) mitigated by using `ReentrantLock` in virtual thread contexts and avoiding `synchronized` entirely. Off-heap memory leaks mitigated by `Cleaner`-based reference tracking and leak detection in test mode.
 
 ## Reviewers
-- principal-distributed-systems-architect: ✅
-- performance-engineer: ✅
-- senior-java-systems-engineer: ✅
+- principal-distributed-systems-architect: yes
+- performance-engineer: yes
+- senior-java-systems-engineer: yes

@@ -8,7 +8,7 @@ Accepted (2026-04-19)
 Every committed Configd command (`PUT`, `DELETE`, `BATCH`) is signed by the
 state machine before its mutation is published to subscribers. The
 signature (Ed25519 over the canonical batch encoding plus an `(epoch,
-nonce)` replay-binding payload — see ADR-0018 fan-out and the F-0052
+nonce)` replay-binding payload - see ADR-0018 fan-out and the F-0052
 finding) is what edge-side `DeltaApplier` instances verify before
 applying the delta locally. An unsigned (or wrongly-signed) command on
 the apply path therefore has two failure modes:
@@ -22,13 +22,13 @@ the apply path therefore has two failure modes:
 The authoritative signing call lives in
 `configd-config-store/src/main/java/io/configd/store/ConfigStateMachine.java`
 (method `signCommand`). When the configured `ConfigSigner` is unable
-to produce a signature — either because the underlying provider throws
+to produce a signature - either because the underlying provider throws
 a `GeneralSecurityException`, or because the signer is verify-only and
-its `sign()` throws `IllegalStateException` — we must NOT publish the
+its `sign()` throws `IllegalStateException` - we must NOT publish the
 mutation as if signing had succeeded.
 
-The S3 row in `docs/ga-review.md` and the `signFailureFailsClose`
-regression test in `ConfigStateMachineTest` already encode this
+The `signFailureFailsClose`
+regression test in `ConfigStateMachineTest` already encodes this
 behaviour. This ADR formalises the contract those tests assert against,
 so that the contract is discoverable from the decisions index rather
 than only from the test name.
@@ -51,7 +51,7 @@ The state machine **fails closed on signature failure**:
    `notifyListeners(...)` only runs on the success path of
    `signCommand`.
 
-The contract is symmetric across `PUT`, `DELETE`, and `BATCH` — the
+The contract is symmetric across `PUT`, `DELETE`, and `BATCH` - the
 fail-close path is the same single `signCommand` invocation in each
 arm of the apply switch.
 
@@ -86,15 +86,14 @@ arm of the apply switch.
 
 ## Related
 
-- ADR-0018 — event-driven notification (consumer of the signed delta)
-- ADR-0025 — on-call rotation procurement (who responds when fail-close trips)
+- ADR-0018 - event-driven notification (consumer of the signed delta)
+- ADR-0025 - on-call rotation procurement (who responds when fail-close trips)
 - F-0052 (signing-payload binding `epoch`+`nonce`)
-- gap-closure §S3 (PA-1004)
-- `docs/ga-review.md` — Phase 7 row "Sign-or-fail-close in state machine"
-- `runbooks/disaster-recovery.md` — signing-key compromise path
+- PA-1004 (sign-or-fail-close requirement)
+- `runbooks/disaster-recovery.md` - signing-key compromise path
 
 ## Verification
 
-- **Testable via:** `configd-config-store/src/test/java/io/configd/store/ConfigStateMachineTest.java` — the nested `SigningIntegration` test class includes `signFailureFailsClose`, which constructs a verify-only `ConfigSigner` (public key only, `sign()` throws), then asserts that `apply(...)` throws `IllegalStateException` with message containing `signing failed`. The same class also covers the success path (`signatureVerifiesWithPublicKey`) so the regression has both polarity assertions.
+- **Testable via:** `configd-config-store/src/test/java/io/configd/store/ConfigStateMachineTest.java` - the nested `SigningIntegration` test class includes `signFailureFailsClose`, which constructs a verify-only `ConfigSigner` (public key only, `sign()` throws), then asserts that `apply(...)` throws `IllegalStateException` with message containing `signing failed`. The same class also covers the success path (`signatureVerifiesWithPublicKey`) so the regression has both polarity assertions.
 - **Invalidated by:** any change to `ConfigStateMachine.signCommand` that catches `GeneralSecurityException` / `IllegalStateException` and returns normally instead of re-throwing; or by moving the `notifyListeners(...)` call before `signCommand(...)` in the apply switch (which would publish first, sign second).
-- **Operator check:** in the live cluster, `configd_state_machine_apply_failure_total{reason="sign_fail_close"}` (when wired by F5/F6 metric work) increments visibly, and `configd_write_commit_total` rate drops to zero — pages the on-call rotation per `ConfigdControlPlaneAvailability`. The incident commander follows `runbooks/disaster-recovery.md` "Signing key compromise" branch to rotate the keypair.
+- **Operator check:** in the live cluster, `configd_state_machine_apply_failure_total{reason="sign_fail_close"}` (when wired by F5/F6 metric work) increments visibly, and `configd_write_commit_total` rate drops to zero - pages the on-call rotation per `ConfigdControlPlaneAvailability`. The incident commander follows `runbooks/disaster-recovery.md` "Signing key compromise" branch to rotate the keypair.

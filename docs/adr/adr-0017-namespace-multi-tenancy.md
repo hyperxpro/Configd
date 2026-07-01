@@ -6,7 +6,7 @@ Accepted, superseded in part by [adr-multiraft-partitioning](adr-multiraft-parti
 The namespace model, the per-namespace isolation dimensions, and the multi-tenancy rationale below all stand. The one part that does not reflect the built system is the "Raft group affinity" idea - pinning a namespace to a specific Raft shard group (the "Raft group affinity" row and the "namespace-scoped Raft shard groups" reasoning). The shipped router hashes the full path within a scope; it does not pin a namespace onto one owner thread. Pinning a whole namespace to one group would collapse that tenant onto a single owner thread (a hot shard) and defeat even hash distribution, so it was not built. Read the affinity and pinning discussion below as a considered-and-rejected alternative, not as current behavior.
 
 ## Context
-Multi-tenancy is required for shared deployments where multiple teams, services, or organizational units use the same Configd cluster. Consul gates multi-tenancy (Admin Partitions), read scaling (non-voting servers), gossip isolation (Network Segments), and AZ-aware failover (Redundancy Zones) behind Enterprise licensing — indicating these capabilities were bolted onto an architecture not designed for them (gap-analysis.md section 4.5). The system must provide tenant isolation for reads, writes, ACLs, rate limits, and storage quotas without requiring separate cluster deployments per tenant. Target: 10K/s aggregate writes across all tenants, with per-tenant rate limiting and fair scheduling.
+Multi-tenancy is required for shared deployments where multiple teams, services, or organizational units use the same Configd cluster. Consul gates multi-tenancy (Admin Partitions), read scaling (non-voting servers), gossip isolation (Network Segments), and AZ-aware failover (Redundancy Zones) behind Enterprise licensing - indicating these capabilities were bolted onto an architecture not designed for them (the gap analysis). The system must provide tenant isolation for reads, writes, ACLs, rate limits, and storage quotas without requiring separate cluster deployments per tenant. Target: 10K/s aggregate writes across all tenants, with per-tenant rate limiting and fair scheduling.
 
 ## Decision
 We adopt **namespace-based multi-tenancy** as a first-class architectural primitive, integrated with Multi-Raft shard groups:
@@ -22,7 +22,7 @@ We adopt **namespace-based multi-tenancy** as a first-class architectural primit
 |---|---|
 | **Key visibility** | Keys in namespace A are invisible to clients authenticated to namespace B. No cross-namespace reads. |
 | **Write authorization** | ACL policies are namespace-scoped. A token grants permissions within one or more namespaces. |
-| **Rate limiting** | Per-namespace write rate limit (configurable, default: 10K writes/s — matches the wired global limiter, see F-0054). Enforced at control plane API before Raft proposal. |
+| **Rate limiting** | Per-namespace write rate limit (configurable, default: 10K writes/s - matches the wired global limiter, see F-0054). Enforced at control plane API before Raft proposal. |
 | **Storage quota** | Per-namespace key count limit and total value size limit. Enforced at state machine apply time. |
 | **Raft group affinity** | Namespaces can be pinned to specific Raft shard groups for performance isolation. |
 | **Subscription isolation** | Edge nodes subscribe to prefixes within their authorized namespaces only. Plumtree fan-out filters events by namespace. |
@@ -45,7 +45,7 @@ We adopt **namespace-based multi-tenancy** as a first-class architectural primit
 ### ACL Model
 - Tokens carry namespace claims: `{namespace: "team-payments", permissions: ["read", "write", "admin"]}`.
 - Cross-namespace access requires explicit grant (e.g., a monitoring service reading metrics from all namespaces).
-- System namespace (`/_system`) requires elevated permissions — not accessible by regular tenant tokens.
+- System namespace (`/_system`) requires elevated permissions - not accessible by regular tenant tokens.
 
 ## Influenced by
 - **Kubernetes Namespaces:** Isolation boundary for resources, RBAC policies, and resource quotas within a shared cluster. Proven model for multi-tenancy at scale.
@@ -64,10 +64,10 @@ At 100 tenants with separate clusters: 100 x 3 Raft voters minimum = 300 nodes. 
 Without shard affinity, all tenants share the same Raft groups. One tenant's write burst (e.g., bulk config update) blocks other tenants' writes because Raft serializes all proposals. Namespace-scoped shard groups provide write throughput isolation: tenant A's burst only affects tenant A's shard group's commit latency.
 
 ### Why not partition by scope only (ADR-0002)?
-Scope-based partitioning (GLOBAL/REGIONAL/LOCAL) determines Raft group placement for latency optimization. Namespace partitioning is orthogonal — it provides tenant isolation within each scope tier. A namespace's GLOBAL keys go to the global Raft group (or a tenant-specific global group for large tenants), and its REGIONAL keys go to regional groups. The two dimensions compose naturally.
+Scope-based partitioning (GLOBAL/REGIONAL/LOCAL) determines Raft group placement for latency optimization. Namespace partitioning is orthogonal - it provides tenant isolation within each scope tier. A namespace's GLOBAL keys go to the global Raft group (or a tenant-specific global group for large tenants), and its REGIONAL keys go to regional groups. The two dimensions compose naturally.
 
 ### Why rate limiting at API layer, not Raft layer?
-Raft proposal rejection is expensive — it consumes leader CPU to deserialize and reject. Rate limiting at the API layer (before proposal) is cheaper: a counter check (~10ns) vs Raft proposal + rejection (~1ms). Additionally, API-layer rate limiting can provide informative error messages (HTTP 429 with `Retry-After` header and per-namespace quota information).
+Raft proposal rejection is expensive - it consumes leader CPU to deserialize and reject. Rate limiting at the API layer (before proposal) is cheaper: a counter check (~10ns) vs Raft proposal + rejection (~1ms). Additionally, API-layer rate limiting can provide informative error messages (HTTP 429 with `Retry-After` header and per-namespace quota information).
 
 ## Rejected Alternatives
 - **Separate clusters per tenant:** 20-100x infrastructure cost increase. Multiplicative operational burden. Underutilized resources per cluster. No resource sharing or dynamic allocation.
@@ -78,9 +78,9 @@ Raft proposal rejection is expensive — it consumes leader CPU to deserialize a
 ## Consequences
 - **Positive:** Tenant isolation without infrastructure multiplication. Per-namespace rate limiting prevents noisy-neighbor effects on write throughput. Shard affinity provides write isolation for high-value tenants. ACL model prevents cross-tenant data access. Namespace quotas prevent individual tenants from exhausting cluster storage.
 - **Negative:** Namespace metadata adds overhead to every key lookup (namespace prefix matching). Cross-namespace operations (e.g., admin reading all namespaces) require special handling. Shard assignment decisions add PlacementDriver complexity.
-- **Risks and mitigations:** Namespace metadata lookup overhead mitigated by caching namespace ACL decisions per connection (amortized to ~0ns per read after first request). Shard assignment complexity mitigated by simple default policy (all namespaces share default shard group; explicit opt-in for dedicated shards). Tenant escape (accessing another tenant's data) mitigated by namespace enforcement at both API layer (ACL check) and state machine layer (key prefix validation) — defense in depth.
+- **Risks and mitigations:** Namespace metadata lookup overhead mitigated by caching namespace ACL decisions per connection (amortized to ~0ns per read after first request). Shard assignment complexity mitigated by simple default policy (all namespaces share default shard group; explicit opt-in for dedicated shards). Tenant escape (accessing another tenant's data) mitigated by namespace enforcement at both API layer (ACL check) and state machine layer (key prefix validation) - defense in depth.
 
 ## Reviewers
-- principal-distributed-systems-architect: ✅
-- security-engineer: ✅
-- site-reliability-engineer: ✅
+- principal-distributed-systems-architect: yes
+- security-engineer: yes
+- site-reliability-engineer: yes

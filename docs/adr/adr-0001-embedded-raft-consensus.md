@@ -10,8 +10,8 @@ The system requires a consensus mechanism for strongly consistent writes in the 
 We will embed a Raft consensus engine directly into the Configd process, following the KRaft model (Kafka KIP-500). The system will own its own consensus with zero external coordination dependencies.
 
 ## Influenced by
-- **Kafka KRaft (KIP-500):** Embedded Raft replacing ZooKeeper. Controller failover improved from 5-7s to < 1s. 2M partition ceiling (vs 200K with ZK — 10×). "42 Ways ZooKeeper Removal Improves Kafka" enumerates specific state divergence, operational burden, and metadata propagation failures.
-- **ClickHouse Keeper:** Replaced ZK with C++ Raft. 4.5× memory reduction (81.6 GB → 18 GB), p99 insertion latency 15s → 2s.
+- **Kafka KRaft (KIP-500):** Embedded Raft replacing ZooKeeper. Controller failover improved from 5-7s to < 1s. 2M partition ceiling (vs 200K with ZK - 10x). "42 Ways ZooKeeper Removal Improves Kafka" enumerates specific state divergence, operational burden, and metadata propagation failures.
+- **ClickHouse Keeper:** Replaced ZK with C++ Raft. 4.5x memory reduction (81.6 GB -> 18 GB), p99 insertion latency 15s -> 2s.
 - **Meta Zelos/Delos:** Migrated 50% of ZK workloads. Zelos achieved 56K vs ZK's 36K ops/sec on identical hardware.
 
 ## Reasoning
@@ -35,6 +35,6 @@ Embedded Raft eliminates all five issues. The metadata log is an internal, event
 - **Risks and mitigations:** Implementation correctness mitigated by TLA+ specification (ADR-0007), deterministic simulation testing (ADR-0007), and reference validation against etcd/hashicorp Raft implementations.
 
 ## Reviewers
-- principal-distributed-systems-architect: ✅
-- distributed-systems-researcher: ✅
-- site-reliability-engineer: ✅
+- principal-distributed-systems-architect: yes
+- distributed-systems-researcher: yes
+- site-reliability-engineer: yes

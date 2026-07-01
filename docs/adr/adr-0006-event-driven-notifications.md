@@ -44,7 +44,7 @@ message SubscribeResponse {
 - **Distribution service nodes** (non-voting Raft followers or dedicated relay nodes) subscribe to the Raft log and fan out to edge nodes.
 - Each distribution node handles up to 10K edge connections.
 - For 1M edge nodes: ~100 distribution nodes.
-- Events are serialized once into a shared immutable buffer, then written to multiple gRPC streams — avoiding per-subscriber serialization cost.
+- Events are serialized once into a shared immutable buffer, then written to multiple gRPC streams - avoiding per-subscriber serialization cost.
 
 ## Influenced by
 - **etcd gRPC streaming watches:** Persistent, multiplexed, revision-based resumption. Progress notifications for liveness. Cost: ~350 bytes/watching instance.
@@ -54,7 +54,7 @@ message SubscribeResponse {
 ## Reasoning
 ### Why not ZooKeeper-style watches?
 - One-shot: client must re-register after each notification. Event loss window between trigger and re-registration.
-- Memory: ~100 bytes/watch. 10K clients × 20K keys = 200M watches = 20 GB RAM (ZOOKEEPER-1177).
+- Memory: ~100 bytes/watch. 10K clients x 20K keys = 200M watches = 20 GB RAM (ZOOKEEPER-1177).
 - Thundering herd: mass re-registration after reconnection saturates write pipeline (Twitter 2018 session storms).
 
 ### Why not Consul blocking queries?
@@ -73,6 +73,6 @@ message SubscribeResponse {
 - **Risks and mitigations:** Stream starvation (etcd #17529) mitigated by per-subscriber output buffers with independent backpressure. Connection storms after distribution node restart mitigated by exponential backoff with jitter on client reconnect.
 
 ## Reviewers
-- principal-distributed-systems-architect: ✅
-- distributed-data-plane-engineer: ✅
-- chaos-engineer: ✅
+- principal-distributed-systems-architect: yes
+- distributed-data-plane-engineer: yes
+- chaos-engineer: yes

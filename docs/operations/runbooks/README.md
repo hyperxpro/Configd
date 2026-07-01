@@ -1,1 +1,3 @@
-> **DEPRECATED.** See [ops/runbooks/](../../ops/runbooks/) for the canonical, alert-linked runbooks. Files in this directory are pre-GA design notes; do NOT use during incidents.
+> **NOTE:** The files in this directory are pre-GA design notes retained for historical context. The
+> canonical, alert-linked operational runbooks are in `ops/runbooks/` at the repository root. Do NOT
+> use these files during incidents -- use the canonical runbooks instead.

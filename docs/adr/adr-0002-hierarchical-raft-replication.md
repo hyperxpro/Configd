@@ -30,7 +30,7 @@ Multi-Raft partitions the keyspace into ranges, each with its own Raft group and
 
 Config distribution is fundamentally different: it needs fast broadcast from a single source of truth, not partitioned consensus. The overhead of managing thousands of Raft groups (heartbeat storms, per-group state, split/merge operations) is unjustified. TiKV reports performance degradation with millions of regions.
 
-Additionally, multi-Raft requires a Placement Driver (centralized coordinator) to manage region metadata — reintroducing a centralized dependency.
+Additionally, multi-Raft requires a Placement Driver (centralized coordinator) to manage region metadata - reintroducing a centralized dependency.
 
 ### Why not leaderless (EPaxos)?
 EPaxos has no production deployment track record. Multiple published correctness bugs: ballot management (Sutra, 2019), fast-quorum check (reference implementation issue #10), recovery deadlock (Ryabinin et al., 2025). Dependency graph management is operationally opaque. Under sustained conflict, SCCs grow unboundedly, stalling execution.
@@ -62,6 +62,6 @@ Regional Raft group (3 voters in same region): 2-5ms commit.
 - **Risks and mitigations:** Group membership management complexity mitigated by TLA+ verification of reconfiguration protocol. Cross-group ordering gaps mitigated by HLC timestamps.
 
 ## Reviewers
-- principal-distributed-systems-architect: ✅
-- distributed-systems-researcher: ✅
-- performance-engineer: ✅
+- principal-distributed-systems-architect: yes
+- distributed-systems-researcher: yes
+- performance-engineer: yes

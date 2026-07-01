@@ -17,19 +17,19 @@ Superseded
 The system has two distinct transport needs: (1) high-throughput, low-latency data plane for Raft replication and edge fan-out, and (2) request-response control plane API for admin operations, writes, and reads.
 
 ## Decision
-- **Data plane (Raft replication, Plumtree fan-out):** Custom framed protocol over Netty with mTLS. Direct ByteBuf manipulation for zero-copy where possible. Nagle disabled, manual batching with bounded delay (200μs).
+- **Data plane (Raft replication, Plumtree fan-out):** Custom framed protocol over Netty with mTLS. Direct ByteBuf manipulation for zero-copy where possible. Nagle disabled, manual batching with bounded delay (200us).
 - **Control plane API:** gRPC over Netty (grpc-java). Spring Boot for admin APIs (REST). gRPC for programmatic client access and streaming subscriptions.
 - **mTLS everywhere:** All node-to-node and client-to-node communication over mTLS. Certificate rotation via control plane config (self-bootstrapping).
 
 ### Data Plane Wire Format
 ```
-┌────────┬────────┬──────────┬─────────┬─────────────┐
-│ Length  │ Type   │ Group ID │ Term    │ Payload     │
-│ 4 bytes│ 1 byte │ 4 bytes  │ 8 bytes │ Variable    │
-├────────┼────────┼──────────┼─────────┼─────────────┤
-│ uint32 │ enum   │ uint32   │ uint64  │ protobuf or │
-│        │        │          │         │ raw bytes   │
-└────────┴────────┴──────────┴─────────┴─────────────┘
++--------+--------+----------+---------+-------------+
+| Length  | Type   | Group ID | Term    | Payload     |
+| 4 bytes| 1 byte | 4 bytes  | 8 bytes | Variable    |
++--------+--------+----------+---------+-------------+
+| uint32 | enum   | uint32   | uint64  | protobuf or |
+|        |        |          |         | raw bytes   |
++--------+--------+----------+---------+-------------+
 
 Message types:
   0x01: AppendEntries
@@ -49,13 +49,13 @@ Message types:
 ```
 
 ### Batching Strategy
-- Raft AppendEntries: batch pending entries with 200μs bounded delay. If batch reaches 64 entries or 256 KB, send immediately.
-- Plumtree EagerPush: batch delta events with 100μs bounded delay. If batch reaches 32 events or 128 KB, send immediately.
+- Raft AppendEntries: batch pending entries with 200us bounded delay. If batch reaches 64 entries or 256 KB, send immediately.
+- Plumtree EagerPush: batch delta events with 100us bounded delay. If batch reaches 32 events or 128 KB, send immediately.
 - Nagle disabled (TCP_NODELAY). Manual batching provides better control.
 
 ## Influenced by
 - **TiKV:** Custom Raft transport over gRPC with batched Raft I/O across groups sharing one RocksDB.
-- **CockroachDB MultiRaft:** Coalesced heartbeats — one per node pair per tick regardless of shared range count.
+- **CockroachDB MultiRaft:** Coalesced heartbeats - one per node pair per tick regardless of shared range count.
 - **Aeron:** Zero-copy messaging with Agrona buffers. Sub-microsecond latency.
 - **Netty:** Industry standard for high-performance Java networking. Used by Cassandra, Elasticsearch, gRPC-java.
 
@@ -75,6 +75,6 @@ gRPC provides: streaming (for subscriptions), protobuf schema evolution, deadlin
 - **Risks and mitigations:** Custom protocol bugs mitigated by exhaustive property tests on frame encoding/decoding. Version incompatibility mitigated by protocol version field in connection handshake.
 
 ## Reviewers
-- principal-distributed-systems-architect: ✅
-- senior-java-systems-engineer: ✅
-- security-engineer: ✅
+- principal-distributed-systems-architect: yes
+- senior-java-systems-engineer: yes
+- security-engineer: yes

@@ -36,9 +36,8 @@ Defer multi-Raft sharding to v0.2. v0.1 ships single-Raft only.
 - v0.1 deployment tooling assumes a single Raft group per cluster.
 - The `ClusterConfig` schema reserves the `shardId` field but always
   sets it to 0; v0.2 will populate it.
-- The capacity calibration table in `docs/perf-baseline.md` defines the
-  recommended cluster-size cap (≤ 5 k subscribed prefixes, ≤ 10 k
-  commits/s) above which v0.2 with sharding is required.
+- The recommended cluster-size cap is <= 5 k subscribed prefixes, <= 10 k
+  commits/s above which v0.2 with sharding is required.
 
 ## Migration Plan
 
@@ -53,10 +52,10 @@ Defer multi-Raft sharding to v0.2. v0.1 ships single-Raft only.
 
 - PA-3001 (R-06 root cause)
 - ADR-0001 (embedded Raft consensus)
-- `docs/perf-baseline.md` (single-Raft ceiling)
+- the single-Raft ceiling (see measurement results)
 
 ## Verification
 
 - **Testable via:** the single-shard invariant is asserted by `configd-consensus-core/src/test/java/io/configd/raft/ClusterConfigTest.java` (the `shardId` field is reserved in `ClusterConfig` but always 0 in v0.1). Multi-Raft driver wiring is exercised by `configd-replication-engine/src/test/java/io/configd/replication/MultiRaftDriverTest.java` even though only one driver is provisioned in v0.1.
 - **Invalidated by:** any v0.1 deployment that provisions more than one Raft group per cluster, or a `ClusterConfig` produced with `shardId != 0`.
-- **Operator check:** `configd_raft_groups_total` gauge equals 1 in production v0.1 clusters; the capacity table in `docs/perf-baseline.md` documents the ≤ 10 k commits/s ceiling above which v0.2 sharding is required.
+- **Operator check:** `configd_raft_groups_total` gauge equals 1 in production v0.1 clusters; the measured ceiling is <= 10 k commits/s above which v0.2 sharding is required.

@@ -1,43 +1,47 @@
 # Configd
 
-A region-local, strongly-consistent configuration control plane: a single Raft "root" for
-linearizable writes, with asynchronous, bounded-staleness fan-out to in-process edge readers
-(a Quicksilver-shaped topology — see [ADR-0030](docs/decisions/adr-0030-quicksilver-shaped-topology.md)).
+A strongly-consistent, sharded, mTLS-secured configuration store. Writes go through sharded Raft for durability and horizontal scale; committed changes fan out to a planet-wide edge that serves reads from an in-process, lock-free cache in microseconds.
 
-## Status: v1 (pre-GA)
+The split is the point: consensus gives you linearizable, durable writes, and the edge gives you fast local reads without paying a consensus round trip on the read path.
 
-v1 is code-level complete with a verified correctness core (consensus, durability, the edge
-read/consistency plane, and a Porcupine-backed linearizability harness). **Before relying on it, read
-[docs/known-limitations.md](docs/known-limitations.md).** The most important v1 limitations:
+## What v1 is
 
-- **No encryption at rest.** Values — **including `secure/` keys** — are stored **plaintext**
-  (integrity-checked only via HMAC; not encrypted). `secure/` is a read-**freshness** class
-  (always-linearizable, fail-closed for security-critical keys), **not** confidentiality. **Do not store
-  secrets** (passwords, tokens, keys) in Configd — use a dedicated secret manager. At-rest encryption is a
-  **v2** item ([RR-098](docs/readiness/production-readiness-register.md)).
-- **Client "watch" / change-subscription:** the RFC §2 watch protocol is **implemented server-side**
-  (N=1) on the edge endpoint (wire `0x02`, multiplex/filter veneer, whole-target authz gate, bounded
-  revocation). A **conforming client driver is the next deliverable**, and N>1 multi-shard watch is **v3**;
-  until a driver ships, use polling / delta-apply. See [known-limitations §2](docs/known-limitations.md)
-  for the guarantees + the deployment security model.
-- **N=1 by default (sharding is built, server-wired, and metal-proven).** v1 defaults to a single Raft
-  group (byte-identical to a non-sharded build). Multi-shard scaling is now wired into the server
-  (`StaticShardMap` + `shardFor` routing) and **measured near-linear on real hardware — ~2.45× on 3
-  machines** (656→1075→1607 committed writes/s;
-  [horizontal run](docs/measurement/ec2-horizontal-2026-07-01/02-scaling-curve.md)). Measured single-group
-  write knee is **~800 writes/s** (churn-bound). N>1 + the edge endpoint fail-closes unless explicitly opted
-  in, and **sustained horizontal scale is operator-managed** — leadership is not yet auto-balanced (one
-  leader per box; a `transferLeadership` balancer is a v2 follow-up).
-- **Empirically validated on metal, with bounded residuals.** DR drills are **executed** (**372 ms**
-  failover, single bounded election, **0/1000** committed-write loss across three fault modes; RTO
-  4.2 s / 5.9 s — [DR drills](docs/measurement/ec2-2026-06-30/02-dr-drills.md)), and a **6 h** soak passed
-  leak/OOM-clean ([soak](docs/measurement/ec2-2026-06-30/04-soak.md)). Honest residuals: **no full 24 h/72 h
-  soak** (proven to 6 h, not 24 h), no literal sustained 10 k/s, and no cross-region/WAN measurement
-  (single-region by design).
+- **Durable, linearizable writes** through Raft, with strong reads available via ReadIndex and bounded-staleness reads at the edge by default.
+- **Sharded for horizontal scale.** A single region-local group is the default (N=1); sharding is wired and proven, and scale is near-linear across machines.
+- **mTLS throughout**, with a per-key authorization model (roles, policies, deny-precedence) and a keyed-HMAC audit log.
+- **At-rest integrity**, meaning tamper detection, not encryption. Values are stored in plaintext and integrity-checked; do not put secrets in Configd (see the limitations below).
 
-## Documentation
+## What v1 proved on real hardware
 
-- [Integration Guide](docs/wiki/Integration-Guide.md) · [Getting Started](docs/wiki/Getting-Started.md)
-- [Consistency Contract](docs/consistency-contract.md) · [Known Limitations](docs/known-limitations.md)
-- [Production-Readiness Register](docs/readiness/production-readiness-register.md) · [ADRs](docs/decisions/)
-- [v1 Go/No-Go Review](docs/readiness/v1-go-no-go-2026-07-01.md) · [Operator Runsheet](docs/operator-runsheet.md) · [Deployer MUST-KNOW](docs/deployer-must-know.md) · [Burn-in Contract](docs/burn-in-contract.md)
+- **Durability under fault.** Disaster-recovery drills failed over in about 372 ms with zero committed-write loss across three fault modes (recovery time 4.2 to 5.9 s), and a 6-hour soak ran leak- and OOM-clean.
+- **Horizontal scale.** Near-linear at about 2.45x across three machines (656, then 1075, then 1607 committed writes per second). A single group's write knee is about 800 writes/s, and a single box plateaus near 1100.
+- **Honest residuals.** Soak is proven to 6 hours, not 24. Measurement is single-region by design. Sustained multi-machine scale is operator-managed, because leadership is not auto-balanced yet.
+
+The full evidence lives in [`docs/archive/`](docs/archive/): the [go/no-go review](docs/archive/readiness/v1-go-no-go-2026-07-01.md), the audited [readiness register](docs/archive/readiness/production-readiness-register.md), and the two paid [EC2 measurement runs](docs/archive/measurement/).
+
+## Where to go
+
+| You want to | Start here |
+|---|---|
+| Understand the whole system | [`docs/architecture/`](docs/architecture/) |
+| Write a client driver | [`docs/rfc/driver-protocol/`](docs/rfc/driver-protocol/) - a self-contained, implementable protocol spec |
+| Deploy or operate a cluster | [`docs/operations/`](docs/operations/) - runsheet, deployer must-knows, runbooks |
+| Know the honest edges | [`docs/operations/known-limitations.md`](docs/operations/known-limitations.md) |
+| Understand a design decision | [`docs/adr/`](docs/adr/) |
+| See what is coming in v2 | [`docs/v2-backlog.md`](docs/v2-backlog.md) |
+
+A fuller map is in [`docs/README.md`](docs/README.md).
+
+## Honest scope: v1 vs v2
+
+v1 is deliberately scoped. These are known and understood, not surprises:
+
+- **No encryption at rest.** At-rest protection is integrity only; values, including `secure/` keys, are plaintext (the `secure/` prefix is a read-freshness class, not confidentiality). Keep secrets in a dedicated secret manager. Encryption at rest is a v2 item.
+- **Watches are server-side.** The watch protocol is implemented for a single group; a conforming client driver is buildable from the RFC but not yet shipped, and cross-shard watches are v3. Until a driver ships, poll and delta-apply.
+- **Horizontal scale is operator-managed.** Multi-machine scale needs one leader per box, placed and maintained by the operator; an automatic leadership balancer is a v2 item.
+
+See [`docs/v2-backlog.md`](docs/v2-backlog.md) for the rest.
+
+## Build
+
+Requires JDK 25. Build and test with `mvn clean install`.

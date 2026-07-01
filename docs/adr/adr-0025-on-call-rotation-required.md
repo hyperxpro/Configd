@@ -8,7 +8,7 @@ Accepted (2026-04-17). Codifies R-12.
 A "production-ready" distributed system depends on a 24/7 on-call
 rotation that owns paging, runbooks, and post-incident review. Configd
 ships the runbooks and the alert-rule generator (Phase 8) but the
-rotation itself — humans, paging service, escalation tree — is
+rotation itself - humans, paging service, escalation tree - is
 operator-procured.
 
 The GA review (Phase 11) needs to be unambiguous on this: an absent
@@ -43,7 +43,7 @@ escalation tree, or any roster.
 
 ## Consequences
 
-- The GA review records on-call as **YELLOW: operator-procured —
+- The GA review records on-call as **YELLOW: operator-procured -
   rotation MUST be in place before production launch**.
 - Each runbook ends with an "Operator setup required" section
   enumerating the paging integration the runbook assumes.
@@ -52,12 +52,12 @@ escalation tree, or any roster.
 
 ## Related
 
-- R-12 (gap-closure §5)
+- R-12 (on-call rotation)
 - `runbooks/` (operator runbooks)
-- `ops/alerts/` (alert generator — Phase 8)
+- `ops/alerts/` (alert generator - Phase 8)
 
 ## Verification
 
-- **Testable via:** the alert generator emits `runbook_url` annotations without notification channels — verified by the test corpus over `ops/alerts/configd-slo-alerts.yaml` (parsed by `configd-observability/src/test/java/io/configd/observability/ProductionSloDefinitionsTest.java` and the burn-rate evaluator under `BurnRateAlertEvaluatorTest.java`). Each runbook ending with an "Operator-Setup" section is the structural assertion of this ADR — see the runbook conformance template `ops/runbooks/runbook-conformance-template.md`.
+- **Testable via:** the alert generator emits `runbook_url` annotations without notification channels - verified by the test corpus over `ops/alerts/configd-slo-alerts.yaml` (parsed by `configd-observability/src/test/java/io/configd/observability/ProductionSloDefinitionsTest.java` and the burn-rate evaluator under `BurnRateAlertEvaluatorTest.java`). Each runbook ending with an "Operator-Setup" section is the structural assertion of this ADR - see the runbook conformance template `ops/runbooks/runbook-conformance-template.md`.
 - **Invalidated by:** an alert manifest that hard-wires a paging-service receiver, or by the GA review marking on-call GREEN without a procured rotation.
-- **Operator check:** confirm the operator's deployment of `ops/alerts/configd-slo-alerts.yaml` is wired to the operator's paging service (e.g. PagerDuty/OpsGenie) — Configd ships no default. `docs/ga-review.md` records on-call as YELLOW until the operator confirms.
+- **Operator check:** confirm the operator's deployment of `ops/alerts/configd-slo-alerts.yaml` is wired to the operator's paging service (e.g. PagerDuty/OpsGenie) - Configd ships no default. On-call readiness remains YELLOW until the operator confirms.

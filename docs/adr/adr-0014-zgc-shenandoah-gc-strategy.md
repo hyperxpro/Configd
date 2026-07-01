@@ -1,7 +1,7 @@
 # ADR-0014: ZGC/Shenandoah GC Strategy with Zero-Allocation Read Path
 
 ## Status
-Superseded — partially. The GC choice (ZGC on JDK 25) stands; library-level claims do not.
+Superseded - partially. The GC choice (ZGC on JDK 25) stands; library-level claims do not.
 
 > **Note (2026-04-16, Verification Phase V8 re-audit):** Sections of this
 > ADR assert Netty, gRPC-java, and Spring Boot as the implementation
@@ -15,7 +15,7 @@ Superseded — partially. The GC choice (ZGC on JDK 25) stands; library-level cl
 > path" section did not account for; those are tracked separately.
 
 ## Context
-The system requires < 1ms p99 edge reads and < 5ms p999. JVM garbage collection pauses are a known threat to coordination services: ZooKeeper's 500ms GC pauses trigger cascading session expirations across all connected clients (gap-analysis.md section 2.3). The ZK troubleshooting guide warns "things may start going wrong" when pauses exceed session timeout. The heap sizing dilemma (< 2 GB = frequent pauses, > 8 GB = longer full GC when they occur) limits ZooKeeper's effective in-memory data capacity to 4-8 GB. The system must handle datasets up to 10 GB per shard (10^9 keys / 100 shards x 1 KB) without GC-induced latency violations.
+The system requires < 1ms p99 edge reads and < 5ms p999. JVM garbage collection pauses are a known threat to coordination services: ZooKeeper's 500ms GC pauses trigger cascading session expirations across all connected clients (the gap analysis). The ZK troubleshooting guide warns "things may start going wrong" when pauses exceed session timeout. The heap sizing dilemma (< 2 GB = frequent pauses, > 8 GB = longer full GC when they occur) limits ZooKeeper's effective in-memory data capacity to 4-8 GB. The system must handle datasets up to 10 GB per shard (10^9 keys / 100 shards x 1 KB) without GC-induced latency violations.
 
 ## Decision
 We adopt a multi-layered GC mitigation strategy:
@@ -35,25 +35,25 @@ We adopt a multi-layered GC mitigation strategy:
 ### 2. Zero-Allocation Read Path (Verified by JMH)
 The edge read hot path must produce **zero heap allocations** in steady state:
 
-- **HAMT traversal:** All internal nodes are pre-allocated during write path. Reader traverses existing objects via volatile reference load — no allocation.
-- **Value return:** Values stored as `byte[]` or off-heap `DirectBuffer`. Returned via flyweight accessor pattern — no wrapper object created per read.
+- **HAMT traversal:** All internal nodes are pre-allocated during write path. Reader traverses existing objects via volatile reference load - no allocation.
+- **Value return:** Values stored as `byte[]` or off-heap `DirectBuffer`. Returned via flyweight accessor pattern - no wrapper object created per read.
 - **Version cursor:** Primitive `long` pair (sequence + timestamp), returned in pre-allocated `ReadResult` thread-local or via value type (JDK Valhalla, future).
 - **No autoboxing:** All hot path methods use primitive specializations. `int`/`long` parameters, never `Integer`/`Long`.
-- **No logging on hot path:** TRACE-level only, guarded by `if (logger.isTraceEnabled())` — no string concatenation or varargs array allocation.
+- **No logging on hot path:** TRACE-level only, guarded by `if (logger.isTraceEnabled())` - no string concatenation or varargs array allocation.
 
 Verification: JMH benchmarks with `-prof gc` must show 0 B/op for `HamtReadBenchmark` and `VersionedStoreReadBenchmark`.
 
 ### 3. Off-Heap Storage via Agrona
 Data that must survive GC pressure or is too large for heap efficiency:
 
-- **Raft WAL segments:** Written via Agrona `MappedByteBuffer` — off-heap, zero-copy from network.
+- **Raft WAL segments:** Written via Agrona `MappedByteBuffer` - off-heap, zero-copy from network.
 - **Large config values (> 4 KB):** Stored in off-heap slab allocator (Agrona `DirectBuffer`). HAMT leaf stores pointer + length.
-- **Ring buffers for thread hand-off:** Agrona `OneToOneRingBuffer` for Apply Thread → Distribution Thread hand-off. Fixed-size off-heap allocation, no GC involvement.
+- **Ring buffers for thread hand-off:** Agrona `OneToOneRingBuffer` for Apply Thread -> Distribution Thread hand-off. Fixed-size off-heap allocation, no GC involvement.
 - **Lifecycle:** Reference counting with `Cleaner`-based release. Leak detection via `configd.offheap.leak` metric in test mode.
 
 ### 4. Lock-Free Structures via JCTools
-- **MPSC queues:** Client request ingestion (multiple gRPC threads → single Raft I/O thread). JCTools `MpscArrayQueue` — lock-free, bounded, no GC pressure from queue operations.
-- **SPSC queues:** Raft Apply Thread → Distribution Thread hand-off. JCTools `SpscArrayQueue` — wait-free, cache-line padded to avoid false sharing.
+- **MPSC queues:** Client request ingestion (multiple gRPC threads -> single Raft I/O thread). JCTools `MpscArrayQueue` - lock-free, bounded, no GC pressure from queue operations.
+- **SPSC queues:** Raft Apply Thread -> Distribution Thread hand-off. JCTools `SpscArrayQueue` - wait-free, cache-line padded to avoid false sharing.
 - **No `synchronized` on any read or write hot path.** Enforced by static analysis (ErrorProne custom check) in CI.
 
 ### 5. Allocation Budget
@@ -63,14 +63,14 @@ Data that must survive GC pressure or is too large for heap efficiency:
 
 ## Influenced by
 - **ClickHouse Keeper:** Replaced ZooKeeper (JVM) with C++ Raft. Achieved 4.5x memory reduction (81.6 GB to 18 GB) and p99 latency improvement from 15s to 2s. Demonstrates that JVM GC overhead is real and measurable in coordination services.
-- **LMAX Disruptor:** Mechanical sympathy — pre-allocated ring buffers, no GC on hot path, cache-line padding. Achieves < 1us latency in financial trading systems.
+- **LMAX Disruptor:** Mechanical sympathy - pre-allocated ring buffers, no GC on hot path, cache-line padding. Achieves < 1us latency in financial trading systems.
 - **Aeron (Agrona):** Off-heap messaging primitives achieving sub-microsecond latency. Production-proven in high-frequency trading and military systems.
 - **JCTools:** Lock-free concurrent queues used by Netty and Reactor. MPSC/SPSC queues with cache-line padding eliminate false sharing.
 
 ## Reasoning
 
 ### Why ZGC over Shenandoah?
-Both deliver sub-ms pauses. The choice is not critical — either satisfies the < 1ms p99 requirement. ZGC is the default because:
+Both deliver sub-ms pauses. The choice is not critical - either satisfies the < 1ms p99 requirement. ZGC is the default because:
 1. Broader production deployment (Oracle, LinkedIn, X/Twitter at scale).
 2. Colored pointer mechanism provides better scaling for large heaps (16 TB+).
 3. Generational mode (JDK 21+) is more mature in ZGC.
@@ -94,10 +94,10 @@ A single allocation on the read hot path at 1M reads/s = 1M object allocations/s
 
 ## Consequences
 - **Positive:** Sub-ms GC pauses regardless of heap size. Zero-allocation read path eliminates GC-correlated read latency spikes. Off-heap storage decouples dataset size from GC pressure. Lock-free queues eliminate contention at thread hand-off points. Allocation budget enforced by CI prevents regression.
-- **Negative:** Zero-allocation discipline requires careful coding practices — flyweight patterns, primitive specializations, thread-locals. Off-heap memory requires manual lifecycle management (reference counting, Cleaner callbacks). JCTools queues have fixed capacity — must be sized at startup.
+- **Negative:** Zero-allocation discipline requires careful coding practices - flyweight patterns, primitive specializations, thread-locals. Off-heap memory requires manual lifecycle management (reference counting, Cleaner callbacks). JCTools queues have fixed capacity - must be sized at startup.
 - **Risks and mitigations:** Off-heap memory leaks mitigated by `Cleaner`-based reference tracking and leak detection metric (`configd.offheap.leak`) in test mode. Allocation budget regression mitigated by JMH `-prof gc` benchmarks in CI that fail on non-zero allocation. Virtual thread pinning (from `synchronized` blocks) mitigated by ErrorProne static analysis check that flags `synchronized` on any class in the hot path package.
 
 ## Reviewers
-- principal-distributed-systems-architect: ✅
-- performance-engineer: ✅
-- senior-java-systems-engineer: ✅
+- principal-distributed-systems-architect: yes
+- performance-engineer: yes
+- senior-java-systems-engineer: yes

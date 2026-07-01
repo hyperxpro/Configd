@@ -35,16 +35,16 @@ java --enable-preview \
 
 | Flag | Required | Default | Description |
 |------|----------|---------|-------------|
-| `--node-id` | Yes | — | Unique node identifier |
-| `--data-dir` | Yes | — | Path for WAL, snapshots, and state |
-| `--peers` | Yes | — | Comma-separated list of all node IDs |
+| `--node-id` | Yes | - | Unique node identifier |
+| `--data-dir` | Yes | - | Path for WAL, snapshots, and state |
+| `--peers` | Yes | - | Comma-separated list of all node IDs |
 | `--bind-address` | No | `0.0.0.0` | Raft transport bind address |
 | `--bind-port` | No | `9090` | Raft transport port |
 | `--api-port` | No | `8080` | HTTP API / health check port |
-| `--tls-cert` | No | — | Path to PKCS12 keystore |
-| `--tls-key` | No | — | Path to PKCS12 key file |
-| `--tls-trust-store` | No | — | Path to PKCS12 trust store |
-| `--auth-token` | No | — | Bearer token for write/admin API |
+| `--tls-cert` | No | - | Path to PKCS12 keystore |
+| `--tls-key` | No | - | Path to PKCS12 key file |
+| `--tls-trust-store` | No | - | Path to PKCS12 trust store |
+| `--auth-token` | No | - | Bearer token for write/admin API |
 
 ## API Endpoints
 
@@ -79,7 +79,7 @@ The HAMT uses ~80 bytes per key-value entry (node overhead + references). Budget
 
 ### OOM Handling
 
-Always use `-XX:+ExitOnOutOfMemoryError` in production. Do NOT use `-XX:+HeapDumpOnOutOfMemoryError` — heap dumps expose config values in plaintext (see `docs/security-heap-dump-policy.md`).
+Always use `-XX:+ExitOnOutOfMemoryError` in production. Do NOT use `-XX:+HeapDumpOnOutOfMemoryError` - heap dumps expose config values in plaintext (see `security-heap-dump-policy.md`).
 
 ## TLS Certificate Setup
 
@@ -115,7 +115,7 @@ keytool -importcert -alias ca -keystore truststore.p12 -storetype PKCS12 \
 
 1. Generate new certificates signed by the same CA (or a new CA added to the trust store)
 2. Replace certificate files on disk
-3. The `TlsManager` supports hot-reload — call the admin endpoint or send SIGHUP
+3. The `TlsManager` supports hot-reload - call the admin endpoint or send SIGHUP
 4. Connections using the old certificate will drain naturally
 5. See `docs/runbooks/cert-rotation.md` for the full procedure
 
@@ -161,17 +161,17 @@ The `BurnRateAlertEvaluator` computes multi-window burn rates:
 | `configd_raft_commit_total` | Counter | Total committed entries |
 | `configd_raft_term` | Gauge | Current Raft term |
 | `configd_edge_read_latency_ns` | Histogram | Edge read latency |
-| `configd_propagation_lag` | Gauge | Leader commit → edge applied gap |
+| `configd_propagation_lag` | Gauge | Leader commit -> edge applied gap |
 | `configd_propagation_violations_total` | Counter | LIVE-1 violations |
 
 ## Troubleshooting
 
-See the operational runbooks in `docs/runbooks/`:
-- `region-loss.md` — Region failure and recovery
-- `leader-stuck.md` — Stuck Raft leader
-- `reconfiguration-rollback.md` — Failed cluster membership change
-- `edge-catchup-storm.md` — Edge fleet reconnection storm
-- `poison-config.md` — Rollback a bad config push
-- `cert-rotation.md` — TLS certificate rotation
-- `write-freeze.md` — Emergency write freeze
-- `version-gap.md` — Edge version divergence
+See the operational runbooks in `runbooks/`:
+- `region-loss.md` - Region failure and recovery
+- `leader-stuck.md` - Stuck Raft leader
+- `reconfiguration-rollback.md` - Failed cluster membership change
+- `edge-catchup-storm.md` - Edge fleet reconnection storm
+- `poison-config.md` - Rollback a bad config push
+- `cert-rotation.md` - TLS certificate rotation
+- `write-freeze.md` - Emergency write freeze
+- `version-gap.md` - Edge version divergence

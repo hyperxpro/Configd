@@ -1,504 +1,386 @@
-# Architecture — Configd: Next-Generation Global Configuration Distribution
+# Configd Architecture
 
-> **Phase 2 deliverable.** Every component, message type, and version field is named.
-> Reviewed by: principal-distributed-systems-architect, distributed-systems-researcher, performance-engineer.
+Configd is a region-local, strongly-consistent configuration control plane. Writes go
+through a Raft group for durable, linearizable ordering; reads are served from a lock-free,
+in-process cache at the edge in microseconds. The shape is deliberately Quicksilver-like: one
+Raft root of truth for writes, plus asynchronous, bounded-staleness fan-out to edge readers
+that hold a local copy and take no part in consensus (ADR-0030).
 
----
+This document describes the system **as it ships in v1**. Where a capability is deferred, it
+says so and points at [`../v2-backlog.md`](../v2-backlog.md). The load-bearing consensus
+threading rules live in a companion spec: [`raft-threading-contract.md`](raft-threading-contract.md).
 
-## 1. Control Plane vs Data Plane Separation
+## What v1 is (and is not)
 
+v1 is a **single, region-local sharded-Raft cluster**. It is NOT a global, multi-region,
+hierarchical-Raft write topology. An earlier design proposed a global Raft group plus per-region
+groups with closed-timestamp follower reads; that design was rejected on cross-region write-latency
+arithmetic and operational complexity (ADR-0030), and the write-availability target was formally
+renegotiated (ADR-0031). None of it was built.
+
+What v1 actually runs:
+
+- **One region-local Raft group by default (N=1).** Hash-within-scope sharding is wired and
+  measured, but a multi-shard deployment (N>1) is a v2 operating mode because horizontal scale
+  is operator-managed, not automatic (see Sharding and Measured envelope, below).
+- **Centralized writes, asynchronous edge reads.** All linearizable writes commit in the root
+  group. Committed deltas fan out to edges that serve sequentially-consistent, bounded-stale reads.
+- **Single region.** Cross-region / WAN write consensus is explicitly out of scope for v1
+  (ADR-0024, ADR-0030). A full-region loss requires manual standby cutover; sub-second region
+  failover is a deferred capability.
+
+## Control plane and data plane
+
+Configd separates a strongly-consistent control plane from a bounded-staleness data plane. The
+boundary is one-way and strict.
+
+| Plane | Consistency | Serves | Key components |
+|---|---|---|---|
+| Control plane | Linearizable (Raft) | Writes, admin, ACL, audit; linearizable reads via ReadIndex | `RaftNode`, `ConfigStateMachine`, `VersionedConfigStore`, the control-plane API |
+| Data plane | Bounded staleness | Edge reads (lock-free, in-process) | `DistributionService`, `LocalConfigStore` (edge HAMT), `StalenessTracker` |
+
+Strict boundary: the data plane never writes to Raft, and the control plane never serves edge
+reads. Communication is one-way -- the control plane pushes committed log entries down to the data
+plane; nothing flows back up the read path.
+
+## Topology
+
+A v1 deployment is a small, region-local Raft group (typically 3 voters across availability zones
+for automatic single-AZ survival) plus a fan-out tree of edge readers.
+
+```mermaid
+flowchart TD
+    subgraph CP[Control plane - region-local Raft group]
+        L[Raft leader]
+        F1[Follower]
+        F2[Follower]
+        L --- F1
+        L --- F2
+    end
+    subgraph DP[Data plane - edge readers]
+        E1[Edge node]
+        E2[Edge node]
+        E3[Edge node]
+    end
+    L -->|committed deltas, async fan-out| E1
+    L -->|committed deltas, async fan-out| E2
+    L -->|committed deltas, async fan-out| E3
 ```
-┌─────────────────────────────────────────────────────────┐
-│                    CONTROL PLANE                         │
-│  Consistency: Linearizable (Raft)                       │
-│  SLO: 99.999% availability, < 150ms write p99           │
-│  Components: RaftGroups, ConfigStateMachine, AdminAPI    │
-├─────────────────────────────────────────────────────────┤
-│                    DATA PLANE                            │
-│  Consistency: Bounded staleness (< 500ms p99)           │
-│  SLO: 99.9999% read availability, < 1ms read p99        │
-│  Components: DistributionService, EdgeCache, Plumtree   │
-└─────────────────────────────────────────────────────────┘
-```
 
-### Control Plane Components
-| Component | Responsibility |
-|---|---|
-| `GlobalRaftGroup` | 5 voters across 3+ regions. Handles GLOBAL-scope config writes. |
-| `RegionalRaftGroup` | 3 voters per region. Handles REGIONAL-scope config writes. |
-| `ConfigStateMachine` | Applies committed Raft entries to VersionedConfigStore. |
-| `ControlPlaneAPI` | HTTP REST (JSON). Write requests, admin, ACL, audit. |
-| `PlacementDriver` | Manages Raft group membership, shard metadata, scheduling. |
+Voters are placed across at least three availability zones (or nearby sub-100ms DCs) in one
+region, so the loss of any single AZ leaves a majority and triggers automatic Raft election
+(PreVote + CheckQuorum) with no operator and no split-brain (ADR-0030 amendment A2). The commit
+floor stays in the single-digit-millisecond range because the quorum is intra-region.
 
-### Data Plane Components
-| Component | Responsibility |
-|---|---|
-| `DistributionService` | Plumtree fan-out from Raft followers to edge nodes. |
-| `HyParViewOverlay` | Peer sampling and overlay maintenance for Plumtree. |
-| `EdgeCache` (library) | In-process HAMT, lock-free reads, version cursors. |
-| `CatchUpService` | Delta replay / snapshot transfer for lagging nodes. |
-| `StalenessTracker` | Monitors edge freshness, manages CURRENT→STALE→DEGRADED transitions. |
+## Write path
 
-**Strict boundary:** The data plane never writes to Raft. The control plane never serves edge reads. Communication is one-way: control plane → data plane via committed log entries.
-
----
-
-## 2. Write Path
+Writes are linearizable and durable. Configd acknowledges only after the root group's majority has
+durably fsynced the entry -- there is no early ack (ADR-0033).
 
 ```mermaid
 sequenceDiagram
     participant C as Client
-    participant API as ControlPlane API
-    participant R as Raft Leader
-    participant F1 as Raft Follower 1
-    participant F2 as Raft Follower 2
+    participant API as Control-plane API
+    participant R as Raft leader
+    participant F1 as Follower 1
+    participant F2 as Follower 2
     participant D as DistributionService
-    participant E as Edge Node
+    participant E as Edge node
 
-    C->>API: PUT /config/key (value, scope=GLOBAL)
-    API->>API: ACL check, rate limit, validate
-    API->>R: Propose(key, value, hlc_timestamp)
-    R->>R: Append to local log (seq=N, term=T)
-    par Replicate to quorum
-        R->>F1: AppendEntries(seq=N, entries=[...])
-        R->>F2: AppendEntries(seq=N, entries=[...])
+    C->>API: PUT /v1/config/{key} (value, scope)
+    API->>API: authn, ACL check, rate limit, validate
+    API->>R: propose(shardFor(scope,key), command)
+    R->>R: append to local log (seq=N, term=T)
+    par replicate to quorum
+        R->>F1: AppendEntries(seq=N)
+        R->>F2: AppendEntries(seq=N)
     end
-    F1-->>R: AppendEntriesResponse(success, matchIndex=N)
-    F2-->>R: AppendEntriesResponse(success, matchIndex=N)
-    R->>R: Commit (majority acked)
-    R->>R: Apply to ConfigStateMachine
-    R-->>API: CommitResult(seq=N, hlc=T)
-    API-->>C: 200 OK {version: N, cursor: {seq:N, ts:T}}
-    R->>D: CommittedEntry(seq=N, key, value)
-    D->>E: PlumtreeEagerPush(seq=N, delta)
-    E->>E: Apply delta to HAMT, volatile swap
+    F1-->>R: success (matchIndex=N)
+    F2-->>R: success (matchIndex=N)
+    R->>R: commit (majority fsynced), apply to ConfigStateMachine
+    R-->>API: CommitResult(seq=N)
+    API-->>C: 200 OK { version: N }
+    R->>D: committed delta (seq=N)
+    D->>E: async fan-out (Plumtree)
+    E->>E: apply delta to local HAMT, volatile swap
 ```
 
-### Latency Budget
+Overload is bounded, not silent: when the leader has about **1024** in-flight (uncommitted)
+proposals, new writes are rejected with **HTTP 429** plus `Retry-After` (the `maxPendingProposals`
+bound in `RaftConfig`, default 1024). This is a single hard, level-triggered bound that caps leader
+memory; it recovers as soon as in-flight drops below the bound. Rate limiting also runs
+unconditionally in front of Raft.
 
-| Stage | Intra-Region | Cross-Region (Global) |
-|---|---|---|
-| Client → API | < 1ms | < 1ms (nearest region) |
-| API → Raft Leader | < 1ms | < 1ms (co-located) |
-| Raft replication to quorum | **2-5ms** | **68ms** (us-east → eu-west) |
-| Apply to state machine | < 1ms | < 1ms |
-| Total write commit | **< 10ms** | **< 80ms** |
-| Distribution to edge (p99) | **< 50ms** | **< 500ms** |
+## Read path
 
-### Throughput: 10K/s sustained, 100K/s burst
+There are two kinds of read, with two different guarantees.
 
-- **Regional writes (60% of traffic):** 3 regional Raft groups × ~20K/s each = 60K/s capacity. At 6K/s per group = comfortable headroom.
-- **Global writes (10% of traffic):** Single global group handling 1K/s. With batching (200μs bounded delay, up to 64 entries), effective throughput of 5K+ entries/s per batch cycle.
-- **Local writes (30% of traffic):** Non-replicated, local-only. Limited only by local storage write speed.
-- **Burst (100K/s):** Raft batching absorbs burst. 200μs batching window × 100K/s = 20 entries per batch average. Well within 64-entry batch limit.
-
-### Batching Strategy
-- **Bounded delay:** 200μs max wait before flushing batch (not Quicksilver's fixed 500ms).
-- **Size trigger:** Flush immediately at 64 entries or 256 KB.
-- **Adaptive:** Under low load, send immediately (< 5 pending). Under high load, batch to max delay.
-
----
-
-## 3. Read Path
+**Edge reads (the common case).** An application thread calls into the local edge store
+(`LocalConfigStore.get`). The read is a single volatile load of the current immutable snapshot
+pointer followed by a HAMT traversal -- lock-free, allocation-free on a miss, and served in
+microseconds (measured in-process p50 around 50 ns; getHit around 483 ns at 100M keys). Edge reads
+are **sequentially consistent and bounded-stale, never linearizable**, and are never shed.
 
 ```mermaid
 sequenceDiagram
-    participant App as Application Thread
+    participant App as Application thread
     participant LC as LocalConfigStore
-    participant HAMT as Immutable HAMT v42
+    participant HAMT as Immutable HAMT snapshot
 
     App->>LC: get("service.api.rate_limit")
     LC->>LC: volatile load of snapshot pointer
-    LC->>HAMT: traverse(hash("service.api.rate_limit"))
-    Note over HAMT: O(log32 N) ≈ 4 levels for 10^6 keys
-    HAMT-->>LC: VersionedValue{bytes, version=42, ts=...}
-    LC-->>App: ReadResult{value, version=42, cursor={42,ts}}
-    Note over App: Total: < 50ns. Zero allocation on miss, ~24 B on hit. Zero locks.
+    LC->>HAMT: traverse(hash(key))
+    HAMT-->>LC: VersionedValue{ bytes, version, ts }
+    LC-->>App: ReadResult{ value, version, cursor }
+    Note over App: microsecond-scale, zero locks, zero allocation on miss
 ```
 
-### Single-Writer / Multi-Reader Model
-- **Writer thread:** Single `DeltaApplier` thread receives Plumtree events, applies mutations to current HAMT (producing new HAMT with structural sharing), stores new reference to `volatile` field.
-- **Reader threads:** Any application thread. Single volatile load acquires current immutable snapshot. HAMT traversal is pure function over immutable data.
-- **Guarantee:** Reader never blocks writer. Writer never blocks reader. No locks, no CAS, no `synchronized` anywhere on the read path.
+**Linearizable reads (control plane).** For read-after-write correctness and for the strong-read
+key class, the control plane serves a linearizable read via Raft **ReadIndex** against the leader.
+If leadership or the ReadIndex confirmation is unavailable, the read fails closed with **HTTP 503**
+(plus a leader hint) rather than returning a possibly-stale value.
 
-### Version Cursor for Monotonic Reads
-```java
-ReadResult result = store.get("key");
-// result.cursor() = VersionCursor{version=42, timestamp=1700000000000}
+The strong-read key class (default prefix `secure/`) is exempt from bounded-stale edge serving:
+security-critical decisions (ACL/auth revocations, kill-switches, legal gates) MUST use the
+linearizable path and MUST fail closed when it is unavailable (ADR-0030 amendment A1). Note that
+`secure/` buys read **freshness**, not confidentiality -- see Security posture.
 
-// Later read with cursor enforcement:
-ReadResult next = store.get("key", previousCursor);
-// If store version < cursor.version: blocks briefly or returns stale-flagged
-assert next.version() >= previousCursor.version(); // Always true
-```
+## Sharding: hash within scope
 
----
+The write seam routes each key to a shard (a Raft group) by hashing the full key within its scope
+tier: `shardFor(scope, key) = hash(namespace, key) mod N_scope` (ADR-multiraft-partitioning). Hash
+(not range) is the deliberate choice: edge reads are point lookups with no range scans, so range
+partitioning would buy nothing and reintroduce the single-hot-shard write collapse; hash disperses
+bursty prefixes across all shards by construction.
 
-## 4. Replication Topology — Hierarchical Raft (ADR-0002)
+- `ConfigScope` selects the pool of groups (and voter topology) for a key; the hash selects the
+  group within that pool. This replaces a single constant group id at the existing
+  `ConfigWriteService.propose(scope, cmd)` -> `MultiRaftDriver.propose(groupId, cmd)` seam.
+- **N=1 is the v1 default and is byte-identical to a non-sharded build** -- a `StaticShardMap(1)`
+  routes every key to the one group. Shard count is set with `-Dconfigd.raft.shardCount=N`.
+- Each group is owned by exactly one owner thread for the life of the process; different groups may
+  progress on different threads (the throughput unlock), the same group never does (the safety
+  invariant). This is the subject of [`raft-threading-contract.md`](raft-threading-contract.md).
+- Fan-out is unchanged by sharding: the distribution tier already ingests every committed delta and
+  localizes per-key deltas to subscribed edges via a radix trie, so shard layout never reaches an
+  edge.
 
-```
-                    ┌──────────────────────┐
-                    │   GLOBAL RAFT GROUP   │
-                    │  5 voters across 3    │
-                    │  regions for GLOBAL   │
-                    │  config keys          │
-                    └──────────┬───────────┘
-                               │
-              ┌────────────────┼────────────────┐
-              │                │                │
-    ┌─────────▼──────┐ ┌──────▼────────┐ ┌─────▼─────────┐
-    │ REGIONAL GROUP │ │ REGIONAL GROUP│ │ REGIONAL GROUP│
-    │  US (3 voters) │ │  EU (3 voters)│ │  AP (3 voters)│
-    │  REGIONAL keys │ │  REGIONAL keys│ │  REGIONAL keys│
-    └────────┬───────┘ └──────┬────────┘ └──────┬────────┘
-             │                │                 │
-    ┌────────▼────────────────▼─────────────────▼────────┐
-    │              PLUMTREE FAN-OUT LAYER                  │
-    │  (Non-consensus, push-based, O(N) messages)         │
-    │  HyParView overlay for peer discovery               │
-    ├─────┬─────┬─────┬─────┬─────┬─────┬─────┬─────┤
-    │Edge │Edge │Edge │Edge │Edge │Edge │Edge │Edge │
-    │Node │Node │Node │Node │Node │Node │Node │Node │
-    │  1  │  2  │  3  │  4  │  5  │  6  │  7  │  8  │
-    └─────┴─────┴─────┴─────┴─────┴─────┴─────┴─────┘
-```
+Dynamic resharding (online split/merge/rebalance) is deferred to v2 behind the same `ShardMap`
+interface (ADR-multiraft-topology); v1 ships `StaticShardMap` with a fixed N.
 
-### Config Key Routing by Scope
-| Scope | Raft Group | Commit Latency | Example Keys |
-|---|---|---|---|
-| `GLOBAL` | Global group (5 voters across regions) | ~68ms | `global.routing.rules`, `security.tls.policy` |
-| `REGIONAL` | Regional group (3 voters in region) | ~3ms | `us.feature.flags`, `eu.capacity.limits` |
-| `LOCAL` | None (local only) | < 1ms | `node.debug.level`, `node.tuning.gc` |
+## Consensus, replication, and durability
 
-### Non-Voting Replicas
-Each regional group has non-voting replicas in other regions for:
-- Cross-region stale reads (bounded by closed timestamp, ~3s staleness like CockroachDB)
-- Faster catch-up after region failover
-- No impact on write quorum latency
+The consensus core is a full, tick-driven Raft implementation:
 
----
+- Leader election with **PreVote** (avoids term inflation from partitioned nodes) and
+  **CheckQuorum** (a leader without majority contact steps down).
+- Log replication with batching; **no early ack** -- commit requires a durable majority fsync.
+- **Leadership transfer** (TimeoutNow) exists in the core (`RaftNode.transferLeadership`) but is
+  not yet exposed on an admin route or invoked on shutdown -- so multi-shard leadership placement
+  is operator-managed in v1 (see Measured envelope and the v2 backlog).
+- **Joint-consensus reconfiguration** and no-op commit on election.
+- At-rest durability artifacts (snapshot blob, WAL records, persistent Raft state) carry an
+  integrity envelope (below).
 
-## 5. Multi-Region Strategy
+**Snapshot size cap.** A single InstallSnapshot blob is capped at 4 MiB on the v1 wire
+(`MAX_SNAPSHOT_BLOB_LEN`). A follower that needs a larger snapshot cannot bootstrap from it; the
+over-cap frame is dropped and logged. Operational guidance: keep snapshot state under 4 MiB and
+alert on the drop plus `matchIndex` lag. Chunked InstallSnapshot is a v2 item.
 
-> ⚠️ **SUPERSEDED by ADR-0030 (2026-06-06, Session 0).** This section describes a multi-region /
-> hierarchical-Raft *write* topology (core/regional/edge tiers, non-voting global replicas,
-> closed-timestamp follower reads) that is **unimplemented** (`docs/STATE-OF-REALITY.md §4.1`: one
-> Raft group; no `region`/`non-voting`/`closedTimestamp` in `src/main`) and whose *write* topology
-> is **rejected** by `docs/decisions/adr-0030-quicksilver-shaped-topology.md` in favor of a
-> Quicksilver-shaped centralized-write + async-edge-fan-out design. Retained for historical context
-> only; do not treat the tiers/RTT matrices/follower-read mechanics below as the current design.
+## Fan-out distribution to the edge
 
-### Region Tiers
-| Tier | Role | Example |
-|---|---|---|
-| **Core** (3 regions) | Global Raft voters. Full dataset. | us-east-1, eu-west-1, us-west-2 |
-| **Regional** (N regions) | Regional Raft groups. Full regional dataset. Non-voting global replicas. | ap-northeast-1, ap-southeast-1, sa-east-1 |
-| **Edge** (10K-1M nodes) | Plumtree consumers. Working set only. No Raft participation. | CDN PoPs, edge servers |
+Committed deltas are pushed down a distribution tree (Plumtree over a HyParView peer-sampling
+overlay, ADR-0011) to edges that hold a local copy. Edges detect gaps via a gap-free monotonic
+sequence number (a received seq exactly one past the last applied is applied; a larger seq triggers
+catch-up; a smaller-or-equal seq is a duplicate and discarded).
 
-### Follower Reads with Bounded Staleness
-Inspired by CockroachDB's closed timestamp mechanism:
-1. Each Raft leader periodically advances a **closed timestamp** — a promise that no new writes will occur at or below that timestamp.
-2. Non-voting replicas in remote regions track this closed timestamp.
-3. Reads at timestamps ≤ closed timestamp can be served locally without leader contact.
-4. Default closed timestamp target: 3 seconds in the past.
-5. Side-transport publishes closed timestamp updates every 200ms for idle Raft groups.
+**Backpressure is bounded queues plus cursor-acknowledged demotion**, not credits. Each fan-out
+session owns a bounded outbound frame queue; sustained queue pressure raises a slow-consumer
+warning metric; queue overflow or cursor-ack lag past threshold demotes the session to catch-up
+(snapshot then resume) -- never an unbounded buffer, never a silent drop (`FanOutSessionCore`). A
+per-identity `SlowConsumerGovernor` ladder escalates repeat offenders (SLOW -> CATCHUP ->
+QUARANTINED -> UNHEALTHY) with a metric, a structured log, and a test at every transition, keyed to
+the mTLS certificate principal so reconnect storms cannot dodge it.
 
-### Region Loss Scenarios
+**Catch-up.** An edge resumes from its cursor: if within the replay horizon, the parent streams
+deltas from the commit-notification boundary; if the gap is larger, the parent sends a chunked
+snapshot and then streams deltas from exactly snapshot-seq + 1. Recovery is transfer-level, not
+chunk-level -- an unacknowledged transfer re-triggers and the whole snapshot is idempotently
+re-sent until cursor-acknowledged; under transport backpressure the in-flight envelope pauses at the
+exact frame and resumes on the next tick.
 
-| Scenario | Impact | Recovery |
-|---|---|---|
-| Loss of non-core region | Regional keys unavailable for writes. Edge reads continue from stale cache. | Promote non-voting replica to voter in surviving region. |
-| Loss of 1 core region (minority) | Global writes continue (3 of 5 voters remain). | Replace lost voters from surviving core regions. |
-| Loss of 2 core regions (majority) | Global writes unavailable. Regional writes continue. Edge reads continue. | Manual intervention required. Consider emergency reconfiguration. |
-| Edge node loss | No impact on system. Other edges unaffected. | New edge bootstraps via snapshot + delta catch-up. |
+## Edge caching
 
----
+The edge store is a persistent Hash Array Mapped Trie (HAMT) with structural sharing:
 
-## 6. Failure Handling
+- 32-way branching; a `put` copies only the root-to-leaf path, so old snapshots stay valid for
+  in-flight readers and become GC-eligible once no reader holds them.
+- **Single writer, many readers.** A single delta-applier thread builds the next immutable snapshot
+  and publishes it with one volatile write (a StoreStore barrier makes it visible to all readers).
+  Readers take a single volatile load and traverse pure immutable data -- reader never blocks writer,
+  writer never blocks reader, no locks anywhere on the read path.
+- **Monotonic reads** via an opaque `VersionCursor`: a read carrying a cursor never returns a value
+  older than the cursor's version.
+- **Staleness tracking.** `StalenessTracker` measures age against the leader-assigned commit
+  timestamp carried on each notification (ADR-0035/ADR-0039) and transitions
+  CURRENT -> STALE -> DEGRADED -> DISCONNECTED, surfacing an `X-Configd-Stale` header while behind.
+- **Poison-pill handling.** A value that fails validation serves the previous known-good version and
+  emits a metric rather than propagating a bad entry.
 
-### Leader Isolation
-- **CheckQuorum:** Leader steps down if no majority heartbeat within election timeout (150-300ms).
-- **PreVote:** Prevents term inflation from partitioned nodes attempting elections.
-- **Leadership transfer:** Graceful leader movement for maintenance (catches up target, sends TimeoutNow).
+## Watches (v1)
 
-### Asymmetric Partitions
-Node A reaches B and C; B reaches A but not C. Mitigation:
-- CheckQuorum on leader detects loss of majority responsiveness.
-- PreVote prevents disconnected nodes from disrupting the cluster.
-- Multi-dimensional health monitoring detects gray failures (heartbeats pass but data plane fails).
+v1 implements the server side of the RFC 2 driver-protocol watch surface on the edge endpoint
+(`--edge-port`): a vector-native per-shard cursor `(gid, seq)`, the `WATCH_*` frames, a
+multiplex/filter veneer, a whole-target authorization gate (`READ and WATCH`, reject-not-filter,
+fail-closed), per-watch filtered delivery with catch-up snapshots, and bounded revocation under a
+live ACL reload.
 
-### Clock Skew
-- HLC-based, not TrueTime. No hardware dependency.
-- Maximum tolerated clock skew: 500ms (configurable). Nodes with clock drift > threshold are fenced.
-- HLC guarantees causal ordering regardless of clock skew (logical counter compensates).
+Guarantees to rely on: **per-key and per-shard order** (never cross-shard / global order);
+batch-atomic per shard-commit; **at-least-once with `(gid, seq)` dedup** (the driver drops
+`seq <= cursor[gid]`); bounded-staleness (edge-served, ordered, not linearizable -- use the strong
+path for read-after-write). Watches are **N=1** in v1; a cross-shard / global-order watch is v3.
 
-### Gray Failures
-Health monitoring beyond Raft heartbeats:
-- **Data-plane latency:** Track p99 of actual AppendEntries round-trip, not just success/failure.
-- **Disk I/O latency:** fsync latency > 1s triggers voluntary leader step-down.
-- **Memory pressure:** Heap usage > 90% triggers write rejection (load shedding).
-- **Network quality:** Packet loss > 5% triggers peer quality degradation alert.
+No conforming client driver ships in v1 -- the protocol is server-ready and the RFC
+([`../rfc/driver-protocol/`](../rfc/driver-protocol/)) is stand-alone implementable with golden
+byte vectors, so drivers are buildable on demand. Until one ships, clients poll (edge reads are
+in-process and sub-millisecond). See [`../operations/known-limitations.md`](../operations/known-limitations.md)
+for the watch deployment-security model (segregate watch clients from the legacy whole-store
+SUBSCRIBE path).
 
----
+## Consistency contract
 
-## 7. Fan-out Distribution (ADR-0003)
+The full contract is [`../operations/consistency-contract.md`](../operations/consistency-contract.md).
+In summary:
 
-### Push via Plumtree over HyParView
-
-**Plumtree parameters:**
-- Eager push peers: log(N)+1 (tree edges, receive full payload)
-- Lazy push peers: 6×(log(N)+1) (overlay edges, receive IHave digests)
-- IHave gossip interval: 500ms
-- GRAFT timeout: 1s (if IHave received but payload not yet seen)
-
-**HyParView parameters:**
-- Active view size: log(N)+1
-- Passive view size: 6×(log(N)+1)
-- Shuffle period: 30s
-- Join TTL: log(N)+1
-
-### Backpressure Model
-> **Amended (S3 doc pass, 2026-06-12 — as-built supersession, recorded per the C1
-> design review's §7-credit-model-superseded statement):** the credit model below was
-> never built. The implemented backpressure is **bounded per-subscriber queues +
-> cursor-acknowledged demotion** (ADR-0038/C1): each fan-out session owns a bounded
-> outbound frame queue; sustained queue-warn pressure raises
-> `edge_fanout_slow_consumer_warnings_total`; queue overflow or cursor-ack lag past the
-> ack-lag threshold demotes the session to catch-up (snapshot + resume) — never an
-> unbounded buffer, never a silent drop (`FanOutSessionCore`; pinned by
-> `EdgePropagationBacklogTest` / `FanOutSessionCoreBoundaryTest`). Original text kept
-> for the audit trail:
-- ~~Credit-based flow control per child: initial 100, 1 per message, ACK replenishes;
-  at 0 credits bounded buffer (1000 max); 80% warning; 100% disconnect~~ (superseded —
-  see amendment note above).
-
-### Catch-up Protocol
-1. Edge node compares `last_applied_seq` with parent's latest sequence (the SUBSCRIBE
-   resume cursor / HEARTBEAT `latestSeq`).
-2. If the cursor is within the replay horizon (the boundary still holds `cursor+1`):
-   parent streams deltas from the ADR-0034 commit-notification boundary (TAIL).
-   *(Amended S3: "from WAL" → the boundary, which the durable log backs, is the replay
-   source — `CatchUpProtocolTest`.)*
-3. If the gap exceeds the replay horizon: parent sends a chunked snapshot, then streams
-   deltas from exactly snapshot-seq + 1 (`ReplayHorizonBoundaryTest` — the full
-   horizon-boundary matrix incl. the lapped-after-TAIL race).
-4. Chunked snapshot: codec-bounded chunks (`EdgeSnapshotCodec`); integrity via the
-   length-prefixed bounds-checked codec + mTLS transport. **Recovery is transfer-level,
-   not chunk-level** *(amended S3 per the CT-31 renegotiation, c3-signoff-review
-   ruling)*: a lost transfer is never resumed mid-envelope — the unacknowledged
-   transfer re-triggers via ack-lag demotion and the WHOLE snapshot is idempotently
-   re-sent until cursor-acknowledged (`SnapshotChunkResumeTest`); under transport
-   backpressure the in-flight envelope pauses at the exact frame and resumes next tick,
-   never restarted (RR-102, `BootstrapSnapshotBackpressureTest`).
-
-### Version Gap Detection
-```
-if received_seq == last_applied_seq + 1:
-    apply normally
-elif received_seq > last_applied_seq + 1:
-    GAP DETECTED → enter catch-up mode
-elif received_seq <= last_applied_seq:
-    DUPLICATE/STALE → discard
-```
-
-### Slow Consumer Policy
-> **Amended (S3 doc pass, 2026-06-12 — re-based on the as-built C4 `SlowConsumerGovernor`
-> ladder; the credit conditions referenced the superseded model above):** thresholds are
-> NAMED CONFIGS (`edge.fanout.policy.*`), every transition has a metric + structured log
-> + test, and the ladder is per-IDENTITY (mTLS cert principal) so reconnect storms
-> cannot dodge it. GAP demotions count on their own ladder (a lossy WAN is not slowness
-> — screen C4-2). Cooldowns alone are sufficient exits (C4-3); operator reset is
-> additional, and UNHEALTHY is NOT permanent removal.
-| Condition (named config, default) | Action |
-|---|---|
-| queue ≥ warn sustained `queueWarnWindowMs` (10s) | SLOW: warning log + `edge_fanout_slow_transitions_total` (still streaming) |
-| C1 demotion (overflow / ack-lag / gap / transport) | CATCHUP: snapshot re-bootstrap in flight; clears on ack progress |
-| `demoteLimit` (3) distress demotions — or `gapDemoteLimit` (10) GAP demotions — within `demoteWindowMs` (60s) | QUARANTINED: `ERROR_CLOSE` code 8 + disconnect; SUBSCRIBEs refused for `quarantineCooldownMs` (60s); then readmitted FORCE-SNAPSHOT (cursor rebound to 0 → SNAPSHOT_FIRST) |
-| `quarantineLimit` (3) quarantines within `unhealthyWindowMs` (1h) | UNHEALTHY (alert-grade): refused until `unhealthyCooldownMs` (1h) elapses — then auto-readmitted with a clean ladder — or operator reset |
-
-### Subscription Model
-- **Prefix-based (primary):** Edge nodes subscribe to key prefixes matching needed namespaces.
-- **Full-store:** Regional relay nodes only. Receive all events.
-- **Per-key:** Supported but discouraged (use prefix with specific key).
-
----
-
-## 8. Edge Caching (ADR-0005)
-
-### HAMT with Structural Sharing
-- 32-way branching (5 bits per level of hash)
-- 4 levels for 10^6 keys, 6 levels for 10^9 keys
-- `put()` clones only the path from root to modified leaf (~6 nodes for 10^6 keys, ~32 KB)
-- Old versions eligible for GC once no readers hold references
-
-### Delta Application
-```java
-// DeltaApplier thread (single writer)
-void applyDelta(ConfigDelta delta) {
-    ConfigSnapshot current = this.currentSnapshot; // volatile read
-    HamtMap<String, VersionedValue> newData = current.data();
-    for (ConfigMutation m : delta.mutations()) {
-        switch (m) {
-            case Put p -> newData = newData.put(p.key(), 
-                new VersionedValue(p.valueUnsafe(), delta.toVersion(), timestamp));
-            case Delete d -> newData = newData.remove(d.key());
-        }
-    }
-    this.currentSnapshot = new ConfigSnapshot(newData, delta.toVersion(), timestamp);
-    // volatile write — StoreStore barrier publishes new snapshot to all readers
-}
-```
-
-### Negative Caching
-- Maintain a key-only index (all known keys without values) on each edge proxy.
-- Bloom filter for fast rejection of non-existent keys (~10 bits/key, 1% false positive rate).
-- For 10^6 keys: ~1.2 MB Bloom filter. For 10^9 keys: ~1.2 GB (too large — use prefix-based subscription to limit key count per edge node).
-
-### Poison-Pill Handling
-- **Dual-TTL:** Soft TTL triggers background refresh; hard TTL evicts even if refresh fails.
-- **Version format checks:** Validate value schema before deserialization.
-- **Circuit breaker:** If value fails validation, serve previous known-good version. Emit `configd.edge.poison_pill` metric.
-
----
-
-## 9. Consistency Contract
-
-See `docs/consistency-contract.md` for full specification.
-
-**Summary:**
 | Property | Guarantee |
 |---|---|
-| Write linearizability | Per Raft group |
-| Edge read consistency | Bounded staleness (< 500ms p99) |
-| Monotonic reads | Per client session (via version cursor) |
-| Read-your-writes (same region) | Guaranteed with 100ms timeout fallback |
-| Per-key total order | Guaranteed (Raft serialization) |
-| Cross-group ordering | Not guaranteed (HLC approximate) |
+| Write linearizability | Per Raft group (per-key total order) |
+| Linearizable reads | Control plane via ReadIndex; fail-closed if unconfirmed |
+| Edge read consistency | Bounded staleness (sequentially consistent, not linearizable) |
+| Monotonic reads | Per client, via `VersionCursor` |
+| Strong-read key class | `secure/` always read fresh (linearizable, fail-closed) |
+| Cross-group ordering | Not guaranteed (independent per-group sequences) |
 
----
+## Overload and backpressure
 
-## 10. Diagrams
+There is no priority scheduler; overload behavior is the emergent result of a few independent,
+level-triggered mechanisms.
 
-### Write Commit Flow
-See §2 sequence diagram.
+| Path | Trigger | Action | Client signal |
+|---|---|---|---|
+| Write | In-flight proposals reach about 1024 | Reject new writes (bounds leader memory) | HTTP 429 + `Retry-After` |
+| Write (apply backlog) | `commitIndex - lastApplied` rising | Observability only (`raft_pending_apply_entries` gauge + warn alert); the 1024 bound already sheds upstream | -- |
+| Read (edge) | n/a (lock-free local HAMT) | Never shed | `X-Configd-Stale: true` while behind |
+| Read (control plane, linearizable) | Leadership / ReadIndex unconfirmed | Fail closed | HTTP 503 (+ leader hint) |
+| Fan-out | Queue over threshold / ack-lag | Slow-consumer warning, then demote to catch-up | Edge re-bootstrap |
 
-### Region Failover
+Effective load-shed order, in practice: linearizable control-plane reads fail closed first; normal
+writes shed with 429 next; edge reads from the local HAMT are never shed.
 
-```mermaid
-sequenceDiagram
-    participant L as Leader (us-east-1)
-    participant F1 as Follower (us-west-2)
-    participant F2 as Follower (eu-west-1)
-    participant NV as NonVoter (ap-northeast-1)
+## Security posture
 
-    Note over L: us-east-1 fails
-    L--xF1: Heartbeat timeout
-    L--xF2: Heartbeat timeout
-    Note over F1,F2: Election timeout expires
-    F1->>F1: PreVote (check if election viable)
-    F1->>F2: PreVote(term=T+1, lastLog=...)
-    F2-->>F1: PreVoteResponse(granted=true)
-    F1->>F1: Increment term, become Candidate
-    F1->>F2: RequestVote(term=T+1)
-    F2-->>F1: VoteGranted
-    Note over F1: F1 becomes new Leader
-    F1->>F2: AppendEntries (heartbeat)
-    F1->>NV: AppendEntries (catch-up)
-    Note over NV: NonVoter catches up, serves stale reads
-```
+v1 has a real, code-wired security model. It is **secure-by-config, not secure-by-default**: except
+for rate limiting, every control is off until an operator enables it (each emits a loud startup
+warning when off). Enabling auth + TLS + audit + replay before production is a documented release
+gate ([`../operations/operator-runsheet.md`](../operations/operator-runsheet.md),
+[`../operations/deployer-must-know.md`](../operations/deployer-must-know.md)).
 
-### New Edge Node Bootstrap
+- **Transport (mTLS per surface, but the surfaces differ).** The edge fan-out surface uses **mTLS
+  with certificate-DN identity**. The Raft/admin control-plane API port is **HTTPS with a bearer
+  token**, not client-certificate mTLS -- a bearer match authenticates as `root`. The client-facing
+  edge-read HTTP surface is plaintext by design (ADR-0043). All four network surfaces run on Netty
+  4.2.
+- **Authorization (in-core RBAC, not pluggable).** `AclService` implements a
+  `{READ, LIST, WRITE, WATCH, ADMIN}` capability model with union-of-ancestor grants, absolute
+  deny-precedence, default-deny, roles, and policy-as-config under `_acl/`. `WATCH` is floored by
+  `READ`. Reserved prefixes (`_acl/`, `_system/`) require `ADMIN` for every method. Empty `_acl/`
+  in production is byte-identical to the default single `root -> ALL` grant.
+- **At-rest protection is integrity, NOT encryption.** The snapshot, WAL, and persistent Raft state
+  carry an **HMAC-SHA-256** integrity envelope (keyed) plus a keyless CRC32C, with constant-time MAC
+  comparison and fail-closed verify (ADR-0042). This is tamper detection. There is **no AES / no
+  `javax.crypto.Cipher` in production code** -- config values (including `secure/` keys) are stored
+  as plaintext bytes. Do not store secrets in Configd; use a dedicated secret manager. Encryption at
+  rest is a v2 item.
+- **Signing key is fail-closed on co-location** (ADR-0044). The integrity and audit keys are
+  HKDF-derived from the cluster signing key; if that key resolves inside the data directory the
+  server refuses to start (a co-located key a storage-writer could read defeats the MAC). An
+  explicit `configd.security.allowColocatedSigningKey=true` opt-out exists for dev/single-host.
+- **Audit log** is a keyed-HMAC hash chain, enabled when authentication is enabled.
+- **Rate limiting** is unconditionally on and gates before Raft propose.
 
-```mermaid
-sequenceDiagram
-    participant New as New Edge Node
-    participant Relay as Regional Relay
-    participant HV as HyParView Overlay
+## Failure handling and disaster recovery
 
-    New->>HV: ForwardJoin(TTL=5)
-    HV-->>New: Active view peers
-    New->>Relay: Subscribe(prefix="/service/api/*", from_seq=0)
-    Relay->>Relay: from_seq=0 → full snapshot needed
-    Relay->>New: SnapshotChunk(1/N, data, crc)
-    Relay->>New: SnapshotChunk(2/N, data, crc)
-    Relay->>New: SnapshotChunk(N/N, data, crc)
-    Note over New: Apply snapshot, set last_applied_seq
-    Relay->>New: ConfigEvent(seq=S+1, PUT, key, value)
-    Relay->>New: ConfigEvent(seq=S+2, DELETE, key)
-    Note over New: Steady-state delta streaming
-    New->>New: Apply to HAMT, volatile swap
-    Note over New: Serving reads
-```
+- **Leader isolation.** CheckQuorum steps down a leader that loses majority contact within the
+  election timeout; PreVote prevents a partitioned node from inflating the term.
+- **Asymmetric partitions.** CheckQuorum plus PreVote keep an isolated leader from wedging the
+  cluster; a majority partition continues.
+- **Clock skew.** Ordering is HLC-based (no TrueTime / hardware dependency); the logical counter
+  preserves causal order regardless of physical drift.
+- **Disaster recovery (measured on hardware).** Leader-loss failover was measured at about
+  **372 ms** with a single bounded election (no storm), **zero committed-write loss** across three
+  fault modes (leader-kill under load, WAL-replay restart, wipe + InstallSnapshot), and recovery RTO
+  of **4.2 s** (WAL) / **5.9 s** (snapshot). This was on a single-box, three-co-located-node topology;
+  cross-machine failover adds network RTT to the gap, but the correctness (no loss, bounded election)
+  is topology-independent. Evidence:
+  [`../archive/measurement/ec2-2026-06-30/`](../archive/measurement/ec2-2026-06-30/).
+- **Full-region loss** requires manual standby cutover (fence-before-promote, fail-closed standby);
+  sub-second automatic region failover is deferred (ADR-0031, ADR-0024).
 
----
+## Runtime
 
-## 11. Backpressure & Overload Policy
+- **Java 25** (Amazon Corretto), run with `--enable-preview` (ADR-0022). A migration to the next LTS
+  (Java 29, expected 2027) is planned; preview features are tracked for stabilization.
+- **Generational ZGC** (`-XX:+UseZGC`) for the serving JVM (ADR-0041). Generational is the only ZGC
+  on JDK 25, so the removed `-XX:+ZGenerational` flag is not passed. In a same-box, same-workload
+  bake-off, ZGC held its worst-case stop-the-world pause around 0.045 ms (versus about 20-29 ms for
+  G1), keeping GC out of the write-commit and edge-read tails.
+- **Netty 4.2** for all four transport surfaces -- edge-read HTTP, admin API, fan-out streaming, and
+  the inter-node consensus wire (ADR-0043). Transport selection auto-defaults to **Epoll** (then
+  NIO); **io_uring is opt-in** via `-Dconfigd.netty.transport=io_uring` after measurement found no
+  throughput benefit at Configd's connection scale and a regression at high fan-out. Wire formats are
+  unchanged by the Netty migration.
 
-> **Amended (S6 operability, RR-110 / Decision Log D-1 — as-built reconciliation, on the merits):**
-> the original per-path ladder below over-specified controls this architecture does not implement and
-> (per the merits analysis) does not need. An `opus` arbiter argued both sides per clause; the verdict
-> was 3 RELABEL + 1 narrow IMPLEMENT. The **as-built reality** is the table immediately below; the
-> original ladder is retained struck-through for the audit trail. Every signal an alert now fires on
-> (the 429 / the `raft_pending_apply_entries` gauge) is a correct, emitted, tested series.
+## Measured envelope
 
-### Per-Path Policy (as-built)
+All numbers are measured on real hardware across two docs-only EC2 runs against a `main`-identical
+server; the full verdict is
+[`../archive/readiness/v1-go-no-go-2026-07-01.md`](../archive/readiness/v1-go-no-go-2026-07-01.md).
 
-| Path | Trigger | Action | Client Signal | Recovery |
-|---|---|---|---|---|
-| **Write** | Uncommitted proposals ≥ `maxPendingProposals` (**1024**, `RaftConfig`) | Reject new writes (bounds leader memory) | HTTP **429** + `Retry-After: 1` (S6) — counted by `configd_write_rejected_overloaded_total` | Accept once uncommitted < 1024 (single hard bound, level-triggered; no separate low-water) |
-| **Write (apply backlog)** | `commitIndex − lastApplied` rising | **Observability only** — `raft_pending_apply_entries` gauge + `ConfigdRaftPipelineSaturation` *warn* alert (> 5000). **No 503 shed** (an apply stall back-pressures commit, so the 1024 write bound already sheds via 429) | — | — |
-| **Read (edge)** | N/A (lock-free local HAMT) | **Never shed** | `X-Configd-Stale: true` while STALE+ | Always served |
-| **Read (control plane, linearizable)** | Leadership/ReadIndex unconfirmed | **Fail closed** (no queue-depth shed; CP linearizable reads are rare by design) | HTTP **503** (`X-Leader-Hint`) | Retry / read at edge |
-| **Fan-out** | Output buffer > 80% per child | Slow-consumer warning (`edge_fanout_slow_consumer_warnings_total`) | `X-Configd-Stale: true` | Normal when buffer < 50% |
-| **Fan-out** | Output buffer 100% per child (or ack-lag past threshold) | Demote to catch-up (snapshot + resume) | Edge reconnection / re-bootstrap | Catch-up protocol |
+- **Single-group write knee:** about **800 w/s**, bound by leadership-churn dynamics (not fsync, CPU,
+  or disk -- about 20% CPU / 16% NVMe at the knee). Under overdrive, admission control sheds to hold
+  it stable rather than collapsing.
+- **Single-box aggregate:** plateaus around **1100 w/s** by about N=4 shards on one box (the shards
+  contend for the same cores).
+- **Horizontal scale:** near-linear across machines -- **656 -> 1075 -> 1607** committed w/s for
+  N=1/2/3 leader-machines, a like-for-like **2.45x on 3 machines**, and it keeps rising with more
+  machines. Cluster-bound by per-group consensus churn, not hardware.
+- **Leadership is operator-managed.** The 2.45x requires one group-leader per box; v1 has no
+  automatic balancer, so an operator achieves the placement (and `transferLeadership` is not yet
+  exposed). This is the one horizontal-scale operability follow-up (v2 backlog).
+- **Edge reads:** microsecond-scale in-process; about 53,600 req/s at 64 connections over the HTTP
+  edge surface.
+- **Long-run stability:** a **6-hour** soak ran clean (flat file descriptors, stable heap floor, GC
+  under 1%, zero rejected). This is 6 hours, not a 24/72-hour soak.
 
-### Load Shedding Order (observed / emergent — NOT an enforced scheduler)
-There is no priority scheduler (producer-priority / region-distance / read-class are not inputs to any
-shed decision). The ordering below is the *emergent* behaviour of independent mechanisms:
-1. Control-plane linearizable reads fail closed (503) when leadership is unconfirmed.
-2. Normal writes are shed with 429 + `Retry-After` once the 1024 proposal bound is hit.
-3. **Never shed:** edge read serving from the local HAMT (lock-free; always served).
+## What v1 does not do (v2 / v3)
 
-<details><summary>Original ladder (superseded by RR-110 / D-1 — kept for audit)</summary>
+Stated scope, not gaps. See [`../v2-backlog.md`](../v2-backlog.md) for the full list.
 
-| Path | Trigger | Action | Client Signal | Recovery |
-|---|---|---|---|---|
-| ~~Write~~ | ~~Raft queue > 1000 entries~~ | ~~Reject new writes~~ | ~~HTTP 429 + `Retry-After: 1`~~ | ~~Accept when queue < 500 (hysteresis)~~ |
-| ~~Write~~ | ~~Raft apply lag > 5000 entries~~ | ~~Reject new writes + alert~~ | ~~HTTP 503~~ | ~~Accept when lag < 1000~~ |
-| ~~Read (control plane)~~ | ~~ReadIndex queue > 100~~ | ~~Reject linearizable reads; suggest stale~~ | ~~HTTP 429~~ | ~~Accept when queue < 50~~ |
+- **Encryption at rest** (v2) -- v1 is integrity-only; the AES-GCM build is designed at the ADR-0042
+  envelope seam.
+- **Client drivers** -- buildable from the stand-alone RFC ([`../rfc/driver-protocol/`](../rfc/driver-protocol/)),
+  not shipped; off the v1 critical path.
+- **Leadership balancer** (v2) -- horizontal scale is operator-managed until then.
+- **Multi-shard / cross-shard watches** (v3) -- v1 watches are per-key/per-shard ordered, N=1.
+- **Authentication and KMS provider SPIs** -- designed, not built; authorization stays in-core.
+- **Dynamic resharding, a `list` endpoint, a BATCH API, and cross-region / WAN** -- deferred.
 
-~~Load-shed order: stale distant reads → low-priority writes → linearizable reads → normal writes →
-never edge reads.~~
-</details>
+## Where to go next
 
----
-
-## 12. Network & WAN Modeling
-
-### Cross-Region RTT Matrix
-
-| Route | RTT (ms) | Used For |
-|---|---|---|
-| us-east-1 ↔ us-west-2 | 57 | Global Raft quorum |
-| us-east-1 ↔ eu-west-1 | 68 | Global Raft quorum |
-| us-east-1 ↔ eu-central-1 | 92 | Regional relay |
-| us-east-1 ↔ ap-northeast-1 | 148 | Non-voting replica |
-| us-east-1 ↔ ap-southeast-1 | 220 | Non-voting replica |
-| eu-west-1 ↔ eu-central-1 | 20 | EU regional Raft |
-| ap-northeast-1 ↔ ap-southeast-1 | 69 | AP regional Raft |
-
-### Tail Amplification for Fan-out Tree
-
-For a 2-tier tree (k=16 at tier 1, k=64 at tier 2) reaching 1024 edges:
-- To achieve p99 at root: each tier-1 child must achieve p99.94
-- Each tier-2 leaf must achieve p99.98
-- **Mitigation:** Hedged requests at each tier — send to 2 children, use first response.
-
-### WAN Partition Scenarios
-
-| Scenario | Behavior | Traceable to |
-|---|---|---|
-| Single region isolated | Raft groups with majority in surviving regions continue. Isolated region's edge nodes serve stale. | INV-S1 (staleness bound) |
-| Split-brain (2+3 partition) | Majority partition (3) continues. Minority partition (2) steps down leaders. | Election Safety (INV-L1) |
-| Asymmetric partition | PreVote prevents term inflation. CheckQuorum forces isolated leader step-down. | Raft liveness properties |
-| Submarine cable cut | Edge nodes in affected regions serve stale. Recovery when cable restored or traffic rerouted (+100-200ms latency). | INV-S1 (DEGRADED state) |
+- Consensus threading rules: [`raft-threading-contract.md`](raft-threading-contract.md)
+- Decision records: [`../adr/`](../adr/)
+- Operate a cluster: [`../operations/`](../operations/) (runsheet, deployer-must-know,
+  known-limitations, consistency contract, burn-in contract, runbooks)
+- Driver protocol: [`../rfc/driver-protocol/`](../rfc/driver-protocol/)
+- Evidence and history: [`../archive/`](../archive/)
+- What is coming next: [`../v2-backlog.md`](../v2-backlog.md)

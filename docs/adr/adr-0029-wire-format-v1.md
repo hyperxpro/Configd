@@ -1,8 +1,8 @@
-# ADR-0029: Wire Format v1 — Version Byte + CRC32C Trailer
+# ADR-0029: Wire Format v1 - Version Byte + CRC32C Trailer
 
 **Status:** Accepted (iter-3, 2026-04-25)
-**Supersedes:** ADR-0010 (v0 wire format — header-only, no version, no checksum)
-**Related:** ADR-0028 (snapshot on-disk format — same TLV-style forward-compat philosophy applied to a different boundary)
+**Supersedes:** ADR-0010 (v0 wire format - header-only, no version, no checksum)
+**Related:** ADR-0028 (snapshot on-disk format - same TLV-style forward-compat philosophy applied to a different boundary)
 
 ## Context
 
@@ -38,18 +38,18 @@ forward-compatibility contract for v2.
 | Group-Id | 4 B BE | Raft group identifier. |
 | Term | 8 B BE | Raft term. |
 | Payload | N B | Message-specific bytes; opaque to the framing layer. |
-| CRC32C | 4 B BE | Castagnoli polynomial (`java.util.zip.CRC32C`) over `[Length .. end of Payload]` — i.e., everything except the trailer itself. |
+| CRC32C | 4 B BE | Castagnoli polynomial (`java.util.zip.CRC32C`) over `[Length .. end of Payload]` - i.e., everything except the trailer itself. |
 
 ### Decode validation order
 
 The order is deliberate; distinct exceptions narrow the diagnostic
 question to a single layer.
 
-1. **Buffer too short for header + trailer** → `IllegalArgumentException`.
-2. **Length prefix out of bounds or != actual length** → `IllegalArgumentException`.
-3. **CRC32C trailer mismatch** → `IllegalArgumentException` with prefix `"CRC32C mismatch"`. Verified **before** any other field so a single bit-flip surfaces unambiguously as "corruption" rather than as a misleading "wire-version mismatch" or "unknown type code" — those would point an operator at the wrong root cause (deployment misconfiguration vs. hardware fault).
-4. **Version byte != `WIRE_VERSION`** → `UnsupportedWireVersionException` (carries the observed version for upstream logging).
-5. **Type code not in `MessageType`** → `IllegalArgumentException` (delegated to `fromCode`).
+1. **Buffer too short for header + trailer** -> `IllegalArgumentException`.
+2. **Length prefix out of bounds or != actual length** -> `IllegalArgumentException`.
+3. **CRC32C trailer mismatch** -> `IllegalArgumentException` with prefix `"CRC32C mismatch"`. Verified **before** any other field so a single bit-flip surfaces unambiguously as "corruption" rather than as a misleading "wire-version mismatch" or "unknown type code" - those would point an operator at the wrong root cause (deployment misconfiguration vs. hardware fault).
+4. **Version byte != `WIRE_VERSION`** -> `UnsupportedWireVersionException` (carries the observed version for upstream logging).
+5. **Type code not in `MessageType`** -> `IllegalArgumentException` (delegated to `fromCode`).
 
 The CRC check covers all bytes from the length field through end of
 payload, so once it passes, the version and type bytes are
@@ -62,7 +62,7 @@ trustworthy.
 - TLS already covers the connection layer for confidentiality and
   integrity against an active attacker. The CRC32C is **defense in
   depth** against bit-flip / bug-induced corruption inside a TLS
-  session — for example a buffer-pool reuse bug that hands the
+  session - for example a buffer-pool reuse bug that hands the
   encoder a stale buffer.
 - 4 bytes of overhead per frame is negligible against the typical 18 B
   header + payload.
@@ -74,8 +74,8 @@ trustworthy.
 `MessageType` enum codes are dense (0x01..0x10) today. Adding a new
 type in v1 is allowed *as long as the code is unique*; v0 readers are
 non-existent (this is the first GA), so the question is purely
-v1↔v2. v2 readers MUST treat unknown type codes as "drop frame and
-log unknown_message_type" — never as a hard reject — to preserve the
+v1<->v2. v2 readers MUST treat unknown type codes as "drop frame and
+log unknown_message_type" - never as a hard reject - to preserve the
 N-1 / N coexistence invariant.
 
 The decode-side validation (`MessageType.fromCode` throwing) is a v1
@@ -116,7 +116,7 @@ instance. No allocation on the encode hot path beyond the result
   with a structured error.
 - **Distinct exception types** narrow operator diagnostics. A frame
   failure is unambiguously "framing", "version", "checksum", or "type
-  code" — never one disguised as another.
+  code" - never one disguised as another.
 - **Bounded allocation on decode.** `MAX_FRAME_SIZE = 16 MiB` is
   enforced at the framing layer; per-message bounds (`MAX_ENTRIES_PER_APPEND`,
   `MAX_COMMAND_LEN`, `MAX_SNAPSHOT_BLOB_LEN`) are enforced inside
@@ -131,7 +131,7 @@ instance. No allocation on the encode hot path beyond the result
 
 - **5 bytes per frame overhead** (1 version + 4 trailer) vs. v0.
   Negligible against typical payload sizes; meaningful only on
-  HEARTBEAT, where it brings the frame from 17 → 22 bytes (~30 %
+  HEARTBEAT, where it brings the frame from 17 -> 22 bytes (~30 %
   overhead). HEARTBEATs are infrequent enough that this is invisible
   in aggregate bandwidth.
 - **CRC32C compute cost**, even hardware-accelerated, is non-zero.
@@ -147,7 +147,7 @@ instance. No allocation on the encode hot path beyond the result
 The v2 wire format MAY:
 
 - Add new `MessageType` codes (must be globally unique; v1 will
-  reject them — see "MessageType extensibility" above).
+  reject them - see "MessageType extensibility" above).
 - Append new fields *after* the existing payload, contained inside
   the per-`MessageType` decoder's framing (not at the FrameCodec
   layer). The CRC32C trailer remains; new bytes must precede it.
@@ -163,7 +163,7 @@ The v2 wire format MUST NOT:
 - Re-use a `MessageType` code with different semantics. Codes are
   burned forever once shipped.
 - Drop the CRC32C trailer. Peers MUST always validate it.
-- Land without the §8.10 fixture-bump CI guardrail extended to
+- Land without the section 8.10 fixture-bump CI guardrail extended to
   `wire-fixtures/v2/`.
 
 A v2 reader that wishes to interoperate with a v1 peer MUST:
@@ -175,7 +175,7 @@ A v2 reader that wishes to interoperate with a v1 peer MUST:
 - Surface a metric `configd_transport_wire_version_observed{version}`
   so operators can see the live mix during a rolling upgrade.
 
-### §8.10 fixture-bump CI guardrail — scope and known gap
+### section 8.10 fixture-bump CI guardrail - scope and known gap
 
 The `wire-compat` CI job greps the PR diff for `WIRE_VERSION` change
 and fails if any byte under `wire-fixtures/v<N>/` changed without it.
@@ -189,7 +189,7 @@ This guardrail covers **only the `FrameCodec` layer**. Specifically:
   layer payload encoded by `RaftMessageCodec`.
 - A change to `RaftMessageCodec.encodeAppendEntries` (or any other
   per-`MessageType` encoder) that reorders/adds/removes payload
-  fields will NOT trip the §8.10 fixture comparison. The defence at
+  fields will NOT trip the section 8.10 fixture comparison. The defence at
   the application-layer is `RaftMessageCodecTest` round-trip plus
   `RaftMessageCodecPropertyTest` (jqwik). Round-trip passes do not
   catch wire-shape drift between v1 and v2 the way golden bytes do.
@@ -204,8 +204,8 @@ not CI. This is documented honestly here rather than oversold.
 
 `MAX_SNAPSHOT_BLOB_LEN = 4 MiB` is a hard ceiling for a single
 `InstallSnapshot` RPC. The wire format reserves `offset` and `done`
-fields for chunked snapshot install (Raft §7), but the v0.1 leader
-does **not** drive chunking — it sends one frame with `offset=0,
+fields for chunked snapshot install (Raft section 7), but the v0.1 leader
+does **not** drive chunking - it sends one frame with `offset=0,
 done=true`.
 
 Operational consequence: if `ConfigStateMachine.snapshot()` produces
@@ -228,16 +228,15 @@ Mitigation in v0.1:
   gauge (TODO: wire in the next observability pass) and alert when
   approaching the cap.
 
-Not a v0.1 GA blocker per gap-closure §5 (acceptable residual with
-documented constraint), but called out here so the next iteration
-sees it.
+Not a v0.1 GA blocker (acceptable residual with documented constraint),
+but called out here so the next iteration sees it.
 
-### Bounds — encoder is symmetric with decoder
+### Bounds - encoder is symmetric with decoder
 
 `FrameCodec.encode(...)` enforces `MAX_FRAME_SIZE` on the write side
 (throws `IllegalArgumentException` if `payload.length + HEADER_SIZE +
 TRAILER_SIZE > MAX_FRAME_SIZE`). Symmetric with the decoder so a
-local encoder can never produce a frame the receiver will reject —
+local encoder can never produce a frame the receiver will reject -
 the failure surfaces at the encoder with a clear message instead of
 on the wire as a misleading "frame length out of bounds" on the
 peer.
@@ -245,10 +244,10 @@ peer.
 `RaftMessageCodec` enforces additional caps on the application
 payload before allocating:
 
-- `MAX_ENTRIES_PER_APPEND = 10_000` — caps the entry-count field
+- `MAX_ENTRIES_PER_APPEND = 10_000` - caps the entry-count field
   that the decoder uses to size an `ArrayList`.
-- `MAX_COMMAND_LEN = 1 MiB` — caps any single LogEntry command.
-- `MAX_SNAPSHOT_BLOB_LEN = 4 MiB` — per-blob cap on InstallSnapshot
+- `MAX_COMMAND_LEN = 1 MiB` - caps any single LogEntry command.
+- `MAX_SNAPSHOT_BLOB_LEN = 4 MiB` - per-blob cap on InstallSnapshot
   data and clusterConfigData. Sized so that two blobs at the cap
   plus the InstallSnapshot fixed header (33 B) plus the FrameCodec
   header+trailer (22 B) totals ~8 MiB, comfortably under
@@ -262,7 +261,7 @@ payload before allocating:
 
 ## Verification
 
-- `FrameCodecPropertyTest` (jqwik, 11 properties × 50–500 tries each):
+- `FrameCodecPropertyTest` (jqwik, 11 properties x 50-500 tries each):
   encode/decode roundtrip, length-field consistency, byte-buffer / array
   parity, truncation rejection, unknown-type rejection, unknown-version
   rejection, length-mismatch rejection, large-payload roundtrip,
@@ -276,26 +275,26 @@ payload before allocating:
   `IllegalArgumentException` (no `BufferUnderflowException`
   amplification).
 - `FrameCodecTest` (existing 8 tests): API-shape regression covered.
-- Full reactor: `./mvnw test` → 21,394 tests, 0 failures, 0 errors,
+- Full reactor: `./mvnw test` -> 21,394 tests, 0 failures, 0 errors,
   ~66 s on JDK 25 + `--enable-preview` (2026-04-25 measurement; later
   CRC-ordering swap + encoder-bounds tests added 9 tests over the
   initial baseline of 21,385).
 
 ## Alternatives considered
 
-- **Magic-number prefix instead of version byte.** Rejected — gives
+- **Magic-number prefix instead of version byte.** Rejected - gives
   no upgrade path; just a hard fingerprint check.
-- **MessagePack / Protobuf for the framing layer.** Rejected — the
+- **MessagePack / Protobuf for the framing layer.** Rejected - the
   framing layer is too hot to pay schema-decoder overhead, and the
   v1 layout is small enough that hand-rolling is the obviously
   correct call. The *payload* may use protobuf in v2; the *frame*
   stays hand-rolled.
-- **CRC32 (IEEE) instead of CRC32C.** Rejected — CRC32 is a worse
+- **CRC32 (IEEE) instead of CRC32C.** Rejected - CRC32 is a worse
   polynomial for catching common error patterns and lacks the
   hardware acceleration.
-- **HMAC-SHA256 trailer instead of CRC32C.** Rejected — TLS already
+- **HMAC-SHA256 trailer instead of CRC32C.** Rejected - TLS already
   handles cryptographic integrity; HMAC at the frame layer is
-  redundant with TLS and cuts throughput by ~5×.
-- **Variable-length frame header (e.g., varint length).** Rejected —
+  redundant with TLS and cuts throughput by ~5x.
+- **Variable-length frame header (e.g., varint length).** Rejected -
   fixed-width header is cheaper to peek and parse, and the 4 B saving
   on small frames is irrelevant.

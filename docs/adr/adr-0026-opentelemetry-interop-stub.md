@@ -15,8 +15,8 @@ Grafana Cloud / Datadog).
 A full OTel integration involves:
 
 1. Pulling in `io.opentelemetry:opentelemetry-sdk` and OTLP exporters
-   (≈ 20 transitive deps, including grpc-java and protobuf).
-2. Threading a `Tracer` and `Meter` through every span boundary —
+   (~ 20 transitive deps, including grpc-java and protobuf).
+2. Threading a `Tracer` and `Meter` through every span boundary -
    currently zero spans exist.
 3. Choosing a context-propagation strategy (W3C tracecontext vs.
    X-Cloud-Trace).
@@ -43,7 +43,7 @@ traces must wait for v0.2.
 ## Bridge contract for operators wanting OTel
 
 ```yaml
-# OTel collector config — scrape Configd /metrics into the OTel pipeline
+# OTel collector config - scrape Configd /metrics into the OTel pipeline
 receivers:
   prometheus:
     config:
@@ -72,18 +72,18 @@ pipeline.
 
 - v0.1 GA can ship without taking on a 20-dep OTel hard dependency.
 - Operators who only need metrics get a clean, low-friction integration.
-- Operators wanting distributed traces are blocked until v0.2 — this is
-  documented in `docs/progress.md` Phase 8 residuals.
+- Operators wanting distributed traces are blocked until v0.2 - this is
+  documented as a v0.2 residual.
 - We retain the option to add a native OTel SDK in v0.2 without breaking
   the Prometheus path (both can coexist).
 
 ## Related
 
-- O6 / PA-5008/15 — histogram type fix in `PrometheusExporter`
-- ADR-0025 — on-call procurement separation (operator-side observability)
+- O6 / PA-5008/15 - histogram type fix in `PrometheusExporter`
+- ADR-0025 - on-call procurement separation (operator-side observability)
 
 ## Verification
 
 - **Testable via:** the Prometheus exposition path is exercised by `configd-observability/src/test/java/io/configd/observability/PrometheusExporterTest.java`; histogram type emission is asserted there (the O6 fix). The "no OTel SDK on classpath" structural assertion is verifiable by `mvn dependency:tree` returning no `io.opentelemetry:*` artifacts.
-- **Invalidated by:** introduction of `io.opentelemetry:opentelemetry-sdk` (or any OTLP exporter) into a production POM — that would silently change the operator integration model.
+- **Invalidated by:** introduction of `io.opentelemetry:opentelemetry-sdk` (or any OTLP exporter) into a production POM - that would silently change the operator integration model.
 - **Operator check:** `curl -sf http://configd-server:9090/metrics | head` returns Prometheus-format histograms (`# TYPE ... histogram`); operator OTel collector scrapes that endpoint per the config snippet above. Distributed-trace spans are NOT YET WIRED in v0.1 (operator must wait for v0.2).
