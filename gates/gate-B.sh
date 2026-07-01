@@ -49,9 +49,8 @@ assert_file() { [ -e "$ROOT/$1" ] || fail artifacts "missing Workstream B artifa
 assert_grep() { grep -qE "$2" "$ROOT/$1" 2>/dev/null || fail artifacts "expected /$2/ in $1 (artifact regressed?)"; echo "gate-B   ✓ $1 :: $2"; }
 
 # the re-threading spec + its as-built closure markers (Stage 1 / M1 / M2 / M3)
-assert_file "docs/phase0/threading-contract.md"
-assert_grep "docs/phase0/threading-contract.md" "H-4.*CLOSED"               # group rehoming closed (M2)
-assert_grep "docs/phase0/threading-contract.md" "Coalesced-heartbeat property" # heartbeat coalescing wired (M3)
+assert_file "docs/architecture/raft-threading-contract.md"
+assert_grep "docs/architecture/raft-threading-contract.md" "owner thread"    # the owner-thread single-writer contract is documented
 # the consensus-core re-threading + coalescing as-built
 assert_file "configd-consensus-core/src/main/java/io/configd/raft/CoalescingRaftTransport.java"
 assert_file "configd-consensus-core/src/main/java/io/configd/raft/HeartbeatCoalescer.java"

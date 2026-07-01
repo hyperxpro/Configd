@@ -1,3 +1,0 @@
-ATRATE-RESULT targetRate=100000 durationSec=30 concurrency=512 valueBytes=512 intended=3000000 committed_200=11892 rejected_backpressure=2905298 exceptions=43 retargets=21 achieved_commit_rate=347 elapsedSec=34.3
-ATRATE-STATUS 200=11892 429=7760 503=72978 504=2029
-ATRATE-HISTOGRAM unit=us co_corrected=intended-time count=3000000 p50=3 p90=11 p99=1167359 p999=7024639 p9999=9232383 max=9445375 mean=48758

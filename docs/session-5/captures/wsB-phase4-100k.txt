@@ -1,7 +1,0 @@
-# WS-B Phase 4: 100k/s burst, short (2s intended) — saturation/shed characterization
-# (full 30s run does not terminate: at 100k/s the generator cannot hold the 10us cadence on 2 vCPU
-#  AND the saturated pool cannot drain — itself an F4 generator-saturation finding. Short run shown.)
-ATRATE-RESULT targetRate=100000 durationSec=2 concurrency=16 valueBytes=512 intended=200000 committed_200=862 rejected_backpressure=199112 exceptions=0 retargets=0 achieved_commit_rate=110 elapsedSec=7.9
-ATRATE-STATUS 200=862 503=26
-ATRATE-HISTOGRAM unit=us co_corrected=intended-time count=200000 p50=3465215 p90=4534271 p99=4624383 p999=5050367 p9999=5718015 max=5996543 mean=3255214
-PHASE4-DONE

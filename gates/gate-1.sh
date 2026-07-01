@@ -24,7 +24,7 @@
 #                  survives a leader kill -9, and loses no committed data
 #                  (gates/smoke-multinode.sh — control-plane only).
 #
-# WHAT A GREEN GATE-1 DOES *NOT* PROVE — see docs/readiness-register.md,
+# WHAT A GREEN GATE-1 DOES *NOT* PROVE — see the readiness register,
 # section "Gate-1 blockers". The four P0 findings are INVISIBLE to a green
 # gate-1:
 #   - RR-001: nothing exercises the headline edge-propagation pipeline
@@ -255,5 +255,5 @@ if printf '%s\n' "${S_STATUS[@]}" | grep -q SKIPPED; then
 fi
 echo "Logs: $LOGDIR"
 echo "Reminder: a green gate-1 does NOT mean system-ready —"
-echo "see docs/readiness-register.md 'Gate-1 blockers' (4 P0s invisible to this gate)."
+echo "see the readiness register 'Gate-1 blockers' (4 P0s invisible to this gate)."
 exit "$overall"

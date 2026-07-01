@@ -1,5 +1,0 @@
-E2E which=jdk payload=0 sends=2000000 perMsgAllocBytes=0.0 nsPerMsg=13648 throughputMsgPerSec=73270
-E2E which=jdk payload=4096 sends=2000000 perMsgAllocBytes=0.0 nsPerMsg=18046 throughputMsgPerSec=55414
-E2E which=jdk-batched payload=0 sends=2000000 perMsgAllocBytes=0.0 nsPerMsg=364 throughputMsgPerSec=2749262
-E2E which=jdk-batched payload=4096 sends=2000000 perMsgAllocBytes=0.0 nsPerMsg=4524 throughputMsgPerSec=221022
-== done ==

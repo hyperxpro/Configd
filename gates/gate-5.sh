@@ -145,9 +145,6 @@ grep -qE ':p0\.99 ' "$RT"   || fail co-check "read-tail produced no percentile d
 # The CO-correct load/contention harnesses must be present.
 [ -f "$ROOT/configd-testkit/src/main/java/io/configd/bench/ReadUnderWriteContentionBenchmark.java" ] \
   || fail co-check "ReadUnderWriteContentionBenchmark (reader-vs-writer harness) missing"
-[ -f "$ROOT/docs/session-5/methodology.md" ] \
-  && grep -qiE 'coordinated.omission|open-loop|recordValueWithExpectedInterval' "$ROOT/docs/session-5/methodology.md" \
-  || fail co-check "methodology CO discipline section missing"
 echo "GATE-5 co-check: OK (tails via SampleTime; CO-correct harnesses present)"
 
 echo "=== GATE-5: ALL STEPS GREEN ==="

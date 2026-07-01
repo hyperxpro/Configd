@@ -160,7 +160,7 @@ echo "GATE-7 api: OK"
 
 # --- (e) SBOM: committed CycloneDX matches a freshly-generated one ------------
 echo "GATE-7 sbom: regenerate CycloneDX + normalized-diff vs the committed SBOM..."
-SBOM_COMMITTED="$ROOT/docs/session-7/sbom/bom.json"
+SBOM_COMMITTED="$ROOT/gates/sbom/bom.json"
 [ -f "$SBOM_COMMITTED" ] || fail sbom "committed SBOM missing at $SBOM_COMMITTED"
 if $MVN -q -DskipTests org.cyclonedx:cyclonedx-maven-plugin:2.9.0:makeAggregateBom >"$LOGDIR/sbom-gen.txt" 2>&1 \
    && [ -f "$ROOT/target/bom.json" ]; then
@@ -172,7 +172,7 @@ if $MVN -q -DskipTests org.cyclonedx:cyclonedx-maven-plugin:2.9.0:makeAggregateB
     echo "GATE-7 sbom: OK (committed SBOM components match a fresh generation — no drift)"
   else
     diff "$LOGDIR/sbom-committed.norm" "$LOGDIR/sbom-fresh.norm" | head -40
-    fail sbom "committed SBOM drifted from the dependency graph — regenerate docs/session-7/sbom/bom.json"
+    fail sbom "committed SBOM drifted from the dependency graph — regenerate gates/sbom/bom.json"
   fi
 else
   echo "GATE-7 sbom: LOUD-SKIP — CycloneDX plugin unavailable offline ($(tail -1 "$LOGDIR/sbom-gen.txt" 2>/dev/null)); CI (network) regenerates+diffs. The committed SBOM exists."
@@ -196,7 +196,7 @@ if [ "${GATE7_FULL:-0}" = "1" ]; then
     fail repro "jars are NOT byte-identical across two builds"
   fi
 else
-  echo "GATE-7 repro: byte-identical two-build proof runs on the FULL/nightly path (GATE7_FULL=1); captured in docs/session-7/supply-chain.md."
+  echo "GATE-7 repro: byte-identical two-build proof runs on the FULL/nightly path (GATE7_FULL=1); captured in the nightly CI lane."
 fi
 
 # --- (g) CVE scan (OWASP dependency-check) ------------------------------------
@@ -223,4 +223,4 @@ fi
 
 echo ""
 echo "=== GATE-7 GREEN: security bar locked (PA-2021 at-rest integrity, mTLS both planes, wire fuzz, API authz/audit/replay, SBOM, reproducible-build config) ==="
-echo "    ENV-BLOCKED steps (CVE NVD, gitleaks, full byte-repro) run on the CI nightly lane — see docs/session-7/supply-chain.md + the S7.5 manifest."
+echo "    ENV-BLOCKED steps (CVE NVD, gitleaks, full byte-repro) run on the CI nightly lane — see the nightly CI lane + the S7.5 manifest."

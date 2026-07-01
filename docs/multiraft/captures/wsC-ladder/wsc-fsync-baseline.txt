@@ -1,3 +1,0 @@
-=== FSYNC BASELINE (fio fdatasync on /mnt/nvme; §7.5 saw ~8,300-14,300 IOPS) ===
-write_iops=16986  write_bw_MBps=66.4
-fdatasync_lat_us: mean=56.3 p99=148.5

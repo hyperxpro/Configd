@@ -1,100 +1,101 @@
 # Testing
 
-Configd uses a multi-layered testing strategy: unit tests, integration tests, and deterministic simulation.
+Configd uses a layered testing strategy: unit tests, end-to-end pipeline tests, deterministic
+simulation, linearizability checking, and Java Memory Model concurrency tests.
 
-## Running Tests
+## Running tests
 
 ```bash
-# All tests
-./gradlew test
+# Everything (full reactor)
+./mvnw test
 
-# Single module
-./gradlew :configd-consensus-core:test
+# One module
+./mvnw -pl configd-consensus-core test
 
-# Single test class
-./gradlew :configd-consensus-core:test --tests "io.configd.raft.RaftNodeTest"
+# One test class
+./mvnw -pl configd-consensus-core test -Dtest=RaftNodeTest
 
-# With Docker (hermetic)
+# In a hermetic container
 docker build -f docker/Dockerfile.build -t configd-build .
 docker run --rm configd-build
 ```
 
-## Test Categories
+The `--enable-preview` flag is configured in the build (compiler and the Surefire test JVM), so you
+never pass it by hand. Note that some harness modules (`configd-testkit`) are not on the `-am`
+dependency path of the runtime modules, so a `mvn clean test-compile` at the reactor root is the way
+to compile the whole tree at once.
 
-### Unit Tests
+## Test categories
 
-Each module has focused unit tests covering its public API and edge cases.
+### Unit tests
 
-| Module | Key Test Classes | What's Covered |
-|--------|-----------------|----------------|
-| configd-consensus-core | `RaftNodeTest` | Leader election, log replication, PreVote, CheckQuorum, leadership transfer |
+Each module has focused unit tests over its public API and edge cases.
+
+| Module | Example test classes | Covers |
+|---|---|---|
+| configd-consensus-core | `RaftNodeTest` | election, replication, PreVote, CheckQuorum, leadership transfer |
 | configd-config-store | `VersionedConfigStoreTest`, `HamtMapTest` | MVCC put/delete/batch, structural sharing, version monotonicity |
-| configd-edge-cache | `LocalConfigStoreTest`, `StalenessTrackerTest` | Lock-free reads, delta application, cursor enforcement, state transitions |
+| configd-edge-cache | `LocalConfigStoreTest`, `StalenessTrackerTest` | lock-free reads, delta application, cursor enforcement, state transitions |
 
-### End-to-End Tests
+### End-to-end pipeline tests
 
-`EndToEndTest` in `configd-testkit` validates the full write pipeline:
+`EndToEndTest` (present in several modules) validates the full write pipeline: write to the
+`VersionedConfigStore`, compute a delta with `DeltaComputer`, apply it to a `LocalConfigStore`, and
+verify read consistency.
 
-1. Write to `VersionedConfigStore`
-2. Compute delta via `DeltaComputer`
-3. Apply delta to `LocalConfigStore`
-4. Verify read consistency
+### Deterministic simulation (configd-testkit)
 
-### Deterministic Simulation (`configd-testkit`)
+Inspired by FoundationDB (ADR-0007), the simulation runs a multi-node cluster in a single thread with
+controlled time, so a run is fully reproducible from its seed.
 
-Inspired by FoundationDB's simulation testing (ADR-0007). The simulation framework provides:
+- `RaftSimulation` / `SimulatedNetwork` -- a seeded Raft cluster with injectable network faults
+  (partitions, delays, drops, reordering).
+- `AdversarialSim` -- adversarial fault schedules over the same engine.
+- `MultiShardSim` -- multiple Raft groups under one driver, for the sharding invariants.
+- `EdgeFanOutSim` -- the edge fan-out and staleness-distribution simulations.
+- `InMemoryRaftCluster` -- an in-memory multi-node cluster used by higher-level tests and benchmarks.
 
-- **`RaftSimulation`** — runs a multi-node Raft cluster in a single thread with controlled time advancement
-- **`SimulatedNetwork`** — injects network faults: partitions, message delays, message drops, reordering
-- **`SimulatedClock`** — logical clock that advances only when explicitly ticked
+Properties the simulation gives you:
 
-Key properties:
+- **Deterministic** -- the same seed produces the same execution.
+- **Reproducible** -- a failing seed replays exactly.
+- **Single-threaded** -- no concurrency bugs in the harness itself.
+- **Fast** -- no real I/O or sleeps; thousands of simulated seconds run in milliseconds.
 
-- **Deterministic**: Same seed produces the same execution every time
-- **Reproducible**: A failing seed can be replayed exactly
-- **Single-threaded**: No concurrency bugs in the test harness itself
-- **Fast**: No real I/O or sleeps — thousands of simulated seconds run in milliseconds
+Seed sweeps (many thousands of seeds) and adversarial schedules run as part of the nightly gates.
 
-#### Writing a Simulation Test
+### Linearizability (configd-linz)
 
-```java
-import io.configd.testkit.RaftSimulation;
+The `configd-linz` module records operation histories from a live cluster (`Cluster`, `ClusterNode`,
+`ConfigClient`, `FaultInjector`, `HistoryRecorder`) and checks them with a Porcupine-style
+linearizability checker (`PorcupineChecker`, `Verdict`). It covers the strong-consistency claims --
+including targeted scenarios such as lost-write and stale-read (`LostWriteScenario`,
+`StaleReadScenario`) -- and can check both live histories and recorded simulation histories.
 
-@Test
-void clusterElectsLeaderAfterPartitionHeals() {
-    RaftSimulation sim = new RaftSimulation(5, /* seed= */ 42L);
+### Java Memory Model concurrency (configd-jcstress)
 
-    // Advance time until a leader is elected
-    sim.tickUntilLeaderElected(10_000);
-    assertNotNull(sim.currentLeader());
+The `configd-jcstress` module runs jcstress tests that stress the publication and ownership invariants
+under the real memory model: `RaftOwnerThreadGuardTest` (the owner-thread guard), 
+`RaftMonitorViewPublicationTest` (the `monitorView()` snapshot never tears),
+`RehomingDoubleOwnershipTest`, `HamtMapStructuralSharingTest`, and the edge/store read tests. These
+back the guarantees in
+[`../architecture/raft-threading-contract.md`](../architecture/raft-threading-contract.md).
 
-    // Partition the leader from the cluster
-    sim.partitionNode(sim.currentLeader());
-    sim.tickAll(5_000);
+## Test conventions
 
-    // A new leader should be elected among the remaining nodes
-    assertNotNull(sim.currentLeader());
+- Tests use JUnit 5. `--enable-preview` is supplied by the build.
+- Randomness uses `java.util.random.RandomGenerator` with explicit seeds for reproducibility.
+- No external dependencies -- everything runs in-process; no databases or network services.
+- `configd-testkit`, `configd-linz`, and `configd-jcstress` are test/verification harnesses, not
+  published runtime artifacts.
 
-    // Heal the partition
-    sim.healAllPartitions();
-    sim.tickAll(5_000);
+## Coverage philosophy
 
-    // The old leader should step down and follow the new leader
-    assertEquals(1, sim.leaderCount());
-}
-```
+There is no enforced line-coverage threshold. The emphasis is:
 
-## Test Conventions
+1. **Correctness of invariants** over line coverage.
+2. **Simulation breadth** (many seeds, many fault scenarios) over targeted unit tests.
+3. **Deterministic reproducibility** -- every failure is replayable from its seed.
 
-- All tests run with `--enable-preview` (configured in root `build.gradle.kts`)
-- Tests use `java.util.random.RandomGenerator` with explicit seeds for reproducibility
-- No external dependencies (databases, network services) — everything is in-process
-- `configd-testkit` is a test-only module — it is not published as a library artifact
-
-## Coverage
-
-There is no enforced coverage threshold. The testing philosophy prioritizes:
-
-1. **Correctness of invariants** over line coverage
-2. **Simulation breadth** (many seeds, many fault scenarios) over targeted unit tests
-3. **Deterministic reproducibility** — every failure is replayable
+Mutation testing is used as the quality signal for the safety-critical modules, rather than a raw
+coverage percentage.

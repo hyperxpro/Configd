@@ -1,39 +1,69 @@
 # Configd Wiki
 
-Configd is a next-generation global configuration distribution system. It provides a strongly-consistent control plane backed by Raft consensus and an eventually-consistent edge data plane with sub-millisecond lock-free reads.
+Configd is a region-local, strongly-consistent configuration control plane. Writes go through Raft
+consensus for durable, linearizable ordering; reads are served from a lock-free, in-process cache at
+the edge in microseconds. The core serves writes; the edge serves reads.
+
+New here? Start with [Getting Started](Getting-Started.md), then skim the
+[Architecture Overview](Architecture-Overview.md). The authoritative deep-dive lives outside the
+wiki in [`../architecture/architecture.md`](../architecture/architecture.md).
 
 ## Pages
 
-- [Getting Started](Getting-Started.md) — Build from source, run tests, first integration
-- [Architecture Overview](Architecture-Overview.md) — Control plane, data plane, modules, topology
-- [Integration Guide](Integration-Guide.md) — Embedding Configd in your Java application
-- [Docker](Docker.md) — Building and running with Docker
-- [Testing](Testing.md) — Unit tests, integration tests, deterministic simulation
-- [Module Reference](Module-Reference.md) — Per-module purpose, API surface, and dependencies
+- [Getting Started](Getting-Started.md) -- build from source, run the tests, run a server
+- [Architecture Overview](Architecture-Overview.md) -- control plane, data plane, topology, modules
+- [Integration Guide](Integration-Guide.md) -- embedding the Configd libraries in a Java application
+- [Module Reference](Module-Reference.md) -- per-module purpose, key types, and dependencies
+- [Docker](Docker.md) -- building and running with Docker and Compose
+- [Testing](Testing.md) -- unit tests, deterministic simulation, linearizability, and jcstress
 
-## Project Status
+## What v1 is
 
-Configd is in active development (Phase 5 — Implementation). The core modules are implemented and tested:
+A single, region-local sharded-Raft cluster. It runs one Raft group by default (N=1); hash-within-
+scope sharding is wired and horizontal scale is proven (near-linear, about 2.45x across three
+machines), but leadership placement is operator-managed, so multi-shard (N>1) is a v2 operating
+mode. It is **not** a global, multi-region, hierarchical-Raft design -- that was considered and
+rejected (ADR-0030, ADR-0031) and never built.
 
-| Module | Status |
-|--------|--------|
-| configd-common | Implemented |
-| configd-consensus-core | Implemented |
-| configd-config-store | Implemented |
-| configd-edge-cache | Implemented |
-| configd-transport | Implemented |
-| configd-testkit | Implemented |
-| configd-replication-engine | Planned |
-| configd-distribution-service | Planned |
-| configd-control-plane-api | Planned |
-| configd-observability | Planned |
+At-rest protection is **integrity** (HMAC-SHA-256 tamper detection), **not encryption**; do not
+store secrets in Configd. See [`../operations/known-limitations.md`](../operations/known-limitations.md)
+for the honest edges and [`../v2-backlog.md`](../v2-backlog.md) for what comes next.
 
-## Key Design Decisions
+## Modules
 
-All architectural decisions are documented as ADRs in `docs/decisions/`. Notable choices:
+All of the following are shipped and real (Maven multi-module build, one module per directory):
 
-- **Embedded Raft** (ADR-0001) — no external coordination (ZooKeeper, etcd)
-- **Hierarchical Raft** (ADR-0002) — global + regional groups
-- **Lock-free edge reads** (ADR-0005) — volatile HAMT pointer, zero allocation on miss
-- **Deterministic simulation** (ADR-0007) — FoundationDB-style seeded testing
-- **Java 21 + ZGC** (ADR-0009) — single-threaded Raft I/O thread
+- Runtime libraries: `configd-common`, `configd-config-store`, `configd-consensus-core`,
+  `configd-replication-engine`, `configd-distribution-service`, `configd-control-plane-api`,
+  `configd-transport`, `configd-netty`, `configd-edge-cache`, `configd-observability`.
+- Runnable services: `configd-server` (the control-plane node, main class
+  `io.configd.server.ConfigdServer`) and `configd-edge-node` (the edge reader, main class
+  `io.configd.edge.node.EdgeNodeMain`).
+- Test and verification harnesses: `configd-testkit` (deterministic simulation + benchmarks),
+  `configd-linz` (Porcupine linearizability), and `configd-jcstress` (Java Memory Model concurrency).
+
+See the [Module Reference](Module-Reference.md) for details.
+
+## Key design decisions
+
+Decisions are recorded as ADRs in [`../adr/`](../adr/). A few that shape the system:
+
+- **Embedded Raft** ([ADR-0001](../adr/adr-0001-embedded-raft-consensus.md)) -- no external
+  coordinator (no ZooKeeper, no etcd).
+- **Quicksilver-shaped topology** ([ADR-0030](../adr/adr-0030-quicksilver-shaped-topology.md)) --
+  one centralized region-local Raft root for writes plus asynchronous bounded-staleness edge fan-out;
+  global multi-region write consensus is rejected.
+- **Hash-within-scope sharding** ([adr-multiraft-partitioning](../adr/adr-multiraft-partitioning.md))
+  -- route a key to a shard by hashing it within its scope; point-lookup workload, no range scans.
+- **Lock-free edge reads** ([ADR-0005](../adr/adr-0005-lock-free-edge-reads.md)) -- a volatile
+  pointer to an immutable HAMT snapshot, zero allocation on a miss.
+- **Deterministic simulation** ([ADR-0007](../adr/adr-0007-deterministic-simulation-testing.md)) --
+  FoundationDB-style seeded testing.
+- **Java 25 + generational ZGC** ([ADR-0022](../adr/adr-0022-java-25-runtime.md),
+  [ADR-0041](../adr/adr-0041-gc-collector.md)) -- sub-millisecond GC pauses for the read/commit tail.
+- **Netty 4.2 transport** ([ADR-0043](../adr/adr-0043-netty-transport-platform.md)) -- one transport
+  stack across all four network surfaces.
+- **At-rest integrity + fail-closed signing key**
+  ([ADR-0042](../adr/adr-0042-snapshot-wal-raftstate-integrity.md),
+  [ADR-0044](../adr/adr-0044-signing-key-management.md)) -- tamper detection on the durability
+  artifacts, with the signing key required to live outside attacker-writable storage.

@@ -115,12 +115,8 @@ assert_file "configd-replication-engine/src/main/java/io/configd/replication/Sta
 assert_file "configd-replication-engine/src/main/java/io/configd/replication/CrossShardWriteGuard.java"
 assert_file "configd-testkit/src/test/java/io/configd/testkit/MultiShardSim.java"
 assert_file "configd-testkit/src/test/java/io/configd/testkit/MultiShardSimTest.java"
-assert_file "docs/multiraft/phase1/design.md"
-assert_file "docs/multiraft/phase1/decision-log.md"
-assert_file "docs/multiraft/phase1/v-verification-machinery.md"
 # the D-B seam invariants + the operator-flagged wire-epoch deferral are recorded
 assert_grep "configd-replication-engine/src/main/java/io/configd/replication/ShardMap.java" "Opaque, stable shard IDs"
-assert_grep "docs/multiraft/phase1/decision-log.md" "DL-P1-04"
 echo "gate-phase1 artifacts: OK"
 
 # --- (d) Server-wiring foundation: Seam A (C4a config N) + Seam B (DL-P1-06 inbound demux) ----
@@ -135,8 +131,6 @@ assert_class_green "$WIRING" "ShardCountConfigTest"   # C4a: range + N>1 BOOTS (
 assert_class_green "$WIRING" "RaftInboundDemuxTest"   # DL-P1-06: gid=k -> group k (not 0); hostile gid dropped
 assert_file "configd-server/src/test/java/io/configd/server/ShardCountConfigTest.java"
 assert_file "configd-server/src/test/java/io/configd/server/RaftInboundDemuxTest.java"
-assert_file "docs/multiraft/phase1/server-wiring-decision-log.md"
-assert_grep "docs/multiraft/phase1/server-wiring-decision-log.md" "DL-W-0"
 echo "gate-phase1 wiring: OK"
 
 # --- (e) Server-wiring Seam C: N-group consensus bring-up (buildRaftGroup loop) ----
@@ -150,8 +144,6 @@ WIRINGC="$LOGDIR/wiring-c.txt"
 run_tests wiring-c "MultiGroupBringupTest" "$WIRINGC"
 assert_class_green "$WIRINGC" "MultiGroupBringupTest"
 assert_file "configd-server/src/test/java/io/configd/server/MultiGroupBringupTest.java"
-assert_file "docs/multiraft/phase1/seam-c-multigroup-bringup.md"
-assert_grep "docs/multiraft/phase1/server-wiring-decision-log.md" "DL-W-C-0"
 echo "gate-phase1 wiring-c: OK"
 
 # --- (f) Server-wiring Seam D: live write/read routing + cross-shard guard ----
@@ -164,8 +156,6 @@ WIRINGD="$LOGDIR/wiring-d.txt"
 run_tests wiring-d "ShardedRoutingTest" "$WIRINGD"
 assert_class_green "$WIRINGD" "ShardedRoutingTest"
 assert_file "configd-server/src/test/java/io/configd/server/ShardedRoutingTest.java"
-assert_file "docs/multiraft/phase1/seam-d-live-routing.md"
-assert_grep "docs/multiraft/phase1/server-wiring-decision-log.md" "DL-W-D-0"
 echo "gate-phase1 wiring-d: OK"
 
 # --- (g) Server-wiring Seam E: per-shard observability (no longer group-0-only) ----
@@ -177,8 +167,6 @@ WIRINGE="$LOGDIR/wiring-e.txt"
 run_tests wiring-e "PerShardMetricsTest" "$WIRINGE"
 assert_class_green "$WIRINGE" "PerShardMetricsTest"
 assert_file "configd-server/src/test/java/io/configd/server/PerShardMetricsTest.java"
-assert_file "docs/multiraft/phase1/seam-e-per-shard-metrics.md"
-assert_grep "docs/multiraft/phase1/server-wiring-decision-log.md" "DL-W-E-0"
 echo "gate-phase1 wiring-e: OK"
 
 # --- (h) Server-wiring Seam F: the WIRE_VERSION 0x01->0x02 bump (D1 epoch + D2 coalesced frame) ----
@@ -203,8 +191,6 @@ assert_grep "configd-transport/src/main/java/io/configd/transport/FrameCodec.jav
 assert_grep "configd-transport/src/main/java/io/configd/transport/FrameCodec.java" "HEADER_SIZE = 26"
 assert_grep "configd-transport/src/main/java/io/configd/transport/MessageType.java" "RAFT_COALESCED_HEARTBEAT\(0x11\)"
 assert_file "configd-server/src/test/java/io/configd/server/CoalescedHeartbeatCodecTest.java"
-assert_file "docs/multiraft/phase1/seam-f-wire-bump.md"
-assert_grep "docs/multiraft/phase1/server-wiring-decision-log.md" "DL-F-0"
 echo "gate-phase1 wiring-f: OK"
 
 # --- (i) Server-wiring Seam G: the integrated N>1 sweep (GATES the boot-guard removal) ----
@@ -227,10 +213,6 @@ assert_class_green "$WIRINGG" "HeartbeatCoalescingTest"          # coalesced-hea
 assert_file "configd-server/src/test/java/io/configd/server/ShardedFanOutTest.java"
 assert_file "configd-server/src/test/java/io/configd/server/MultiShardIntegratedSweepTest.java"
 assert_file "configd-replication-engine/src/test/java/io/configd/replication/SharedNodeFaultIsolationLiveTest.java"
-assert_file "docs/multiraft/phase1/seam-g1-fanout-merge.md"
-assert_file "docs/multiraft/phase1/seam-g2-live-isolation.md"
-assert_grep "docs/multiraft/phase1/server-wiring-decision-log.md" "DL-W-G1-0"
-assert_grep "docs/multiraft/phase1/server-wiring-decision-log.md" "DL-W-G2-0"
 echo "gate-phase1 wiring-g: OK"
 
 # --- (j) Server-wiring Seam G4: the SWITCH-FLIP — the N>1 boot guard is REMOVED ----
@@ -250,7 +232,6 @@ assert_file "configd-server/src/test/java/io/configd/server/NGreaterThanOneBootS
 if grep -q "is not enabled in this build" "$ROOT/configd-server/src/main/java/io/configd/server/ConfigdServer.java"; then
   fail wiring-g4 "the N>1 boot-refusal message is back in ConfigdServer — the switch-flip regressed"
 fi
-assert_grep "docs/multiraft/phase1/server-wiring-decision-log.md" "DL-W-G4-0"
 echo "gate-phase1 wiring-g4: OK"
 
 echo "=== gate-phase1: GREEN — Multi-Raft Phase 1 sharding foundation + server-wiring A/B/C/D/E/F/G (incl. G4 switch-flip) verified ==="

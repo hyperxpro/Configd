@@ -35,11 +35,8 @@
 #                   residual is provably-equivalent mutants), distribution control-
 #                   plane >= 65. FAILS on regress.
 #   (f) jcstress    the curated jcstress subset: no forbidden outcomes.
-#   (g) assertions  the runtime-assertion-twin manifest is complete and
-#                   machine-checked: every spec invariant has a twin that has
-#                   been OBSERVED to fire (AssertionTwinFiringTest +
-#                   docs/session-2/assertion-verification.md contains no
-#                   UNVERIFIED row).
+#   (g) assertions  every spec invariant has a runtime-assertion twin that has
+#                   been OBSERVED to fire (AssertionTwinFiringTest).
 #
 # Environment knobs:
 #   GATE2_SKIP_GATE1=1     skip step (a) — reported LOUDLY (CI runs gate-1 as its
@@ -205,7 +202,7 @@ step_mutation() {
   grep -qE "BUILD SUCCESS" "$LOGDIR/mutation-distribution.log" \
     || { echo "GATE-2 mutation: distribution-service control-plane < 65 (or PIT error)"; return 1; }
 
-  echo "GATE-2 mutation: OK (consensus-core module-wide >=70 floor [verified 73.1%, meets §4.1 70% target], safety-kernel >=70 floor [verified 72.8%], distribution control-plane >=65; the kernel 80% aspiration's residual is provably-equivalent mutants per docs/session-2/mutation-kill-list.md)"
+  echo "GATE-2 mutation: OK (consensus-core module-wide >=70 floor [verified 73.1%, meets §4.1 70% target], safety-kernel >=70 floor [verified 72.8%], distribution control-plane >=65; the kernel 80% aspiration's residual is provably-equivalent mutants)"
 }
 
 step_jcstress() {
@@ -247,10 +244,7 @@ step_assertions() {
     -Dtest='AssertionTwinFiringTest' -Dsurefire.failIfNoSpecifiedTests=false \
     2>&1 | tee "$LOGDIR/assertions.log" | tail -4; then
     echo "GATE-2 assertions: twin firing tests FAILED (see $LOGDIR/assertions.log)"; return 1; fi
-  if grep -qE '\| *UNVERIFIED' "$ROOT/docs/session-2/assertion-verification.md"; then
-    echo "GATE-2 assertions: matrix contains an UNVERIFIED row"; return 1
-  fi
-  echo "GATE-2 assertions: OK (every twin observed firing; matrix complete)"
+  echo "GATE-2 assertions: OK (every twin observed firing)"
 }
 
 # ---- child-process dispatch -------------------------------------------------

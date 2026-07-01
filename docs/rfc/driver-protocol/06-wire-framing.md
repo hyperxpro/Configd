@@ -15,7 +15,7 @@ and the **golden vectors** in
 (CRC-correct frames per type, pinned by `EdgeFrameCodecGoldenFixtureTest` for v1 and
 `EdgeFrameCodecV2GoldenFixtureTest` for v2). **Every layout here MUST match those golden bytes**; the fixture
 name is cited next to each frame so a driver author can use the golden bytes as the cross-language conformance
-vector. **Wire-format ADR note:** [`adr-0029-wire-format-v1.md`](../../decisions/adr-0029-wire-format-v1.md) is
+vector. **Wire-format ADR note:** [`adr-0029-wire-format-v1.md`](../../adr/adr-0029-wire-format-v1.md) is
 the canonical origin of the framing **discipline** — a version byte, a CRC32C-Castagnoli trailer, CRC-before-
 type validation, and fail-closed forward-compat — but its *concrete* diagram is the **Raft** frame
 (`HEADER_SIZE = 18`, 16 MiB, with Group-Id/Term). The **edge** layout (`HEADER_SIZE = 6`, 2 MiB, no group/term)
@@ -322,7 +322,7 @@ length is a **signed `i32`** bounded to `[0, 1 MiB]`.
 
 **F7-2 (the ADR-0028 snapshot body — the reassembled `SNAPSHOT_CHUNK` bytes).** Concatenating the
 `SNAPSHOT_CHUNK` `chunkBytes` in `index` order yields the ADR-0028 snapshot body
-([`adr-0028-snapshot-on-disk-format.md`](../../decisions/adr-0028-snapshot-on-disk-format.md)), big-endian:
+([`adr-0028-snapshot-on-disk-format.md`](../../adr/adr-0028-snapshot-on-disk-format.md)), big-endian:
 
 ```
 [8 u64] sequenceCounter

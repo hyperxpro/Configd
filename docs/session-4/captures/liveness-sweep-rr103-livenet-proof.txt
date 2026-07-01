@@ -1,6 +1,0 @@
-===== RR-103 LIVE-NET PROOF: decay STILL reverted + soak added → liveness sweep must now catch the leak =====
-[ERROR] Tests run: 1, Failures: 1, Errors: 0, Skipped: 0, Time elapsed: 0.694 s <<< FAILURE! -- in io.configd.testkit.LivenessBoundedProgressSweepTest
-[ERROR] io.configd.testkit.LivenessBoundedProgressSweepTest.postHealElectionAndPropagationAreBounded -- Time elapsed: 0.584 s <<< FAILURE!
-org.opentest4j.AssertionFailedError: seed 0: LIVENESS VIOLATION — after heal the cluster did not return to full service (a write committed on ALL 5 nodes) within 800 ticks; the rejoined minority stayed behind. This is the RR-103 failure shape — a healed-but-stuck follower. ==> expected: <true> but was: <false>
-[ERROR]   LivenessBoundedProgressSweepTest.postHealElectionAndPropagationAreBounded:248 seed 0: LIVENESS VIOLATION — after heal the cluster did not return to full service (a write committed on ALL 5 nodes) within 800 ticks; the rejoined minority stayed behind. This is the RR-103 failure shape — a healed-but-stuck follower. ==> expected: <true> but was: <false>
-[ERROR] Tests run: 1, Failures: 1, Errors: 0, Skipped: 0

@@ -48,7 +48,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 MVN="$ROOT/mvnw -B"
 JAR="$ROOT/configd-testkit/target/benchmarks.jar"
-CAPTURE="$ROOT/docs/session-3/captures/ct34-jmh-gc-check.txt"
+CAPTURE="$ROOT/target/ct34-jmh-gc-check.txt"
 SIZE="${JMHGC_SIZE:-10000}"
 # Gated legs: the two paths the law requires to be strictly zero-alloc.
 GATED_LEGS=(getMiss getIntoHit)
