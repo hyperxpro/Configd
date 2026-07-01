@@ -656,6 +656,45 @@ class RaftNodeTest {
             }
             return false;
         }
+
+        @Test
+        void stalledTransferAbortsAfterElectionTimeoutAndWritesResumeWithoutStepDown() {
+            // A 4-voter config where node 4 is a configured voter that never runs (removed from the
+            // routing map = permanently partitioned). The live majority {1,2,3} keeps the leader's quorum,
+            // so the leader stays up; node 4 never catches up, so a transfer to it can never complete.
+            TestCluster cluster = new TestCluster(4);
+            cluster.nodes.remove(NodeId.of(4));
+            cluster.transports.remove(NodeId.of(4));
+            cluster.electLeader(NodeId.of(1));
+            RaftNode leader = cluster.nodes.get(NodeId.of(1));
+            assertEquals(RaftRole.LEADER, leader.role());
+            cluster.deliverAllMessages(10);
+
+            // Transfer to the unreachable voter: it is a legal target (a configured voter, not self), so
+            // transferTarget is set, but maybeSendTimeoutNow never fires (node 4 never catches up).
+            assertTrue(leader.transferLeadership(NodeId.of(4)), "the transfer to the partitioned voter is initiated");
+            assertNotNull(leader.transferTarget(), "the transfer is in progress (target never catches up)");
+            assertEquals(ProposalResult.TRANSFER_IN_PROGRESS, leader.propose(new byte[]{1}).result(),
+                    "every write is wedged while the transfer is in progress");
+
+            // Drive the leader past one election timeout, keeping the live majority {1,2,3} exchanging so
+            // its quorum holds (the leader must NOT step down). Node 4 is gone, so it never acks.
+            int electionTimeout = leader.electionTimeoutTicksForTest();
+            for (int i = 0; i <= electionTimeout; i++) {
+                for (RaftNode n : cluster.nodes.values()) {
+                    n.tick();
+                }
+                cluster.deliverAllMessages(5);
+            }
+
+            // The stalled transfer is aborted (section 3.10): target cleared, leader still leads, writes resume.
+            assertNull(leader.transferTarget(),
+                    "the stalled transfer must be aborted after about one election timeout");
+            assertEquals(RaftRole.LEADER, leader.role(),
+                    "the leader must NOT step down on abort - the group stays available under the same leader");
+            assertEquals(ProposalResult.ACCEPTED, leader.propose(new byte[]{2}).result(),
+                    "writes must resume once the stalled transfer is aborted");
+        }
     }
 
     // Log conflict resolution tests

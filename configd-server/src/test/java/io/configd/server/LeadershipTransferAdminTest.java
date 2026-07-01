@@ -4,6 +4,8 @@ import io.configd.api.AclService;
 import io.configd.api.AdminService;
 import io.configd.api.AuthInterceptor;
 import io.configd.api.HealthService;
+import io.configd.api.ReplayGuard;
+import io.configd.common.Clock;
 import io.configd.common.NodeId;
 import io.configd.store.VersionedConfigStore;
 import org.junit.jupiter.api.Test;
@@ -274,6 +276,54 @@ class LeadershipTransferAdminTest {
                 null, null);
         assertEquals(404, post(h, PATH, "target=2", "root").status(),
                 "with no leadership seam wired, the transfer path must fall through to 404");
+    }
+
+    // =============================================================================================
+    // Replay protection: a captured, valid-bearer transfer must not be replayable to force churn.
+    // =============================================================================================
+
+    @Test
+    void replayedTransferIsRejected409AndNotAttempted() throws Exception {
+        FakeLeadershipAdmin seam = new FakeLeadershipAdmin(0);
+        Clock clock = Clock.system();
+        ReplayGuard guard = new ReplayGuard(clock);
+        AdminApiHandler h = new AdminApiHandler(new HealthService(), null, new VersionedConfigStore(),
+                null, null, auth(), acl(), StrongReadPolicy.defaultPolicy(),
+                (scope, key) -> NodeId.of(1), null, guard, seam);
+        String ts = String.valueOf(clock.currentTimeMillis());
+        String nonce = "transfer-nonce-1";
+
+        // The first (fresh) request passes the guard and reaches the mechanism.
+        assertEquals(200, h.handle(transferReqWithReplay("root", ts, nonce)).status(),
+                "the first transfer request is accepted through the replay guard");
+        assertEquals(1, seam.attempts.get(), "the first transfer reached the mechanism");
+
+        // Replaying the SAME captured request (same nonce) is rejected 409, and NOT attempted again.
+        assertEquals(409, h.handle(transferReqWithReplay("root", ts, nonce)).status(),
+                "a replayed transfer request must be rejected (replayed nonce)");
+        assertEquals(1, seam.attempts.get(), "a replayed transfer must not reach the mechanism");
+    }
+
+    private static AdminApiHandler.AdminRequest transferReqWithReplay(String token, String ts, String nonce) {
+        final URI uri;
+        try {
+            uri = new URI(null, null, PATH, "target=2", null);
+        } catch (URISyntaxException e) {
+            throw new IllegalArgumentException(e);
+        }
+        return new AdminApiHandler.AdminRequest() {
+            @Override public String method() { return "POST"; }
+            @Override public URI uri() { return uri; }
+            @Override public String header(String name) {
+                if ("Authorization".equalsIgnoreCase(name)) {
+                    return token != null ? "Bearer " + token : null;
+                }
+                if (ReplayGuard.TIMESTAMP_HEADER.equalsIgnoreCase(name)) return ts;
+                if (ReplayGuard.NONCE_HEADER.equalsIgnoreCase(name)) return nonce;
+                return null;
+            }
+            @Override public byte[] body() { return new byte[0]; }
+        };
     }
 
     // =============================================================================================

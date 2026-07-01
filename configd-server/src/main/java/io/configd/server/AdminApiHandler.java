@@ -542,6 +542,15 @@ public final class AdminApiHandler {
             return json(400, "Unknown group " + groupId);
         }
 
+        // Replay protection, exactly as the config mutations apply it: a leadership transfer is a mutating
+        // privileged control op, so a captured (valid-bearer) request must not be replayable to force
+        // leadership churn. 401 on stale/malformed replay headers, 409 on a replayed nonce; the transfer is
+        // NOT attempted when rejected. No-op when no replay guard is configured (opt-in, default off).
+        AdminResponse replay = replayRejected(req, authCheck.principal(), "TRANSFER_LEADERSHIP", resourceKey);
+        if (replay != null) {
+            return replay;
+        }
+
         try {
             AdminService.AdminResult result = leadershipAdmin.transferLeadership(groupId, target);
             return transferResult(authCheck.principal(), resourceKey, groupId, target, result);

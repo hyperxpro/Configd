@@ -10,6 +10,7 @@ import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Future;
+import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
@@ -147,7 +148,15 @@ final class DriverLeadershipAdmin implements AdminApiHandler.LeadershipAdmin {
             // transferLeadership asserts the owner thread, so it MUST run there, never on the HTTP thread.
             // The bounded await keeps a wedged owner from blocking the HTTP thread; on expiry we raise a
             // timeout (503) rather than reporting a false negative.
-            Future<Boolean> f = owner.submit(() -> node.transferLeadership(target));
+            final Future<Boolean> f;
+            try {
+                f = owner.submit(() -> node.transferLeadership(target));
+            } catch (RejectedExecutionException e) {
+                // The owner executor is shutting down or draining: the node is unavailable, and the
+                // request is safe to retry elsewhere - surface the SAME retryable path as a timeout (503),
+                // never let it propagate to a 500.
+                throw new AdminApiHandler.LeadershipTransferTimeout(groupId, awaitMillis);
+            }
             try {
                 return f.get(awaitMillis, TimeUnit.MILLISECONDS);
             } catch (TimeoutException e) {

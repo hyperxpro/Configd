@@ -24,6 +24,7 @@ import org.junit.jupiter.api.Timeout;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
@@ -75,7 +76,8 @@ class DriverLeadershipAdminOwnerThreadTest {
         try {
             MetricsRegistry registry = new MetricsRegistry();
             RaftNode node = buildNode(registry, RaftConfig.of(NodeId.of(1), Set.of())); // self-elects
-            // Bind the owner + self-elect as the first tasks on the group's owner executor (the H-6 idiom).
+            // Bind the owner + self-elect as the first tasks on the group's owner executor, so the
+            // bind/elect path runs on-owner and the guard is active for the assertions below.
             pool.ownerExecutor(GROUP).submit(() -> {
                 node.bindOwnerThread();
                 for (int i = 0; i < 400; i++) node.tick();
@@ -139,5 +141,35 @@ class DriverLeadershipAdminOwnerThreadTest {
         } finally {
             pool.shutdown();
         }
+    }
+
+    /**
+     * A transfer submitted while the owner executor is shutting down must surface the retryable
+     * {@link AdminApiHandler.LeadershipTransferTimeout} path (mapped to 503), never a bare
+     * RejectedExecutionException that would become a 500.
+     */
+    @Test
+    @Timeout(30)
+    void transferDuringOwnerShutdownIsARetryableTimeoutNotA500() throws Exception {
+        OwnerExecutorPool pool = new OwnerExecutorPool(1);
+        MetricsRegistry registry = new MetricsRegistry();
+        RaftNode node = buildNode(registry, RaftConfig.of(NodeId.of(1), Set.of())); // self-elects to LEADER
+        pool.ownerExecutor(GROUP).submit(() -> {
+            node.bindOwnerThread();
+            for (int i = 0; i < 400; i++) node.tick();
+        }).get(5, TimeUnit.SECONDS);
+        assertEquals(RaftRole.LEADER, node.role());
+
+        MultiRaftDriver driver = new MultiRaftDriver(NodeId.of(1), Clock.system());
+        driver.setOwnerPool(pool);
+        driver.addGroup(GROUP, node);
+        DriverLeadershipAdmin admin = new DriverLeadershipAdmin(driver, 5_000L);
+
+        // The node still reads as LEADER (role() is volatile), so the guard reaches the owner post - but the
+        // executor now rejects it. That must convert to the retryable timeout path, not escape as a 500.
+        pool.shutdown();
+        assertThrows(AdminApiHandler.LeadershipTransferTimeout.class,
+                () -> admin.transferLeadership(GROUP, NodeId.of(2)),
+                "a transfer rejected by a shutting-down owner executor must surface the retryable 503 path");
     }
 }
