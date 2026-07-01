@@ -603,6 +603,59 @@ class RaftNodeTest {
             RaftNode leader = cluster.nodes.get(NodeId.of(1));
             assertFalse(leader.transferLeadership(NodeId.of(99)));
         }
+
+        @Test
+        void committedWritesSurviveTransferAndLeadershipIsRestorable() {
+            TestCluster cluster = new TestCluster(3);
+            cluster.electLeader(NodeId.of(1));
+            RaftNode leader1 = cluster.nodes.get(NodeId.of(1));
+
+            byte[] cmdA = {1, 2, 3};
+            byte[] cmdB = {4, 5, 6};
+            assertEquals(ProposalResult.ACCEPTED, leader1.propose(cmdA).result());
+            assertEquals(ProposalResult.ACCEPTED, leader1.propose(cmdB).result());
+            cluster.deliverAllMessages(20);
+            cluster.tickLeaderHeartbeatAndDeliver();
+            long committedBefore = leader1.log().commitIndex();
+            assertTrue(committedBefore >= 2, "both proposals must have committed on the leader");
+
+            // Transfer leadership to node 2.
+            assertTrue(leader1.transferLeadership(NodeId.of(2)), "the leader initiates the transfer");
+            cluster.deliverAllMessages(20);
+            RaftNode node2 = cluster.nodes.get(NodeId.of(2));
+            assertEquals(RaftRole.LEADER, node2.role(), "node 2 becomes leader after the transfer");
+
+            // No committed-write loss: the previously committed entries survive in the new leader's log,
+            // and its state machine already applied both original commands.
+            assertTrue(node2.log().lastIndex() >= committedBefore,
+                    "the new leader must retain every previously committed entry (no write loss)");
+            TestStateMachine sm2 = cluster.stateMachines.get(NodeId.of(2));
+            assertTrue(containsCommand(sm2, cmdA) && containsCommand(sm2, cmdB),
+                    "both committed writes must be present in the new leader's applied state (durable across transfer)");
+
+            // The group stays available under the new leader: it accepts and commits a fresh write.
+            assertEquals(ProposalResult.ACCEPTED, node2.propose(new byte[]{7, 8, 9}).result());
+            cluster.deliverAllMessages(20);
+            cluster.tickLeaderHeartbeatAndDeliver();
+            assertTrue(node2.log().commitIndex() > committedBefore,
+                    "the new leader commits a fresh write - the group stays available");
+
+            // Restorable: leadership can be moved back to node 1 (operator-manageable, not one-way).
+            cluster.deliverAllMessages(20);
+            assertTrue(node2.transferLeadership(NodeId.of(1)), "leadership must be transferable back");
+            cluster.deliverAllMessages(20);
+            assertEquals(RaftRole.LEADER, cluster.nodes.get(NodeId.of(1)).role(),
+                    "leadership is restored to node 1 - placement is operator-manageable in both directions");
+        }
+
+        private static boolean containsCommand(TestStateMachine sm, byte[] command) {
+            for (TestStateMachine.AppliedEntry e : sm.applied) {
+                if (java.util.Arrays.equals(e.command(), command)) {
+                    return true;
+                }
+            }
+            return false;
+        }
     }
 
     // Log conflict resolution tests

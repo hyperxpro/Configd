@@ -93,6 +93,28 @@ public final class HttpApiServer {
                          BiFunction<ConfigScope, String, NodeId> leaderHintSupplier,
                          AuditLog auditLog,
                          ReplayGuard replayGuard) throws IOException {
+        this(port, sslContext, healthService, prometheusExporter, configStore, writeService, readService,
+                authInterceptor, aclService, strongReadPolicy, leaderHintSupplier, auditLog, replayGuard, null);
+    }
+
+    /**
+     * As the full constructor, plus the {@link AdminApiHandler.LeadershipAdmin} seam that backs the
+     * ADMIN-gated leadership-transfer endpoint. A {@code null} seam leaves that endpoint unrouted.
+     */
+    public HttpApiServer(int port,
+                         SSLContext sslContext,
+                         HealthService healthService,
+                         PrometheusExporter prometheusExporter,
+                         VersionedConfigStore configStore,
+                         ConfigWriteService writeService,
+                         ConfigReadService readService,
+                         AuthInterceptor authInterceptor,
+                         AclService aclService,
+                         StrongReadPolicy strongReadPolicy,
+                         BiFunction<ConfigScope, String, NodeId> leaderHintSupplier,
+                         AuditLog auditLog,
+                         ReplayGuard replayGuard,
+                         AdminApiHandler.LeadershipAdmin leadershipAdmin) throws IOException {
         if (sslContext != null) {
             HttpsServer httpsServer = HttpsServer.create(new InetSocketAddress(port), 0);
             httpsServer.setHttpsConfigurator(new HttpsConfigurator(sslContext));
@@ -103,7 +125,7 @@ public final class HttpApiServer {
 
         AdminApiHandler handler = new AdminApiHandler(healthService, prometheusExporter, configStore,
                 writeService, readService, authInterceptor, aclService, strongReadPolicy,
-                leaderHintSupplier, auditLog, replayGuard);
+                leaderHintSupplier, auditLog, replayGuard, leadershipAdmin);
 
         // A single root context: the shared handler does its own exact-match routing,
         // so a suffix variant of a fixed endpoint cannot be served by a prefix-matched context.

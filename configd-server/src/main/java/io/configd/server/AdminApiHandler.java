@@ -1,6 +1,7 @@
 package io.configd.server;
 
 import io.configd.api.AclService;
+import io.configd.api.AdminService;
 import io.configd.api.AuditLog;
 import io.configd.api.AuthInterceptor;
 import io.configd.api.ConfigReadService;
@@ -65,6 +66,9 @@ public final class AdminApiHandler {
     private final BiFunction<ConfigScope, String, NodeId> leaderHintSupplier;
     private final AuditLog auditLog;                   // nullable: auditing disabled
     private final ReplayGuard replayGuard;             // nullable: replay protection off
+    // nullable: when null the leadership-transfer route falls through to 404, so a handler wired without
+    // it is byte-identical to one built before the endpoint existed (every existing caller passes null).
+    private final LeadershipAdmin leadershipAdmin;
 
     public AdminApiHandler(HealthService healthService,
                            PrometheusExporter prometheusExporter,
@@ -77,6 +81,22 @@ public final class AdminApiHandler {
                            BiFunction<ConfigScope, String, NodeId> leaderHintSupplier,
                            AuditLog auditLog,
                            ReplayGuard replayGuard) {
+        this(healthService, prometheusExporter, configStore, writeService, readService, authInterceptor,
+                aclService, strongReadPolicy, leaderHintSupplier, auditLog, replayGuard, null);
+    }
+
+    public AdminApiHandler(HealthService healthService,
+                           PrometheusExporter prometheusExporter,
+                           VersionedConfigStore configStore,
+                           ConfigWriteService writeService,
+                           ConfigReadService readService,
+                           AuthInterceptor authInterceptor,
+                           AclService aclService,
+                           StrongReadPolicy strongReadPolicy,
+                           BiFunction<ConfigScope, String, NodeId> leaderHintSupplier,
+                           AuditLog auditLog,
+                           ReplayGuard replayGuard,
+                           LeadershipAdmin leadershipAdmin) {
         this.healthService = healthService;
         this.prometheusExporter = prometheusExporter;
         this.configStore = configStore;
@@ -88,6 +108,7 @@ public final class AdminApiHandler {
         this.leaderHintSupplier = Objects.requireNonNull(leaderHintSupplier, "leaderHintSupplier must not be null");
         this.auditLog = auditLog;
         this.replayGuard = replayGuard;
+        this.leadershipAdmin = leadershipAdmin;
     }
 
     // -----------------------------------------------------------------------
@@ -120,6 +141,37 @@ public final class AdminApiHandler {
     public record AdminResponse(int status, Map<String, String> headers, byte[] body) {
     }
 
+    /**
+     * The mechanism seam for the ADMIN-gated leadership-transfer endpoint. The decision core stays
+     * transport- AND driver-agnostic: it decides routing, the ADMIN gate, and the response mapping, then
+     * delegates the {@code RaftNode} mechanism (owner-thread posting, the transfer itself) here. The
+     * production implementation ({@code DriverLeadershipAdmin}) is backed by the multi-Raft driver; tests
+     * supply a fake. A {@code null} seam disables the endpoint (the route falls through to 404).
+     */
+    public interface LeadershipAdmin {
+        /** Whether the group is registered on this node (an unknown group is a 400 request). */
+        boolean hasGroup(int groupId);
+
+        /**
+         * Initiates a leadership transfer of {@code groupId} to {@code target} through the built
+         * {@link AdminService} guard, returning its {@link AdminService.AdminResult}. Runs the owner-confined
+         * {@code RaftNode} touch on the group's owner thread. Throws {@link LeadershipTransferTimeout} if
+         * the owner thread does not confirm within its bounded wait (mapped to 503).
+         */
+        AdminService.AdminResult transferLeadership(int groupId, NodeId target);
+    }
+
+    /**
+     * The owner thread did not confirm a leadership transfer within the bounded wait. Surfaced as 503
+     * (unknown-but-retryable), distinct from a precondition {@link AdminService.AdminResult.Failure} (409).
+     */
+    public static final class LeadershipTransferTimeout extends RuntimeException {
+        public LeadershipTransferTimeout(int groupId, long awaitMillis) {
+            super("leadership transfer for group " + groupId
+                    + " was not confirmed within " + awaitMillis + "ms");
+        }
+    }
+
     // -----------------------------------------------------------------------
     // Routing
     // -----------------------------------------------------------------------
@@ -138,6 +190,11 @@ public final class AdminApiHandler {
         }
         if (path != null && path.startsWith("/v1/config/")) {
             return config(req, path);
+        }
+        // The leadership-transfer control endpoint, present only when the seam is wired. A null seam leaves
+        // the admin-groups namespace unrouted, so the handler is byte-identical to before the endpoint existed.
+        if (leadershipAdmin != null && path != null && path.startsWith(ADMIN_GROUPS_PREFIX)) {
+            return transferLeadership(req, path);
         }
         return json(404, "Not Found");
     }
@@ -405,6 +462,165 @@ public final class AdminApiHandler {
                 yield new AdminResponse(429, h, bytes("Overloaded"));
             }
         };
+    }
+
+    // -----------------------------------------------------------------------
+    // Leadership transfer (ADMIN-gated control operation)
+    // -----------------------------------------------------------------------
+
+    private static final String ADMIN_GROUPS_PREFIX = "/v1/admin/groups/";
+    private static final String TRANSFER_LEADERSHIP_SUFFIX = "/transfer-leadership";
+
+    /**
+     * {@code POST /v1/admin/groups/{groupId}/transfer-leadership?target=<nodeId>} - an operator-initiated,
+     * ADMIN-gated request to place group {@code groupId}'s Raft leadership on node {@code target}. This is
+     * a control operation, deliberately NOT modelled as a {@code /v1/config/} write or a reserved-key write
+     * (which would conflate it with config apply/audit/replay semantics). It is idempotent-ish and its
+     * effect is asynchronous: a 200 means the transfer was INITIATED (a TimeoutNow was sent), not that the
+     * leader has moved - the caller confirms via a follow-up leader read.
+     *
+     * <p>The group id is parsed from the path (the caller's own input, so a malformed id is a 400 decided
+     * before the ADMIN gate, leaking no server state); group EXISTENCE is checked only AFTER the gate so an
+     * unauthorized caller cannot probe which groups exist.
+     */
+    private AdminResponse transferLeadership(AdminRequest req, String path) {
+        if (!path.endsWith(TRANSFER_LEADERSHIP_SUFFIX)) {
+            return json(404, "Not Found"); // an unknown sub-resource under the admin-groups namespace
+        }
+        if (!"POST".equals(req.method())) {
+            return json(405, "Method Not Allowed");
+        }
+        // The group-id segment lies between the prefix and the suffix. Guard the bounds: when the prefix
+        // and suffix overlap or abut ({@code segEnd <= prefix length}) there is no group id at all
+        // (e.g. `/v1/admin/groups/transfer-leadership`), which is a malformed request, not a substring fault.
+        int segEnd = path.length() - TRANSFER_LEADERSHIP_SUFFIX.length();
+        if (segEnd <= ADMIN_GROUPS_PREFIX.length()) {
+            return json(400, "Invalid group id in path");
+        }
+        String groupIdSegment = path.substring(ADMIN_GROUPS_PREFIX.length(), segEnd);
+        // A segment carrying a nested path ('/') is not a single group id.
+        if (groupIdSegment.indexOf('/') >= 0) {
+            return json(400, "Invalid group id in path");
+        }
+        final int groupId;
+        try {
+            groupId = Integer.parseInt(groupIdSegment);
+        } catch (NumberFormatException e) {
+            return json(400, "Invalid group id '" + groupIdSegment + "' (expected an integer)");
+        }
+
+        // The ADMIN gate. The transfer is authorized against the group's reserved `_system/` control
+        // resource (ADMIN reaches the `_system/` subtree by design), fail-closed and STRICTER than the
+        // config gate: refused outright when auth is off (a control op must never be issuable during an
+        // insecure bring-up).
+        String resourceKey = SYSTEM_PREFIX + "raft/groups/" + groupId + "/leadership";
+        AuthCheck authCheck = checkAdmin(req, resourceKey);
+        if (authCheck.decision() != AuthDecision.OK) {
+            audit(authCheck.principal(), "TRANSFER_LEADERSHIP", resourceKey,
+                    "denied: " + authCheck.decision() + " (" + authCheck.reason() + ")");
+            return authDenial(authCheck);
+        }
+
+        String targetRaw = queryParam(req.uri().getQuery(), "target");
+        if (targetRaw == null || targetRaw.isBlank()) {
+            audit(authCheck.principal(), "TRANSFER_LEADERSHIP", resourceKey, "rejected: missing target");
+            return json(400, "Missing required query parameter 'target' (the node id to transfer leadership to)");
+        }
+        final NodeId target;
+        try {
+            target = NodeId.of(Integer.parseInt(targetRaw.trim()));
+        } catch (NumberFormatException e) {
+            audit(authCheck.principal(), "TRANSFER_LEADERSHIP", resourceKey,
+                    "rejected: invalid target '" + targetRaw + "'");
+            return json(400, "Invalid target node id '" + targetRaw + "' (expected an integer)");
+        }
+
+        // Group existence is decided AFTER the ADMIN gate (an unauthorized caller must not learn which
+        // groups exist).
+        if (!leadershipAdmin.hasGroup(groupId)) {
+            audit(authCheck.principal(), "TRANSFER_LEADERSHIP", resourceKey, "rejected: unknown group " + groupId);
+            return json(400, "Unknown group " + groupId);
+        }
+
+        try {
+            AdminService.AdminResult result = leadershipAdmin.transferLeadership(groupId, target);
+            return transferResult(authCheck.principal(), resourceKey, groupId, target, result);
+        } catch (LeadershipTransferTimeout timeout) {
+            // The owner thread did not confirm within its bound: unknown outcome, safe to retry -> 503,
+            // distinct from a precondition failure (409).
+            audit(authCheck.principal(), "TRANSFER_LEADERSHIP", resourceKey, "timeout");
+            return json(503, "Leadership transfer to " + target + " for group " + groupId
+                    + " could not be confirmed within the deadline; unknown outcome, safe to retry");
+        }
+    }
+
+    /**
+     * Maps an {@link AdminService.AdminResult} to HTTP: {@code Success} -> 200 (initiated, asynchronous);
+     * {@code NotLeader} -> 503 + {@code X-Leader-Hint} (retry the group leader); {@code Failure} -> 409
+     * (a transfer precondition failed - target == self / not a voter / a config change is pending).
+     */
+    private AdminResponse transferResult(String actor, String resourceKey, int groupId, NodeId target,
+                                         AdminService.AdminResult result) {
+        return switch (result) {
+            case AdminService.AdminResult.Success ignored -> {
+                audit(actor, "TRANSFER_LEADERSHIP", resourceKey, "initiated: target=" + target);
+                yield json(200, "Leadership transfer to " + target + " for group " + groupId
+                        + " initiated (asynchronous; confirm via the new leader)");
+            }
+            case AdminService.AdminResult.NotLeader nl -> {
+                audit(actor, "TRANSFER_LEADERSHIP", resourceKey, "not-leader");
+                Map<String, String> h = jsonHeaders();
+                if (nl.leaderId() != null) {
+                    h.put("X-Leader-Hint", String.valueOf(nl.leaderId().id()));
+                }
+                yield new AdminResponse(503, h, bytes("Not Leader: this node does not lead group " + groupId
+                        + (nl.leaderId() != null ? " (leader=" + nl.leaderId() + ")" : "")
+                        + "; retry against the group leader"));
+            }
+            case AdminService.AdminResult.Failure f -> {
+                audit(actor, "TRANSFER_LEADERSHIP", resourceKey, "rejected: " + f.reason());
+                yield json(409, "Leadership transfer rejected: " + f.reason());
+            }
+        };
+    }
+
+    /**
+     * The ADMIN gate for a privileged control operation. Reuses the SAME authn (Bearer) + authz
+     * (ACL {@link AclService.Permission#ADMIN}) primitives as {@link #checkAuth}, but with a STRICTER
+     * fail-closed posture appropriate to a control op:
+     * <ul>
+     *   <li><b>Auth disabled</b> -> DENIED. A leadership transfer must never be issuable during an
+     *       insecure auth-off bring-up - identity/policy is meaningless without auth, and moving
+     *       leadership is too dangerous to leave open (mirrors the reserved-prefix WRITE refusal, which
+     *       likewise refuses a privileged mutation while auth is off).</li>
+     *   <li><b>Authenticated but no ACL service</b> -> DENIED: ADMIN cannot be evaluated, so fail closed
+     *       rather than fall through to allowed.</li>
+     *   <li><b>Authenticated, ACL present</b> -> requires ADMIN on the group's reserved control resource.</li>
+     * </ul>
+     */
+    private AuthCheck checkAdmin(AdminRequest req, String resourceKey) {
+        if (authInterceptor == null) {
+            return AuthCheck.forbidden("-",
+                    "Access denied: leadership transfer requires authentication, which is disabled");
+        }
+        AuthInterceptor.AuthResult authResult = authInterceptor.authenticate(bearerToken(req));
+        if (authResult instanceof AuthInterceptor.AuthResult.Denied denied) {
+            return AuthCheck.unauthenticated("authentication required: " + denied.reason());
+        }
+        if (authResult instanceof AuthInterceptor.AuthResult.Authenticated authed) {
+            if (aclService == null) {
+                return AuthCheck.forbidden(authed.principal(),
+                        "Access denied: leadership transfer requires ADMIN but no ACL is configured");
+            }
+            if (!aclService.isAllowed(authed.principal(), authed.roles(), resourceKey,
+                    AclService.Permission.ADMIN)) {
+                return AuthCheck.forbidden(authed.principal(),
+                        "Access denied: ADMIN required for leadership transfer");
+            }
+            return AuthCheck.ok(authed.principal());
+        }
+        // Defensive fail-closed for any future AuthResult variant (the sealed type is {Authenticated, Denied}).
+        return AuthCheck.forbidden("-", "Access denied: leadership transfer requires ADMIN");
     }
 
     // -----------------------------------------------------------------------
