@@ -16,7 +16,7 @@
 #                   (gates/gate3-map-expectation.txt, owned by contract-qa —
 #                   any map drift is LOUD, and PARTIAL rows are tolerated only
 #                   because each carries an explicit future-session owner,
-#                   audited in docs/session-3/reviews/c6-contract-qa-audit.md).
+#                   audited in the contract-qa audit).
 #   (c) edgeseeds   the committed 507-seed gate set with the FULL V1 edge
 #                   invariant set (monotonicity, no-stale-overwrite, eventual
 #                   delivery, snapshot–delta equivalence): zero safety
