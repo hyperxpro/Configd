@@ -60,7 +60,7 @@ mkdir -p "$LOGDIR"
 export GATE3_LOG_DIR="$LOGDIR"
 
 MVN="$ROOT/mvnw -B"
-MAP="$ROOT/docs/session-3/contract-test-map.md"
+MAP="$ROOT/gates/contract-test-map.md"
 EXPECT="$ROOT/gates/gate3-map-expectation.txt"
 
 step_gate2() {
