@@ -15,6 +15,7 @@ separately). Full detail in the sibling docs; raw captures in `captures/`.
 | No committed-write loss on fault | **0 loss** across leader-kill, WAL-replay restart, wipe+InstallSnapshot (1000/1000 keys each) | ✅ durability contract holds |
 | Node recovery RTO | **~4.2 s** (WAL replay) / **~5.9 s** (snapshot rebuild) | ✅ pass |
 | mTLS on the production CLI path | 3-node Raft peer mTLS + API serve, curl-P12 → 200 | ✅ functional |
+| **Soak — no leak/OOM** (6 h burn-in) | full 6 h reached (prior attempt OOM'd at 3.45 h); **FD flat 350→350**, RSS 2.6 % spread, heap floor stable, GC 0.92 %, 0 rejected | ✅ **PASS** (gate closed) |
 
 ## What's NOT proven (the honest gaps)
 
@@ -28,9 +29,7 @@ separately). Full detail in the sibling docs; raw captures in `captures/`.
    raw throughput (~800→~1100/s) but de-churns the cluster; real multi-machine scaling should exceed
    ~1100/s by an unmeasured factor.
 
-2. **Soak (6 h leak/OOM burn-in): IN PROGRESS** — see `04-soak.md` (this section updated on completion).
-   The prior 24 h attempt OOM'd at 3.45 h; this run targets 6 h on NVMe with 2 g ZGC heaps + NMT, watching
-   heap/RSS/GC/FD. [PASS/BLOCKER — pending.]
+2. ~~Soak~~ — now **PROVEN** (moved to the proven table below).
 
 ## Allocation hypotheses (oracle)
 - server `ByteBufFrameSink` per-connection reuse — **real win ~176 B/op** (confirmed). Follow-up to merge.
@@ -48,4 +47,19 @@ None merged this session (per charter).
   on a single box.** Recommend either (a) shipping v1 with an explicit "per-cell ~1100 w/s on comparable
   hardware; multi-machine N× is a v2 measurement" caveat, or (b) a short follow-up multi-instance run
   before committing to the horizontal-scale claim in v1 docs.
-- Soak verdict pending (gates the leak/OOM concern).
+- **Soak: GREEN.** 6 h clean past the 3.45 h prior OOM — FD/RSS/heap/GC all flat; the leak/OOM concern is
+  closed on clean code.
+
+## The v1 ship line, in one sentence
+Durability, availability, and long-run stability are **measured and green**; single-node performance is
+**characterised (~800 w/s knee, churn-bound)**; the **one open item is multi-machine horizontal N× scaling**,
+which a single box cannot prove — ship v1 with that explicit caveat, or run a short multi-instance
+follow-up first.
+
+## Empirical 🔬 items closed this session
+Real-hardware single-box N×knee · single-group knee root-cause · DR failover + no-loss + RTO · 6 h soak
+leak/OOM · allocation floors + hypothesis verdicts · mTLS functional. **Still open:** multi-machine N×knee.
+
+## Follow-ups (NOT this session)
+Merge the confirmed alloc win (`ByteBufFrameSink` reuse ~176 B/op) + `PrefixStorageFilter.isEmpty()`;
+harden `soak.sh` cleanup (`$BASE`==`$OUT_DIR` guard); run the multi-machine N×knee.
