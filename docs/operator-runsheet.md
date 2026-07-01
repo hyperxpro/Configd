@@ -1,341 +1,254 @@
-# Operator Runsheet — Configd v0.1 GA
+# Operator Runsheet — Configd v1 (secure-by-CONFIG release gates)
 
-**Audience:** the platform SRE / release engineer / on-call lead who
-owns the seven calendar-bounded harnesses that flip YELLOW gates to
-GREEN in `docs/ga-review.md`.
+> **Supersedes** the prior v0.1-GA hardening runsheet (the April-2026 "40-day
+> harness" artifact from the self-healing-loop era). That document's
+> calendar-bounded soak/burn/shadow/longevity harnesses are retired: the DR and
+> soak **evidence now lives in [`measurement/`](measurement/)** (the two paid EC2
+> runs — [`ec2-2026-06-30/`](measurement/ec2-2026-06-30/) single-box durability +
+> 6 h soak, and [`ec2-horizontal-2026-07-01/`](measurement/ec2-horizontal-2026-07-01/)
+> multi-machine horizontal scale), and the first-30-days operating posture is the
+> **[burn-in contract](burn-in-contract.md)** (go/no-go condition **C4** —
+> [`readiness/v1-go-no-go-2026-07-01.md`](readiness/v1-go-no-go-2026-07-01.md) §0/§5.1).
 
-**Promise of this file:** you can execute the whole GA hardening cycle
-top-to-bottom from this document alone. Every command, duration,
-hardware shape, pass criterion, fail criterion, evidence path, and
-GA-row mapping is right here. You should not need to open
-`docs/handoff.md`, `docs/ga-review.md`, or any runbook to *plan* —
-only to execute the runbook step text once you reach steps 1 and 2.
+**Audience:** the release engineer / SRE who signs off that a cluster is
+production-ready.
 
-**Authored:** 2026-04-22 by the autonomous self-healing loop
-(Opus 4.7), as Type C **artifact preparation** following iter-2
-termination per §5. Type C closure (signing `docs/ga-approval.md`)
-remains a human gate per the §4.7 honesty invariant.
+**What this file is.** A checklist you run **before** declaring a Configd v1
+cluster production-ready. It closes go/no-go **condition C1** ("ship
+secure-by-config; put the §4 MUST-KNOW list into the runsheet as release gates,
+not footnotes"). Read it together with its companion
+[`deployer-must-know.md`](deployer-must-know.md) (condition C2 — the
+"know-this-or-you-create-a-vulnerability" list).
 
----
+## The one thing to internalize: secure-by-CONFIG, not by-default
 
-## 0. Read this first
+v1 is a **deliberate posture choice: secure-by-config, not secure-by-default**
+([go/no-go §4](readiness/v1-go-no-go-2026-07-01.md)). **Except rate limiting,
+every security control is OFF until you turn it on**, and each off control emits
+a loud startup warning or a `disabled` banner line. An out-of-the-box node is
+**plaintext, unauthenticated, unaudited, no replay protection**. None of the
+gates below are optional for a production node.
 
-- **Order:** harnesses below are ordered **shortest-first**. Run them
-  in order unless the dependency graph in §9 says otherwise.
-- **Two execution tracks:** drills (steps 1–2) execute on the
-  **staging** cluster; the four perf harnesses (steps 3–6) execute on
-  a separate **production-shaped 5-node** cluster. The on-call
-  bootstrap (step 7) is organisational and runs in parallel to
-  everything else.
-- **Honesty invariant:** record measured elapsed seconds. Do not round
-  up. Do not mark a row GREEN until the result file exists at the
-  named path AND its numbers meet the pass criterion below.
-- **One harness per cluster at a time.** The perf harnesses share
-  hardware and contend for the same 5-node footprint; serialize them.
-- **Each harness produces exactly one `result.txt`** at the path named
-  in its "Evidence lands at" line. That path is what the approver
-  pastes into `docs/ga-approval.md` §6.5 / §4.
+Every gate is verified two ways: a **startup log line** to grep, and a
+**behavioral probe** with an expected response. Trust the behavioral probe over
+the banner.
 
 ---
 
-## 1. Step 1 — Leader-loss recovery drill (≤ 5 min)
+## Release-gate checklist (fill this in per cluster)
 
-- **Purpose:** prove the leader-loss runbook is executable as written
-  and the cluster recovers within SLA.
-- **Hardware:** staging cluster matching `deploy/kubernetes/`
-  (5 nodes minimum, 3 voters; can reuse perf cluster between perf
-  runs).
-- **Procedure:** force-kill the current Raft leader, then follow
-  `ops/runbooks/control-plane-down.md` end-to-end through write
-  resumption. Identify the leader via:
-  ```sh
-  kubectl exec -n configd configd-0 -- curl -s localhost:8080/raft/status | jq .leader
-  kubectl delete pod -n configd <leader-pod-name> --grace-period=0 --force
-  ```
-- **Required duration:** **< 5 minutes wall time** (one drill).
-- **Pass — exact numbers:**
-  - New leader elected in **< 10 s** from kill.
-  - Write-commit p99 returns under 150 ms within **< 30 s** of new
-    leader's first heartbeat.
-  - **Zero** committed writes lost (Raft log comparison: highest
-    committed index on every surviving node ≥ pre-kill highest
-    committed index).
-- **Fail:** any of: no leader after 10 s, p99 still elevated after
-  30 s, any committed-index regression, runbook step that requires an
-  undocumented command. Any one of these is a fail; do not partial-
-  credit.
-- **Evidence lands at:**
-  `ops/dr-drills/results/control-plane-down-<UTC>/result.txt` per
-  `ops/runbooks/runbook-conformance-template.md`.
-- **Flips:** GA row **Runbook conformance — leader loss** YELLOW →
-  GREEN.
+| # | Gate | What to set | Verify (startup line · behavioral probe) | Default |
+|---|------|-------------|------------------------------------------|---------|
+| 1 | **Auth ON** | `--auth-token <token>` | `Auth         : enabled` · unauth `PUT /v1/config/k` → **401** | **OFF** (loud 5-line WARNING) |
+| 2 | **mTLS ON** (peer + edge) | `--tls-cert` `--tls-key` `--tls-trust-store` (all three) | `TLS          : enabled` · plaintext dial to peer/edge port → **handshake failure** | **OFF** → plaintext |
+| 3 | **Audit ON** | *(none — auto-ON iff Auth ON)* | `Audit log    : security-audit (KEYED HMAC-SHA256 chain...)` | **OFF** (there is **no `--audit` flag**) |
+| 4 | **Replay protection ON** | `-Dconfigd.replay.enabled=true` (sysprop, **not** a CLI flag) | `Replay guard : ON (window 300000ms, nonce cap 1000000)` · replayed nonce → **409**, stale/missing → **401** | **OFF** |
+| 5 | **Signing key NOT co-located** | `--signing-key-file <path outside --data-dir>` | Node **boots** (no `SecurityException`); a co-located key **refuses to start** by default | Fail-closed **ON** |
+| 6 | **Strong reads** | `--strong-read-prefixes secure/,...` (or accept the default) | `Strong reads : [secure/] (fail-closed linearizable, ADR-0030 INV-1)` | **ON** for `secure/` (safe default) |
+| — | **Rate limiting** | *(none — unconditionally ON)* | `Write rate   : 10000/s (burst 10000)` · sustained flood → **429** | **ON** (the one control on-by-default) |
 
-## 2. Step 2 — Restore-from-snapshot drill (~ 30 min)
-
-- **Purpose:** prove the restore runbook works on a real cluster from
-  a real snapshot, not just from in-memory test fixtures.
-- **Hardware:** staging cluster matching `deploy/kubernetes/`,
-  pre-seeded with a known data set whose key list is stored in the
-  snapshot manifest (`snapshot-manifest.json` produced by `configd
-  snapshot create`).
-- **Procedure:** follow `ops/runbooks/restore-from-snapshot.md`
-  step-by-step. Use no commands not in the runbook — that is part of
-  the test.
-- **Required duration:** **~30 minutes wall time** (operator SLA).
-- **Pass — exact numbers:**
-  - Runbook executable from documented steps only — operator records
-    "0 undocumented commands" on the result file.
-  - `InvariantMonitor.assertAll()` returns success (one log line:
-    `INVARIANTS OK`) on the restored cluster.
-  - **100 %** of keys in the snapshot manifest read back
-    byte-identical from the restored cluster (`diff
-    expected-keys.txt restored-keys.txt` is empty).
-- **Fail:** any undocumented command needed; any invariant assertion
-  failure; any key with non-identical bytes; any restore exceeding
-  60 minutes.
-- **Evidence lands at:**
-  `ops/dr-drills/results/restore-from-snapshot-<UTC>/result.txt`.
-- **Flips:** GA row **Runbook conformance — restore** YELLOW → GREEN.
-
-## 3. Step 3 — 72-hour soak (259 200 s)
-
-- **Purpose:** baseline steady-state perf and detect short-window
-  regressions (memory, p99, leader churn).
-- **Command:**
-  ```sh
-  ./perf/soak-72h.sh --duration=$((72*3600)) --seed=42 \
-    --out=perf/results/soak-prod-$(date -u +%Y%m%dT%H%M%SZ)
-  ```
-  **Prerequisite:** the harness today honours the duration contract
-  only; you must wire the write/read/RSS-sampler loops described in
-  the script's header before the run.
-- **Hardware:** production-shaped 5-node cluster per
-  `deploy/kubernetes/`. Dedicated; no co-tenants for the duration.
-- **Required duration:** **259 200 s wall time** (3 days).
-- **Pass — exact numbers (from `result.txt`):**
-  - `measured_elapsed_sec >= 259200`
-  - Write-commit p99 **< 150 ms** every sampling window.
-  - Edge read p99 **< 1 ms** every sampling window.
-  - Propagation p99 **< 500 ms** every sampling window.
-  - RSS growth t+15min → t+end **< 10 %**.
-  - Leader-churn count after warm-up window: **0**.
-- **Fail:** any p99 breach in any window; RSS growth ≥ 10 %; any
-  leader change post-warmup; `measured_elapsed_sec < 259200`.
-- **Evidence lands at:**
-  `perf/results/soak-prod-<UTC>/result.txt`.
-- **Flips:** GA row **C1 — 72-h soak** YELLOW → GREEN.
-
-## 4. Step 4 — 7-day burn (604 800 s)
-
-- **Purpose:** surface accumulating drift at sustained 80%-capacity
-  with periodic chaos: fd leaks, cache fragmentation, log-segment
-  fragmentation, follower metric staleness.
-- **Command:**
-  ```sh
-  ./perf/burn-7d.sh --duration=$((7*24*3600)) --seed=43 \
-    --out=perf/results/burn-prod-$(date -u +%Y%m%dT%H%M%SZ)
-  ```
-  Chaos schedule per script header: 1 leader kill / 12 h, 1
-  partition-then-heal / 24 h (≤ 30 s), 1 disk-fsync stall / 48 h
-  (≤ 5 s), 1 TLS hot-reload / 36 h.
-- **Hardware:** same 5-node prod-shaped cluster. **Must run AFTER
-  step 3** completes — they share hardware and step 3 establishes
-  the steady-state baseline this run drifts away from.
-- **Required duration:** **604 800 s wall time** (7 days).
-- **Pass — exact numbers:**
-  - `measured_elapsed_sec >= 604800`.
-  - Open file descriptors at end ≤ FD count at t+1h × **1.05**.
-  - Resident-set size at end ≤ RSS at t+1h × **1.10**.
-  - Day-7 write-commit p99 ≤ Day-1 write-commit p99 × **1.10**.
-  - All chaos events recover within their per-event SLA stated
-    above (each emits a recovery-time line in `result.txt`).
-- **Fail:** FD growth > 5 %; RSS growth > 10 %; p99 drift > 10 %;
-  any chaos event whose recovery exceeds its SLA.
-- **Evidence lands at:**
-  `perf/results/burn-prod-<UTC>/result.txt`.
-- **Flips:** GA row **C2 — 7-day burn** YELLOW → GREEN.
-
-## 5. Step 5 — 14-day shadow traffic (1 209 600 s)
-
-- **Purpose:** verify v0.1 produces byte-identical reads under real
-  production traffic against a control build. v0.1 is the first GA,
-  so see "Resolution" below for the self-shadow protocol.
-- **Command:**
-  ```sh
-  ./perf/shadow-14d.sh --duration=$((14*24*3600)) \
-    --out=perf/results/shadow-prod-$(date -u +%Y%m%dT%H%M%SZ)
-  ```
-  Production traffic mirrored via the operator's gateway mirroring
-  proxy to **two** clusters: the previous-GA control and the
-  candidate v0.1.
-- **Hardware:** **two** 5-node prod-shaped clusters running
-  concurrently. **Independent of step 3 / 4 hardware** — this can
-  run in parallel to the perf track if a second cluster pair is
-  available.
-- **Required duration:** **1 209 600 s wall time** (14 days).
-- **Resolution for v0.1 first-release case:** there is no previous
-  build to shadow against. Resolve **before** starting the run, by:
-  - **Option A** — run v0.1 against a canary slice of production
-    traffic; explicitly accept "self-shadow" in
-    `docs/decisions/adr-0027-v0.1-accepted-residuals.md`. Pass
-    criterion below applies to the canary slice.
-  - **Option B** — drop C4 to a YELLOW residual in ADR-0027 and
-    defer real shadow to v0.2's first update. Skip this step.
-  Pick one before starting; both are valid GA dispositions.
-- **Pass — exact numbers:**
-  - Every read response **byte-identical** between control and
-    candidate (diff count = **0**).
-  - Candidate p99 ≤ control p99 × **1.05**.
-  - **Zero** new ERROR log classes in candidate vs. control
-    (compared by error-class fingerprint, not by count).
-- **Fail:** any byte-divergence; p99 ratio > 1.05; any new error
-  class.
-- **Evidence lands at:**
-  `perf/results/shadow-prod-<UTC>/result.txt`.
-- **Flips:** GA row **C4 — 14-day shadow** YELLOW → GREEN
-  (Option A) OR YELLOW-via-accepted-residual (Option B documented
-  in ADR-0027).
-
-## 6. Step 6 — 30-day longevity (2 592 000 s)
-
-- **Purpose:** prove the snapshot subsystem is healthy across many
-  install/truncate cycles; detect WAL segment growth, snapshot
-  install-latency drift, disk high-watermark.
-- **Command:**
-  ```sh
-  ./perf/longevity-30d.sh --duration=$((30*24*3600)) --seed=44 \
-    --out=perf/results/longevity-prod-$(date -u +%Y%m%dT%H%M%SZ)
-  ```
-- **Hardware:** same 5-node prod-shaped cluster as steps 3 / 4.
-  **Must run AFTER step 4** — same hardware contention; longevity
-  is the longest single run, so do not start it until burn has
-  passed.
-- **Required duration:** **2 592 000 s wall time** (30 days).
-- **Pass — exact numbers:**
-  - `measured_elapsed_sec >= 2592000`.
-  - Daily snapshot install latency p99 stays within **±10 %** of
-    Day-1 baseline.
-  - WAL segment count at end ≤ Day-1 segment count × **1.20**
-    (segments grow but are truncated under cap).
-  - Disk-space high-watermark stays under **70 %** of available
-    capacity throughout.
-  - Day-30 read p99 within **±10 %** of Day-1 read p99.
-- **Fail:** snapshot p99 drift > 10 %; WAL growth > 20 %; disk
-  watermark ≥ 70 %; read p99 drift > 10 %.
-- **Evidence lands at:**
-  `perf/results/longevity-prod-<UTC>/result.txt`.
-- **Flips:** GA row **C3 — 30-day longevity** YELLOW → GREEN.
-
-## 7. Step 7 — On-call rotation bootstrap (one rotation cycle)
-
-- **Purpose:** establish that a real human can be paged for a real
-  incident within an SLA, with a defined escalation path.
-- **Owner:** operator lead — organisational, not technical.
-- **Procedure:** write an attestation (PR commit at
-  `ops/on-call-rotation.md` is the canonical form) naming:
-  1. Paging service wired to
-     `ops/alerts/configd-slo-alerts.yaml` annotations.
-  2. Rotation schedule covering 24×7.
-  3. Escalation path per severity (page vs. warn).
-  4. Incident-commander pool for disaster declarations.
-- **Required duration:** **one rotation cycle** — typically 2 weeks
-  to validate that hand-offs work and at least one synthetic page
-  has been acknowledged by each rostered human.
-- **Pass — exact numbers:**
-  - All four items above filled in `ops/on-call-rotation.md`.
-  - Operator-lead's signature line filled.
-  - At least **1 synthetic page acknowledged per rostered human**
-    within the rotation cycle (logged in the same file).
-- **Fail:** any of the four items missing; any rostered human who
-  did not acknowledge a synthetic page; signature line blank.
-- **Evidence lands at:** `ops/on-call-rotation.md` (or equivalent
-  named operator document, committed to the repo).
-- **Flips:** GA row **R-12 — on-call rotation** YELLOW → GREEN.
-- **Runs in parallel to all other steps.** Start it on day 0 of GA
-  hardening, not day 30.
+Source of truth for the gate set: [`readiness/v1-go-no-go-2026-07-01.md` §4](readiness/v1-go-no-go-2026-07-01.md).
 
 ---
 
-## 8. Other GA gates not in this runsheet
+## Gate 1 — Authentication ON
 
-These exist in `docs/handoff.md` §2 but are not calendar-bounded
-harnesses; they are listed here so you do not forget them when
-collecting evidence for `docs/ga-approval.md`:
+- **What to set:** `--auth-token <token>`. Auth is considered enabled iff the
+  token is present and non-blank (`ServerConfig.authEnabled()`,
+  `configd-server/.../ServerConfig.java:209-211`).
+- **What ON means:** the bearer token is checked with a **constant-time compare**
+  (`MessageDigest.isEqual`, `ConfigdServer.java:725`). A bearer match
+  authenticates **as `root` with empty roles** (`ROOT_PRINCIPAL`, `Set.of()`,
+  `ConfigdServer.java:732`) and `root` is granted **ALL** permissions on every
+  key (`ConfigdServer.java:738`). So in the default config, **"authenticated via
+  `--auth-token`" ≡ "is root."** Multi-principal separation comes only from
+  `_acl/` policy or the mTLS cert-DN path — a shared bearer token is a single
+  root identity, not per-user auth.
+- **How to VERIFY:**
+  - **Startup line:** `Auth         : enabled` (`ConfigdServer.java:2300`).
+  - **Behavioral:** an **unauthenticated** mutating request is rejected:
+    ```sh
+    curl -sk -o /dev/null -w '%{http_code}\n' -X PUT \
+      https://<host>:<api-port>/v1/config/probe --data-binary 'x'
+    # expect: 401
+    ```
+    (The `/metrics` endpoint is also bearer-gated when auth is on —
+    `AdminApiHandler.java:163-170` returns **401** without a token.)
+- **Failure mode if left OFF:** the loud 5-line `WARNING` banner prints
+  (`ConfigdServer.java:713-719`): *"Authentication is DISABLED... All
+  write/delete/admin endpoints are unauthenticated... DO NOT run in production."*
+  **Every** `PUT`/`DELETE`/admin call and `/metrics` scrape is open to anyone who
+  can reach the port. Config can be silently rewritten by any client.
 
-| Step | What | Owner | Where it lives |
-|------|------|-------|----------------|
-| §2 Step 6 | Disposition for every RED row | eng + sec lead | `docs/decisions/adr-0027-v0.1-accepted-residuals.md` |
-| §2 Step 7 | End-to-end release dry-run on a fork | release engineer | release URL on fork + `cosign verify` / `gh attestation verify` output pasted into `docs/ga-approval.md` §6.2 |
-| §2 Step 8 | Independent formal-spec ↔ implementation review | Java engineer who did NOT author the TLA+ specs | review notes pasted into `docs/ga-approval.md` |
+## Gate 2 — mTLS ON (Raft peer + edge fan-out)
+
+- **What to set:** **all three** of `--tls-cert <pkcs12>` `--tls-key <pkcs12>`
+  `--tls-trust-store <pkcs12>`. TLS is enabled iff all three are present
+  (`ServerConfig.tlsEnabled()`, `ServerConfig.java:202-204`). Missing any one ⇒
+  **plaintext**.
+- **What ON means — read this carefully (the surfaces differ):**
+  | Surface | With TLS configured | Client-cert (mTLS)? | Enforced at |
+  |---------|--------------------|--------------------|-------------|
+  | **Raft peer channel** (`--bind-port`) | TLS | **REQUIRED** (`setNeedClientAuth(true)`) | `TcpRaftTransport.java:572-573` (Netty: `ConfigdServer.java:412`) |
+  | **Edge fan-out / watch** (`--edge-port`) | TLS | **REQUIRED** (edge always demands a client cert) | `FanOutServer.java:339`, `NettyFanOutServer.java:249` |
+  | **HTTP admin/API** (`--api-port`) | **HTTPS, server-side TLS ONLY** | **NOT required** | `NettyHttpApiServer.java:168-170` |
+  The REST admin API is **HTTPS + bearer token**, *not* client-cert mTLS —
+  "Client identity is the Bearer token; mTLS is the fan-out/consensus surface"
+  (`NettyHttpApiServer.java:170`). Do **not** assume "TLS on" means mutual auth on
+  the API port; that port's authentication is **Gate 1 (the bearer token)**.
+- **How to VERIFY:**
+  - **Startup line:** `TLS          : enabled` (`ConfigdServer.java:2299`); and if
+    `--edge-port` is set, `Edge port    : <port> (mTLS)` (`ConfigdServer.java:1017-1018`).
+  - **Behavioral (peer/edge require a client cert):** a dial **without** a trusted
+    client cert fails the TLS handshake; a dial **with** the P12 client cert
+    succeeds. See the worked cross-box example in
+    [`measurement/ec2-horizontal-2026-07-01/03-mtls-bringup.md`](measurement/ec2-horizontal-2026-07-01/03-mtls-bringup.md)
+    (`curl` over mTLS with a P12 client cert → `200`; startup shows `TLS : enabled`).
+  - **Behavioral (API port is HTTPS):** `https://` works, plaintext `http://` to
+    the API port fails.
+- **Cross-box requirement (the `EdgeTransportSanMismatch` risk class):** the Raft
+  peer client enforces HTTPS endpoint identification — it verifies the peer's
+  cert **SAN** against the **name it dialed**. The shipped
+  `deploy/compose/secrets/server.pem` carries a shared identity
+  `CN=configd-cp` with `SAN = dns:cp1,cp2,cp3,localhost, ip:127.0.0.1`. Cross-box
+  therefore needs, on **every** node: (1) `/etc/hosts` mapping `cp1/cp2/cp3` → the
+  private IPs; (2) `--peer-addresses 1=cp1:9291,2=cp2:9291,3=cp3:9291` (dial **by
+  the SAN name**, never by raw IP); (3) the TLS triple. Full worked example:
+  [`03-mtls-bringup.md`](measurement/ec2-horizontal-2026-07-01/03-mtls-bringup.md).
+- **Failure mode if left OFF:** plaintext Raft consensus and plaintext edge
+  fan-out on the wire — any on-path attacker reads/forges config traffic and edge
+  deltas. With TLS off, the edge port serves **plaintext** (`Edge port : <port>
+  (PLAINTEXT)`, `ConfigdServer.java:1018`).
+
+## Gate 3 — Audit log ON (auto-tied to Auth)
+
+- **What to set:** **nothing directly — there is NO `--audit` flag.** The audit
+  log is enabled **iff authentication is enabled**:
+  `AuditLog auditLog = (authInterceptor != null) ? new AuditLog(...) : null`
+  (`ConfigdServer.java:923`). Turning on **Gate 1** turns on audit. (An audit
+  trail only has subjects to record once there are authenticated principals.)
+  Do not hunt for a separate toggle — it does not exist.
+- **What ON means:** a **keyed HMAC-SHA256 chain** under `K_audit` (HKDF-derived,
+  domain-separated, from the cluster signing key — `ConfigdServer.java:292`),
+  written to append-only durable storage and bounded to
+  `AuditLog.DEFAULT_MAX_RECORDS`. The keyed chain means a file-rewriting attacker
+  cannot forge a consistent history.
+- **How to VERIFY:**
+  - **Startup line:** `Audit log    : security-audit (KEYED HMAC-SHA256 chain,
+    append-only, cap <N>)` (`ConfigdServer.java:925-926`). Its **presence**
+    confirms both auth and audit are on; its **absence** means auth is off.
+- **Failure mode if left OFF (i.e. auth off):** no tamper-evident record of
+  who changed what — post-incident forensics are impossible, and there is no
+  detection of after-the-fact log tampering.
+
+## Gate 4 — Replay protection ON
+
+- **What to set:** the **system property** `-Dconfigd.replay.enabled=true`
+  (`ConfigdServer.java:934`). This is a **JVM sysprop, not a CLI flag** — passing
+  `--replay...` will fail arg parsing.
+- **What ON means:** clients stamp each mutating request with
+  `X-Configd-Timestamp` (epoch ms) and a unique `X-Configd-Nonce`
+  (`ReplayGuard.java:55,58`). Requests outside a **±5-minute** window
+  (`DEFAULT_WINDOW_MS = 300_000`, `ReplayGuard.java:49`) or reusing a seen nonce
+  are rejected; the nonce store is bounded to **1,000,000** entries
+  (`DEFAULT_MAX_NONCES`, `ReplayGuard.java:52`) with TTL + LRU eviction.
+  **Scope of protection (be honest with yourself):** this defends **only against
+  passive capture-and-replay**. A holder of the bearer token can still mint a
+  **fresh** request (new nonce + current timestamp) — per-request content signing
+  is an S8/v2 follow-up (`ReplayGuard.java:17-24`). It is not a substitute for
+  Gate 1.
+- **How to VERIFY:**
+  - **Startup line:** `Replay guard : ON (window 300000ms, nonce cap 1000000)`
+    (`ConfigdServer.java:936-937`).
+  - **Behavioral:** a **replayed** nonce returns **409**; a **stale/future or
+    missing** replay header returns **401** (`AdminApiHandler.java:581-601`:
+    `STALE`/`MALFORMED` → 401 at :590-594, `REPLAY` → 409 at :596-598; hooked on
+    `PUT` at :314-316 and `DELETE` at :368-370).
+- **Failure mode if left OFF:** a captured mutating request (e.g. a `DELETE`) can
+  be replayed verbatim by an on-path attacker with no time bound.
+
+## Gate 5 — Signing key NOT co-located with the data dir
+
+- **What to set:** `--signing-key-file <path>` pointing **outside** `--data-dir`
+  (mount it on separate storage — KMS/HSM/mounted secret). This is **fail-closed
+  by default**: `enforceSigningKeyNotColocated` throws a `SecurityException` and
+  **refuses to boot** if the signing key lives inside the data dir it protects
+  (`ConfigdServer.java:1251-1266`, invoked from `deriveRaftIntegrityEnvelope`
+  `:1218`). The at-rest **integrity** key is HKDF-derived from this signing key,
+  so a storage-tampering adversary who could both read the co-located key and
+  rewrite artifacts could forge a valid MAC — defeating the integrity layer.
+- **Opt-out (dev/test/single-node ONLY — do not use in prod):** **two** forms
+  downgrade the refusal to a loud warning — the sysprop
+  `-Dconfigd.security.allowColocatedSigningKey=true` **or** the env var
+  `CONFIGD_ALLOW_COLOCATED_SIGNING_KEY=true` (`ConfigdServer.java:1216-1217`;
+  warning banner `:1267-1277`). Leave **both** unset in production.
+- **How to VERIFY:**
+  - **Behavioral:** the node **boots without** a `SecurityException`, and startup
+    shows **no** "signing key is CO-LOCATED" warning banner. Confirm the key path
+    is genuinely outside the data dir.
+  - A deliberate negative check (staging): put the key inside `--data-dir` with no
+    opt-out set → the node must **refuse to start** with the D-1 message.
+- **Failure mode if left mis-configured:** with the key co-located **and** the
+  opt-out set, a host/storage-tampering adversary (threat A2/T3) can read the key
+  and forge a valid at-rest MAC — the snapshot/WAL/state integrity guarantee
+  becomes worthless.
+
+## Gate 6 — Strong reads (freshness, NOT confidentiality)
+
+- **What to set:** `--strong-read-prefixes secure/,<more>`. **Omitting the flag
+  keeps the safe default `secure/`** (`ServerConfig.java:263-266` →
+  `StrongReadPolicy.DEFAULT_PREFIX`); passing an **explicit blank** value is a
+  deliberate opt-out that disables enforcement. GETs under a strong-read prefix
+  are served **fail-closed linearizable** (`ConfigdServer.java:914`).
+- **Important:** strong-read is a **freshness** class (no stale reads for those
+  keys), **not** a confidentiality control. It does **not** encrypt anything — see
+  [`deployer-must-know.md` item 1](deployer-must-know.md) (do NOT store secrets).
+- **How to VERIFY:**
+  - **Startup line:** `Strong reads : [secure/] (fail-closed linearizable,
+    ADR-0030 INV-1)` (`ConfigdServer.java:915-916`).
+- **Failure mode if disabled (explicit blank):** reads of security-relevant keys
+  may be served **stale** from a non-leader, so a client can act on a
+  rolled-back/old value after a failover.
+
+## Always-on — Rate limiting (verify, don't configure)
+
+- **What:** a global **10,000/s** token bucket (burst 10,000) **plus** a
+  per-principal bucket, gated **before** the Raft propose so a hostile tenant
+  cannot spend the whole write budget or reach consensus with a flood
+  (`ConfigdServer.java:782-798`). This is the **one control that is
+  unconditionally on**.
+- **How to VERIFY:**
+  - **Startup line:** `Write rate   : 10000/s (burst 10000)` (`ConfigdServer.java:785`).
+  - **Behavioral:** a sustained flood past the cap returns HTTP **429
+    "Overloaded"** (`AdminApiHandler.java:405-411`).
+- **Note:** the reserved namespaces `_acl/` and `_system/` require **ADMIN** for
+  **every** method (mutation and disclosure), fail-closed, with write-time `_acl/`
+  validation returning **400** pre-commit (`AdminApiHandler.java:477-525`
+  reserved-prefix gate, `:332-338` `validateAclWrite`, `isReserved` `:537-538`).
+  This is active whenever auth is on and needs no configuration.
 
 ---
 
-## 9. Dependency graph
+## Sign-off
 
-```
-                          day 0
-                            │
-            ┌───────────────┼─────────────────────┐
-            │               │                     │
-            ▼               ▼                     ▼
-   step 7 on-call      step 1 leader-loss   step 5 shadow
-   bootstrap           drill (≤ 5 min)      (independent
-   (runs in            ─┐                    cluster pair,
-   parallel for         │                    14 days; can
-   ~2 weeks)            ▼                    start any time)
-                   step 2 restore drill
-                   (~ 30 min)
-                        │
-                        ▼
-                   step 3 soak-72h
-                   (3 days, prod cluster)
-                        │
-                        ▼
-                   step 4 burn-7d
-                   (7 days, same cluster)
-                        │
-                        ▼
-                   step 6 longevity-30d
-                   (30 days, same cluster)
-```
+A cluster is **not** production-ready until Gates 1-6 are each **verified by their
+behavioral probe** (not merely by a config flag being present) and the always-on
+controls show their startup lines. Record the verifying command output per gate.
 
-**Read this as:**
+Then read [`deployer-must-know.md`](deployer-must-know.md) — five system-boundary
+requirements (secrets, legacy-SUBSCRIBE segregation, single-scope, snapshot cap,
+leadership placement) that the server does **not** enforce for you.
 
-- **Serial chain** (steps 1 → 2 → 3 → 4 → 6): drills then perf
-  harnesses, all sharing the prod-shaped 5-node cluster. Total
-  serialised wall-clock minimum: ~40 days + chaos margin.
-- **Parallel track A** (step 5 — shadow): needs its **own** cluster
-  pair plus a traffic mirror. Independent of the serial chain;
-  start whenever the second cluster pair and mirror are available.
-  14 days wall.
-- **Parallel track B** (step 7 — on-call): organisational, no
-  hardware dependency. **Start on day 0** of GA hardening so it
-  can finish concurrently with the serial chain.
-- **Drills (steps 1–2)** technically only need the staging cluster
-  and could run before the perf hardware is provisioned; sequencing
-  them at the head of the chain just makes it tidy.
-- **Critical path to GA-able evidence set:** `max(serial_chain,
-  shadow_track, on_call_track)` ≈ **40 days** if everything passes
-  first time. Budget **45–60 days** for re-runs after a fail.
+## Cross-references
 
----
-
-## 10. After all seven harnesses pass
-
-1. Confirm every result file from §1–§7 exists at the named path
-   AND meets its pass criterion. If any is missing or fails, the
-   corresponding GA row stays YELLOW; do not proceed.
-2. Open `docs/ga-approval.md` (the unsigned template authored
-   alongside this runsheet on 2026-04-22).
-3. Fill §3 with the commit SHA you intend to promote.
-4. Fill §6.1–§6.5 minimum-evidence checkboxes, each with the
-   matching artifact path / signature.
-5. Walk the §5 signatures through architect / SRE / security /
-   performance / release engineer. **Each signature is a personal
-   attestation, not a delegation to the loop.**
-6. The first signature's date starts the 90-day expiry clock per
-   §6.
-
-The loop will not do steps 1–6. The loop ended on 2026-04-19 per
-`docs/loop-state.json` `termination_mode = "stable_two_consecutive"`.
-Type C closure is yours.
+- [`deployer-must-know.md`](deployer-must-know.md) — companion C2 list.
+- [`readiness/v1-go-no-go-2026-07-01.md`](readiness/v1-go-no-go-2026-07-01.md) —
+  §4 is the source for this gate set; §0 lists conditions C1-C4.
+- [`measurement/ec2-horizontal-2026-07-01/03-mtls-bringup.md`](measurement/ec2-horizontal-2026-07-01/03-mtls-bringup.md)
+  — the worked cross-box mTLS bring-up.
+- [`burn-in-contract.md`](burn-in-contract.md) — the C4 first-30-days burn-in
+  posture (heightened alerting thresholds, rollback triggers, on-call, exit criteria).
+- [`known-limitations.md`](known-limitations.md) — the snapshot-cap / encoder-drop
+  operator signals and the deployment security model.
+- [`measurement/ec2-2026-06-30/02-dr-drills.md`](measurement/ec2-2026-06-30/02-dr-drills.md)
+  · [`04-soak.md`](measurement/ec2-2026-06-30/04-soak.md) — DR and 6 h soak evidence.
