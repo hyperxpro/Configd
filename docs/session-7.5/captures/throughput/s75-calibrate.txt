@@ -1,2 +1,0 @@
-CALIBRATE-RESULT concurrency=64 measureSec=17.0 committed_200=6465 non200=680 retargets=14 sustained_commit_rate_per_sec=380
-CALIBRATE-STATUS 200=6465 503=627 504=53

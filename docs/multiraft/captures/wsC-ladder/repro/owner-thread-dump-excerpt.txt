@@ -1,3 +1,0 @@
-"configd-raft-owner-0" #54 [48436] daemon prio=5 os_prio=0 cpu=6983.43ms elapsed=15.59s tid=0x00007f6e5c30f890 nid=48436 runnable  [0x00007f6e2641a000]
-   java.lang.Thread.State: RUNNABLE
-	at sun.security.util.math.intpoly.IntegerPolynomial25519.square(java.base@25.0.3/IntegerPolynomial25519.java:273)

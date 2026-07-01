@@ -1,6 +1,0 @@
-===== RR-008 MUTATION-REVERT: inbound swallow restored → wiring test must go RED =====
-[ERROR] Tests run: 2, Failures: 1, Errors: 0, Skipped: 0, Time elapsed: 0.284 s <<< FAILURE! -- in io.configd.server.InboundRoutingThrowableHandlerTest
-[ERROR] io.configd.server.InboundRoutingThrowableHandlerTest.inboundHandlerCatchesRouteMessageThrowableAndExecutorSurvives -- Time elapsed: 0.180 s <<< FAILURE!
-org.opentest4j.AssertionFailedError: inbound routing Throwable must be surfaced as a counter (RR-008) — PRE-FIX the executor swallows it: no metric, no ack, mute zombie ==> expected: not <null>
-[ERROR]   InboundRoutingThrowableHandlerTest.inboundHandlerCatchesRouteMessageThrowableAndExecutorSurvives:158 inbound routing Throwable must be surfaced as a counter (RR-008) — PRE-FIX the executor swallows it: no metric, no ack, mute zombie ==> expected: not <null>
-[ERROR] Tests run: 2, Failures: 1, Errors: 0, Skipped: 0

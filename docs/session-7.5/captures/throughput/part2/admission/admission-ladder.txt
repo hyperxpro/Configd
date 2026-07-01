@@ -1,7 +1,0 @@
-# S7.5 admission-control sweep — phase3 @ 2000/s offered (a churning rate), group commit ON.
-# off = no admission (PART 2 churn baseline). inflightN = -Dconfigd.write.maxInflightProposals=N.
-config         rate/s  achieved/s  elections  status(codes)
-off            2000    432         29         200=8966 503=9784 504=379
-inflight16     2000    864         1          200=17291 429=22709
-inflight32     2000    667         4          200=13390 429=26610
-inflight64     2000    375         24         200=7521 429=27928 503=4551

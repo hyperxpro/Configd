@@ -1,7 +1,0 @@
-[RR-095 seed=452] leaderElected=false | endDropRate=0.445 endPartitions=5 | dropWindows=1(unpaired=1) partAdds=4 partRemoves=0 heals=0 => NEVER-HEALED ARTIFACT (benign)
-[RR-095 seed=869] leaderElected=false | endDropRate=0.384 endPartitions=0 | dropWindows=1(unpaired=0) partAdds=1 partRemoves=1 heals=3 => NEVER-HEALED ARTIFACT (benign)
-[RR-095 seed=4740] leaderElected=false | endDropRate=0.452 endPartitions=4 | dropWindows=1(unpaired=1) partAdds=3 partRemoves=1 heals=0 => NEVER-HEALED ARTIFACT (benign)
-[RR-095 seed=5100] leaderElected=false | endDropRate=0.433 endPartitions=0 | dropWindows=1(unpaired=1) partAdds=0 partRemoves=3 heals=1 => NEVER-HEALED ARTIFACT (benign)
-[RR-095 seed=5159] leaderElected=false | endDropRate=0.465 endPartitions=0 | dropWindows=2(unpaired=2) partAdds=2 partRemoves=1 heals=2 => NEVER-HEALED ARTIFACT (benign)
-[RR-095 seed=5500] leaderElected=false | endDropRate=0.498 endPartitions=2 | dropWindows=1(unpaired=1) partAdds=2 partRemoves=4 heals=1 => NEVER-HEALED ARTIFACT (benign)
-[RR-095 seed=8319] leaderElected=false | endDropRate=0.441 endPartitions=0 | dropWindows=1(unpaired=1) partAdds=2 partRemoves=2 heals=2 => NEVER-HEALED ARTIFACT (benign)

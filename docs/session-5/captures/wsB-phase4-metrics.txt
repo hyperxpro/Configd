@@ -1,8 +1,0 @@
-# TYPE configd_write_commit_failed_total counter
-configd_write_commit_failed_total 0
-# TYPE configd_write_commit_total counter
-configd_write_commit_total 0
-# TYPE configd_raft_pending_apply_entries gauge
-configd_raft_pending_apply_entries 0
-# TYPE configd_write_commit_seconds summary
-configd_write_commit_seconds_count 0

@@ -1,7 +1,0 @@
-# mini-Jepsen sustained run (866a0ab + MiniJepsenSweepTest) — GREEN, 0 safety violations
-# -Dconfigd.minijepsen.seeds=16 -Dconfigd.minijepsen.horizon=20000
-
-MINI-JEPSEN: seeds=16 horizon=20000 faultsInjected=13920 worstFinalConvergeTicks=1641 safetyViolations=0 (single-leader-per-term + no-divergent-commit + no-loss, every tick)
-[INFO] Tests run: 1, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 267.5 s -- in io.configd.testkit.MiniJepsenSweepTest
-[INFO] Tests run: 1, Failures: 0, Errors: 0, Skipped: 0
-[INFO] BUILD SUCCESS

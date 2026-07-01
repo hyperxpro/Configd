@@ -1,1 +1,0 @@
-[s75] DATA-ON-NVMe CONFIRMED: WAL=/mnt/nvme/run/s75et-et-1000ms-2000/n2/raft-log.wal (device /dev/nvme1n1)
