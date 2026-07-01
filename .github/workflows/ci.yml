@@ -6,53 +6,40 @@ on:
   pull_request:
     branches: [main]
   schedule:
-    # Nightly full gates (incl. the heavy PIT mutation step + the gate-4 heavy
-    # integrated chaos sweeps) at 03:17 UTC. NOTE: GitHub only fires `schedule`
-    # from the DEFAULT branch — until this file lands on `main`, the nightly is
-    # configured-but-dormant on session branches. Use the workflow_dispatch
-    # `run_full_nightly` input below to execute the exact nightly path on demand
-    # in real CI (S5/RR-107: prove the nightly chaos job runs green once).
+    # Nightly full run at 03:17 UTC. The full path adds the heavy work that is
+    # skipped for fast pull-request feedback: mutation testing, the integrated
+    # chaos and consistency sweeps, the large deterministic seed sweeps, and the
+    # security supply-chain scans (CVE, secret, and byte-for-byte reproducibility).
+    # GitHub fires `schedule` only from the default branch; use the
+    # workflow_dispatch input below to run the same full path on demand.
     - cron: '17 3 * * *'
   workflow_dispatch:
     inputs:
       run_full_nightly:
-        description: 'Run the FULL nightly path (PIT mutation + gate-4 heavy integrated chaos sweeps / mini-Jepsen) instead of the fast CI subset'
+        description: 'Run the full nightly path (mutation testing, integrated chaos sweeps, large seed sweeps, supply-chain scans) instead of the fast subset'
         type: boolean
         default: false
 
+# Least privilege: read-only token by default. Jobs that need more request it
+# per job (none here do; the release workflow grants write scopes).
 permissions:
   contents: read
 
-# Cancel superseded in-progress runs for the SAME PR (a new push obsoletes the
-# old run). Scoped to pull_request only — push-to-main and the nightly schedule
-# always run to completion so every landed commit gets a full, uncancelled CI
-# result.
+# Cancel superseded in-progress runs for the same pull request; a new push
+# obsoletes the old run. Scoped to pull_request only so push-to-main and the
+# nightly schedule always run to completion and every landed commit gets a full,
+# uncancelled result.
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
-# -----------------------------------------------------------------------------
-# PARALLEL FAN-OUT MODEL (CI wall-clock).
-# -----------------------------------------------------------------------------
-# Every gate job below runs INDEPENDENTLY and CONCURRENTLY — there is deliberately
-# NO serial `needs:` chain between gates. Each gate-N job sets its predecessor-SKIP
-# flag (GATE2_SKIP_GATE1, GATE3_SKIP_GATE2, GATE4_SKIP_GATE3, … GATE_PHASE1_SKIP_CHAIN)
-# so it runs ONLY its own unique steps; each prior gate's coverage is supplied by
-# that gate's OWN parallel job, not by re-running the cumulative chain. GitHub
-# Actions runs every job on a fresh, isolated VM (no shared filesystem, no artifact
-# hand-off between gates — they upload only logs), so the former
-# gate-2→gate-3→…→gate-phase1 `needs:` chain provided NO build reuse: it was pure
-# serialization, turning ~10 short gates into a ~1h critical path. Fanning them out
-# drops CI wall-clock to roughly the single slowest gate.
-#
-# The cumulative guarantee — "a green CI ⟹ every gate passed" — is preserved by the
-# `ci-success` aggregator at the bottom: it `needs:` every job and FAILS if any did
-# not succeed. Set `ci-success` as the sole required status check in branch
-# protection (requiring each gate by name also still works — each reports its own
-# status). Where a per-gate comment below says cumulative coverage "comes from the
-# job dependency", that now means the parallel sibling job sealed by `ci-success`,
-# not a serial `needs:` edge.
-# -----------------------------------------------------------------------------
+# Parallel fan-out. Every verification job runs independently and concurrently;
+# there is deliberately no serial dependency chain between them. Each job runs
+# only its own unique work on a fresh, isolated runner and reports its own
+# status. The cumulative "everything passed" guarantee is provided by the
+# ci-success job at the bottom, which depends on every pull-request-gating job
+# and fails unless all of them succeeded. Make ci-success the single required
+# status check in branch protection.
 jobs:
   build-and-test:
     runs-on: ubuntu-latest
@@ -60,10 +47,10 @@ jobs:
       matrix:
         java: ['25']
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4.3.1
 
       - name: Set up JDK ${{ matrix.java }}
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v4.8.0
         with:
           java-version: ${{ matrix.java }}
           distribution: 'corretto'
@@ -82,7 +69,7 @@ jobs:
         run: mvn test -pl configd-testkit -am --no-transfer-progress -Dtest="SeedSweepTest" -Dconfigd.seedSweep.count=10000 -Dsurefire.failIfNoSpecifiedTests=false
 
       - name: Upload test reports
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v4.6.2
         if: always()
         with:
           name: test-reports
@@ -90,9 +77,10 @@ jobs:
           retention-days: 7
 
   tlc-model-check:
+    # Model-check the three TLA+ specifications with TLC at their full configs.
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4.3.1
 
       - name: Download TLC
         run: |
@@ -110,326 +98,181 @@ jobs:
           java -jar ../tools/tla2tools.jar -config SnapshotInstallSpec.cfg -workers auto SnapshotInstallSpec.tla
         timeout-minutes: 30
 
-  gate-1:
-    # Session-1 cumulative gate (audit-session-1 Phase E): clean `./mvnw clean
-    # verify` + count tripwire, Porcupine-gated linz self-tests (8/8, 0 skips),
-    # JMH executability smoke (9 classes), TLC smoke bounds (gates/spec-smoke/),
-    # 3-node failover smoke. See gates/gate-1.sh header for what a green run
-    # does and does NOT prove (docs/readiness-register.md "Gate-1 blockers").
-    # NOTE: runs the pinned wrapper (./mvnw); build-and-test above runs bare
-    # `mvn` — that discrepancy is registered finding RR-071 (Session 5 owns it).
-    # Estimated runtime on ubuntu-latest (4 vCPU): ~15-25 min, from per-step
-    # measurements on the 2-vCPU audit box: build+suite 5.5-13 min (CPU-credit
-    # dependent), linz 15s, JMH smoke ~2 min, TLC smoke ~2.5-8 min, multinode
-    # ~10s; a cold Maven cache adds dependency-download time.
-    # RR-094 (TF-9) RESOLVED in Session 2: the two keytool TLS tests
-    # (find0050/find0051) had their expensive keytool fixture hoisted to an
-    # un-budgeted @BeforeAll and a generous method-level @Timeout(120); they no
-    # longer flake on slow/throttled runners. Gate-1 passes (lead's official
-    # run 2026-06-11, TOTAL PASS 1214s).
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Set up JDK 25
-        uses: actions/setup-java@v4
-        with:
-          java-version: '25'
-          distribution: 'corretto'
-          cache: maven
-
-      - name: Set up Go (builds the Porcupine checker in gate-1 step b)
-        uses: actions/setup-go@v5
-        with:
-          # gate-1 builds with GOTOOLCHAIN=local, so the installed toolchain
-          # must satisfy the go.mod "go" directive — read it from the file.
-          go-version-file: configd-linz/src/main/go/porcupine-check/go.mod
-          cache-dependency-path: configd-linz/src/main/go/porcupine-check/go.sum
-
-      - name: Run gate-1
-        run: bash gates/gate-1.sh
-        env:
-          GATE1_LOG_DIR: ${{ runner.temp }}/gate1-logs
-        timeout-minutes: 45
-
-      - name: Upload gate-1 step logs
-        uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: gate-1-logs
-          path: ${{ runner.temp }}/gate1-logs
-          retention-days: 7
-
-  gate-2:
-    # Session-2 cumulative gate (gates/gate-2.sh) — REQUIRES gate-1 (it runs it
-    # as step a), then: named P0/P1 discriminating tests, the committed 507-seed
-    # adversarial sweep, linearizability (checker self-tests + sim-history),
-    # PIT mutation thresholds (consensus-core >=70 module / kernel, distribution
-    # control-plane >=65), the curated jcstress subset, and the runtime-assertion
-    # twin manifest. See gates/gate-2.sh header.
+  gate:
+    # One matrixed job covering the homogeneous verification gates. Each leg
+    # invokes its own gates/gate-*.sh script; those scripts are the source of
+    # truth for what is checked and are not modified here. Per-event flag
+    # selection runs the fast subset on push/pull_request and the full path on
+    # the nightly schedule or a manual full-nightly dispatch, matching each
+    # script's own fast/nightly contract. Two verification jobs that need extra
+    # setup are intentionally kept out of this matrix so they read clearly:
+    # security-and-supply-chain (gitleaks install + NVD secret) and
+    # multiraft-merge-seal (a fast artifact-existence seal that needs no JDK).
     #
-    # Cost split: on push/PR the heavy ~3x-PIT mutation step is SKIPPED for fast
-    # feedback (its thresholds are enforced on the nightly run + were verified
-    # standalone in S2 — mutation-kill-list.md). The nightly schedule runs the
-    # FULL gate incl. mutation. The live faulted linz matrix (sudo iptables) is
-    # NOT run here — it is the self-hosted nightly variant (docs/session-2/
-    # linz-plan.md §4); GATE2_FAULTED is left unset.
+    # Flag selection uses the GitHub Actions `cond && A || B` idiom. Keep every
+    # nightly_flags value non-empty whenever it differs from fast_flags: an empty
+    # string is falsy and would silently fall through to fast_flags on the nightly
+    # path, which would be a coverage downgrade. The only leg with empty flags is
+    # verify-and-selftest, whose fast and nightly runs are identical anyway.
+    name: ${{ matrix.name }}
     runs-on: ubuntu-latest
+    strategy:
+      # Never cancel sibling gates when one fails: each gate is an independent
+      # signal, exactly as when they were separate jobs.
+      fail-fast: false
+      matrix:
+        include:
+          # Clean build/verify, linearizability-checker self-tests, JMH and TLC
+          # smoke, and a 3-node failover smoke. Same work on every event.
+          - name: verify-and-selftest
+            script: gates/gate-1.sh
+            log_env: GATE1_LOG_DIR
+            needs_go: true
+            fast_flags: ''
+            nightly_flags: ''
+            timeout_fast: 45
+            timeout_nightly: 45
+          # Discriminating consensus tests, the adversarial seed sweep,
+          # linearizability, jcstress, and (nightly) the PIT mutation thresholds.
+          - name: consensus-correctness
+            script: gates/gate-2.sh
+            log_env: GATE2_LOG_DIR
+            needs_go: true
+            fast_flags: 'GATE2_SKIP_GATE1=1 GATE2_SKIP_MUTATION=1'
+            nightly_flags: 'GATE2_SKIP_GATE1=1'
+            timeout_fast: 90
+            timeout_nightly: 180
+          # Edge data plane: contract map, edge seed sweep, propagation probe,
+          # slow-consumer walk, Compose end-to-end, and (nightly) new-module PIT.
+          - name: edge-data-plane
+            script: gates/gate-3.sh
+            log_env: GATE3_LOG_DIR
+            needs_go: false
+            fast_flags: 'GATE3_SKIP_GATE2=1 GATE3_SKIP_MUTATION=1'
+            nightly_flags: 'GATE3_SKIP_GATE2=1'
+            timeout_fast: 120
+            timeout_nightly: 180
+          # Durability, recovery, and chaos. The fast subset runs the liveness,
+          # reconfiguration, durability, edge-chaos, partition, and overload
+          # cells; the heavy integrated chaos sweeps run only on the nightly path.
+          - name: durability-and-chaos
+            script: gates/gate-4.sh
+            log_env: GATE4_LOG_DIR
+            needs_go: false
+            fast_flags: 'GATE4_SKIP_GATE3=1 GATE4_SKIP_NIGHTLY=1'
+            nightly_flags: 'GATE4_SKIP_GATE3=1'
+            timeout_fast: 60
+            timeout_nightly: 120
+          # Performance regression gate (allocation, tail-latency, throughput
+          # smoke, backpressure bound). Identical work on every event.
+          - name: performance
+            script: gates/gate-5.sh
+            log_env: GATE5_LOG_DIR
+            needs_go: true
+            fast_flags: 'GATE5_SKIP_GATE4=1'
+            nightly_flags: 'GATE5_SKIP_GATE4=1'
+            timeout_fast: 60
+            timeout_nightly: 60
+          # Operability: metric/alert emission contract, promtool alert tests,
+          # wire byte-stability, cold start, backup/restore, and a game-day drill.
+          - name: operability
+            script: gates/gate-6.sh
+            log_env: GATE6_LOG_DIR
+            needs_go: false
+            fast_flags: 'GATE6_SKIP_GATE5=1'
+            nightly_flags: 'GATE6_SKIP_GATE5=1'
+            timeout_fast: 30
+            timeout_nightly: 30
+          # Per-group owner-thread re-threading and the group-rehoming hazard
+          # closure. The heavy 20k-seed deterministic sim runs on the nightly path.
+          - name: raft-owner-threading
+            script: gates/gate-phase0.sh
+            log_env: GATE_PHASE0_LOG_DIR
+            needs_go: false
+            fast_flags: 'GATE_PHASE0_SKIP_GATE7=1 GATE_PHASE0_SKIP_SIM=1'
+            nightly_flags: 'GATE_PHASE0_SKIP_GATE7=1'
+            timeout_fast: 45
+            timeout_nightly: 60
+          # Static-N sharding layer and its multi-shard simulator invariants.
+          # Fast runs a 200-seed sweep; the nightly path runs the 10k-seed sweep.
+          - name: sharding
+            script: gates/gate-phase1.sh
+            log_env: GATE_PHASE1_LOG_DIR
+            needs_go: false
+            fast_flags: 'GATE_PHASE1_SKIP_CHAIN=1 GATE_PHASE1_SWEEP_COUNT=200'
+            nightly_flags: 'GATE_PHASE1_SKIP_CHAIN=1 GATE_PHASE1_SWEEP_COUNT=10000'
+            timeout_fast: 30
+            timeout_nightly: 45
     steps:
-      - uses: actions/checkout@v4
+      # None of the matrixed gates need git history; the two verification jobs
+      # that do (security-and-supply-chain, multiraft-merge-seal) are separate.
+      - uses: actions/checkout@v4.3.1
 
       - name: Set up JDK 25
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v4.8.0
         with:
           java-version: '25'
           distribution: 'corretto'
           cache: maven
 
-      - name: Set up Go (Porcupine checker for the linzgate step)
-        uses: actions/setup-go@v5
+      - name: Set up Go (builds the Porcupine linearizability checker)
+        if: ${{ matrix.needs_go }}
+        uses: actions/setup-go@v5.6.0
         with:
+          # The checker is built with GOTOOLCHAIN=local, so the installed
+          # toolchain must satisfy the module's "go" directive; read it from go.mod.
           go-version-file: configd-linz/src/main/go/porcupine-check/go.mod
           cache-dependency-path: configd-linz/src/main/go/porcupine-check/go.sum
 
-      - name: Run gate-2 (push/PR — mutation skipped for speed)
-        if: github.event_name != 'schedule' && github.event.inputs.run_full_nightly != 'true'
-        run: GATE2_SKIP_GATE1=1 GATE2_SKIP_MUTATION=1 bash gates/gate-2.sh
+      - name: Run ${{ matrix.name }}
         env:
-          GATE2_LOG_DIR: ${{ runner.temp }}/gate2-logs
-        timeout-minutes: 90
+          SCRIPT: ${{ matrix.script }}
+          LOG_ENV: ${{ matrix.log_env }}
+          LOG_DIR: ${{ runner.temp }}/gate-logs
+          # Fast subset on push/pull_request; full path on the nightly schedule
+          # or a manual full-nightly dispatch. See the empty-string caveat above.
+          FLAGS: ${{ (github.event_name == 'schedule' || github.event.inputs.run_full_nightly == 'true') && matrix.nightly_flags || matrix.fast_flags }}
+        # `env ${FLAGS} ...` (not a bare `${FLAGS} ...`) because the shell only
+        # recognizes VAR=val assignment prefixes at parse time; assignments that
+        # arrive by variable expansion must be applied by the env utility.
+        run: |
+          export "${LOG_ENV}=${LOG_DIR}"
+          env ${FLAGS} bash "${SCRIPT}"
+        timeout-minutes: ${{ (github.event_name == 'schedule' || github.event.inputs.run_full_nightly == 'true') && matrix.timeout_nightly || matrix.timeout_fast }}
 
-      - name: Run gate-2 FULL (nightly — incl. PIT mutation thresholds)
-        if: github.event_name == 'schedule' || github.event.inputs.run_full_nightly == 'true'
-        run: GATE2_SKIP_GATE1=1 bash gates/gate-2.sh
-        env:
-          GATE2_LOG_DIR: ${{ runner.temp }}/gate2-logs
-        timeout-minutes: 180
-
-      - name: Upload gate-2 step logs
-        uses: actions/upload-artifact@v4
+      - name: Upload ${{ matrix.name }} logs
+        uses: actions/upload-artifact@v4.6.2
         if: always()
         with:
-          name: gate-2-logs
-          path: ${{ runner.temp }}/gate2-logs
+          name: ${{ matrix.name }}-logs
+          path: ${{ runner.temp }}/gate-logs
           retention-days: 7
 
-  gate-3:
-    # Session-3 cumulative gate (gates/gate-3.sh) — the edge data plane.
-    # REQUIRES gate-2 green (runs as its own job here, so the gate-3 run sets
-    # GATE3_SKIP_GATE2=1 — cumulative coverage comes from the job dependency,
-    # not a redundant re-run). Steps: contract-map end-state pin, the 507-seed
-    # edge gate sweep + digest byte-identity, the propagation probe in BOTH
-    # modes (sim + live boundary + live edge), the slow-consumer state-machine
-    # walk, the four-phase Compose E2E scenario (docker available on
-    # ubuntu-latest), the CT-34 JMH gc-profile check, and (nightly) the
-    # new-module PIT floors (edge-cache + edge-node >= 65).
+  security-and-supply-chain:
+    # Security and supply chain, proven by negative tests (attack performed,
+    # refusal asserted): at-rest integrity, mTLS on both planes, wire fuzzing,
+    # API authn/authz, replay, keyed-HMAC audit, SBOM match, reproducible-build
+    # config. Kept as its own job because the nightly path adds a gitleaks binary
+    # install and an NVD-keyed CVE scan. On push/pull_request the CVE scan, the
+    # secret scan, and the two-build reproducibility proof loudly skip.
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4.3.1
+        with:
+          fetch-depth: 0  # the nightly gitleaks scan reads full history
 
       - name: Set up JDK 25
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v4.8.0
         with:
           java-version: '25'
           distribution: 'corretto'
           cache: maven
 
-      - name: Run gate-3 (push/PR — mutation skipped for speed)
-        if: github.event_name != 'schedule' && github.event.inputs.run_full_nightly != 'true'
-        run: GATE3_SKIP_GATE2=1 GATE3_SKIP_MUTATION=1 bash gates/gate-3.sh
-        env:
-          GATE3_LOG_DIR: ${{ runner.temp }}/gate3-logs
-        timeout-minutes: 120
-
-      - name: Run gate-3 FULL (nightly — incl. new-module PIT floors)
-        if: github.event_name == 'schedule' || github.event.inputs.run_full_nightly == 'true'
-        run: GATE3_SKIP_GATE2=1 bash gates/gate-3.sh
-        env:
-          GATE3_LOG_DIR: ${{ runner.temp }}/gate3-logs
-        timeout-minutes: 180
-
-      - name: Upload gate-3 step logs
-        uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: gate-3-logs
-          path: ${{ runner.temp }}/gate3-logs
-          retention-days: 7
-
-  gate-4:
-    # Session-4 cumulative gate (gates/gate-4.sh) — durability, recovery & chaos.
-    # REQUIRES gate-3 green (runs as its own job here, so the gate-4 run sets
-    # GATE4_SKIP_GATE3=1 — cumulative coverage comes from the job dependency, not
-    # a redundant re-run). CI-subset steps (push/PR): the RR-103/RR-095 liveness
-    # regression seeds, D§2 reconfiguration-under-fault, the A3 edge-chaos legs,
-    # the B-rest durability cells (RR-005, fsync-lie, ENOSPC, short-read), AND
-    # workstreams C (partition/WAN — PartitionMatrixTest) and D (overload —
-    # OverloadChaosTest), which run UNCONDITIONALLY in the CI subset. The HEAVY
-    # integrated sweeps (EdgeIntegratedNightlySweepTest, the RR-095 integrated
-    # rerun, and workstream E's MiniJepsenSweepTest) run ONLY on the nightly path
-    # (schedule, or workflow_dispatch with run_full_nightly=true) — the push/PR
-    # GATE4_SKIP_NIGHTLY=1 keeps the CI subset in CI time. (RR-106: this block
-    # previously claimed C/D/E were "NOT YET IN GATE-4"; the code has run C+D in
-    # the subset and E nightly since S4 — comment corrected 2026-06-14.)
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Set up JDK 25
-        uses: actions/setup-java@v4
-        with:
-          java-version: '25'
-          distribution: 'corretto'
-          cache: maven
-
-      - name: Run gate-4 (push/PR — gate-3 + heavy nightly sweeps skipped)
-        if: github.event_name != 'schedule' && github.event.inputs.run_full_nightly != 'true'
-        run: GATE4_SKIP_GATE3=1 GATE4_SKIP_NIGHTLY=1 bash gates/gate-4.sh
-        env:
-          GATE4_LOG_DIR: ${{ runner.temp }}/gate4-logs
-        timeout-minutes: 60
-
-      - name: Run gate-4 FULL (nightly — incl. the heavy integrated chaos sweeps)
-        if: github.event_name == 'schedule' || github.event.inputs.run_full_nightly == 'true'
-        run: GATE4_SKIP_GATE3=1 bash gates/gate-4.sh
-        env:
-          GATE4_LOG_DIR: ${{ runner.temp }}/gate4-logs
-        timeout-minutes: 120
-
-      - name: Upload gate-4 step logs
-        uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: gate-4-logs
-          path: ${{ runner.temp }}/gate4-logs
-          retention-days: 7
-
-  gate-5:
-    # Session-5 cumulative gate (gates/gate-5.sh) — PERFORMANCE & capacity.
-    # REQUIRES gate-4 green (runs as its own job here, so the gate-5 run sets
-    # GATE5_SKIP_GATE4=1 — cumulative coverage comes from the job dependency, not
-    # a redundant re-run). Locks in the Session-5 wins so Sessions 6-8 cannot
-    # silently erode them: read-path 0 B/op (jmh-gc-check), read p99/p999 latency
-    # REGRESSION bounds (JMH SampleTime/HdrHistogram), a throughput SMOKE floor
-    # (RaftCommitBenchmark in-memory), the §11 as-built write bound
-    # (maxPendingProposals=1024, Workstream D / RR-110), and a coordinated-omission
-    # self-check (tails via SampleTime, CO-correct harnesses present). Collector
-    # ZGC (ADR-0041). The FULL soak + sustained 10k/s + 100k/s burst are NOT a
-    # CI job — the soak is a 24h lead-launched background run and the sustained/
-    # burst rates are ENV-BLOCKED on CI hardware (manifest M-9/M-10); they live as
-    # docs/session-5 captures + the perf nightly lane (the nightly path below runs
-    # the full gate-5, incl. the unskipped steps, captured).
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Set up JDK 25
-        uses: actions/setup-java@v4
-        with:
-          java-version: '25'
-          distribution: 'corretto'
-          cache: maven
-
-      - name: Set up Go (gate-5 chains jmh-gc-check; gate-4 chain needs the Porcupine checker if unskipped)
-        uses: actions/setup-go@v5
-        with:
-          go-version-file: configd-linz/src/main/go/porcupine-check/go.mod
-          cache-dependency-path: configd-linz/src/main/go/porcupine-check/go.sum
-
-      # gate-5 always SKIPs the gate-4 chain (GATE5_SKIP_GATE4=1) — cumulative
-      # coverage of gates 1-4 comes from the gate-4 JOB dependency (which itself
-      # runs the full chaos chain on the nightly path), exactly like gate-4 sets
-      # GATE4_SKIP_GATE3=1. Re-running the chain inside gate-5 would double the
-      # work. gate-5's own perf-regression steps are identical on every event, so
-      # there is no separate nightly variant; the nightly schedule simply captures
-      # the perf gate alongside the full gate-4 chaos run (the perf nightly lane).
-      - name: Run gate-5 (perf regression gate; gate-4 chain via the job dependency)
-        run: GATE5_SKIP_GATE4=1 bash gates/gate-5.sh
-        env:
-          GATE5_LOG_DIR: ${{ runner.temp }}/gate5-logs
-        timeout-minutes: 60
-
-      - name: Upload gate-5 step logs
-        uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: gate-5-logs
-          path: ${{ runner.temp }}/gate5-logs
-          retention-days: 7
-
-  gate-6:
-    # Session-6 cumulative gate (gates/gate-6.sh) — OPERABILITY & deployment readiness.
-    # REQUIRES gate-5 green (runs as its own job here, so the gate-6 run sets
-    # GATE6_SKIP_GATE5=1 — cumulative coverage via the job dependency, like every prior
-    # gate). Locks the operability bar so Sessions 7-8 cannot silently erode it: every
-    # dashboard panel + alert series is PROVEN EMITTED and the SLO series RECORDED with
-    # real data (metric-contract), every alert FIRES on its condition and STAYS QUIET on
-    # normal op (promtool), wire byte-stability N<->N+1 (golden fixtures), zero-state cold
-    # start, backup/restore state-equality, and the alert->runbook->recovery loop closes
-    # for one scenario. gate-6 downloads a pinned promtool. The full multi-node game-day
-    # drill is the nightly/ops lane (gates/game-day-drill.sh wraps e2e-compose-scenario.sh,
-    # itself a gate-3 step) — captured, not in the fast gate.
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Set up JDK 25
-        uses: actions/setup-java@v4
-        with:
-          java-version: '25'
-          distribution: 'corretto'
-          cache: maven
-
-      - name: Run gate-6 (operability gate; gates 1..5 via the job dependency)
-        run: GATE6_SKIP_GATE5=1 bash gates/gate-6.sh
-        env:
-          GATE6_LOG_DIR: ${{ runner.temp }}/gate6-logs
-        timeout-minutes: 30
-
-      - name: Upload gate-6 step logs
-        uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: gate-6-logs
-          path: ${{ runner.temp }}/gate6-logs
-          retention-days: 7
-
-  gate-7:
-    # Session-7 cumulative gate (gates/gate-7.sh) — SECURITY & supply chain.
-    # REQUIRES gate-6 green (runs as its own job here, so the gate-7 run sets
-    # GATE7_SKIP_GATE6=1 — cumulative coverage via the job dependency, like every
-    # prior gate). Locks the security bar so Session 8 cannot silently erode it:
-    # PA-2021 at-rest integrity (tampered snapshot/WAL/raft-state + forged
-    # install-snapshot REFUSED; ADR-0042), mTLS adversarially verified on BOTH
-    # planes (plaintext/expired/wrong-SAN/TLSv1.2-downgrade refused), wire-protocol
-    # fuzz (resource oracle — no crash/OOM/unbounded-alloc/hang), API authn/authz
-    # (401 vs 403) + verbatim-replay 409 + KEYED-HMAC tamper-evident audit, the
-    # committed CycloneDX SBOM matches a fresh generation, and reproducible-build
-    # config (project.build.outputTimestamp). The S4 durability cells re-run inside
-    # the PA-2021 step prove no recovery-path regression.
-    #
-    # ENV-BLOCKED-on-fast-path steps run on the NIGHTLY path (charter §10.8): the
-    # OWASP dependency-check NVD CVE scan (needs NVD_API_KEY + network), the
-    # gitleaks secret scan (needs the binary), and the two-build byte-identical
-    # reproducibility proof (GATE7_FULL=1). On push/PR they loud-skip.
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0  # gitleaks (nightly) scans history
-
-      - name: Set up JDK 25
-        uses: actions/setup-java@v4
-        with:
-          java-version: '25'
-          distribution: 'corretto'
-          cache: maven
-
-      - name: Run gate-7 (push/PR — CVE/secret/full-repro loud-skipped, run nightly)
+      - name: Run security gate (push/PR subset; CVE/secret/full-repro skipped)
         if: github.event_name != 'schedule' && github.event.inputs.run_full_nightly != 'true'
         run: GATE7_SKIP_GATE6=1 bash gates/gate-7.sh
         env:
-          GATE7_LOG_DIR: ${{ runner.temp }}/gate7-logs
+          GATE7_LOG_DIR: ${{ runner.temp }}/security-and-supply-chain-logs
         timeout-minutes: 45
 
       - name: Install gitleaks (nightly secret scan)
@@ -442,136 +285,45 @@ jobs:
           tar -xzf /tmp/gitleaks.tgz -C /tmp gitleaks
           echo "GITLEAKS=/tmp/gitleaks" >> "$GITHUB_ENV"
 
-      - name: Run gate-7 FULL (nightly — CVE scan + gitleaks + byte-repro proof)
+      - name: Run security gate (nightly full; CVE scan + gitleaks + byte-repro)
         if: github.event_name == 'schedule' || github.event.inputs.run_full_nightly == 'true'
         run: GATE7_SKIP_GATE6=1 GATE7_FULL=1 bash gates/gate-7.sh
         env:
-          GATE7_LOG_DIR: ${{ runner.temp }}/gate7-logs
-          NVD_API_KEY: ${{ secrets.NVD_API_KEY }}   # empty → CVE step loud-skips (honest, never assumed-passing)
+          GATE7_LOG_DIR: ${{ runner.temp }}/security-and-supply-chain-logs
+          NVD_API_KEY: ${{ secrets.NVD_API_KEY }}   # empty -> CVE step loudly skips, never assumed passing
         timeout-minutes: 90
 
-      - name: Upload gate-7 step logs
-        uses: actions/upload-artifact@v4
+      - name: Upload security-and-supply-chain logs
+        uses: actions/upload-artifact@v4.6.2
         if: always()
         with:
-          name: gate-7-logs
-          path: ${{ runner.temp }}/gate7-logs
+          name: security-and-supply-chain-logs
+          path: ${{ runner.temp }}/security-and-supply-chain-logs
           retention-days: 7
 
-  gate-phase0:
-    # Phase 0 Workstream B cumulative gate (gates/gate-phase0.sh) — the R-01 re-threading
-    # (single tick thread → one owner thread per group) + the H-4 group-rehoming hazard closure.
-    # REQUIRES gates 1..7 green (each runs as its own job, so this sets GATE_PHASE0_SKIP_GATE7=1 —
-    # cumulative coverage via the job dependency, like every prior gate). Proves: the owner net is
-    # non-vacuous at N>1 (a cross-group access on a real foreign owner trips the per-node net); the
-    # H-4 rehoming MECHANISM (quiesce→publish→adopt + check-and-bounce + the deferred sub-mechanisms +
-    # the red-team/replay robustness fixes); H-4 no-double-ownership at the JMM level (jcstress, the
-    # rehoming proofs run at -m quick where the broken control reliably fails); and the S2–S4 invariant
-    # surface WITH rehoming injected (zero off-owner fires across tens of thousands of handoffs, groups
-    # keep committing). The heavy 20,001-seed deterministic sim runs on the NIGHTLY path (skipped on
-    # push/PR for speed; cumulatively covered by gate-1's failover smoke + gate-2's seed sweep).
+  multiraft-merge-seal:
+    # Non-vacuity seal for the multi-Raft milestone: asserts the milestone
+    # artifacts (contracts, gates, coalescing classes) still exist, so a deletion
+    # fails the build instead of silently passing. Runs the same gates/gate-B.sh;
+    # the cumulative test chain is supplied by the other jobs (SKIP_CHAIN), so
+    # this is a fast check that needs no JDK.
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-
-      - name: Set up JDK 25
-        uses: actions/setup-java@v4
+      - uses: actions/checkout@v4.3.1
         with:
-          java-version: '25'
-          distribution: 'corretto'
-          cache: maven
+          fetch-depth: 0  # reads the merge-base with main for the baseline seal
 
-      - name: Run gate-phase0 (push/PR — 20k sim skipped for speed, run nightly)
-        if: github.event_name != 'schedule' && github.event.inputs.run_full_nightly != 'true'
-        run: GATE_PHASE0_SKIP_GATE7=1 GATE_PHASE0_SKIP_SIM=1 bash gates/gate-phase0.sh
-        env:
-          GATE_PHASE0_LOG_DIR: ${{ runner.temp }}/gate-phase0-logs
-        timeout-minutes: 45
-
-      - name: Run gate-phase0 FULL (nightly — incl. the 20,001-seed deterministic sim)
-        if: github.event_name == 'schedule' || github.event.inputs.run_full_nightly == 'true'
-        run: GATE_PHASE0_SKIP_GATE7=1 bash gates/gate-phase0.sh
-        env:
-          GATE_PHASE0_LOG_DIR: ${{ runner.temp }}/gate-phase0-logs
-        timeout-minutes: 60
-
-      - name: Upload gate-phase0 step logs
-        uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: gate-phase0-logs
-          path: ${{ runner.temp }}/gate-phase0-logs
-          retention-days: 7
-
-  gate-B:
-    # Workstream B MERGE gate (gates/gate-B.sh) — the merge-readiness SEAL for the multi-Raft
-    # re-threading: R-01 deletion (Stage 1), N>1 owner-isolation (M1), H-4 group-rehoming closure
-    # (M2a/M2b), and the coalesced-heartbeat de-regression (M3). Cumulative with gates 1..7 + phase0,
-    # which each run as their own PARALLEL job; the ci-success aggregator (not a serial needs: edge) is what
-    # proves the whole chain passed. It sets GATE_B_SKIP_CHAIN=1 (the chain is supplied by the gate jobs, not re-run) and
-    # asserts the B milestone artifacts exist (non-vacuity — a deleted contract/gate/coalescing class
-    # FAILS, never a silent pass) + records the verified baseline (cedc706, D-010). A green gate-B is the
-    # named status the B → main merge is gated on.
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0  # gate-B reads the merge-base with main for the baseline seal
-      - name: Run gate-B (merge-readiness seal; cumulative chain supplied by the gate jobs)
+      - name: Assert multi-Raft milestone artifacts exist
         run: GATE_B_SKIP_CHAIN=1 bash gates/gate-B.sh
         timeout-minutes: 5
 
-  gate-phase1:
-    # Multi-Raft Phase 1 cumulative gate (gates/gate-phase1.sh) — the static-N sharding layer: the
-    # ShardMap seam + StaticShardMap (hash-within-scope), the DISCLAIM cross-shard write guard, and the
-    # multi-shard deterministic simulator with its six invariants (routing correctness, disjoint
-    # ownership, per-shard linearizability, cross-shard isolation, stale-map redirect, N=1 equivalence) —
-    # each proven NON-VACUOUS (an injected mis-route / wrong-shard / dropped-redirect / N=1-divergence goes
-    # RED). Cumulative with gates 1..7 + phase0 + B (each its own PARALLEL job); the ci-success aggregator
-    # (not a serial needs: edge) is what proves the whole chain passed. Sets GATE_PHASE1_SKIP_CHAIN=1 (chain supplied by the
-    # gate jobs). Push/PR runs a fast 200-seed sweep; the NIGHTLY path runs the integrated >=10k-seed sweep
-    # (charter C5).
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Set up JDK 25
-        uses: actions/setup-java@v4
-        with:
-          java-version: '25'
-          distribution: 'corretto'
-          cache: maven
-
-      - name: Run gate-phase1 (push/PR — fast 200-seed sweep)
-        if: github.event_name != 'schedule' && github.event.inputs.run_full_nightly != 'true'
-        run: GATE_PHASE1_SKIP_CHAIN=1 GATE_PHASE1_SWEEP_COUNT=200 bash gates/gate-phase1.sh
-        env:
-          GATE_PHASE1_LOG_DIR: ${{ runner.temp }}/gate-phase1-logs
-        timeout-minutes: 30
-
-      - name: Run gate-phase1 FULL (nightly — the integrated >=10k-seed multi-shard sweep, charter C5)
-        if: github.event_name == 'schedule' || github.event.inputs.run_full_nightly == 'true'
-        run: GATE_PHASE1_SKIP_CHAIN=1 GATE_PHASE1_SWEEP_COUNT=10000 bash gates/gate-phase1.sh
-        env:
-          GATE_PHASE1_LOG_DIR: ${{ runner.temp }}/gate-phase1-logs
-        timeout-minutes: 45
-
-      - name: Upload gate-phase1 step logs
-        uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: gate-phase1-logs
-          path: ${{ runner.temp }}/gate-phase1-logs
-          retention-days: 7
-
   wire-compat:
-    # ADR-0029 §8.10 fixture-bump guardrail.
-    # Fails the build if GoldenFixtures.java changed without a matching bump
-    # to FrameCodec.WIRE_VERSION. Golden bytes are stored as hex constants in
-    # GoldenFixtures.java rather than binary files — diffs stay human-readable.
+    # Fails the build if the golden wire fixtures changed without a matching
+    # bump to FrameCodec.WIRE_VERSION. Golden bytes are stored as hex constants
+    # in GoldenFixtures.java, so diffs stay human-readable.
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4.3.1
         with:
           fetch-depth: 0  # need history to diff against the base ref
 
@@ -613,32 +365,72 @@ jobs:
             echo "No fixture changes in $DIFF_RANGE — wire-compat clean."
           fi
 
+  linearizability-under-fault:
+    # Live linearizability check under injected network faults: the unmodified
+    # server binary is driven through seeded fault+workload schedules on 3- and
+    # 5-node clusters and every operation history must check as linearizable. The
+    # fault injector shells out to `sudo -n iptables` to isolate a node's inbound
+    # Raft port, so the runner needs passwordless sudo and iptables, and the
+    # multi-node clusters want more than 2 vCPUs of headroom. GitHub-hosted
+    # ubuntu-latest provides passwordless sudo and iptables; if a larger or
+    # self-hosted runner is available, swap the label below for more cores.
+    #
+    # Scheduled or manual only (never on push or pull_request) because of the
+    # privileged, resource-heavy setup, and deliberately excluded from the
+    # ci-success seal so it can never fail or block a pull request.
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4.3.1
+
+      - name: Set up JDK 25
+        uses: actions/setup-java@v4.8.0
+        with:
+          java-version: '25'
+          distribution: 'corretto'
+          cache: maven
+
+      - name: Set up Go (builds the Porcupine linearizability checker)
+        uses: actions/setup-go@v5.6.0
+        with:
+          go-version-file: configd-linz/src/main/go/porcupine-check/go.mod
+          cache-dependency-path: configd-linz/src/main/go/porcupine-check/go.sum
+
+      # Runs the checker self-tests, the sim-history check, and the live faulted
+      # seed matrix (GATE2_FAULTED=1) via the linearizability step of gate-2.sh.
+      - name: Run linearizability under injected network faults
+        run: GATE2_FAULTED=1 bash gates/gate-2.sh --step linzgate
+        env:
+          GATE2_LOG_DIR: ${{ runner.temp }}/linz-fault-logs
+        timeout-minutes: 120
+
+      - name: Upload linearizability-under-fault logs
+        uses: actions/upload-artifact@v4.6.2
+        if: always()
+        with:
+          name: linearizability-under-fault-logs
+          path: ${{ runner.temp }}/linz-fault-logs
+          retention-days: 14
+
   ci-success:
-    # Aggregator / required-check seal. With the gates fanned out in parallel (no
-    # serial needs: chain), this single job re-establishes the cumulative guarantee:
-    # it depends on EVERY other job and FAILS unless all of them succeeded. Make
-    # THIS the sole required status check in branch protection — it collapses the
-    # 13 parallel jobs back into one green/red signal, and any future job you also
-    # list under `needs:` is then enforced automatically. `if: always()` so a
-    # failed or cancelled upstream still yields a definitive RED here (a skipped
-    # aggregator would read as "no result" to branch protection and could let a
-    # broken build merge).
+    # Required-check seal. With the verification jobs fanned out in parallel,
+    # this single job re-establishes the cumulative guarantee: it depends on
+    # every pull-request-gating job and fails unless all of them succeeded. Make
+    # THIS the sole required status check in branch protection. It deliberately
+    # does not depend on linearizability-under-fault, which runs only on the
+    # nightly schedule / manual dispatch and must never block a pull request.
+    # `if: always()` so a failed or cancelled upstream still yields a definitive
+    # red result here (a skipped aggregator would read as "no result" to branch
+    # protection and could let a broken build merge).
     name: CI Success (all gates green)
     if: always()
     needs:
       - build-and-test
       - tlc-model-check
+      - gate
+      - security-and-supply-chain
+      - multiraft-merge-seal
       - wire-compat
-      - gate-1
-      - gate-2
-      - gate-3
-      - gate-4
-      - gate-5
-      - gate-6
-      - gate-7
-      - gate-phase0
-      - gate-B
-      - gate-phase1
     runs-on: ubuntu-latest
     steps:
       - name: Require every upstream job to have succeeded
