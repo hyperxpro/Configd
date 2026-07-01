@@ -93,19 +93,21 @@ measurement doc.
 
 ## 4. Keep snapshot state < 4 MiB -- a larger InstallSnapshot wedges the follower
 
-- **Requirement.** Keep the state a single Raft snapshot must ship **under 4 MiB**,
-  and **alert** if the cap is hit.
+- **Requirement.** Keep the state a single Raft snapshot must ship **under 4 MiB**.
+  There is **no built-in metric or alert** for the over-cap drop -- you must add a
+  **log-watch** alert yourself (see "What to do" below).
 - **Why it matters.** The Raft message codec caps a single snapshot blob at
   **`MAX_SNAPSHOT_BLOB_LEN = 4 * 1024 * 1024`** (4 MiB) --
   `configd-server/.../RaftMessageCodec.java:76` (enforced at encode `:128`/`:133`
   and decode `:480`/`:495`). A follower needing a **> 4 MiB** `InstallSnapshot`
   never receives it: the over-cap frame is **dropped to stderr** --
   `"Dropping InstallSnapshot ... (codec rejected -- snapshot too large for v1 wire)"`
-  (`configd-consensus-core/.../RaftNode.java:2074-2077`) -- and the send is
+  (`configd-consensus-core/.../RaftNode.java`, `sendInstallSnapshot`, catch around
+  line 2009) -- and the send is
   abandoned. That follower cannot bootstrap from snapshot; if the leader has
   compacted past the entries it still needs, the follower is **permanently
-  behind** ([`known-limitations.md` section "Snapshot size cap"](known-limitations.md),
-  lines 186-204). Chunked `InstallSnapshot` is a **v2** item.
+  behind** ([`known-limitations.md` section "Snapshot size cap"](known-limitations.md)).
+  Chunked `InstallSnapshot` is a **v2** item.
   - **Note (do not mis-cite):** the 4 MiB limit is the **app-layer snapshot-blob
     cap in `RaftMessageCodec`**, which is **stricter** than the transport frame cap
     `FrameCodec.MAX_FRAME_SIZE = 16 MiB` (`configd-transport/.../FrameCodec.java:104`).
@@ -113,11 +115,15 @@ measurement doc.
     looser bound.
 - **What to do.**
   1. Tune snapshot/compaction policy so state stays **< 4 MiB** at snapshot time.
-  2. **Alert on the drop.** There is currently **no Prometheus metric** for this --
-     the only signal is the **stderr line** above
-     ([`known-limitations.md` section "Encoder-drop observability"](known-limitations.md),
-     lines 216-224: "no metric counter exports drop frequency -- it's stderr
-     only"). Scrape logs for `Dropping InstallSnapshot`.
+  2. **Log-watch for the drop -- there is no metric or built-in alert.** The only
+     signal is the **stderr line** above; **no Prometheus counter exports it**
+     ([`known-limitations.md` section "Encoder-drop observability"](known-limitations.md)).
+     Add a log alert on the string `snapshot too large for v1 wire` -- any
+     occurrence is a wedged follower. **Do not rely on `ConfigdSnapshotInstallStalled`
+     for this:** that alert fires on `configd_snapshot_install_failed_total`, a
+     **receiver-side** counter (a follower failing to *install* a snapshot it
+     received); the over-cap frame never reaches the follower, so that counter and
+     that alert **never trip on this drop**.
   3. **Alert on `matchIndex` lag** -- a follower whose `matchIndex` falls and stays
      far behind the leader's `commitIndex` is the proxy for "stuck because
      snapshot install was rejected." Fold this into the first-30-days burn-in

@@ -184,8 +184,11 @@ The consensus core is a full, tick-driven Raft implementation:
 
 **Snapshot size cap.** A single InstallSnapshot blob is capped at 4 MiB on the v1 wire
 (`MAX_SNAPSHOT_BLOB_LEN`). A follower that needs a larger snapshot cannot bootstrap from it; the
-over-cap frame is dropped and logged. Operational guidance: keep snapshot state under 4 MiB and
-alert on the drop plus `matchIndex` lag. Chunked InstallSnapshot is a v2 item.
+over-cap frame is dropped at the leader (`RaftNode.sendInstallSnapshot`) and logged to stderr with
+**no metric** -- detection is log-watch only, and the receiver-side `ConfigdSnapshotInstallStalled`
+alert does not cover it. Operational guidance: keep snapshot state under 4 MiB, log-watch the drop
+string, and track `matchIndex` lag as a proxy. Chunked InstallSnapshot (the cap-lift that makes the
+over-cap drop unreachable) is a later item.
 
 ## Fan-out distribution to the edge
 

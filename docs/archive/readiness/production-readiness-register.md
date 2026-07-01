@@ -114,6 +114,15 @@ recommendation for the go/no-go, **not** a decision.
 > §2.6–2.11) is the frozen 2026-06-26 auditor's snapshot; the reconciled per-row status is in §1–§11 and the
 > go/no-go holds the decision.
 
+> **Erratum 2026-07-01 (Gate 3, post-go/no-go) -- #7's "alert on the drop" mitigation does not exist.** The
+> go/no-go itself repeated this phantom, so it is corrected here rather than folded into the reconciliation
+> above. The leader-side over-cap `InstallSnapshot` drop (`RaftNode.sendInstallSnapshot`) increments **no
+> metric**; the only snapshot alert, `ConfigdSnapshotInstallStalled`, fires on the **receiver-side**
+> `configd_snapshot_install_failed_total`, which the over-cap frame never reaches, so it **cannot** cover
+> this drop. Detection is **log-watch only** (grep `snapshot too large for v1 wire`). Corrected live in
+> `docs/operations/known-limitations.md` ("Snapshot size cap" / "Encoder-drop observability") and
+> `docs/operations/deployer-must-know.md` section 4. The frozen #7 row below is left as-authored.
+
 ### Recommended **blockers** for an unqualified production claim
 
 1. **Empirical validation is deferred to production observation** (11.12, 9.7, 9.8, 7.5). No completed
