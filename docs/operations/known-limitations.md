@@ -49,10 +49,11 @@ but does not remove, the exposure.)
   nonce uniqueness is global and safe, but cross-group at-rest *integrity* (a record spliced from group
   B's WAL into group A's) is caught only by the Raft log-consistency layer, not the envelope; bind
   groupId into the AAD before an N>1 deployment relies on cross-group at-rest integrity.
-- **Write-path overhead (pending final measurement).** The on/off write-path cost of AES-256-GCM at rest
-  (algId=2) versus the algId=1 integrity default is being measured on the release bytes; the number lands
-  with the Gate-7 measurement fill-in.
-  <!-- GATE7-MEASUREMENT: encryption ON vs OFF write-path overhead (per-op latency + throughput delta, algId=2 vs the algId=1 integrity default) from the final drive-to-green run on eb9b293 - orchestrator to fill -->
+- **Write-path overhead (measured, release SHA eb9b293).** Encryption ON vs OFF, single node, 256 B values:
+  sustained throughput knee 1210 -> 1180 w/s (-2.5%), commit latency p50 7.65 -> 7.77 ms (+1.5%), p99 14.6 ->
+  36.4 ms (+150%). Low on throughput and median; the cost is tail-weighted (per-record AES-GCM + ciphertext
+  allocation roughly doubles p99). Single loopback node, so this is the local encrypt-on-write cost only (no
+  cross-node replication fsync in the path) - a floor. See `docs/measurement/ec2-drive-to-green-2026-07-02/gate7-final/`.
 
 ### 2. Client-facing watches: the RFC section 2 protocol is implemented server-side (N=1); drivers + N>1 are next
 
@@ -159,21 +160,27 @@ GREEN against a `main`-identical server (register section 11.12). The honest res
   co-location guard rather than disabling it); the multi-process iptables-faulted matrix then ran GREEN
   (8/8 LINEARIZABLE, reproducibility gate iv byte-identical) on the arc's intermediate commit
   (`docs/measurement/ec2-drive-to-green-2026-07-02/README.md`). Because later gates changed consensus and
-  storage code, the **definitive C3 must be re-captured on the release SHA**.
-  <!-- GATE7-MEASUREMENT: definitive faulted-linz GREEN on release SHA eb9b293 (8/8 LINEARIZABLE + reproducibility gate iv) - orchestrator to capture + link -->
+  storage code, the definitive C3 was re-captured on the release SHA. **DONE: GREEN on release SHA
+  eb9b293** - 8/8 LINEARIZABLE (3- and 5-node, faults active), reproducibility gate iv byte-identical
+  (`docs/measurement/ec2-drive-to-green-2026-07-02/gate7-final/`). Condition C3 closed on the shipped bytes.
 - **Edge-staleness distribution (INV-S2) - re-run pending with the gap-quarantine fix.** The on-metal
   INV-S2 distribution run this arc surfaced a real edge-fan-out bug: a perfectly caught-up edge
   (`cursor == lastAckedSeq`) under any sustained write stream past the fan-out buffer capacity was
   spuriously gap-demoted and quarantined, freezing its frontier and ramping measured staleness to the
   histogram ceiling. The staleness **mechanism** itself validated (a subscribed edge hovers 2-251 ms,
   bounded by the 250 ms heartbeat). The bug is now **fixed** (transient lock-free-read-race GAPs are
-  distinguished from a genuine fall-behind; register section 4.13), so the distribution is re-runnable.
-  <!-- GATE7-MEASUREMENT: INV-S2 edge-staleness distribution (p99 < 500 ms / p9999 < 2 s under sustained load) re-run with the gap-quarantine fix on eb9b293 - orchestrator to fill + link -->
+  distinguished from a genuine fall-behind; register section 4.13). **DONE: re-run on release SHA eb9b293,
+  bound MET with large margin** - 4 edges/500 w/s/180 s: p99 24 ms, p9999 117 ms; 1 edge/100 w/s/30 min:
+  p99 13 ms, p9999 212 ms, max 232 ms (bound p99 < 500 ms / p9999 < 2 s met ~10-38x). A faithful deep-tail
+  measurement at high multi-edge density wants dedicated edge hardware (single-box co-location occasionally
+  starves an edge JVM); the clean per-edge steady-state distribution is representative and the bound is met.
+  See `docs/measurement/ec2-drive-to-green-2026-07-02/gate7-final/`.
 - **Residuals** (burn-in / v2): no literal sustained **10 k/s** or **100 k burst** (single-cluster max
   1607 w/s), no **cross-region / WAN** measurement (single-region by design), no full **24 h / 72 h** soak,
-  and the two drive-to-green measurements above (definitive C3 on the release SHA + the INV-S2 distribution
-  re-run) are owed (`consistency-contract.md` section 2). See the register section 11 empirical-validation
-  rows and the [burn-in contract](burn-in-contract.md).
+  and a faithful **INV-S2 deep-tail at high multi-edge density** wants dedicated edge hardware (the release-SHA
+  re-run above met the bound on the clean per-edge distribution; single-box co-location limits the multi-edge
+  p9999). The definitive C3 and the INV-S2 bound are both DONE on the release SHA (above). See the register
+  section 11 empirical-validation rows and the [burn-in contract](burn-in-contract.md).
 
 ---
 
