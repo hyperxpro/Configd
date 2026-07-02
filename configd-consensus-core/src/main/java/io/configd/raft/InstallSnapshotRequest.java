@@ -13,18 +13,21 @@ import java.util.Objects;
  * entries the follower needs). The follower replaces its state machine
  * state with the snapshot and resets its log.
  * <p>
- * In this implementation, the entire snapshot is sent in a single
- * message ({@code offset} is always 0 and {@code done} is always true).
- * Chunked transfer can be added later for large snapshots.
+ * Large snapshots are sent as an ordered stream of chunks: {@code offset} is the byte offset of
+ * this chunk's {@code data} within the whole snapshot and {@code done} marks the final chunk. A
+ * snapshot that fits one chunk is a single message with {@code offset == 0} and {@code done ==
+ * true}. The cluster config rides the final chunk (the receiver needs it only at install time), so
+ * {@code clusterConfigData} is non-null only on the {@code done} chunk of a multi-chunk transfer.
  *
  * @param term              leader's current term
  * @param leaderId          leader sending the snapshot (so follower can redirect clients)
  * @param lastIncludedIndex the snapshot replaces all entries up through and including this index
  * @param lastIncludedTerm  term of {@code lastIncludedIndex}
- * @param offset            byte offset within the snapshot data (0 for single-chunk transfer)
- * @param data              raw snapshot bytes
+ * @param offset            byte offset of this chunk's {@code data} within the whole snapshot
+ * @param data              this chunk's raw snapshot bytes
  * @param done              true if this is the last (or only) chunk
- * @param clusterConfigData serialized cluster config at snapshot point (may be null)
+ * @param clusterConfigData serialized cluster config at snapshot point, carried on the final
+ *                          chunk (may be null)
  */
 public record InstallSnapshotRequest(
         long term,

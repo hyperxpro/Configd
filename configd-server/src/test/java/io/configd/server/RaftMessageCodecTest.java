@@ -3,9 +3,11 @@ package io.configd.server;
 import io.configd.common.NodeId;
 import io.configd.raft.*;
 import io.configd.transport.FrameCodec;
+import io.configd.transport.MessageType;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 
+import java.nio.ByteBuffer;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -168,11 +170,37 @@ class RaftMessageCodecTest {
             var result = (InstallSnapshotRequest) RaftMessageCodec.decode(frame);
             assertEquals(0, result.data().length);
         }
+
+        @Test
+        void midStreamChunkRoundTrip() {
+            // An intermediate chunk of a chunked transfer: nonzero offset, not the final chunk, and
+            // no cluster config (config rides only the final chunk).
+            byte[] data = {5, 6, 7, 8};
+            var req = new InstallSnapshotRequest(8L, NodeId.of(1), 100L, 7L, 4096, data, false);
+            FrameCodec.Frame frame = RaftMessageCodec.encode(req, GROUP_ID);
+            var result = (InstallSnapshotRequest) RaftMessageCodec.decode(frame);
+
+            assertEquals(4096, result.offset());
+            assertFalse(result.done());
+            assertArrayEquals(data, result.data());
+            assertNull(result.clusterConfigData());
+        }
+
+        @Test
+        void chunkExceedingPerChunkCapIsRejectedOnEncode() {
+            // A single chunk larger than the per-chunk data ceiling is rejected on encode: the
+            // sender's chunk size must stay at or below this cap. The TOTAL snapshot is unbounded
+            // (it streams as many chunks), but no single chunk may exceed one frame.
+            byte[] tooBig = new byte[RaftMessageCodec.MAX_SNAPSHOT_BLOB_LEN + 1];
+            var req = new InstallSnapshotRequest(8L, NodeId.of(1), 100L, 7L, 0, tooBig, true);
+            assertThrows(IllegalArgumentException.class, () -> RaftMessageCodec.encode(req, GROUP_ID));
+        }
     }
 
     @Test
     void installSnapshotResponseRoundTrip() {
-        var resp = new InstallSnapshotResponse(8L, true, NodeId.of(3), 42L);
+        // Carries a non-zero nextExpectedOffset (chunked-transfer position) to prove it round-trips.
+        var resp = new InstallSnapshotResponse(8L, true, NodeId.of(3), 42L, 65536);
         FrameCodec.Frame frame = RaftMessageCodec.encode(resp, GROUP_ID);
         var result = (InstallSnapshotResponse) RaftMessageCodec.decode(frame);
 
@@ -180,6 +208,24 @@ class RaftMessageCodecTest {
         assertTrue(result.success());
         assertEquals(NodeId.of(3), result.from());
         assertEquals(42L, result.lastIncludedIndex());
+        assertEquals(65536, result.nextExpectedOffset());
+    }
+
+    @Test
+    void installSnapshotResponseDefaultsOffsetWhenAbsentOnWire() {
+        // An InstallSnapshotResponse frame WITHOUT the trailing nextExpectedOffset field (the 13-byte
+        // pre-chunking layout) must still decode, defaulting the offset to 0. This is the optional-
+        // trailing-field contract the decoder relies on.
+        ByteBuffer legacy = ByteBuffer.allocate(1 + 4 + 8);
+        legacy.put((byte) 1);            // success
+        legacy.putInt(NodeId.of(3).id());
+        legacy.putLong(42L);             // lastIncludedIndex
+        FrameCodec.Frame frame = new FrameCodec.Frame(
+                MessageType.INSTALL_SNAPSHOT_RESPONSE, GROUP_ID, 8L, legacy.array());
+        var result = (InstallSnapshotResponse) RaftMessageCodec.decode(frame);
+
+        assertEquals(42L, result.lastIncludedIndex());
+        assertEquals(0, result.nextExpectedOffset());
     }
 
     @Test
