@@ -216,6 +216,15 @@ public final class DeltaApplier {
                         + " -> " + delta.toVersion() + "]: signature verification is required");
                 return ApplyResult.UNSIGNED_REJECTED;
             }
+            // Defense-in-depth: the leader always signs with epoch > 0 (the position + epoch +
+            // nonce payload, ADR-0044). A signature carried on an epoch-0 delta is not a shape
+            // production emits; reject it rather than fall back to the legacy batch-only
+            // verification form, which would strip the position binding.
+            if (delta.epoch() == 0L) {
+                LOG.warning("Rejecting signed delta [" + delta.fromVersion()
+                        + " -> " + delta.toVersion() + "]: a signature requires epoch > 0");
+                return ApplyResult.SIGNATURE_INVALID;
+            }
             try {
                 byte[] payload = buildVerificationPayload(delta);
                 if (!verifier.verify(payload, signature)) {

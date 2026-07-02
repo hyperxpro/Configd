@@ -632,9 +632,9 @@ class ConfigStateMachineTest {
             ConfigSigner verifier = new ConfigSigner(keyPair.getPublic());
             byte[] canonical = CommandCodec.encodeBatch(List.of(
                     new ConfigMutation.Put("db.host", bytes("localhost"))));
-            byte[] payload = buildPayload(canonical, sm.lastEpoch(), sm.lastNonce());
+            byte[] payload = buildPayload(canonical, 0L, 1L, sm.lastEpoch(), sm.lastNonce());
             assertTrue(verifier.verify(payload, sig),
-                    "Signature should verify against canonical batch-encoded form bound with epoch+nonce");
+                    "Signature should verify against canonical batch-encoded form bound with position+epoch+nonce");
 
             // The raw command bytes should NOT verify - the signature covers the canonical
             // batch encoding, not the raw wire bytes.
@@ -642,9 +642,15 @@ class ConfigStateMachineTest {
                     "Signature must NOT verify against raw PUT-encoded bytes");
         }
 
-        private byte[] buildPayload(byte[] canonical, long epoch, byte[] nonce) {
-            java.nio.ByteBuffer buf = java.nio.ByteBuffer.allocate(canonical.length + Long.BYTES + nonce.length);
+        // Mirrors ConfigDelta.signingPayload() for a signed (epoch > 0) delta: canonical batch
+        // bytes, then the version position (fromVersion, toVersion), then the epoch and nonce.
+        private byte[] buildPayload(byte[] canonical, long fromVersion, long toVersion,
+                                    long epoch, byte[] nonce) {
+            java.nio.ByteBuffer buf = java.nio.ByteBuffer.allocate(
+                    canonical.length + 3 * Long.BYTES + nonce.length);
             buf.put(canonical);
+            buf.putLong(fromVersion);
+            buf.putLong(toVersion);
             buf.putLong(epoch);
             buf.put(nonce);
             return buf.array();
@@ -668,9 +674,9 @@ class ConfigStateMachineTest {
             byte[] canonical = CommandCodec.encodeBatch(List.of(
                     new ConfigMutation.Put("a", bytes("1")),
                     new ConfigMutation.Delete("b")));
-            byte[] payload = buildPayload(canonical, sm.lastEpoch(), sm.lastNonce());
+            byte[] payload = buildPayload(canonical, 0L, 1L, sm.lastEpoch(), sm.lastNonce());
             assertTrue(verifier.verify(payload, sig),
-                    "Batch signature should verify against re-encoded batch bound with epoch+nonce");
+                    "Batch signature should verify against re-encoded batch bound with position+epoch+nonce");
         }
 
         @Test
@@ -702,10 +708,10 @@ class ConfigStateMachineTest {
             byte[] canonical = CommandCodec.encodeBatch(List.of(
                     new ConfigMutation.Put("key", bytes("val"))));
             assertTrue(verifier.verify(
-                    buildPayload(canonical, smBatch.lastEpoch(), smBatch.lastNonce()),
+                    buildPayload(canonical, 0L, 1L, smBatch.lastEpoch(), smBatch.lastNonce()),
                     batchSig));
             assertTrue(verifier.verify(
-                    buildPayload(canonical, smPut.lastEpoch(), smPut.lastNonce()),
+                    buildPayload(canonical, 0L, 1L, smPut.lastEpoch(), smPut.lastNonce()),
                     putSig));
         }
 

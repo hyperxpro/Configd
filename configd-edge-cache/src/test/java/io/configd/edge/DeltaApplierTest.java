@@ -290,12 +290,17 @@ class DeltaApplierTest {
         }
 
         /**
-         * Helper: signs a delta's mutations in canonical batch-encoded form,
-         * matching the normalization performed by ConfigStateMachine.canonicalize().
+         * Helper: builds a leader-signed delta at a real epoch ({@code > 0}), signing the same
+         * {@link ConfigDelta#signingPayload()} the edge verifier reconstructs - canonical
+         * mutations, the version position ({@code fromVersion}, {@code toVersion}), the epoch,
+         * and the nonce (ADR-0044). Production never emits a signed epoch-0 delta.
          */
-        private byte[] signDelta(ConfigDelta delta) throws Exception {
-            byte[] canonical = CommandCodec.encodeBatch(delta.mutations());
-            return leaderSigner.sign(canonical);
+        private ConfigDelta signedDelta(long fromV, long toV, List<ConfigMutation> mutations,
+                                        long epoch) throws Exception {
+            byte[] nonce = new byte[]{1, 2, 3, 4, 5, 6, 7, (byte) epoch};
+            ConfigDelta unsigned = new ConfigDelta(fromV, toV, mutations, null, epoch, nonce);
+            byte[] sig = leaderSigner.sign(unsigned.signingPayload());
+            return new ConfigDelta(fromV, toV, mutations, sig, epoch, nonce);
         }
 
         @Test
@@ -303,11 +308,8 @@ class DeltaApplierTest {
             ConfigSigner verifier = new ConfigSigner(keyPair.getPublic());
             DeltaApplier verifyingApplier = new DeltaApplier(client, verifier);
 
-            ConfigDelta unsignedDelta = new ConfigDelta(0, 1, List.of(
-                    new ConfigMutation.Put("key", bytes("value"))
-            ));
-            byte[] sig = signDelta(unsignedDelta);
-            ConfigDelta signedDelta = new ConfigDelta(0, 1, unsignedDelta.mutations(), sig);
+            ConfigDelta signedDelta = signedDelta(0, 1, List.of(
+                    new ConfigMutation.Put("key", bytes("value"))), 1L);
 
             DeltaApplier.ApplyResult result = verifyingApplier.offer(signedDelta, clock.currentTimeMillis());
 
@@ -320,15 +322,57 @@ class DeltaApplierTest {
             ConfigSigner verifier = new ConfigSigner(keyPair.getPublic());
             DeltaApplier verifyingApplier = new DeltaApplier(client, verifier);
 
+            // A well-formed signed (epoch > 0) delta whose signature bytes are corrupt.
             byte[] badSignature = new byte[64]; // all zeros - invalid
             ConfigDelta delta = new ConfigDelta(0, 1, List.of(
-                    new ConfigMutation.Put("key", bytes("value"))
-            ), badSignature);
+                    new ConfigMutation.Put("key", bytes("value"))), badSignature, 1L,
+                    new byte[]{1, 2, 3, 4, 5, 6, 7, 8});
 
             DeltaApplier.ApplyResult result = verifyingApplier.offer(delta, clock.currentTimeMillis());
 
             assertEquals(DeltaApplier.ApplyResult.SIGNATURE_INVALID, result);
             assertEquals(0, client.currentVersion()); // not applied
+        }
+
+        @Test
+        void signedDeltaWithEpochZeroIsRejected() throws Exception {
+            // Defense-in-depth (ADR-0044): the leader always signs with epoch > 0, so a
+            // signature carried on an epoch-0 delta is not a shape production emits. The edge
+            // rejects it rather than fall back to the legacy batch-only verification form.
+            ConfigSigner verifier = new ConfigSigner(keyPair.getPublic());
+            DeltaApplier verifyingApplier = new DeltaApplier(client, verifier);
+
+            List<ConfigMutation> mutations = List.of(new ConfigMutation.Put("key", bytes("value")));
+            // Sign the legacy (batch-only) payload and carry it on an epoch-0 delta.
+            byte[] legacySig = leaderSigner.sign(CommandCodec.encodeBatch(mutations));
+            ConfigDelta signedEpoch0 = new ConfigDelta(0, 1, mutations, legacySig);
+
+            DeltaApplier.ApplyResult result =
+                    verifyingApplier.offer(signedEpoch0, clock.currentTimeMillis());
+
+            assertEquals(DeltaApplier.ApplyResult.SIGNATURE_INVALID, result);
+            assertEquals(0, client.currentVersion());
+        }
+
+        @Test
+        void rewrittenVersionPositionFailsVerification() throws Exception {
+            // Track 0 red-team regression: the version position is inside the signature, so a
+            // relay that rewrites fromVersion/toVersion to splice a delta out of the chain
+            // breaks verification (the property the anti-suppression claim used to lean on TLS
+            // for; ADR-0044).
+            ConfigSigner verifier = new ConfigSigner(keyPair.getPublic());
+            DeltaApplier verifyingApplier = new DeltaApplier(client, verifier);
+
+            List<ConfigMutation> mutations = List.of(new ConfigMutation.Put("key", bytes("value")));
+            ConfigDelta signed = signedDelta(0, 1, mutations, 1L);
+            // Rewrite the wire position (5 -> 6) while keeping the same signature/epoch/nonce.
+            ConfigDelta tampered = new ConfigDelta(5, 6, mutations,
+                    signed.signature(), signed.epoch(), signed.nonce());
+
+            DeltaApplier.ApplyResult result =
+                    verifyingApplier.offer(tampered, clock.currentTimeMillis());
+
+            assertEquals(DeltaApplier.ApplyResult.SIGNATURE_INVALID, result);
         }
 
         @Test
@@ -356,13 +400,12 @@ class DeltaApplierTest {
             ConfigSigner verifier = new ConfigSigner(keyPair.getPublic());
             DeltaApplier verifyingApplier = new DeltaApplier(client, verifier);
 
-            ConfigDelta unsignedDelta = new ConfigDelta(0, 1, List.of(
-                    new ConfigMutation.Put("key", bytes("value"))
-            ));
-            // Sign with the wrong key (using canonical batch form)
-            byte[] payload = CommandCodec.encodeBatch(unsignedDelta.mutations());
-            byte[] sig = wrongSigner.sign(payload);
-            ConfigDelta delta = new ConfigDelta(0, 1, unsignedDelta.mutations(), sig);
+            List<ConfigMutation> mutations = List.of(new ConfigMutation.Put("key", bytes("value")));
+            byte[] nonce = new byte[]{1, 2, 3, 4, 5, 6, 7, 8};
+            // Sign the correct (position + epoch + nonce) payload but with the wrong key.
+            ConfigDelta unsigned = new ConfigDelta(0, 1, mutations, null, 1L, nonce);
+            byte[] sig = wrongSigner.sign(unsigned.signingPayload());
+            ConfigDelta delta = new ConfigDelta(0, 1, mutations, sig, 1L, nonce);
 
             DeltaApplier.ApplyResult result = verifyingApplier.offer(delta, clock.currentTimeMillis());
 
@@ -420,12 +463,8 @@ class DeltaApplierTest {
             DeltaApplier verifyingApplier = new DeltaApplier(client, verifier);
 
             for (int i = 1; i <= 3; i++) {
-                ConfigDelta unsignedDelta = new ConfigDelta(i - 1, i, List.of(
-                        new ConfigMutation.Put("key-" + i, bytes("val-" + i))
-                ));
-                byte[] sig = signDelta(unsignedDelta);
-                ConfigDelta signedDelta = new ConfigDelta(i - 1, i,
-                        unsignedDelta.mutations(), sig);
+                ConfigDelta signedDelta = signedDelta(i - 1, i, List.of(
+                        new ConfigMutation.Put("key-" + i, bytes("val-" + i))), i);
 
                 assertEquals(DeltaApplier.ApplyResult.APPLIED,
                         verifyingApplier.offer(signedDelta, clock.currentTimeMillis()));
