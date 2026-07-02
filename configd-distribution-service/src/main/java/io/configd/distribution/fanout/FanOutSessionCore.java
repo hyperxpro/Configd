@@ -47,6 +47,21 @@ import java.util.function.Consumer;
  */
 public final class FanOutSessionCore {
 
+    /**
+     * Live-lock backstop for the transient-GAP retry path (see {@link #drainStreaming}).
+     * A transient GAP (a lock-free-read race whose data is still retained) is retried on the
+     * next tick rather than counted as a slow-consumer demotion. This bounds the pathological
+     * case where EVERY read for a long run races - if the consumer gets that many CONSECUTIVE
+     * transient GAPs with no clean read in between, it cannot make progress against the write
+     * rate, so we demote (a genuine "cannot keep up" signal). A single clean read resets the
+     * streak, so steady-state operation - where clean reads interleave the occasional race -
+     * never approaches this. At the production 10 ms tick this is ~1.3 s of back-to-back
+     * racing reads: unreachable in normal operation (a lock-free read is microseconds; even a
+     * 50 w/s writer is ~20 ms apart), yet a firm bound on a degenerate write storm. Kept
+     * deliberately high so it never masks the fix (a healthy caught-up edge must never trip it).
+     */
+    static final int MAX_CONSECUTIVE_TRANSIENT_GAPS = 128;
+
     /** The session states. */
     public enum SessionState {
         /** Tailing {@code readSince(cursor)} into NOTIFY batches. */
@@ -92,6 +107,14 @@ public final class FanOutSessionCore {
     private DemotionEvent lastDemotion;
 
     private int demotionCount;
+
+    /**
+     * Consecutive transient-GAP ticks (a lock-free-read race whose data is still retained)
+     * with no clean read in between. Reset by any clean {@code readSince} (see
+     * {@link #drainStreaming}) and by {@link #demote}. Bounded by
+     * {@link #MAX_CONSECUTIVE_TRANSIENT_GAPS}, the live-lock backstop.
+     */
+    private int consecutiveTransientGaps;
 
     /**
      * The in-progress (possibly transport-paused) snapshot transfer; null when none.
@@ -288,10 +311,11 @@ public final class FanOutSessionCore {
 
         Result r = source.readSince(cursor);
         if (r.isGap()) {
-            demote(DemotionEvent.REASON_GAP);
-            return true;
+            return handleGap((Result.Gap) r);
         }
         List<CommitNotification> pending = ((Result.Ok) r).notifications();
+        // A clean read (even an empty one - caught up, no race) breaks any transient-GAP streak.
+        consecutiveTransientGaps = 0;
         if (pending.isEmpty()) {
             return false;
         }
@@ -335,6 +359,65 @@ public final class FanOutSessionCore {
             emitted = true;
         }
         return emitted;
+    }
+
+    /**
+     * Classifies a {@link Result.Gap} from {@code readSince(cursor)} as a GENUINE fall-behind
+     * (demote) or a TRANSIENT lock-free-read race (retry next tick). Returns true if a demotion
+     * was emitted, false if the GAP was transient and no frame was emitted this tick.
+     *
+     * <p>{@link io.configd.distribution.FanOutBuffer#readSince} returns a GAP for two very
+     * different reasons, and only one of them is a slow-consumer signal:
+     *
+     * <ol>
+     *   <li><b>GENUINE fall-behind.</b> The consumer's needed data was EVICTED from the ring.
+     *       The buffer's authoritative test is its fast-path
+     *       ({@code FanOutBuffer.readSince}: {@code if (evicted >= 0 && cursor < evicted)}):
+     *       a notification with {@code seq > cursor} is already gone. Eviction is drop-oldest
+     *       over strictly-ascending seqs, and the appender captures the evicted seq from the
+     *       tail slot BEFORE advancing tail, so {@code oldestRetainedSeq}
+     *       ({@code FanOutBuffer.oldestSeqInternal}, the seq now at the tail) always sits
+     *       strictly above {@code lastEvictedSeq}, i.e. {@code oldestRetainedSeq >=
+     *       lastEvictedSeq + 1}. Hence {@code cursor < lastEvictedSeq} implies
+     *       {@code oldestRetainedSeq > cursor + 1}: the cursor's SUCCESSOR is no longer
+     *       retained. This consumer must re-snapshot - a real slow-consumer signal the
+     *       governor must count toward quarantine.</li>
+     *   <li><b>TRANSIENT lock-free-read race.</b> The Lamport verify-after-read fallbacks
+     *       ({@code h - t1 > capacity}, torn read {@code t2 != t1}, or a not-yet-published
+     *       null slot) fire when a read coincides with a concurrent write+eviction at the
+     *       FULL-buffer boundary. They are only reachable AFTER the fast-path has already
+     *       proved {@code cursor >= lastEvictedSeq}, so the requested data is STILL IN THE
+     *       RING ({@code oldestRetainedSeq <= cursor + 1}) and a retry on the next tick
+     *       succeeds. This is NOT slow-consumer distress: once the ring is full and writes
+     *       continue, a fully caught-up edge hits this on nearly every boundary read, so
+     *       counting it as a GAP demotion spuriously walks a healthy edge to QUARANTINED.
+     *       Do NOT demote; return without a frame and re-read next tick.</li>
+     * </ol>
+     *
+     * <p>The boundary {@code oldestRetainedSeq > cursor + 1} errs on the SAFE side: it NEVER
+     * masks a genuine fall-behind (genuine always implies it, as shown above), and in the
+     * common contiguous-seq case it matches the buffer's own {@code cursor < lastEvictedSeq}
+     * test exactly. Only with sparse seqs (no-op/RCFG entries skip sequence numbers) can it
+     * conservatively over-classify a still-served cursor sitting in a skipped-seq gap as
+     * genuine - a rare, self-correcting extra re-snapshot, never a missed demotion.
+     * {@code oldestRetainedSeq == -1} (empty ring) is transient: the buffer never emits a
+     * genuine GAP while empty (an eviction leaves the ring at capacity).
+     */
+    private boolean handleGap(Result.Gap gap) {
+        long oldestRetainedSeq = gap.oldestRetainedSeq();
+        if (oldestRetainedSeq > cursor + 1) {
+            // GENUINE: the cursor's successor is no longer retained - must re-snapshot.
+            demote(DemotionEvent.REASON_GAP);
+            return true;
+        }
+        // TRANSIENT: data still retained. Retry next tick unless the race is unrelenting -
+        // a long run of back-to-back racing reads with no progress IS a "cannot keep up"
+        // signal (the live-lock backstop), at which point demoting is correct.
+        if (++consecutiveTransientGaps >= MAX_CONSECUTIVE_TRANSIENT_GAPS) {
+            demote(DemotionEvent.REASON_GAP);
+            return true;
+        }
+        return false;
     }
 
     /**
@@ -484,6 +567,7 @@ public final class FanOutSessionCore {
         // Drop pending outbound accounting - the snapshot supersedes everything in flight.
         inFlightFrameMaxSeq.clear();
         slowConsumerWarned = false;
+        consecutiveTransientGaps = 0; // re-bootstrap is a clean slate for the transient-GAP streak
         metrics.onDemotion(reason);
         if (demotionListener != null) {
             demotionListener.accept(event);
