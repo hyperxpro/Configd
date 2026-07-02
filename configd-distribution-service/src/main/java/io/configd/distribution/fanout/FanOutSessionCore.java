@@ -88,6 +88,17 @@ public final class FanOutSessionCore {
     /** Last applied-mutation seq S the session has STREAMED to the edge (the cursor). */
     private long cursor;
 
+    /**
+     * The highest seq the session has DELIVERED to the edge as data - a NOTIFY batch max, or a
+     * snapshot cutover seq - the ack-lag basis. It tracks {@link #cursor} in classic mode, but on
+     * a filtered session it does NOT advance over the covered-S skip: the filtered range the edge
+     * acks wholesale on the HEARTBEAT is not a backlog of unconfirmed data, so charging it to
+     * ack-lag would spuriously demote a healthy narrow edge. A snapshot cutover advances it (the
+     * snapshot IS unconfirmed data), preserving the self-healing re-demote of an unconfirmed
+     * snapshot.
+     */
+    private long highestDeliveredSeq;
+
     /** Highest seq the edge has acknowledged via CURSOR_ACK. */
     private long lastAckedSeq;
 
@@ -226,6 +237,7 @@ public final class FanOutSessionCore {
         this.cursor = subscribe.effectiveResumeCursor();
         this.lastAckedSeq = cursor;
         this.lastAdvertisedCoveredS = cursor;
+        this.highestDeliveredSeq = cursor;
 
         // Server-side prefix filtering is active only when the deployment posture is on, the edge
         // opted in (acceptsFiltered), and the subscription is a non-empty prefix set. When inactive
@@ -333,9 +345,15 @@ public final class FanOutSessionCore {
      * frame was emitted. Demotes on GAP / queue overflow / ack-lag / transport block.
      */
     private boolean drainStreaming(long nowMillis) {
-        // Ack-lag breach check FIRST (a stuck consumer that never acks must demote even if
-        // new data keeps it under the frame cap).
-        if (cursor - lastAckedSeq > config.ackLagDemoteSeqs()) {
+        // Ack-lag breach check FIRST (a stuck consumer that never acks must demote even if new
+        // data keeps it under the frame cap). Charge the DELIVERED-as-data seq span
+        // (highestDeliveredSeq - lastAcked), NOT the raw cursor: under filtering the cursor
+        // advances over skipped deltas via the covered-S, which the edge acks wholesale on the
+        // HEARTBEAT and is not a backlog of unconfirmed data, so charging it would spuriously
+        // demote a healthy narrow edge. In classic mode highestDeliveredSeq == cursor, so this is
+        // byte-identical to the previous cursor-based check (incl. the post-snapshot re-demote of
+        // an unconfirmed snapshot, whose cutover advances highestDeliveredSeq).
+        if (highestDeliveredSeq - lastAckedSeq > config.ackLagDemoteSeqs()) {
             demote(DemotionEvent.REASON_ACK_LAG);
             return true; // demoted (the notice is emitted, or parked per RR-104 would-block)
         }
@@ -411,6 +429,7 @@ public final class FanOutSessionCore {
             }
             inFlightFrameMaxSeq.addLast(batchMaxSeq);
             cursor = batchMaxSeq;
+            highestDeliveredSeq = batchMaxSeq; // the ack-lag basis: real delivered data
             // A delivered NOTIFY conveys the covered position through its highest seq.
             lastAdvertisedCoveredS = Math.max(lastAdvertisedCoveredS, batchMaxSeq);
             metrics.onNotifyBatch(batch.size(), batchBytes);
@@ -608,6 +627,7 @@ public final class FanOutSessionCore {
         catchupSnapshotOwed = false;
         metrics.onSnapshotTransfer();
         cursor = t.seq;
+        highestDeliveredSeq = t.seq; // the snapshot IS unconfirmed data until the edge acks it
         inFlightFrameMaxSeq.clear();
         slowConsumerWarned = false;
         state = SessionState.STREAMING;

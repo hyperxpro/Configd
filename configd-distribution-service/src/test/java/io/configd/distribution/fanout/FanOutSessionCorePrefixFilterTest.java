@@ -22,7 +22,7 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * The server-side prefix-filtering drain proofs (ADR-0045, Track 1): a filtered session
+ * The server-side prefix-filtering drain proofs (ADR-0045): a filtered session
  * delivers only the matching (plus strong-read) deltas, advances its cursor over the full
  * scanned range, and tells the edge the covered-through position with a cursor-advance
  * HEARTBEAT. Uses the same real {@link FanOutBuffer} / {@link RecordingTransportSink} /
@@ -196,5 +196,33 @@ class FanOutSessionCorePrefixFilterTest {
         assertEquals(5L, sink.sentOfType(EdgeFrame.Heartbeat.class).get(0).latestSeq());
         assertEquals(5L, s.cursor());
         assertEquals(5, metrics.filtered);
+    }
+
+    // A large filtered burst advances the covered-S past the ack-lag threshold in one pass, but must
+    // NOT demote a caught-up edge: ack-lag charges only DELIVERED-but-unacked seqs, not the covered-S
+    // advance the edge acks wholesale on the heartbeat (F2 regression).
+    @Test
+    void largeFilteredBurstDoesNotDemoteOnAckLag() {
+        FanOutBuffer buffer = new FanOutBuffer(16384);
+        FanOutSessionCore s = session(buffer, filteringConfig());
+        s.onSubscribe(filteredSubscribe(List.of("svc/"), 0));
+        // A few matching deltas early, then a long filtered tail whose covered-S advance (to 9500)
+        // exceeds the ack-lag threshold (default 8192). The edge has not acked.
+        for (long i = 1; i <= 50; i++) {
+            buffer.publish(put(i, "svc/k" + i, "v"));
+        }
+        for (long i = 51; i <= 9500; i++) {
+            buffer.publish(put(i, "other/k" + i, "v"));
+        }
+        s.tick(clock.currentTimeMillis());
+        assertEquals(FanOutSessionCore.SessionState.STREAMING, s.state(),
+                "a filtered burst must not demote the caught-up edge");
+        assertEquals(9500L, s.cursor(), "the covered-S advanced past the ack-lag threshold");
+
+        // The NEXT tick runs the ack-lag check at the top against the covered-S=9500 vs ack=0: with the
+        // fix it charges only the 50 delivered-but-unacked seqs (< 8192), so still no demote.
+        s.tick(clock.currentTimeMillis());
+        assertEquals(FanOutSessionCore.SessionState.STREAMING, s.state(),
+                "ack-lag charges only delivered-but-unacked seqs, not the covered-S advance");
     }
 }

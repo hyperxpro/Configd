@@ -297,7 +297,8 @@ public final class FanOutConnectionDriver {
                 return;
             }
             case ALLOW_FORCE_SNAPSHOT -> bound = new EdgeFrame.Subscribe(
-                    bound.fullStore(), bound.prefixes(), 0L, -1L, bound.edgeId());
+                    bound.fullStore(), bound.prefixes(), 0L, -1L, bound.edgeId(),
+                    bound.acceptsFiltered());
             case ALLOW -> { /* admit as requested */ }
         }
         EdgeFrame.Subscribe admitted = bound;
@@ -371,8 +372,10 @@ public final class FanOutConnectionDriver {
         if ("plaintext".equals(edgeIdentity)) {
             return wire;
         }
+        // Carry acceptsFiltered through the identity rebind - dropping it here would silently
+        // disable server-side filtering on every mTLS connection (the production path).
         return new EdgeFrame.Subscribe(wire.fullStore(), wire.prefixes(), wire.resumeCursor(),
-                wire.failoverResumeCursor(), edgeIdentity);
+                wire.failoverResumeCursor(), edgeIdentity, wire.acceptsFiltered());
     }
 
     // -----------------------------------------------------------------------
