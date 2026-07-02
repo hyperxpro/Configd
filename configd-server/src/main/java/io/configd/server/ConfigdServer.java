@@ -960,10 +960,19 @@ public final class ConfigdServer {
             // Production edge fan-out is the Netty transport. The fast-revert is `git revert` of this
             // commit - restoring `new FanOutServer(...)` (the JDK transport is retained, fully tested by
             // the contract, and a drop-in FanOutEndpoint).
+            // Server-side prefix filtering posture (ADR-0044): default ON for the co-located
+            // trusted deployment, so a prefix-scoped edge that opts in gets its stream filtered;
+            // set OFF (full-chain) when a separate/untrusted relay tier terminates the fan-out. The
+            // strong-read prefixes are always shipped regardless of the edge's prefix set. When off
+            // (or for a full-store / non-opting edge) the drain is byte-identical to the legacy path.
+            io.configd.distribution.fanout.FanOutConfig fanOutConfig =
+                    io.configd.distribution.fanout.FanOutConfig.defaults()
+                            .withServerSidePrefixFilter(resolveEdgeFilterPosture(),
+                                    strongReadPolicy.prefixes());
             fanOutServer = new io.configd.server.fanout.NettyFanOutServer(
                     new InetSocketAddress(config.bindAddress(), config.edgePort()),
                     tlsManager, fanOutBuffer, edgeReplaySource,
-                    io.configd.distribution.fanout.FanOutConfig.defaults(),
+                    fanOutConfig,
                     io.configd.server.fanout.FanOutServer.DEFAULT_TRANSPORT_QUEUE_FRAMES,
                     io.configd.server.fanout.FanOutServer.DEFAULT_MAX_SESSIONS,
                     slowConsumerGovernor, fanOutMetrics, clock, watchAuthorizer);
@@ -1201,6 +1210,26 @@ public final class ConfigdServer {
     private static boolean encryptionAtRestEnabled() {
         return Boolean.getBoolean("configd.raft.encryption.enabled")
                 || "true".equalsIgnoreCase(System.getenv("CONFIGD_ENCRYPTION_AT_REST"));
+    }
+
+    /** System property that sets the edge fan-out server-side prefix-filtering posture (ADR-0044). */
+    static final String EDGE_FILTER_PROP = "configd.edge.fanout.filter";
+
+    /**
+     * Resolves the {@value #EDGE_FILTER_PROP} posture: {@code on}/{@code off}, DEFAULT on for the
+     * co-located trusted deployment, fail-loud on any other value (mirroring the
+     * {@code NettyTransport.select} / KMS-provider posture flags - never a silent default). Set
+     * {@code off} to restore the full-chain feed when a separate/untrusted relay tier terminates
+     * the fan-out. This is a two-way door, not a one-way door.
+     */
+    static boolean resolveEdgeFilterPosture() {
+        String v = System.getProperty(EDGE_FILTER_PROP, "on").trim().toLowerCase();
+        return switch (v) {
+            case "on", "true" -> true;
+            case "off", "false" -> false;
+            default -> throw new IllegalArgumentException(
+                    EDGE_FILTER_PROP + " must be 'on' or 'off', got: '" + v + "'");
+        };
     }
 
     /**
