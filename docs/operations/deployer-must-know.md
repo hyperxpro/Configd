@@ -91,46 +91,56 @@ measurement doc.
   policy** (`_acl/` roles/policies with deny-precedence), not with `scope`. Treat
   `scope` as a routing/label hint only.
 
-## 4. Keep snapshot state < 4 MiB -- a larger InstallSnapshot wedges the follower
+## 4. Upgrade ALL nodes together -- chunked snapshot transfer corrupts a not-yet-upgraded follower
 
-- **Requirement.** Keep the state a single Raft snapshot must ship **under 4 MiB**.
-  There is **no built-in metric or alert** for the over-cap drop -- you must add a
-  **log-watch** alert yourself (see "What to do" below).
-- **Why it matters.** The Raft message codec caps a single snapshot blob at
-  **`MAX_SNAPSHOT_BLOB_LEN = 4 * 1024 * 1024`** (4 MiB) --
-  `configd-server/.../RaftMessageCodec.java:76` (enforced at encode `:128`/`:133`
-  and decode `:480`/`:495`). A follower needing a **> 4 MiB** `InstallSnapshot`
-  never receives it: the over-cap frame is **dropped to stderr** --
-  `"Dropping InstallSnapshot ... (codec rejected -- snapshot too large for v1 wire)"`
-  (`configd-consensus-core/.../RaftNode.java`, `sendInstallSnapshot`, catch around
-  line 2009) -- and the send is
-  abandoned. That follower cannot bootstrap from snapshot; if the leader has
-  compacted past the entries it still needs, the follower is **permanently
-  behind** ([`known-limitations.md` section "Snapshot size cap"](known-limitations.md)).
-  Chunked `InstallSnapshot` is a **v2** item.
-  - **Note (do not mis-cite):** the 4 MiB limit is the **app-layer snapshot-blob
-    cap in `RaftMessageCodec`**, which is **stricter** than the transport frame cap
-    `FrameCodec.MAX_FRAME_SIZE = 16 MiB` (`configd-transport/.../FrameCodec.java:104`).
-    The **4 MiB** figure is the operative one; the 16 MiB frame cap is a separate,
-    looser bound.
+- **Requirement.** This version streams a large Raft snapshot as **chunks** (lifting the
+  old 4 MiB single-frame ceiling). A node running this code MUST NOT send a chunked
+  (multi-chunk) `InstallSnapshot` to a node running an **older** build. Therefore:
+  **upgrade every node in a cluster to this version together** -- do NOT run a
+  mixed-version cluster where any node's committed state exceeds the chunk size
+  (default 1 MiB) while an old node is still in the cluster.
+- **Why it matters.** The chunked protocol reuses the pre-existing `offset`/`done`
+  fields on `InstallSnapshot`, and there is **no wire-version negotiation** for the
+  Raft RPC codec. An **old** follower (pre-chunking) **ignores `offset` and `done`**
+  and installs **chunk 0 as if it were the whole snapshot**, then marks itself
+  installed at the snapshot's full `lastIncludedIndex`. The result is **silent state
+  corruption**: the follower believes it holds committed state it never received, and
+  nothing errors or alerts. This happens for **any snapshot larger than one chunk**
+  (the exact case this feature exists to serve).
+  - **Single-chunk transfers are safe.** A snapshot that fits one chunk is sent
+    exactly as before (`offset = 0`, `done = true`, whole blob), which an old node
+    handles correctly. Only **multi-chunk** transfers to an old node corrupt it.
+  - This cannot be fixed in code retroactively -- the vulnerable receiver is the
+    **already-deployed old build**. It is a **hard deploy-ordering requirement**.
 - **What to do.**
-  1. Tune snapshot/compaction policy so state stays **< 4 MiB** at snapshot time.
-  2. **Log-watch for the drop -- there is no metric or built-in alert.** The only
-     signal is the **stderr line** above; **no Prometheus counter exports it**
-     ([`known-limitations.md` section "Encoder-drop observability"](known-limitations.md)).
-     Add a log alert on the string `snapshot too large for v1 wire` -- any
-     occurrence is a wedged follower. **Do not rely on `ConfigdSnapshotInstallStalled`
-     for this:** that alert fires on `configd_snapshot_install_failed_total`, a
-     **receiver-side** counter (a follower failing to *install* a snapshot it
-     received); the over-cap frame never reaches the follower, so that counter and
-     that alert **never trip on this drop**.
-  3. **Alert on `matchIndex` lag** -- a follower whose `matchIndex` falls and stays
-     far behind the leader's `commitIndex` is the proxy for "stuck because
-     snapshot install was rejected." Fold this into the first-30-days burn-in
-     alerting -- the [burn-in contract](burn-in-contract.md) section 2C snapshot row.
-  - This is a **deployment-conditional blocker**: it blocks **iff** expected
-    snapshot state exceeds 4 MiB (see the readiness review,
-    [section 5.4](../archive/readiness/v1-go-no-go-2026-07-01.md)).
+  1. **Coordinated upgrade.** Bring the whole cluster to this version in one rollout.
+     Avoid a long mixed-version window; in particular do not let a large-state leader
+     ship a snapshot to an old, lagging follower mid-rollout. A rolling restart is
+     fine **provided** no node needs a multi-chunk snapshot while any old node remains
+     -- if in doubt, keep committed state small (or drain writes) during the rollout.
+  2. **Set the reassembly cap above your largest expected total committed state.**
+     Chunking removes the 4 MiB wire ceiling, but the receiver reassembles the whole
+     snapshot **in memory** to apply it, so the total is bounded by the follower's heap
+     and a **fail-closed cap** (`configd.raft.maxReassembledSnapshotBytes`, default
+     **512 MiB**; the effective value is clamped to ~2 GiB, the max single-array size).
+     The cap **MUST exceed the largest total committed state** any group will hold --
+     the whole state has to fit in the follower's heap to be applied regardless, so size
+     it accordingly. A snapshot that would exceed the cap is **refused before it can
+     OOM** the follower: the partial is dropped, a **`SEVERE`** line is logged
+     (`refusing InstallSnapshot reassembly ... exceed the reassembly cap`), and no
+     install occurs -- **no OOM, no corruption**, but that follower **stays out of
+     quorum until an operator raises the cap** (or trims state). This over-cap refusal
+     logs **`SEVERE` per occurrence with no dedicated metric** -- log-watch that string;
+     a drop counter/alert is a documented observability follow-up (see the snapshot-drop
+     observability item in [`known-limitations.md`](known-limitations.md)).
+  3. **Alert on `matchIndex` lag** -- a follower whose `matchIndex` falls and stays far
+     behind the leader's `commitIndex` is the proxy for "stuck: snapshot could not be
+     installed" (over-cap, or a transfer that never completed). Fold this into the
+     first-30-days burn-in alerting -- the [burn-in contract](burn-in-contract.md)
+     section 2C snapshot row.
+  - The old **"snapshot too large for v1 wire"** stderr drop no longer occurs for
+    total state above 4 MiB (chunking handles it); a codec reject now only means a
+    single **chunk** exceeded the per-chunk cap (a chunk-size misconfiguration).
 
 ## 5. Horizontal scale is OPERATOR-managed -- leadership is NOT auto-balanced
 
@@ -203,7 +213,7 @@ measurement doc.
 | 1 | Don't store secrets (integrity-only at rest) | Plaintext secrets readable from disk/snapshot/backup | No -- deployment choice |
 | 2 | Grant edge hydration identity root READ | Edge SUBSCRIBE refused NOT_AUTHORIZED (auth on); whole-store read requires root READ | Yes -- gated at admission (auth on) |
 | 3 | `scope` is not tenant isolation | Cross-tenant read/write via scope-blind gate | No -- scope is metadata |
-| 4 | Snapshot < 4 MiB | Follower wedges permanently on >4 MiB InstallSnapshot | Cap enforced; **alerting is on you** |
+| 4 | Upgrade all nodes together | Multi-chunk snapshot to an old node = silent state corruption; total snapshot bounded by heap/reassembly cap | No -- deploy-ordering is on you |
 | 5 | Place one leader per box | Aggregate collapses to single-box plateau | No -- no auto-balancer in v1 |
 | 6 | Keep cert-DN and bearer policies consistent | A person read-restricted by token can watch via cert identity | No -- operator must align both policies |
 

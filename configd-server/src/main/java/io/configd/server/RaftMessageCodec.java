@@ -34,7 +34,8 @@ import java.util.Map;
  *   <li>RequestVoteResponse: [1B voteGranted][4B from]</li>
  *   <li>InstallSnapshotRequest: [4B leaderId][8B lastIncludedIndex][8B lastIncludedTerm]
  *       [4B offset][1B done][4B dataLen][data][4B configLen][configData]</li>
- *   <li>InstallSnapshotResponse: [1B success][4B from][8B lastIncludedIndex]</li>
+ *   <li>InstallSnapshotResponse: [1B success][4B from][8B lastIncludedIndex]
+ *       [4B nextExpectedOffset] (the last field is optional-trailing: absent decodes to 0)</li>
  *   <li>TimeoutNowRequest: [4B leaderId]</li>
  * </ul>
  */
@@ -58,20 +59,28 @@ public final class RaftMessageCodec {
     public static final int MAX_COMMAND_LEN = 1 * 1024 * 1024;
 
     /**
-     * Hard upper bound on a single snapshot data OR cluster-config blob
-     * in an {@code InstallSnapshot} RPC.
+     * Hard upper bound on a single InstallSnapshot CHUNK's data blob OR its
+     * cluster-config blob. This is a per-CHUNK ceiling, not a total-snapshot
+     * one: the sender ({@code RaftNode.sendSnapshotChunk}) splits a large
+     * snapshot into ordered chunks each at most this size, lifting the old
+     * single-frame ceiling on total snapshot size. The total is NOT unbounded,
+     * though - the receiver reassembles the snapshot in heap to apply it, so it
+     * is bounded by the follower's memory and the fail-closed reassembly cap
+     * ({@code RaftNode.maxReassembledSnapshotBytes}), not by disk.
      *
-     * <p>Per-blob ceiling alone is insufficient: an InstallSnapshot
-     * carries TWO blobs (data + clusterConfigData). The encoder
-     * additionally enforces the combined-fits-in-frame constraint
+     * <p>Per-blob ceiling alone is insufficient: a chunk carries TWO blobs
+     * (data + clusterConfigData, the latter only on the final chunk). The
+     * encoder additionally enforces the combined-fits-in-frame constraint
      * via {@link #checkInstallSnapshotFitsFrame} so that a maximally-
-     * sized request is provably encodable AND decodable.
+     * sized chunk is provably encodable AND decodable.
      *
      * <p>4 MiB per blob leaves headroom for both blobs (= 8 MiB) plus
      * the InstallSnapshot fixed header (33 B) plus the FrameCodec
      * header+trailer ({@code HEADER_SIZE + TRAILER_SIZE}), all comfortably
-     * under {@link FrameCodec#MAX_FRAME_SIZE} = 16 MiB. Larger snapshots
-     * must chunk via the {@code offset}/{@code done} fields.
+     * under {@link FrameCodec#MAX_FRAME_SIZE} = 16 MiB. The sender's default
+     * chunk size ({@code RaftNode.DEFAULT_SNAPSHOT_CHUNK_BYTES}) sits well
+     * below this cap; a chunk that trips this bound is a chunk-size
+     * misconfiguration, not legitimate traffic.
      */
     public static final int MAX_SNAPSHOT_BLOB_LEN = 4 * 1024 * 1024;
 
@@ -504,11 +513,12 @@ public final class RaftMessageCodec {
     // ---- InstallSnapshotResponse ----
 
     private static FrameCodec.Frame encodeInstallSnapshotResponse(InstallSnapshotResponse resp, int groupId) {
-        // [1B success][4B from][8B lastIncludedIndex]
-        ByteBuffer buf = ByteBuffer.allocate(1 + 4 + 8);
+        // [1B success][4B from][8B lastIncludedIndex][4B nextExpectedOffset]
+        ByteBuffer buf = ByteBuffer.allocate(1 + 4 + 8 + 4);
         buf.put((byte) (resp.success() ? 1 : 0));
         buf.putInt(resp.from().id());
         buf.putLong(resp.lastIncludedIndex());
+        buf.putInt(resp.nextExpectedOffset());
         return new FrameCodec.Frame(MessageType.INSTALL_SNAPSHOT_RESPONSE, groupId, resp.term(), buf.array());
     }
 
@@ -527,7 +537,19 @@ public final class RaftMessageCodec {
                     "Negative InstallSnapshotResponse lastIncludedIndex: "
                             + lastIncludedIndex);
         }
-        return new InstallSnapshotResponse(frame.term(), success, from, lastIncludedIndex);
+        // nextExpectedOffset (chunked-transfer position) is an optional trailing field: decode it
+        // when present, default 0 otherwise. The chunk-transfer field was added after the base
+        // response; a frame without it decodes to offset 0, which the sender safely re-syncs from.
+        int nextExpectedOffset = 0;
+        if (buf.hasRemaining()) {
+            checkRemaining(buf, 4, "InstallSnapshotResponse nextExpectedOffset");
+            nextExpectedOffset = buf.getInt();
+            if (nextExpectedOffset < 0) {
+                throw new IllegalArgumentException(
+                        "Negative InstallSnapshotResponse nextExpectedOffset: " + nextExpectedOffset);
+            }
+        }
+        return new InstallSnapshotResponse(frame.term(), success, from, lastIncludedIndex, nextExpectedOffset);
     }
 
     // ---- TimeoutNow ----

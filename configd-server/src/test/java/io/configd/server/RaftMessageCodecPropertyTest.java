@@ -169,9 +169,11 @@ class RaftMessageCodecPropertyTest {
             @ForAll boolean success,
             @ForAll int from,
             @ForAll int groupId,
-            @ForAll @LongRange(min = 0, max = Long.MAX_VALUE) long lastIncludedIndex) {
+            @ForAll @LongRange(min = 0, max = Long.MAX_VALUE) long lastIncludedIndex,
+            @ForAll @IntRange(min = 0, max = Integer.MAX_VALUE) int nextExpectedOffset) {
 
-        var msg = new InstallSnapshotResponse(term, success, NodeId.of(from), lastIncludedIndex);
+        var msg = new InstallSnapshotResponse(term, success, NodeId.of(from), lastIncludedIndex,
+                nextExpectedOffset);
         FrameCodec.Frame frame = RaftMessageCodec.encode(msg, groupId);
         var decoded = assertInstanceOf(InstallSnapshotResponse.class,
                 RaftMessageCodec.decode(frame));
@@ -179,6 +181,7 @@ class RaftMessageCodecPropertyTest {
         assertEquals(success, decoded.success());
         assertEquals(from, decoded.from().id());
         assertEquals(lastIncludedIndex, decoded.lastIncludedIndex());
+        assertEquals(nextExpectedOffset, decoded.nextExpectedOffset());
     }
 
     @Property(tries = 100)

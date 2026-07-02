@@ -3,7 +3,9 @@ package io.configd.raft;
 import io.configd.common.NodeId;
 import io.configd.common.Storage;
 
+import java.io.ByteArrayOutputStream;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
@@ -87,6 +89,81 @@ public final class RaftNode {
 
     /** The most recent snapshot available for transfer to lagging followers. */
     private SnapshotState latestSnapshot;
+
+    /**
+     * Per-follower progress of an in-flight chunked InstallSnapshot transfer (leader-volatile,
+     * recreated on {@link #becomeLeader}). Present only while a transfer to that peer is in
+     * flight. Read and mutated only on the owner thread.
+     */
+    private Map<NodeId, SnapshotSendState> snapshotSend = new HashMap<>();
+
+    /**
+     * Follower-side reassembly of an in-progress chunked InstallSnapshot, or null when idle. The
+     * snapshot is installed only once every chunk has arrived in order and the final ({@code done})
+     * chunk completes it - a truncated or torn transfer never reaches the state machine.
+     */
+    private SnapshotReassembly snapshotReassembly;
+
+    /**
+     * Maximum snapshot bytes carried by one InstallSnapshot chunk. A snapshot larger than this is
+     * split into ordered chunks so a large snapshot streams as frame-sized messages rather than
+     * being dropped at a single-frame ceiling. Kept well below the codec's per-chunk data ceiling
+     * ({@link #MAX_SNAPSHOT_CHUNK_BYTES} = 4 MiB) so a chunk - plus the cluster config that rides
+     * the final chunk - always fits one 16 MiB frame. Overridable in tests to force many chunks
+     * over a small snapshot; the setter caps it at {@link #MAX_SNAPSHOT_CHUNK_BYTES} so a chunk can
+     * never be born unencodable.
+     */
+    private int snapshotChunkBytes = DEFAULT_SNAPSHOT_CHUNK_BYTES;
+
+    /** Default {@link #snapshotChunkBytes} (1 MiB). */
+    static final int DEFAULT_SNAPSHOT_CHUNK_BYTES = 1024 * 1024;
+
+    /**
+     * Hard upper bound on {@link #snapshotChunkBytes}: a single chunk larger than this is rejected
+     * by the wire codec and would wedge the transfer. Mirrors
+     * {@code RaftMessageCodec.MAX_SNAPSHOT_BLOB_LEN} (4 MiB); kept as a core-side constant because
+     * consensus-core does not depend on the server codec. The two must stay in sync.
+     */
+    static final int MAX_SNAPSHOT_CHUNK_BYTES = 4 * 1024 * 1024;
+
+    /**
+     * Fail-closed ceiling on the follower-side reassembly buffer (bytes held in HEAP for one
+     * in-progress chunked InstallSnapshot). Chunked transfer lifts the single-frame ceiling, but
+     * the reassembled snapshot must still fit in memory to be applied - it is bounded by the
+     * follower's heap and this cap, NOT by disk. A never-{@code done} ascending stream, or a
+     * snapshot genuinely larger than the cap, is refused before it can OOM the follower: the partial
+     * is dropped, a SEVERE line is logged, and no install occurs. Operator-tunable via the
+     * {@code configd.raft.maxReassembledSnapshotBytes} system property; the default is generous
+     * enough to exceed any realistic state yet bound a runaway. Clamped to
+     * {@link #MAX_REASSEMBLY_CAP_BYTES}: the buffer is a single byte array, so a configured cap
+     * above the max array length could not be honoured and would OOM before the cap was consulted.
+     */
+    private long maxReassembledSnapshotBytes = clampReassemblyCap(Long.getLong(
+            "configd.raft.maxReassembledSnapshotBytes", DEFAULT_MAX_REASSEMBLED_SNAPSHOT_BYTES));
+
+    /** Default {@link #maxReassembledSnapshotBytes} (512 MiB). */
+    static final long DEFAULT_MAX_REASSEMBLED_SNAPSHOT_BYTES = 512L * 1024 * 1024;
+
+    /**
+     * Hard clamp on {@link #maxReassembledSnapshotBytes}. The reassembly buffer is a single
+     * {@code byte[]}, which cannot exceed the JVM max array length, so a cap above this would OOM
+     * before the fail-closed check could refuse the over-cap snapshot - defeating the guard.
+     * {@code Integer.MAX_VALUE - 8} is the conventional safe max array size (leaves room for the
+     * array header some JVMs reserve).
+     */
+    static final long MAX_REASSEMBLY_CAP_BYTES = Integer.MAX_VALUE - 8;
+
+    /**
+     * Heartbeat intervals of TOTAL SILENCE (no ack of any kind) from a follower before the leader
+     * restarts its chunked snapshot transfer from offset 0. This is only a no-feedback belt: the
+     * ground-truth offset echo ({@code InstallSnapshotResponse.nextExpectedOffset}) is the primary
+     * recovery, self-healing every drop / reorder / restart case the instant the leader re-syncs to
+     * the follower's reported position. The counter is reset on ANY ack (progress or not) - an
+     * acking follower, however slow or however often it rejects, is driven entirely by the echo and
+     * must never be reset out from under itself, which would discard the partial it is building over
+     * a high-RTT link and livelock the transfer. Only a genuinely silent channel gets the restart.
+     */
+    static final int SNAPSHOT_TRANSFER_STALL_HEARTBEATS = 3;
 
     /** Tracks pending linearizable read requests. */
     private final ReadIndexState readIndexState;
@@ -1484,6 +1561,17 @@ public final class RaftNode {
                         "leader silenced toward peer " + peer + ": inflightCount="
                                 + inflightCount.getOrDefault(peer, 0) + " at cap "
                                 + config.maxInflightAppends() + " and peer inactive this interval");
+
+                // Chunked-snapshot stall recovery: a transfer that has not acked a chunk for
+                // several heartbeats is presumed wedged - the follower restarted mid-stream and
+                // lost its in-memory partial, or the offsets desynced - so retransmitting the
+                // same chunk can never make progress. Restart from offset 0 so the next broadcast
+                // re-primes the follower from the beginning. Counter is zeroed on every acked chunk.
+                SnapshotSendState snap = snapshotSend.get(peer);
+                if (snap != null && ++snap.stallHeartbeats >= SNAPSHOT_TRANSFER_STALL_HEARTBEATS) {
+                    snap.ackedOffset = 0;
+                    snap.stallHeartbeats = 0;
+                }
             }
 
             broadcastAppendEntries();
@@ -1583,6 +1671,10 @@ public final class RaftNode {
             long newMatchIndex = resp.matchIndex();
             matchIndex.put(resp.from(), newMatchIndex);
             nextIndex.put(resp.from(), newMatchIndex + 1);
+
+            // The follower is replicating via AppendEntries, so any snapshot transfer we had in
+            // flight to it is moot; drop the progress so it does not linger or spuriously restart.
+            snapshotSend.remove(resp.from());
 
             maybeAdvanceCommitIndex();
             applyCommitted();
@@ -1881,6 +1973,9 @@ public final class RaftNode {
         nextIndex = new HashMap<>();
         matchIndex = new HashMap<>();
         inflightCount = new HashMap<>();
+        snapshotSend = new HashMap<>();
+        // We are no longer a follower ingesting a snapshot; drop any partial reassembly.
+        snapshotReassembly = null;
         peerActivity.clear();
         for (NodeId peer : clusterConfig.peersOf(config.nodeId())) {
             nextIndex.put(peer, log.lastIndex() + 1);
@@ -1963,12 +2058,15 @@ public final class RaftNode {
     }
 
     /**
-     * Sends the latest snapshot to a lagging peer via InstallSnapshot RPC.
+     * Sends the current snapshot to a lagging peer as a chunked InstallSnapshot transfer.
      * <p>
-     * Called when the peer's nextIndex points to an entry that has been
-     * compacted. If no snapshot is available, this is a no-op (the peer
-     * will eventually receive entries once the log catches up or a
-     * snapshot is taken).
+     * Called when the peer's nextIndex points to an entry that has been compacted. If no snapshot
+     * is available, this is a no-op (the peer will catch up once the log advances or a snapshot is
+     * taken). The snapshot is split into ordered chunks of at most {@link #snapshotChunkBytes}; this
+     * call sends the chunk at {@code ackedOffset}. {@link #handleInstallSnapshotResponse} re-syncs
+     * {@code ackedOffset} to the follower's reported {@code nextExpectedOffset} on every ack, so
+     * this heartbeat-driven call simply (re)sends the exact chunk the follower needs next - which is
+     * how a lost chunk, a reordered delivery, or a follower that restarted mid-transfer all recover.
      *
      * @param peer the target follower node
      */
@@ -1988,26 +2086,55 @@ public final class RaftNode {
         // outbound descriptor trips here on the SENDER.
         checkSnapshotSendTwin(latestSnapshot.lastIncludedIndex(), latestSnapshot.lastIncludedTerm());
 
+        SnapshotSendState st = snapshotSend.get(peer);
+        if (st == null
+                || st.index != latestSnapshot.lastIncludedIndex()
+                || st.term != latestSnapshot.lastIncludedTerm()) {
+            // First chunk to this peer, or the snapshot advanced since the last transfer: restart
+            // from the beginning of the current snapshot.
+            st = new SnapshotSendState(latestSnapshot.lastIncludedIndex(), latestSnapshot.lastIncludedTerm());
+            snapshotSend.put(peer, st);
+        }
+        sendSnapshotChunk(peer, st);
+    }
+
+    /**
+     * Sends one InstallSnapshot chunk to {@code peer}: the snapshot slice starting at
+     * {@code st.ackedOffset}, up to {@link #snapshotChunkBytes} bytes. The final chunk carries
+     * {@code done=true} and the cluster config - the receiver needs the config only at install
+     * time, so it rides the last chunk and every intermediate chunk stays pure data. A snapshot
+     * that fits one chunk is sent exactly as an unchunked transfer was: offset 0, done true, the
+     * full data array, config attached.
+     */
+    private void sendSnapshotChunk(NodeId peer, SnapshotSendState st) {
+        byte[] data = latestSnapshot.data();
+        int total = data.length;
+        int offset = Math.min(st.ackedOffset, total);
+        int len = Math.min(snapshotChunkBytes, total - offset);
+        boolean done = offset + len == total;
+        byte[] chunk = (offset == 0 && len == total) ? data : Arrays.copyOfRange(data, offset, offset + len);
+        byte[] configData = done ? latestSnapshot.clusterConfigData() : null;
+
         InstallSnapshotRequest req = new InstallSnapshotRequest(
                 currentTerm,
                 config.nodeId(),
-                latestSnapshot.lastIncludedIndex(),
-                latestSnapshot.lastIncludedTerm(),
-                0,
-                latestSnapshot.data(),
-                true,
-                latestSnapshot.clusterConfigData()
+                st.index,
+                st.term,
+                offset,
+                chunk,
+                done,
+                configData
         );
 
-        // Same inflight-leak guard as sendAppendEntries: send first,
-        // increment only on success. Snapshots are large by definition,
-        // so the encoder-reject path here is the dominant cause of legitimate IAE in production.
+        // Same inflight-leak guard as sendAppendEntries: send first, increment only on success.
+        // A codec reject here now means a single CHUNK exceeds the per-chunk cap (a chunk-size
+        // misconfiguration), not that the whole snapshot is too large - the total-state ceiling is
+        // lifted, so this is no longer the dominant legitimate-IAE path it once was.
         try {
             transport.send(peer, req);
         } catch (IllegalArgumentException e) {
-            System.err.println("Dropping InstallSnapshot to " + peer
-                    + " (codec rejected — snapshot too large for v1 wire): "
-                    + e.getMessage());
+            System.err.println("Dropping InstallSnapshot chunk to " + peer
+                    + " (codec rejected chunk at offset " + offset + "): " + e.getMessage());
             return;
         }
         inflightCount.merge(peer, 1, Integer::sum);
@@ -2320,6 +2447,8 @@ public final class RaftNode {
         // from lastApplied+1, which on a follower that has compacted
         // past lastApplied would cause a prevLogTerm mismatch.
         if (req.lastIncludedIndex() <= log.snapshotIndex()) {
+            // Any partial we were assembling for this (or an older) snapshot is superseded.
+            snapshotReassembly = null;
             transport.send(req.leaderId(),
                     new InstallSnapshotResponse(currentTerm, true,
                             config.nodeId(),
@@ -2327,15 +2456,97 @@ public final class RaftNode {
             return;
         }
 
+        // --- Chunked reassembly (req.lastIncludedIndex() > our snapshotIndex) ---
+        // A chunk for a different snapshot than the one we are assembling discards the partial:
+        // chunks from two different (lastIncludedIndex, lastIncludedTerm) snapshots must never be
+        // spliced into one buffer, or we would install a corrupt mix.
+        if (snapshotReassembly != null
+                && (snapshotReassembly.index != req.lastIncludedIndex()
+                    || snapshotReassembly.term != req.lastIncludedTerm())) {
+            snapshotReassembly = null;
+        }
+
+        // Accept a chunk only when it extends the contiguous prefix we already hold - the buffer is
+        // therefore always an untorn prefix of the snapshot, and its size is our accumulated-byte
+        // count, which we echo back to the leader as nextExpectedOffset (its ground truth).
+        int accumulated = snapshotReassembly == null ? 0 : snapshotReassembly.buf.size();
+        boolean inOrder = req.offset() == accumulated;
+        boolean restart = !inOrder && req.offset() == 0;
+        boolean appended = false;
+        if (inOrder || restart) {
+            // Fail closed against heap exhaustion: chunked transfer lifts the single-frame ceiling,
+            // but the reassembled snapshot still has to fit in memory to be applied. A never-done
+            // ascending stream, or a snapshot larger than the cap, is refused before it can OOM the
+            // follower - drop the partial, log SEVERE, do not install. A restart re-accepts from 0,
+            // so its base is 0, not the (about-to-be-discarded) accumulated.
+            long base = inOrder ? accumulated : 0L;
+            if (base + req.data().length > maxReassembledSnapshotBytes) {
+                snapshotReassembly = null;
+                System.err.println("RaftNode: SEVERE: refusing InstallSnapshot reassembly for index "
+                        + req.lastIncludedIndex() + " - " + (base + req.data().length)
+                        + " bytes would exceed the reassembly cap " + maxReassembledSnapshotBytes
+                        + " (configd.raft.maxReassembledSnapshotBytes); dropping partial, not installing");
+                // Report position 0: we hold nothing now, so the leader will re-drive from the start
+                // (and hit the same cap - an over-cap snapshot cannot be applied to this follower).
+                transport.send(req.leaderId(),
+                        new InstallSnapshotResponse(currentTerm, true, config.nodeId(),
+                                Math.max(log.snapshotIndex(), log.lastApplied()), 0));
+                return;
+            }
+            if (snapshotReassembly == null || restart) {
+                // In-order at offset 0 with no partial starts fresh; a restart (offset 0 with a
+                // stale partial - our earlier bytes were lost to a restart, or the leader reset)
+                // discards it and re-accepts from the beginning.
+                snapshotReassembly = new SnapshotReassembly(req.lastIncludedIndex(), req.lastIncludedTerm());
+            }
+            snapshotReassembly.buf.writeBytes(req.data());
+            appended = true;
+        }
+        // else: a duplicate (offset < accumulated) or a gap (offset > accumulated). Fail closed -
+        // never splice a chunk we cannot place in order. Leave the contiguous partial untouched and
+        // fall through to ack our current position so the leader retransmits from there.
+
+        if (appended && req.done()) {
+            // Every chunk received in order and this is the final one: the buffer now holds the
+            // complete snapshot. Run the exact single-blob install path on the reassembled bytes -
+            // the installed state is byte-identical to what a one-shot InstallSnapshot produced.
+            byte[] full = snapshotReassembly.buf.toByteArray();
+            snapshotReassembly = null;
+            installSnapshot(req, full);
+            return;
+        }
+
+        // Not yet installed (intermediate chunk, duplicate, or gap): ack with our current position.
+        // lastIncludedIndex is our UNCHANGED durable index (below req.lastIncludedIndex()), telling
+        // the leader we have not installed; nextExpectedOffset is the contiguous bytes we now hold,
+        // so the leader re-syncs its send offset to exactly where we are (resuming after a gap,
+        // duplicate, or restart). We never partially apply - the state machine is touched only on
+        // the done chunk above.
+        int nextExpectedOffset = snapshotReassembly == null ? 0 : snapshotReassembly.buf.size();
+        transport.send(req.leaderId(),
+                new InstallSnapshotResponse(currentTerm, true,
+                        config.nodeId(),
+                        Math.max(log.snapshotIndex(), log.lastApplied()),
+                        nextExpectedOffset));
+    }
+
+    /**
+     * Installs a fully reassembled snapshot via the single-writer install path (Raft section 7).
+     * {@code full} is the complete snapshot - one chunk, or many ordered chunks concatenated - so
+     * the installed state is identical whether the transfer was chunked or single-shot. Reached
+     * only from the done chunk once the buffer is complete, never on a partial, so a truncated or
+     * aborted transfer never mutates any state.
+     */
+    private void installSnapshot(InstallSnapshotRequest req, byte[] full) {
         // Snapshot install invariants - checked at the install decision point
         // (the spec's ReceiveInstallSnapshot "newer - install" branch), before we
         // mutate any state. We are here only because req.lastIncludedIndex() >
-        // log.snapshotIndex() (the early-return above handled the older/equal case),
-        // i.e. this is the spec's installing branch.
+        // log.snapshotIndex() (the early-return in handleInstallSnapshot handled the
+        // older/equal case), i.e. this is the spec's installing branch.
         checkSnapshotInstallTwins(req.lastIncludedIndex(), req.lastIncludedTerm());
 
         // Restore the state machine from the snapshot
-        stateMachine.restoreSnapshot(req.data());
+        stateMachine.restoreSnapshot(full);
 
         // A follower installing a snapshot has the same restart-loss exposure as a leader taking
         // one - it is about to compact away the WAL prefix. Persist the received snapshot bytes
@@ -2343,7 +2554,7 @@ public final class RaftNode {
         // dropping everything at/below lastIncludedIndex. Cache it as latestSnapshot too,
         // so this node can in turn serve it to a lagging peer.
         SnapshotState installed = new SnapshotState(
-                req.data(), req.lastIncludedIndex(), req.lastIncludedTerm(),
+                full, req.lastIncludedIndex(), req.lastIncludedTerm(),
                 req.clusterConfigData());
         log.persistSnapshot(installed);
         latestSnapshot = installed;
@@ -2470,6 +2681,43 @@ public final class RaftNode {
         if (resp.success() && latestSnapshot != null) {
             long snapIndex = latestSnapshot.lastIncludedIndex();
 
+            SnapshotSendState st = snapshotSend.get(resp.from());
+            boolean chunkedInProgress = st != null
+                    && st.index == latestSnapshot.lastIncludedIndex()
+                    && st.term == latestSnapshot.lastIncludedTerm();
+
+            if (chunkedInProgress && resp.lastIncludedIndex() < snapIndex) {
+                // The follower has NOT installed yet (it still reports a position below the
+                // snapshot). Re-sync our send offset to the follower's REPORTED position - its
+                // ground truth - rather than counting acks. This is what makes the transfer correct
+                // under a lossy transport, chunk reorder, and follower restart: a dropped chunk
+                // leaves the follower's position at the gap and a restarted follower reports 0, so
+                // we always resume from exactly where the follower actually is. A rejected chunk
+                // (gap/duplicate) reports the same position, so we simply retransmit it.
+                //
+                // Crucially, do NOT touch matchIndex: the follower does not hold the snapshot yet,
+                // so counting it as replicated would let a not-yet-installed index flow into the
+                // commit quorum. matchIndex advances only on the final (install) ack below.
+                int total = latestSnapshot.data().length;
+                int reportedOffset = Math.max(0, Math.min(resp.nextExpectedOffset(), total));
+                // Any ack means the channel is alive and the ground-truth echo is driving recovery,
+                // so clear the stall backstop. The offset-0 restart must fire ONLY on total silence
+                // (no ack at all for SNAPSHOT_TRANSFER_STALL_HEARTBEATS heartbeats): resetting a
+                // slow-but-acking follower - one whose chunk round-trip exceeds a few heartbeats over
+                // a high-RTT link, or one that keeps rejecting at a gap - would discard the partial
+                // it is still building and livelock the transfer.
+                st.stallHeartbeats = 0;
+                st.ackedOffset = reportedOffset;
+                if (st.ackedOffset < total) {
+                    sendSnapshotChunk(resp.from(), st);
+                }
+                return;
+            }
+
+            // Final (install) ack, or the follower is already at/ahead of our snapshot: the
+            // transfer is done. Drop any in-flight send progress and advance the follower's indices.
+            snapshotSend.remove(resp.from());
+
             // A follower may already be past our cached snapshot (e.g., it caught up via a
             // more-recent snapshot from a different leader during a partition). Trust the
             // follower's reported index, but clamp the upper bound so a malicious or buggy
@@ -2584,5 +2832,96 @@ public final class RaftNode {
      */
     int inflightCountForTest(NodeId peer) {
         return inflightCount == null ? 0 : inflightCount.getOrDefault(peer, 0);
+    }
+
+    /**
+     * The leader's recorded highest-replicated index for {@code peer}. Test seam so a chunked-
+     * snapshot test can prove that an intermediate-chunk ack does NOT advance matchIndex (the
+     * follower has not installed yet) while the final ack does. Leader-only volatile state.
+     */
+    long matchIndexForTest(NodeId peer) {
+        return matchIndex == null ? 0L : matchIndex.getOrDefault(peer, 0L);
+    }
+
+    /**
+     * Overrides the per-chunk snapshot byte cap so a test can force a multi-chunk transfer over a
+     * small snapshot without allocating a multi-megabyte one. Production uses
+     * {@link #DEFAULT_SNAPSHOT_CHUNK_BYTES}.
+     */
+    void setSnapshotChunkBytesForTest(int bytes) {
+        if (bytes <= 0) {
+            throw new IllegalArgumentException("snapshotChunkBytes must be positive: " + bytes);
+        }
+        if (bytes > MAX_SNAPSHOT_CHUNK_BYTES) {
+            throw new IllegalArgumentException(
+                    "snapshotChunkBytes " + bytes + " exceeds the per-chunk cap "
+                            + MAX_SNAPSHOT_CHUNK_BYTES + " (a larger chunk is unencodable and would wedge)");
+        }
+        this.snapshotChunkBytes = bytes;
+    }
+
+    /**
+     * Overrides the reassembly heap cap so a test can drive the fail-closed OOM guard with a small
+     * snapshot. Production uses {@link #DEFAULT_MAX_REASSEMBLED_SNAPSHOT_BYTES} or the
+     * {@code configd.raft.maxReassembledSnapshotBytes} system property.
+     */
+    void setMaxReassembledSnapshotBytesForTest(long bytes) {
+        if (bytes <= 0) {
+            throw new IllegalArgumentException("maxReassembledSnapshotBytes must be positive: " + bytes);
+        }
+        this.maxReassembledSnapshotBytes = clampReassemblyCap(bytes);
+    }
+
+    /**
+     * Clamps a configured reassembly cap to {@link #MAX_REASSEMBLY_CAP_BYTES}. A value above the max
+     * array length cannot be honoured - the single-array reassembly buffer would OOM before the
+     * fail-closed check ran - so clamp it (and log once) rather than let a misconfiguration
+     * reintroduce the unbounded-heap crash.
+     */
+    private static long clampReassemblyCap(long configured) {
+        if (configured > MAX_REASSEMBLY_CAP_BYTES) {
+            System.err.println("RaftNode: configd.raft.maxReassembledSnapshotBytes " + configured
+                    + " exceeds the max reassembly buffer size " + MAX_REASSEMBLY_CAP_BYTES
+                    + " (the buffer is a single array); clamping to " + MAX_REASSEMBLY_CAP_BYTES);
+            return MAX_REASSEMBLY_CAP_BYTES;
+        }
+        return configured;
+    }
+
+    /**
+     * Leader-side progress of a chunked InstallSnapshot transfer to one follower.
+     * {@code ackedOffset} is the count of contiguous snapshot bytes the follower has confirmed it
+     * holds, and equally the offset of the next chunk to send. It advances only on a chunk ack, so
+     * it stays in lockstep with the follower's accumulated bytes and a retransmit re-sends exactly
+     * the chunk the follower needs next. {@code index}/{@code term} pin the transfer to one
+     * snapshot; a newer snapshot restarts it.
+     */
+    private static final class SnapshotSendState {
+        final long index;
+        final long term;
+        int ackedOffset;
+        int stallHeartbeats;
+
+        SnapshotSendState(long index, long term) {
+            this.index = index;
+            this.term = term;
+        }
+    }
+
+    /**
+     * Follower-side reassembly of a chunked InstallSnapshot. A chunk is appended only when its
+     * offset equals the bytes already buffered, so {@code buf} is always a contiguous, untorn
+     * prefix of the snapshot and {@code buf.size()} is the accumulated-byte count. {@code index}/
+     * {@code term} identify the snapshot; a chunk for any other snapshot discards the partial.
+     */
+    private static final class SnapshotReassembly {
+        final long index;
+        final long term;
+        final ByteArrayOutputStream buf = new ByteArrayOutputStream();
+
+        SnapshotReassembly(long index, long term) {
+            this.index = index;
+            this.term = term;
+        }
     }
 }

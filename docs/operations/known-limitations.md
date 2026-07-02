@@ -205,37 +205,49 @@ items rather than pre-GA gates:
 - The first follower-bootstrap from snapshot in production is
   the actual chaos-engineering exercise.
 
-### Snapshot size cap (NEW iter-3 limitation)
+### Snapshot transfer: chunked (4 MiB total-state ceiling lifted), bounded by follower heap
 
-- `MAX_SNAPSHOT_BLOB_LEN = 4 MiB` (`RaftMessageCodec`). If
-  `ConfigStateMachine.snapshot()` exceeds this, the affected
-  follower **cannot** bootstrap from snapshot - must catch up via
-  AppendEntries from the leader's oldest retained entry. If the
-  leader has compacted past entries the follower needs, that
-  follower is permanently behind.
-- A later release will implement chunked InstallSnapshot via the
-  `offset` / `done` fields (already in the wire format, currently
-  ignored by the leader), lifting the cap so a large snapshot ships
-  in chunks instead of being dropped - which makes this > 4 MiB drop
-  unreachable. v1 ships with the cap.
-- **Mitigation in v1:** tune snapshot policy so state stays
-  under 4 MiB at snapshot time. Monitor per-follower `matchIndex`
-  lag against leader `commitIndex` as a proxy for "follower is
-  stuck because snapshot install rejected".
-- **Operator-visible signal:** stderr line
-  `"Dropping InstallSnapshot to ... (codec rejected - snapshot too
-  large for v1 wire)"` (from `RaftNode.sendInstallSnapshot`, the
-  catch around line 2009). **No Prometheus metric exports this** -
-  detection is log-watch only. In particular the receiver-side
-  `ConfigdSnapshotInstallStalled` alert does **NOT** cover this drop:
-  it fires on `configd_snapshot_install_failed_total`, which is
-  incremented at the follower when a snapshot it *received* fails to
-  install; the over-cap frame never reaches the follower, so that
-  counter never moves for this failure mode.
+- The old `MAX_SNAPSHOT_BLOB_LEN = 4 MiB` was a **total-state** ceiling: a snapshot
+  larger than one frame was dropped at the sender and the follower wedged. Chunked
+  `InstallSnapshot` now streams a large snapshot as ordered chunks (each <= the 4 MiB
+  per-**chunk** cap, default chunk 1 MiB), driven off the follower's echoed
+  `nextExpectedOffset`, so the total-state ceiling is lifted. Consensus semantics are
+  unchanged (transport-only): the follower installs only after the whole snapshot is
+  reassembled in order and `matchIndex` advances only on that install.
+- **The total is now bounded by the follower's HEAP, not by disk.** The receiver
+  reassembles the whole snapshot in memory to apply it. A fail-closed cap
+  (`configd.raft.maxReassembledSnapshotBytes`, default **512 MiB**, effective value
+  clamped to ~2 GiB - the max single-array size) refuses a snapshot that would exceed it
+  **before it can OOM** the follower: the partial is dropped, a `SEVERE` line is logged
+  (`refusing InstallSnapshot reassembly ... exceed the reassembly cap`), and no install
+  occurs - **no OOM, no corruption**, but that follower **stays out of quorum until an
+  operator raises the cap** (or trims state). The cap **must exceed the largest expected
+  total committed state**; the state has to fit in heap to be applied regardless.
+- **Over-cap observability:** the refusal logs `SEVERE` **per occurrence with no
+  dedicated metric** - detection is log-watch only, and per-follower `matchIndex` lag is
+  the proxy alert. A dedicated snapshot-reassembly-drop counter/alert is a documented
+  observability follow-up, tying into the "Encoder-drop observability" item below (both
+  want the same server-transport metric seam).
+- **Deploy-ordering requirement (silent corruption risk):** the chunked protocol
+  reuses the existing `offset`/`done` fields and there is **no wire-version negotiation**
+  for the Raft RPC codec. A **pre-chunking** follower ignores those fields and installs
+  **chunk 0 as the whole snapshot**, silently corrupting its state, for any snapshot
+  larger than one chunk. **All nodes must be upgraded together**; single-chunk transfers
+  (<= chunk size) remain safe. See
+  [`deployer-must-know.md` section 4](deployer-must-know.md).
+- **Mitigation:** upgrade the whole cluster together; keep state within the reassembly
+  cap; monitor per-follower `matchIndex` lag against leader `commitIndex` as the proxy
+  for "follower stuck (snapshot could not be installed)".
 
 ### Wire-version mismatch alerting
 
 - v1 is the first version, so no v0/v1 mixed traffic exists today.
+- The Raft RPC codec (`RaftMessageCodec`) has **no wire-version byte** and no
+  negotiation; the transport `FrameCodec.WIRE_VERSION` guards only the frame envelope.
+  A payload-layout change to a Raft RPC (e.g. the chunked-transfer
+  `InstallSnapshotResponse.nextExpectedOffset` field) is therefore **not** caught by a
+  version tripwire between mixed-code peers -- which is why cross-version snapshot
+  transfer is a deploy-ordering requirement (above), not a negotiated capability.
 - v2 will land with a Hello handshake (ADR-0030+, not yet authored)
   to negotiate version. Until then, mixed-version traffic terminates
   the connection with `UnsupportedWireVersionException`.
