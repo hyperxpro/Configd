@@ -42,7 +42,11 @@ but does not remove, the exposure.)
   refuse legacy records once the plaintext prefix is gone.
 - **Fate-sharing + signing-key rotation.** With `local`, confidentiality fate-shares with the signing key:
   a signing-key compromise decrypts all at-rest data, and rotating the signing key orphans existing
-  `algId=2` data (re-snapshot before rotating). Off-host key custody is a v2 KMS-provider item.
+  `algId=2` data **permanently and is not an in-place operation** (re-snapshotting under the old key does
+  not rescue it -- that snapshot is still ciphertext under the old root; treat the signing key as permanent
+  for an encrypted data dir, see [`deployer-must-know.md` section 1](deployer-must-know.md)). **Back up the
+  signing key before enabling encryption; losing it means permanent, unrecoverable loss of all encrypted
+  data.** Off-host key custody is a v2 KMS-provider item.
 - **Not encrypted at rest (v1):** the **audit log stays HMAC-only**, so audit metadata (config key
   **names**, principals) is not confidential. **N>1 note (LOW, inherited):** the GCM AAD binds the
   artifact-type magic but **not** the Raft groupId, and one key manager is shared across all groups -
@@ -280,7 +284,11 @@ items rather than pre-GA gates:
   (`refusing InstallSnapshot reassembly ... exceed the reassembly cap`), and no install
   occurs - **no OOM, no corruption**, but that follower **stays out of quorum until an
   operator raises the cap** (or trims state). The cap **must exceed the largest expected
-  total committed state**; the state has to fit in heap to be applied regardless.
+  total committed state**; the state has to fit in heap to be applied regardless -- and the
+  transient peak during a transfer is **~2-3x the snapshot size** (growable reassembly
+  buffer plus the final-array copy at install), so size the heap with ~3x-the-snapshot
+  headroom, not merely above the cap (see
+  [`deployer-must-know.md` section 4](deployer-must-know.md)).
   **Disk-spilling reassembly** (streaming chunks to disk rather than buffering the whole
   snapshot in heap) is a **v2** item - today reassembly is heap-bound.
 - **Over-cap observability:** the refusal logs `SEVERE` **per occurrence with no

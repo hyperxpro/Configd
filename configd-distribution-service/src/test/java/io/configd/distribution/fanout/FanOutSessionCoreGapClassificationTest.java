@@ -369,4 +369,58 @@ class FanOutSessionCoreGapClassificationTest {
         assertTrue(((Result.Gap) quiescent).oldestRetainedSeq() > parked + 1,
                 "a genuinely lapped reader must be classified GENUINE, never masked as transient");
     }
+
+    // ------------------------------------------------------------------------
+    // 7. REAL FanOutBuffer (no mock), end-to-end through the SESSION: a session whose cursor
+    //    genuinely fell off the retention window (its successor seq truly evicted, data missed)
+    //    must demote on the FIRST tick - not be retried as a transient race. Tests 5 and 6 cover
+    //    the real buffer for a caught-up session and for a raw lapped reader; this one closes the
+    //    remaining seam by driving the lapped case through the session's own classifier, pinning
+    //    the fail-safe direction of the fix (a real fall-behind is never mistaken for a race,
+    //    not even for one tick, once the buffer state is settled).
+    // ------------------------------------------------------------------------
+
+    @Test
+    void genuinelyLappedSessionAgainstRealBufferDemotesOnFirstTick() {
+        int capacity = 8;
+        FanOutBuffer buffer = new FanOutBuffer(capacity);
+        Consumer<DemotionEvent> toGovernor =
+                ev -> governor.onDemotion(IDENTITY, ev, clock.currentTimeMillis());
+
+        // Fill the ring exactly to capacity (seqs 1..8, nothing evicted yet) and subscribe
+        // caught-up at the head, so the session starts STREAMING via TAIL like a healthy edge.
+        for (long seq = 1; seq <= capacity; seq++) {
+            buffer.publish(note(seq));
+        }
+        FanOutSessionCore s = new FanOutSessionCore(buffer, replayAt(capacity), sink,
+                FanOutConfig.defaults(), FanOutSessionMetrics.NOOP, clock, toGovernor);
+        s.onSubscribe(subscribe(capacity));
+        assertEquals(EdgeFrame.Mode.TAIL,
+                sink.sentOfType(EdgeFrame.SubscribeOk.class).get(0).mode(),
+                "caught-up non-zero cursor must TAIL, not snapshot-first");
+        assertEquals(FanOutSessionCore.SessionState.STREAMING, s.state());
+        sink.clear();
+
+        // The session never ticks while the writer runs far ahead: publishing through 32 on a
+        // capacity-8 ring evicts seqs 1..24, so the ring retains 25..32 and the session's cursor
+        // (8) has genuinely missed committed data - its successor (9) is gone.
+        for (long seq = capacity + 1; seq <= 32; seq++) {
+            buffer.publish(note(seq));
+        }
+        assertTrue(buffer.droppedTotal() >= 32 - capacity,
+                "the ring must have evicted past the session's cursor (a real fall-behind)");
+
+        // FIRST tick on the settled buffer: readSince(8) takes the buffer's fast path
+        // (cursor < lastEvictedSeq) and reports oldestRetainedSeq 25 > cursor + 1 = 9, so the
+        // classifier must call it GENUINE and demote immediately - a transient-retry here would
+        // be the false-negative that silently serves stale reads.
+        s.tick(clock.now());
+
+        assertEquals(FanOutSessionCore.SessionState.CATCHUP, s.state(),
+                "a genuinely lapped session must leave STREAMING on the first tick");
+        assertEquals(1, s.demotionCount(),
+                "exactly one demotion on the first tick - no transient-retry grace for a real gap");
+        assertEquals(DemotionEvent.REASON_GAP, s.lastDemotion().reason(),
+                "the demotion is the genuine fall-behind GAP signal the governor counts");
+    }
 }

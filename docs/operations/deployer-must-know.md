@@ -47,6 +47,20 @@ measurement doc.
   that still writes plaintext and re-replicate into it -- there is no in-place
   downgrade.) This is the same irreversibility CockroachDB/etcd/Vault document for
   storage encryption.
+- **BACK UP THE SIGNING KEY BEFORE ENABLING -- it is the ONLY copy of your
+  encryption root.** With the `local` provider the encryption root is *nothing but*
+  HKDF(signing key): there is **no separate key file, no escrow, no recovery code**.
+  The signing key and the KMS root are the **same custody object**, so the signing
+  key inherits the **full gravity of an encryption master key** -- give it the same
+  backup, access-control, and rotation discipline you would give a cloud-KMS root.
+  **If you lose or destroy the signing key, every `algId=2` record on every node
+  that derived its root from it is PERMANENTLY UNRECOVERABLE**, exactly as for a
+  lost KMS master key -- there is no escape hatch. Before enabling encryption:
+  (1) **back up the signing key to durable, off-host storage** kept separate from
+  the data dir and its backups (the D-1 co-location guard already forbids
+  co-locating them), and (2) **test-restore it** -- bring a node up from the key
+  backup plus a snapshot and confirm recovery succeeds -- so you know the backup is
+  good *before* you hold irreplaceable ciphertext.
 - **Enable from FIRST BOOT (or force a compaction).** Enabling on a node that
   already holds plaintext / HMAC records (`algId=0/1`) does **not** rewrite them --
   they stay plaintext on disk until a snapshot/compaction rewrites them encrypted.
@@ -60,9 +74,20 @@ measurement doc.
 - **Signing-key rotation caveat + fate-sharing.** With the `local` provider the
   encryption root is HKDF-derived from the cluster **signing key**, so **rotating
   the signing key re-derives a different root and makes existing `algId=2` data
-  undecryptable.** Re-snapshot/re-encrypt under the old key **before** rotating the
-  signing key (the same coupling already holds for the integrity key and the D-1
-  co-location guard). Confidentiality therefore **fate-shares with the signing key**:
+  undecryptable.** **There is no supported in-place signing-key rotation once
+  `algId=2` data exists in v1.** The keyTerm / old-root-retention machinery in
+  `SegmentKeyManager` is present but **not wired** (`ConfigdServer` always boots
+  the root at `keyTerm=1` from the single current signing key and never installs a
+  prior key), and once the old signing key is replaced its root can never be
+  re-derived -- so re-snapshotting under the old key does **not** help: that
+  snapshot is still ciphertext under the old root and is undecryptable after the
+  rotation, and a cluster-wide signing-key change bricks every node's at-rest data
+  at once (no healthy peer to re-replicate from). **Treat the signing key as
+  permanent for the lifetime of an encrypted data directory**; changing it requires
+  a full, staging-validated re-provision of encrypted state, not an in-place
+  rotation. (The same HKDF coupling means rotating the signing key also orphans the
+  integrity-only `algId=1` WAL when encryption is off -- see the D-1 co-location
+  guard.) Confidentiality therefore **fate-shares with the signing key**:
   a signing-key compromise decrypts all at-rest data, and the `local` provider gives
   **no off-host key custody**. Off-host custody (a cloud KMS / HSM provider) is a
   **v2** item: the KMS-provider SPI is built and `local` slots into it, but no cloud
@@ -165,7 +190,13 @@ measurement doc.
      **512 MiB**; the effective value is clamped to ~2 GiB, the max single-array size).
      The cap **MUST exceed the largest total committed state** any group will hold --
      the whole state has to fit in the follower's heap to be applied regardless, so size
-     it accordingly. A snapshot that would exceed the cap is **refused before it can
+     it accordingly. Size the heap with **headroom of roughly 3x the largest snapshot**,
+     not merely "above the cap": reassembly buffers the incoming bytes in a growable
+     buffer (which can hold up to ~2x the data right after a growth step) and then copies
+     them once more into the final array at install, so the transient peak during a
+     transfer is ~2-3x the snapshot size on top of the node's normal working set. A heap
+     only modestly above the snapshot size can OOM during reassembly even though the
+     fail-closed cap was never exceeded. A snapshot that would exceed the cap is **refused before it can
      OOM** the follower: the partial is dropped, a **`SEVERE`** line is logged
      (`refusing InstallSnapshot reassembly ... exceed the reassembly cap`), and no
      install occurs -- **no OOM, no corruption**, but that follower **stays out of
@@ -250,7 +281,7 @@ measurement doc.
 
 | # | MUST-KNOW | The failure if ignored | Enforced by server? |
 |---|-----------|------------------------|---------------------|
-| 1 | At-rest encryption is OFF by default; enabling it is a one-way door | OFF: plaintext secrets readable from disk/snapshot/backup. ON: cannot disable/roll back; signing-key rotation orphans ciphertext | No -- deployment choice (`-Dconfigd.raft.encryption.enabled`) |
+| 1 | At-rest encryption is OFF by default; enabling it is a one-way door | OFF: plaintext secrets readable from disk/snapshot/backup. ON: cannot disable/roll back; signing-key rotation OR loss = permanent, unrecoverable loss of all encrypted data (no in-place rotation -- back up the key before enabling) | No -- deployment choice (`-Dconfigd.raft.encryption.enabled`) |
 | 2 | Grant edge hydration identity root READ | Edge SUBSCRIBE refused NOT_AUTHORIZED (auth on); whole-store read requires root READ | Yes -- gated at admission (auth on) |
 | 3 | `scope` is not tenant isolation | Cross-tenant read/write via scope-blind gate | No -- scope is metadata |
 | 4 | Upgrade all nodes together | Multi-chunk snapshot to an old node = silent state corruption; total snapshot bounded by heap/reassembly cap | No -- deploy-ordering is on you |
