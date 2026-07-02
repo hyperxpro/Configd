@@ -606,9 +606,12 @@ public final class EdgeClientCore {
         if (filtered) {
             // On a filtered stream latestSeq is the server's DRAINED-THROUGH covered-S (not the
             // buffer tip): everything matching this edge's prefixes through it has been delivered
-            // or filtered. Advance the transport cursor to it (a forward-only covered position),
+            // or filtered. Advance the transport cursor to it MONOTONICALLY (advance-if-greater),
             // so the edge acks the covered-S and the server's ack-lag never trips on filtered
-            // skips; the applied store version is tracked separately by the applier.
+            // skips; the applied store version is tracked separately by the applier. A REGRESSED
+            // covered-S is safely IGNORED here (the edge never regresses its covered cursor) - a
+            // genuine gap is instead surfaced by a delivered NOTIFY whose position regresses below
+            // the applied version (DeltaApplier's forward-only check).
             if (h.latestSeq() > cursor) {
                 cursor = h.latestSeq();
             }

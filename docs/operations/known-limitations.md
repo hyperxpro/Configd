@@ -107,12 +107,21 @@ legacy in-process `WatchService` is unrelated server-internal plumbing (register
     stands), strong-read (`secure/`) keys are always shipped, and the edge learns the covered-through position
     from the HEARTBEAT (a dense covered-S cursor + forward-only version chain). **The trust boundary:** the
     edge trusts the server's covered-S assertion. A genuine data-loss gap (ring eviction) is still caught
-    **server-side** and re-snapshotted; a **malformed** covered-S (regression / skip below a delivered delta)
-    is caught **edge-side** and resynced; but a **well-formed suppression of a matching delta** behind a
-    correct covered-S is **not** edge-detectable - sound only within the co-located mTLS domain. **Set
+    **server-side** and re-snapshotted; a **delivered `NOTIFY` whose position regresses below the applied
+    version** is caught **edge-side** (the forward-only gap check) and resynced; a regressed covered-S on the
+    HEARTBEAT is safely **ignored** (the edge advances its covered cursor monotonically, never regresses it);
+    but a **well-formed suppression of a matching delta** behind a correct covered-S is **not** edge-detectable
+    - sound only within the co-located mTLS domain. **Set
     `configd.edge.fanout.filter=off` (restore the full chain) the moment a separate or untrusted relay tier
     terminates the fan-out** - a two-way door. This posture only ever narrows what a narrow edge already asked
     for; it never widens exposure (an edge still needs whole-store READ to subscribe at all).
+  - **Strong-read prefix drift (prerequisite, not a v1 hazard).** The always-shipped strong-read prefix set is
+    the **hardcoded `StrongReadKeyClass.DEFAULT` (`secure/`)** on the edge, but **config-driven**
+    (`--strong-read-prefixes`) on the server. If an operator overrides the server's strong-read prefixes, the
+    two could **drift**, so the edge might not treat a server-strong-read key as always-store. **Non-exploitable
+    today** - strong-read reads bypass the edge copy entirely via the linearizable root ReadIndex - but this
+    drift MUST be closed (thread the configured set to the edge) before any edge-local-serve feature for
+    strong-read keys.
   - **mTLS + explicit grant required.** A watch needs a verified cert-DN **and** an explicit `READ  and  WATCH`
     grant to that DN; without mTLS all watches are rejected (fail-closed). The default config grants watch only
     to `root`, so out-of-the-box no edge cert can watch until the operator adds an `_acl/` grant.

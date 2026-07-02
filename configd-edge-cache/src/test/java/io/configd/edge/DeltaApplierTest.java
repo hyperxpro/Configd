@@ -356,7 +356,7 @@ class DeltaApplierTest {
 
         @Test
         void rewrittenVersionPositionFailsVerification() throws Exception {
-            // Track 0 red-team regression: the version position is inside the signature, so a
+            // Red-team regression (ADR-0045): the version position is inside the signature, so a
             // relay that rewrites fromVersion/toVersion to splice a delta out of the chain
             // breaks verification (the property the anti-suppression claim used to lean on TLS
             // for; ADR-0045).

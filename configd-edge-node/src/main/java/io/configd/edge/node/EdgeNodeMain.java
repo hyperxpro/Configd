@@ -193,11 +193,11 @@ public final class EdgeNodeMain {
     static final String ACCEPT_FILTERED_PROP = "configd.edge.accept_filtered";
 
     /**
-     * Resolves the {@value #ACCEPT_FILTERED_PROP} posture: {@code on}/{@code off} (default off),
-     * fail-loud on any other value (mirroring the server's transport / filter posture flags). A
-     * prefix-scoped edge with this on negotiates the 0x03 wire and advertises {@code
-     * acceptsFiltered} so the server filters its stream server-side; default off keeps every edge
-     * on the byte-identical 0x01 wire.
+     * Resolves the {@value #ACCEPT_FILTERED_PROP} posture: {@code on}/{@code off} (aliases
+     * {@code true}/{@code false}); default {@code off}, fail-loud on any other value (mirroring the
+     * server's transport / filter posture flags). A prefix-scoped edge with this on negotiates the
+     * 0x03 wire and advertises {@code acceptsFiltered} so the server filters its stream server-side;
+     * default off keeps every edge on the byte-identical 0x01 wire.
      */
     static boolean resolveAcceptFiltered() {
         String v = System.getProperty(ACCEPT_FILTERED_PROP, "off").trim().toLowerCase();
@@ -205,7 +205,7 @@ public final class EdgeNodeMain {
             case "on", "true" -> true;
             case "off", "false" -> false;
             default -> throw new IllegalArgumentException(
-                    ACCEPT_FILTERED_PROP + " must be 'on' or 'off', got: '" + v + "'");
+                    ACCEPT_FILTERED_PROP + " must be 'on'/'off' (or 'true'/'false'), got: '" + v + "'");
         };
     }
 

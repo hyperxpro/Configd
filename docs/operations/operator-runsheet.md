@@ -253,6 +253,10 @@ Source of truth for the gate set: the readiness review, [section 4](../archive/r
 - **What to WATCH:** `edge_fanout_filtered_deltas_total` vs `edge_fanout_delivered_deltas_total`
   (delivered / (delivered + filtered) is the measured keyspace fraction), `edge_fanout_cursor_advances_total`
   (the covered-S heartbeats), `edge_fanout_filtered_sessions_total`.
+- **Do NOT watch seq-lag for a filtered edge:** a filtered edge shows **~0 seq-lag by design** - its
+  `HEARTBEAT.latestSeq` is the covered-S cursor, not the buffer tip, so cursor-lag is trivially ~0. Watch the
+  **commit-timestamp staleness gauge** (`edge_staleness_ms` / `edge_staleness_state`) for filtered edges, not
+  seq-lag.
 - **Trust note:** filtering trusts the serving node's assertion "(A,B] had nothing under your prefixes." Do
   **not** enable it across an untrusted relay. A genuine data-loss gap (ring eviction) is still caught
   server-side and re-snapshotted; a malformed covered-S is caught edge-side; a well-formed suppression of a

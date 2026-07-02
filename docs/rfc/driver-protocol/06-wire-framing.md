@@ -329,12 +329,14 @@ from it (the tip may include commits it has not received).
 frame layout is unchanged; `latestSeq` is **re-typed as the drained-through covered-S**: the server MUST have
 delivered every matching delta with `toVersion ≤ latestSeq` **before** emitting the heartbeat (drain-then-
 heartbeat ordering). The edge advances its dense covered cursor to it and acks it (`CURSOR_ACK.seq = covered-S`),
-so a narrow-prefix edge is never demoted for ack-lag caused by filtering. The value is clamped to the drained
-cursor and monotone; a **regression** (or a covered-S below a delivered delta's seq) is a malformed assertion
-and the edge **MUST** resync (snapshot). "Caught up and quiet" is `covered-S == latestSeq`; a frozen covered-S
-while the server keeps committing is "stalled." A well-formed suppression of a matching delta behind a correct
-covered-S is **not** edge-detectable — the documented trusted-server boundary (ADR-0045; a genuine data-loss
-gap from ring eviction is still detected server-side and healed by a re-snapshot).
+so a narrow-prefix edge is never demoted for ack-lag caused by filtering. The edge advances the covered cursor
+**monotonically** (advance-if-greater) and **MUST NOT** regress it; a **regressed** covered-S on the HEARTBEAT
+is **safely ignored**, not a resync trigger. A genuine gap is signalled instead by a **delivered `NOTIFY`**
+whose position regresses below the applied version (the forward-only gap check, F6-2a), which triggers resync.
+"Caught up and quiet" is `covered-S == latestSeq`; a frozen covered-S while the server keeps committing is
+"stalled." A well-formed suppression of a matching delta behind a correct covered-S is **not** edge-detectable
+— the documented trusted-server boundary (ADR-0045; a genuine data-loss gap from ring eviction is still
+detected server-side and healed by a re-snapshot).
 
 **F6-9 `ERROR_CLOSE` (`0x09`)** — *server→client* terminal; golden `error_*.bin` (codes 1–10):
 

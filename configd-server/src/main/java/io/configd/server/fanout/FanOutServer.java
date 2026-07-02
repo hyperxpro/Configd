@@ -498,7 +498,7 @@ public final class FanOutServer implements FanOutEndpoint {
             if (inboundNegotiatedVersion == 0) {
                 // First frame: accept either version (CRC-validated), then PIN to its stamp.
                 EdgeFrame frame = EdgeFrameCodec.decode(frameBytes);
-                inboundNegotiatedVersion = EdgeFrameCodec.peekVersion(frameBytes); // known 0x01/0x02
+                inboundNegotiatedVersion = EdgeFrameCodec.peekVersion(frameBytes); // known 0x01/0x02/0x03
                 return frame;
             }
             // Pinned: a frame stamped with the OTHER accepted version -> BAD_WIRE_VERSION (fail closed).

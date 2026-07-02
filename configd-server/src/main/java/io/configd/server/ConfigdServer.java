@@ -1228,7 +1228,7 @@ public final class ConfigdServer {
             case "on", "true" -> true;
             case "off", "false" -> false;
             default -> throw new IllegalArgumentException(
-                    EDGE_FILTER_PROP + " must be 'on' or 'off', got: '" + v + "'");
+                    EDGE_FILTER_PROP + " must be 'on'/'off' (or 'true'/'false'), got: '" + v + "'");
         };
     }
 

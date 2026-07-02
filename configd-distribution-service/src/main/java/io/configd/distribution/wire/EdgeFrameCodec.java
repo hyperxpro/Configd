@@ -79,7 +79,8 @@ public final class EdgeFrameCodec {
      * <b>sole</b> wire difference between a {@code 0x01} and a {@code 0x02} connection for a
      * shared frame (W1-3): the {@code 0x01} golden fixtures stay byte-identical, and the watch
      * protocol adds separate {@code 0x02} fixtures rather than rebaselining them. The decoder
-     * accepts {@code 0x01} and {@code 0x02}; any other version is {@link ErrorCode#BAD_WIRE_VERSION}.
+     * accepts {@code 0x01}, {@code 0x02}, and {@code 0x03} (the filtered fan-out, see
+     * {@link #EDGE_WIRE_VERSION_V3}); any other version is {@link ErrorCode#BAD_WIRE_VERSION}.
      */
     public static final byte EDGE_WIRE_VERSION_V2 = (byte) 0x02;
 
@@ -179,7 +180,7 @@ public final class EdgeFrameCodec {
      * connection; a {@code WATCH_*} frame may be encoded <b>only</b> under {@code 0x02}.
      *
      * @param frame   the frame to encode
-     * @param version {@link #EDGE_WIRE_VERSION} or {@link #EDGE_WIRE_VERSION_V2}
+     * @param version {@link #EDGE_WIRE_VERSION}, {@link #EDGE_WIRE_VERSION_V2}, or {@link #EDGE_WIRE_VERSION_V3}
      * @return the wire bytes
      * @throws IllegalArgumentException if {@code version} is not a supported edge wire
      *                                  version, or a {@code WATCH_*} frame is encoded under
@@ -227,7 +228,7 @@ public final class EdgeFrameCodec {
      *
      * @param frame   the frame to encode
      * @param sink    the destination (its current {@link FrameSink#writerIndex()} is the start)
-     * @param version {@link #EDGE_WIRE_VERSION} or {@link #EDGE_WIRE_VERSION_V2}
+     * @param version {@link #EDGE_WIRE_VERSION}, {@link #EDGE_WIRE_VERSION_V2}, or {@link #EDGE_WIRE_VERSION_V3}
      * @throws IllegalArgumentException if {@code version} is unsupported, or a {@code WATCH_*}
      *                                  frame is encoded under {@code 0x01} (W5-11) - a
      *                                  caller/programming error, kept distinct from the
@@ -528,8 +529,8 @@ public final class EdgeFrameCodec {
     // -----------------------------------------------------------------------
 
     /**
-     * Decodes a single complete frame, accepting either negotiated version. The array must
-     * contain exactly one frame.
+     * Decodes a single complete frame, accepting any negotiated version ({@code 0x01}/{@code 0x02}
+     * /{@code 0x03}). The array must contain exactly one frame.
      *
      * <p>Validation order (deliberate, mirroring {@code FrameCodec}): length bounds ->
      * length==data.length -> CRC32C -> version -> type -> payload.
@@ -571,8 +572,8 @@ public final class EdgeFrameCodec {
 
     /**
      * The single decode implementation. {@code expectedVersion} is the per-connection pin
-     * (W5-11): {@code null} accepts either {@code 0x01}/{@code 0x02}; a non-null value also
-     * rejects a frame stamped with the other accepted version as {@link ErrorCode#BAD_WIRE_VERSION}.
+     * (W5-11): {@code null} accepts any of {@code 0x01}/{@code 0x02}/{@code 0x03}; a non-null value
+     * also rejects a frame stamped with another accepted version as {@link ErrorCode#BAD_WIRE_VERSION}.
      */
     private static EdgeFrame decode(byte[] data, Byte expectedVersion) {
         Objects.requireNonNull(data, "data must not be null");
@@ -1097,8 +1098,8 @@ public final class EdgeFrameCodec {
      * version with {@link ErrorCode#BAD_WIRE_VERSION}).
      *
      * @param data a buffer with at least {@link #HEADER_SIZE} bytes
-     * @return the stamped version byte (expected {@link #EDGE_WIRE_VERSION} or
-     *         {@link #EDGE_WIRE_VERSION_V2})
+     * @return the stamped version byte (expected {@link #EDGE_WIRE_VERSION},
+     *         {@link #EDGE_WIRE_VERSION_V2}, or {@link #EDGE_WIRE_VERSION_V3})
      * @throws CodecException if the buffer is shorter than {@link #HEADER_SIZE}
      */
     public static byte peekVersion(byte[] data) {

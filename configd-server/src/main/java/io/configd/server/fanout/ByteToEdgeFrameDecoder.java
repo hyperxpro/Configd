@@ -19,10 +19,10 @@ import java.util.List;
  *
  * <p><b>Per-connection inbound version pin.</b> This decoder is per-channel
  * (stateful), so it tracks the connection's negotiated wire version: the FIRST frame is decoded
- * accepting either {@code 0x01} or {@code 0x02} (CRC-validated), then the connection is PINNED to
- * that frame's stamped version; every subsequent frame is decoded under the pin, so a
- * version-mismatched frame mid-connection ({@code 0x02} on a {@code 0x01}-pinned connection or vice
- * versa) fails closed with {@link io.configd.distribution.wire.ErrorCode#BAD_WIRE_VERSION}. A legacy
+ * accepting {@code 0x01}, {@code 0x02}, or {@code 0x03} (CRC-validated), then the connection is PINNED
+ * to that frame's stamped version; every subsequent frame is decoded under the pin, so a
+ * version-mismatched frame mid-connection (a frame stamped with any other accepted version) fails
+ * closed with {@link io.configd.distribution.wire.ErrorCode#BAD_WIRE_VERSION}. A legacy
  * SUBSCRIBE-first connection pins to {@code 0x01} and remains byte-identical to the pre-watch path
  * for all real (single-version) traffic; only a mixed-version adversary is newly rejected.
  *
@@ -62,7 +62,7 @@ final class ByteToEdgeFrameDecoder extends ByteToMessageDecoder {
         if (negotiatedVersion == 0) {
             // First frame: accept either version (CRC-validated), then PIN to its stamped version.
             out.add(EdgeFrameCodec.decode(frameBytes));
-            negotiatedVersion = EdgeFrameCodec.peekVersion(frameBytes); // known 0x01/0x02 post-decode
+            negotiatedVersion = EdgeFrameCodec.peekVersion(frameBytes); // known 0x01/0x02/0x03 post-decode
         } else {
             // Pinned: a frame stamped with the OTHER accepted version -> BAD_WIRE_VERSION (fail closed).
             out.add(EdgeFrameCodec.decode(frameBytes, negotiatedVersion));
