@@ -1,0 +1,11 @@
+=== live edge staleness (edge_staleness_ms gauge, ADR-0039) scope=all-edges ===
+  cadence = 100 ms (fixed wall-clock, methodology §3c)
+  count   = 38555
+  min     = 4 ms
+  p50     = 600063 ms
+  p90     = 600063 ms
+  p99     = 600063 ms  (tail samples >= p99: 26168)
+  p999    = 600063 ms  (tail samples >= p999: 26168)
+  p9999   = 600063 ms  (tail samples >= p9999: 26168)
+  max     = 600063 ms
+STALENESS-SAMPLE-HISTOGRAM: scope=all-edges cadence_ms=100 count=38555 p50=600063 p99=600063 p999=600063 p9999=600063 max=600063 skipped=0 unit=ms
