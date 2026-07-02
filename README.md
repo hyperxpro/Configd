@@ -6,19 +6,21 @@ The split is the point: consensus gives you linearizable, durable writes, and th
 
 ## What v1 is
 
-- **Durable, linearizable writes** through Raft, with strong reads available via ReadIndex and bounded-staleness reads at the edge by default.
-- **Sharded for horizontal scale.** A single region-local group is the default (N=1); sharding is wired and proven, and scale is near-linear across machines.
+- **Durable, linearizable writes** through Raft, with strong reads available via ReadIndex and bounded-staleness reads at the edge by default. Snapshots stream to lagging followers in chunks, so total state is not capped by the wire frame size.
+- **Sharded for horizontal scale.** A single region-local group is the default (N=1); sharding is wired and proven, and scale is near-linear across machines. Per-group leadership can be moved with an ADMIN-gated transfer route.
 - **mTLS on the edge and replication surfaces**, with a per-key authorization model (roles, policies, deny-precedence) and a keyed-HMAC audit log. The admin API is HTTPS with a bearer token rather than client certificates, and edge reads are plaintext by design.
-- **At-rest integrity**, meaning tamper detection, not encryption. Values are stored in plaintext and integrity-checked; do not put secrets in Configd (see the limitations below).
-- **Secure by configuration, not by default.** TLS and mTLS, authentication, the audit log, and replay protection are off until you turn them on (the server warns loudly while they are off). See the [operator runsheet](docs/operations/operator-runsheet.md).
+- **At-rest integrity by default, encryption available.** By default, values are stored in plaintext and integrity-checked (tamper detection); node-local AES-256-GCM encryption at rest can be enabled with a flag, backed by a pluggable KMS-provider SPI. Enabling it is a one-way door — read [the deployer must-knows](docs/operations/deployer-must-know.md) first. With encryption off, do not put secrets in Configd (see the limitations below).
+- **Secure by configuration, not by default.** TLS and mTLS, authentication, the audit log, encryption at rest, and replay protection are off until you turn them on (the server warns loudly while they are off). See the [operator runsheet](docs/operations/operator-runsheet.md).
 
 ## What v1 proved on real hardware
 
 - **Durability under fault.** Disaster-recovery drills failed over in about 372 ms with zero committed-write loss across three fault modes (recovery time 4.2 to 5.9 s), and a 6-hour soak ran leak- and OOM-clean.
+- **Linearizability under fault.** The faulted linearizability suite is green on the release commit: 8 of 8 histories linearizable with fault injection active, and edge staleness bounds held with wide margin (p99 of 13 to 24 ms against a 500 ms bound).
 - **Horizontal scale.** Near-linear at about 2.45x across three machines (656, then 1075, then 1607 committed writes per second). A single group's write knee is about 800 writes/s, and a single box plateaus near 1100.
+- **Encryption cost.** Enabling encryption at rest cost about 2.5% of the write knee and 1.5% at p50; the overhead is tail-weighted (p99 roughly doubles).
 - **Honest residuals.** Soak is proven to 6 hours, not 24. Measurement is single-region by design. Sustained multi-machine scale is operator-managed, because leadership is not auto-balanced yet.
 
-The full evidence lives in [`docs/archive/`](docs/archive/): the [go/no-go review](docs/archive/readiness/v1-go-no-go-2026-07-01.md), the audited [readiness register](docs/archive/readiness/production-readiness-register.md), and the two paid [EC2 measurement runs](docs/archive/measurement/).
+The full evidence lives in [`docs/archive/`](docs/archive/): the [go/no-go review](docs/archive/readiness/v1-go-no-go-2026-07-01.md), the audited [readiness register](docs/archive/readiness/production-readiness-register.md), and the two paid [EC2 measurement runs](docs/archive/measurement/). The release-commit measurements (faulted linearizability, staleness bounds, encryption overhead) are in [`docs/measurement/`](docs/measurement/).
 
 ## Where to go
 
@@ -37,9 +39,9 @@ A fuller map is in [`docs/README.md`](docs/README.md).
 
 v1 is deliberately scoped. These are known and understood, not surprises:
 
-- **No encryption at rest.** At-rest protection is integrity only; values, including `secure/` keys, are plaintext (the `secure/` prefix is a read-freshness class, not confidentiality). Keep secrets in a dedicated secret manager. Encryption at rest is a v2 item.
+- **Encryption at rest is off by default and a one-way door.** With it off, values — including `secure/` keys — are plaintext (the `secure/` prefix is a read-freshness class, not confidentiality); keep secrets in a dedicated secret manager. Once enabled, it cannot be disabled and the binary cannot roll back to a pre-encryption version. The default key provider derives its root from the cluster signing key (confidentiality fate-shares with it); the audit log stays HMAC-only, and cloud KMS providers behind the SPI are v2 items.
 - **Watches are server-side.** The watch protocol is implemented for a single group; a conforming client driver is buildable from the RFC but not yet shipped, and cross-shard watches are v3. Until a driver ships, poll and delta-apply.
-- **Horizontal scale is operator-managed.** Multi-machine scale needs one leader per box, placed and maintained by the operator; an automatic leadership balancer is a v2 item.
+- **Horizontal scale is operator-managed.** Multi-machine scale needs one leader per box; leadership can be moved manually via the ADMIN transfer route, but there is no transfer-on-shutdown and no automatic balancer yet — both are v2 items.
 
 See [`docs/v2-backlog.md`](docs/v2-backlog.md) for the rest.
 
