@@ -90,6 +90,16 @@ public final class DeltaApplier {
     /** True if a gap has been detected and full sync is needed. */
     private boolean gapDetected;
 
+    /**
+     * True when the server is filtering this session server-side (ADR-0044). In filtered mode
+     * the delivered version chain is intentionally non-contiguous - dropped non-matching deltas
+     * bumped the global version - so gap detection relaxes to forward-only (a jump is expected;
+     * only a regression below the applied version is a genuine gap), and the store apply bridges
+     * the jump to {@code toVersion}. Set by {@link #setFilteredMode(boolean)} from the
+     * SUBSCRIBE_OK {@code filtered} confirm. Off = the byte-identical classic contiguity path.
+     */
+    private boolean filteredMode;
+
     /** The version of the last successfully applied delta. */
     private long lastAppliedVersion;
 
@@ -257,15 +267,28 @@ public final class DeltaApplier {
             return ApplyResult.STALE_DELTA;
         }
 
-        // Gap detection - fromVersion must match current version
-        if (delta.fromVersion() != currentVersion) {
+        // Gap detection. Classic mode requires strict contiguity (fromVersion == currentVersion).
+        // Filtered mode relaxes to forward-only: a jump (fromVersion > currentVersion) is expected
+        // because non-matching deltas were dropped server-side; only a regression below the
+        // applied version is a genuine gap.
+        if (filteredMode) {
+            if (delta.fromVersion() < currentVersion) {
+                gapDetected = true;
+                return ApplyResult.GAP_DETECTED;
+            }
+        } else if (delta.fromVersion() != currentVersion) {
             gapDetected = true;
             return ApplyResult.GAP_DETECTED;
         }
 
-        // Apply the delta (subscription filter inside the client; covered frontier from
-        // the leader commit timestamp -- always passed explicitly by the caller).
-        client.applyDelta(delta, commitTimestampMillis);
+        // Apply the delta (subscription filter inside the client; covered frontier from the leader
+        // commit timestamp -- always passed explicitly by the caller). Filtered mode bridges the
+        // intentional version jump; classic mode applies contiguously.
+        if (filteredMode) {
+            client.applyDeltaBridged(delta, commitTimestampMillis);
+        } else {
+            client.applyDelta(delta, commitTimestampMillis);
+        }
         lastAppliedVersion = delta.toVersion();
         if (delta.epoch() > highestSeenEpoch) {
             highestSeenEpoch = delta.epoch();
@@ -285,6 +308,22 @@ public final class DeltaApplier {
      */
     public long highestSeenEpoch() {
         return highestSeenEpoch;
+    }
+
+    /**
+     * Selects the server-side-filtered apply mode (ADR-0044): forward-only gap detection and a
+     * version-bridged store apply. Set from the SUBSCRIBE_OK {@code filtered} confirm; the
+     * default is the classic strict-contiguity mode.
+     *
+     * @param filtered true to accept a non-contiguous (forward-jumping) delivered version chain
+     */
+    public void setFilteredMode(boolean filtered) {
+        this.filteredMode = filtered;
+    }
+
+    /** Whether this applier is in the server-side-filtered apply mode. */
+    public boolean filteredMode() {
+        return filteredMode;
     }
 
     /**

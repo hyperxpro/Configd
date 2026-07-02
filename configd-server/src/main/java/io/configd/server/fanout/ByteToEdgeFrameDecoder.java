@@ -34,10 +34,16 @@ final class ByteToEdgeFrameDecoder extends ByteToMessageDecoder {
 
     /**
      * The connection's negotiated inbound wire version, or {@code 0} until the first frame establishes
-     * it (a successfully-decoded frame stamps {@code 0x01} or {@code 0x02}, never {@code 0}, so {@code 0}
-     * is an unambiguous "not yet negotiated" sentinel). Per-channel state (the decoder is not sharable).
+     * it (a successfully-decoded frame stamps {@code 0x01}, {@code 0x02}, or {@code 0x03}, never
+     * {@code 0}, so {@code 0} is an unambiguous "not yet negotiated" sentinel). Per-channel state (the
+     * decoder is not sharable).
      */
     private byte negotiatedVersion;
+
+    /** The negotiated inbound wire version ({@code 0} until the first frame pins it). */
+    byte negotiatedVersion() {
+        return negotiatedVersion;
+    }
 
     @Override
     protected void decode(ChannelHandlerContext ctx, ByteBuf in, List<Object> out) {

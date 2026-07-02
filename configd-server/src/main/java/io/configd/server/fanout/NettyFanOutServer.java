@@ -394,14 +394,19 @@ public final class NettyFanOutServer implements FanOutEndpoint {
             if (!firstInboundSeen) {
                 firstInboundSeen = true;
                 // Outbound flip: a WATCH_CREATE-first connection is a 0x02 watch connection, so the
-                // encoder must stamp 0x02 for the client to decode the server's WATCH_* frames.
-                // A SUBSCRIBE-first legacy connection stays 0x01 (byte-identical). Flip BEFORE routing,
-                // so the flip happens-before any outbound watch frame the driver later produces. (A
-                // WATCH_CREATE is always 0x02-stamped - the codec forbids WATCH_* under 0x01 - and the
-                // decoder has already pinned this connection's inbound version to 0x02 for the same
-                // reason, so the two version views agree for every real connection.)
+                // encoder must stamp 0x02 for the client to decode the server's WATCH_* frames. A
+                // 0x03-stamped SUBSCRIBE is a filtered-fan-out connection (ADR-0044), so the encoder
+                // stamps 0x03 for the SUBSCRIBE_OK filtered confirm and every subsequent frame the
+                // edge's 0x03-pinned reader decodes. A plain 0x01 SUBSCRIBE stays 0x01 (byte-
+                // identical). Flip BEFORE routing, so it happens-before any outbound frame the driver
+                // later produces. The decoder has already pinned this connection's inbound version.
                 if (frame instanceof EdgeFrame.WatchCreate) {
                     wireVersion = EdgeFrameCodec.EDGE_WIRE_VERSION_V2;
+                } else if (frame instanceof EdgeFrame.Subscribe) {
+                    ByteToEdgeFrameDecoder dec = ctx.pipeline().get(ByteToEdgeFrameDecoder.class);
+                    if (dec != null && dec.negotiatedVersion() == EdgeFrameCodec.EDGE_WIRE_VERSION_V3) {
+                        wireVersion = EdgeFrameCodec.EDGE_WIRE_VERSION_V3;
+                    }
                 }
             }
             FanOutConnectionDriver d = driver;

@@ -110,6 +110,15 @@ public final class EdgeStreamClient implements AutoCloseable {
     private final List<InetSocketAddress> endpoints;
     private final String edgeId;
     private final List<String> prefixes;
+    /**
+     * The outbound edge wire version for this client: {@code 0x03} when the operator opted this
+     * prefix-scoped edge into server-side filtering (ADR-0044), else {@code 0x01} (byte-identical
+     * legacy). EVERY outbound frame - SUBSCRIBE and CURSOR_ACK - is stamped with it, because the
+     * server pins the inbound version from the connection's first frame and fails a later frame
+     * stamped otherwise closed.
+     */
+    private final byte wireVersion;
+    private final boolean acceptFiltered;
     private final TlsManager tlsManager; // null = plaintext (test / single-node)
     private final long backoffBaseMs;
     private final long silenceWindowMs;
@@ -148,12 +157,34 @@ public final class EdgeStreamClient implements AutoCloseable {
                             long backoffBaseMs, int silenceFactor,
                             Clock clock, EdgeNodeMetrics metrics, Runnable rebootstrapHook,
                             Runnable terminalAction) {
+        this(endpoints, edgeId, prefixes, tlsManager, backoffBaseMs, silenceFactor, clock,
+                metrics, rebootstrapHook, terminalAction, false);
+    }
+
+    /**
+     * @param acceptFiltered opt this edge into server-side prefix filtering (ADR-0044). When true
+     *                       AND the subscription is prefix-scoped (non-empty prefixes), the client
+     *                       negotiates the {@code 0x03} wire and advertises {@code acceptsFiltered}
+     *                       on SUBSCRIBE; a full-store edge always negotiates {@code 0x01}. The
+     *                       explicit opt-in (not automatic-by-version) keeps an unconfigured edge
+     *                       byte-identical.
+     */
+    public EdgeStreamClient(List<InetSocketAddress> endpoints, String edgeId,
+                            List<String> prefixes, TlsManager tlsManager,
+                            long backoffBaseMs, int silenceFactor,
+                            Clock clock, EdgeNodeMetrics metrics, Runnable rebootstrapHook,
+                            Runnable terminalAction, boolean acceptFiltered) {
         this.endpoints = List.copyOf(Objects.requireNonNull(endpoints, "endpoints"));
         if (this.endpoints.isEmpty()) {
             throw new IllegalArgumentException("at least one endpoint is required");
         }
         this.edgeId = Objects.requireNonNull(edgeId, "edgeId");
         this.prefixes = List.copyOf(Objects.requireNonNull(prefixes, "prefixes"));
+        // 0x03 only when the operator opted in AND the edge is prefix-scoped (a full-store edge
+        // wants the whole chain, so it stays on the byte-identical 0x01 wire).
+        this.acceptFiltered = acceptFiltered && !this.prefixes.isEmpty();
+        this.wireVersion = this.acceptFiltered
+                ? EdgeFrameCodec.EDGE_WIRE_VERSION_V3 : EdgeFrameCodec.EDGE_WIRE_VERSION;
         this.tlsManager = tlsManager;
         if (backoffBaseMs <= 0) {
             throw new IllegalArgumentException("backoffBaseMs must be > 0: " + backoffBaseMs);
@@ -424,9 +455,9 @@ public final class EdgeStreamClient implements AutoCloseable {
             long cursor = core.poisonPolicy().quarantinedSeq() >= 0 ? 0L : core.cursor();
             EdgeFrame.Subscribe subscribe = new EdgeFrame.Subscribe(
                     prefixes.isEmpty(), prefixes, cursor,
-                    failedOver ? cursor : -1L, edgeId);
+                    failedOver ? cursor : -1L, edgeId, acceptFiltered);
             OutputStream out = socket.getOutputStream();
-            out.write(EdgeFrameCodec.encode(subscribe));
+            out.write(EdgeFrameCodec.encode(subscribe, wireVersion));
             out.flush();
 
             Connection conn = new Connection(socket);
@@ -526,7 +557,9 @@ public final class EdgeStreamClient implements AutoCloseable {
             }
             byte[] encoded;
             try {
-                encoded = EdgeFrameCodec.encode(frame);
+                // Stamp the negotiated wire version so a 0x03 session's CURSOR_ACK is not rejected
+                // by the server's inbound version pin (established from the 0x03 SUBSCRIBE).
+                encoded = EdgeFrameCodec.encode(frame, wireVersion);
             } catch (EdgeFrameCodec.CodecException e) {
                 LOG.log(Level.WARNING, "edge frame encode failure", e);
                 return false;
