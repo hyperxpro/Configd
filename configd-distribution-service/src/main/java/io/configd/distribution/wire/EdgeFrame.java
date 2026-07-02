@@ -78,13 +78,21 @@ public sealed interface EdgeFrame
      *                             it; v1 servers treat it as the resume cursor when it exceeds
      *                             {@code resumeCursor}. {@code -1} means "not present".
      * @param edgeId               the edge identity (bound to the mTLS cert identity)
+     * @param acceptsFiltered      the edge advertises it understands the server-side-filtered
+     *                             stream semantics (a dense covered-seq cursor advanced on the
+     *                             HEARTBEAT, a forward-only version chain). Encoded ONLY under
+     *                             {@link EdgeFrameCodec#EDGE_WIRE_VERSION_V3}; a {@code 0x01}/
+     *                             {@code 0x02} decode always yields {@code false}. A full-store
+     *                             subscription MUST set it {@code false} (a root edge wants the
+     *                             whole chain). See ADR-0044.
      */
     record Subscribe(
             boolean fullStore,
             List<String> prefixes,
             long resumeCursor,
             long failoverResumeCursor,
-            String edgeId
+            String edgeId,
+            boolean acceptsFiltered
     ) implements EdgeFrame {
 
         public Subscribe {
@@ -94,6 +102,10 @@ public sealed interface EdgeFrame
                 throw new IllegalArgumentException(
                         "full-store subscription must carry no prefixes: " + prefixes);
             }
+            if (fullStore && acceptsFiltered) {
+                throw new IllegalArgumentException(
+                        "full-store subscription must not accept server-side filtering");
+            }
             if (resumeCursor < 0) {
                 throw new IllegalArgumentException("resumeCursor must be non-negative: " + resumeCursor);
             }
@@ -102,6 +114,15 @@ public sealed interface EdgeFrame
                         "failoverResumeCursor must be >= -1 (-1 = absent): " + failoverResumeCursor);
             }
             Objects.requireNonNull(edgeId, "edgeId must not be null");
+        }
+
+        /**
+         * A subscription that does not opt into server-side filtering ({@code acceptsFiltered}
+         * false) - the byte-identical legacy shape. Existing callers use this arity unchanged.
+         */
+        public Subscribe(boolean fullStore, List<String> prefixes, long resumeCursor,
+                         long failoverResumeCursor, String edgeId) {
+            this(fullStore, prefixes, resumeCursor, failoverResumeCursor, edgeId, false);
         }
 
         /**
@@ -132,11 +153,24 @@ public sealed interface EdgeFrame
      *
      * @param latestSeq the highest applied-mutation seq S the server currently holds
      * @param mode      {@link Mode#TAIL} or {@link Mode#SNAPSHOT_FIRST}
+     * @param filtered  the server confirms it is filtering this session server-side (the edge
+     *                  then selects the filtered-stream apply mode). Encoded ONLY under
+     *                  {@link EdgeFrameCodec#EDGE_WIRE_VERSION_V3}; a {@code 0x01}/{@code 0x02}
+     *                  decode always yields {@code false} = the byte-identical full-chain
+     *                  session. See ADR-0044.
      */
-    record SubscribeOk(long latestSeq, Mode mode) implements EdgeFrame {
+    record SubscribeOk(long latestSeq, Mode mode, boolean filtered) implements EdgeFrame {
 
         public SubscribeOk {
             Objects.requireNonNull(mode, "mode must not be null");
+        }
+
+        /**
+         * An unfiltered (full-chain) acknowledgement - the byte-identical legacy shape.
+         * Existing callers use this arity unchanged.
+         */
+        public SubscribeOk(long latestSeq, Mode mode) {
+            this(latestSeq, mode, false);
         }
 
         @Override

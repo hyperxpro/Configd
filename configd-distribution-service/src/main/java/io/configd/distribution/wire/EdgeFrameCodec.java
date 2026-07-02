@@ -83,6 +83,20 @@ public final class EdgeFrameCodec {
      */
     public static final byte EDGE_WIRE_VERSION_V2 = (byte) 0x02;
 
+    /**
+     * The filtered-fan-out edge wire version (ADR-0044). A {@code 0x03} connection carries the
+     * server-side-filtered SUBSCRIBE stream: {@link EdgeFrame.Subscribe} gains an
+     * {@code acceptsFiltered} opt-in byte and {@link EdgeFrame.SubscribeOk} gains a
+     * {@code filtered} confirm byte, both appended <b>only</b> under {@code 0x03} (mirroring the
+     * {@code 0x02} watch-only fields). Every other frame - NOTIFY, HEARTBEAT, SNAPSHOT_*,
+     * CURSOR_ACK, ERROR_CLOSE - is byte-identical to its {@code 0x01} form save the version byte
+     * (and the CRC over it). The {@code WATCH_*} frames are <b>not</b> legal under {@code 0x03}
+     * (they remain {@code 0x02}-only). The decoder accepts {@code 0x01}, {@code 0x02}, and
+     * {@code 0x03}; any other version is {@link ErrorCode#BAD_WIRE_VERSION}, so a {@code 0x03}
+     * SUBSCRIBE to an old server fails LOUD rather than misparsing.
+     */
+    public static final byte EDGE_WIRE_VERSION_V3 = (byte) 0x03;
+
     /** Fixed header: 4 (length) + 1 (version) + 1 (type) = 6 bytes. */
     public static final int HEADER_SIZE = 6;
 
@@ -224,20 +238,22 @@ public final class EdgeFrameCodec {
     public static void encodeInto(EdgeFrame frame, FrameSink sink, byte version) {
         Objects.requireNonNull(frame, "frame must not be null");
         Objects.requireNonNull(sink, "sink must not be null");
-        if (version != EDGE_WIRE_VERSION && version != EDGE_WIRE_VERSION_V2) {
+        if (version != EDGE_WIRE_VERSION && version != EDGE_WIRE_VERSION_V2
+                && version != EDGE_WIRE_VERSION_V3) {
             throw new IllegalArgumentException("unsupported edge wire version for encode: 0x"
                     + Integer.toHexString(version & 0xFF));
         }
-        if (version == EDGE_WIRE_VERSION && isWatchType(frame.type())) {
+        if (version != EDGE_WIRE_VERSION_V2 && isWatchType(frame.type())) {
             throw new IllegalArgumentException(frame.type()
-                    + " is a 0x02 watch frame and cannot be encoded on a 0x01 connection (W5-11)");
+                    + " is a 0x02 watch frame and cannot be encoded on a 0x"
+                    + Integer.toHexString(version & 0xFF) + " connection (W5-11)");
         }
         final int start = sink.writerIndex();
         sink.writeInt(0); // total-length placeholder, back-patched below
         sink.writeByte(version);
         sink.writeByte((byte) frame.type().code());
 
-        encodePayloadInto(frame, sink);
+        encodePayloadInto(frame, sink, version);
 
         final int payloadEnd = sink.writerIndex();
         long total = (long) (payloadEnd - start) + TRAILER_SIZE;
@@ -254,10 +270,10 @@ public final class EdgeFrameCodec {
         sink.writeInt((int) crc.getValue());
     }
 
-    private static void encodePayloadInto(EdgeFrame frame, FrameSink sink) {
+    private static void encodePayloadInto(EdgeFrame frame, FrameSink sink, byte version) {
         switch (frame) {
-            case EdgeFrame.Subscribe f -> encodeSubscribeInto(f, sink);
-            case EdgeFrame.SubscribeOk f -> encodeSubscribeOkInto(f, sink);
+            case EdgeFrame.Subscribe f -> encodeSubscribeInto(f, sink, version);
+            case EdgeFrame.SubscribeOk f -> encodeSubscribeOkInto(f, sink, version);
             case EdgeFrame.Notify f -> encodeNotifyInto(f, sink);
             case EdgeFrame.SnapshotBegin f -> encodeSnapshotBeginInto(f, sink);
             case EdgeFrame.SnapshotChunk f -> encodeSnapshotChunkInto(f, sink);
@@ -277,8 +293,10 @@ public final class EdgeFrameCodec {
         }
     }
 
-    private static void encodeSubscribeInto(EdgeFrame.Subscribe f, FrameSink sink) {
+    private static void encodeSubscribeInto(EdgeFrame.Subscribe f, FrameSink sink, byte version) {
         // [1B fullStore][4B prefixCount][prefixes][8B resume][8B failoverResume][4B edgeIdLen][edgeId]
+        // and, ONLY under 0x03, a trailing [1B acceptsFiltered] (ADR-0044) - so a 0x01/0x02
+        // SUBSCRIBE is byte-identical (the extra byte is an appended field, not a reshape).
         sink.writeByte(f.fullStore() ? 1 : 0);
         sink.writeInt(f.prefixes().size());
         for (String p : f.prefixes()) {
@@ -291,11 +309,18 @@ public final class EdgeFrameCodec {
         byte[] edgeId = f.edgeId().getBytes(StandardCharsets.UTF_8);
         sink.writeInt(edgeId.length);
         sink.writeBytes(edgeId);
+        if (version == EDGE_WIRE_VERSION_V3) {
+            sink.writeByte(f.acceptsFiltered() ? 1 : 0);
+        }
     }
 
-    private static void encodeSubscribeOkInto(EdgeFrame.SubscribeOk f, FrameSink sink) {
+    private static void encodeSubscribeOkInto(EdgeFrame.SubscribeOk f, FrameSink sink, byte version) {
         sink.writeLong(f.latestSeq());
         sink.writeByte(f.mode().ordinal());
+        // ONLY under 0x03 a trailing [1B filtered] confirm byte (ADR-0044); 0x01/0x02 identical.
+        if (version == EDGE_WIRE_VERSION_V3) {
+            sink.writeByte(f.filtered() ? 1 : 0);
+        }
     }
 
     private static void encodeNotifyInto(EdgeFrame.Notify f, FrameSink sink) {
@@ -536,7 +561,8 @@ public final class EdgeFrameCodec {
      *                                  version != {@code negotiatedVersion}
      */
     public static EdgeFrame decode(byte[] data, byte negotiatedVersion) {
-        if (negotiatedVersion != EDGE_WIRE_VERSION && negotiatedVersion != EDGE_WIRE_VERSION_V2) {
+        if (negotiatedVersion != EDGE_WIRE_VERSION && negotiatedVersion != EDGE_WIRE_VERSION_V2
+                && negotiatedVersion != EDGE_WIRE_VERSION_V3) {
             throw new IllegalArgumentException("unsupported negotiated edge wire version: 0x"
                     + Integer.toHexString(negotiatedVersion & 0xFF));
         }
@@ -580,16 +606,18 @@ public final class EdgeFrameCodec {
                             + " trailer=0x" + Integer.toHexString(trailer));
         }
 
-        // Accept the built 0x01 and the watch-capable 0x02 (W1-3 / W5-11); any other
-        // version is BAD_WIRE_VERSION. The negotiated version is a per-connection property
-        // the transport tracks; the codec accepts both and the FrameType gates which
-        // payloads are legal under which version (below).
+        // Accept the built 0x01, the watch-capable 0x02, and the filtered-fan-out 0x03
+        // (W1-3 / W5-11 / ADR-0044); any other version is BAD_WIRE_VERSION. The negotiated
+        // version is a per-connection property the transport tracks; the codec accepts all
+        // three and the FrameType gates which payloads are legal under which version (below).
         byte version = buf.get();
-        if (version != EDGE_WIRE_VERSION && version != EDGE_WIRE_VERSION_V2) {
+        if (version != EDGE_WIRE_VERSION && version != EDGE_WIRE_VERSION_V2
+                && version != EDGE_WIRE_VERSION_V3) {
             throw new CodecException(ErrorCode.BAD_WIRE_VERSION,
                     "unsupported edge wire version: 0x" + Integer.toHexString(version & 0xFF)
                             + " (expected 0x" + Integer.toHexString(EDGE_WIRE_VERSION & 0xFF)
-                            + " or 0x" + Integer.toHexString(EDGE_WIRE_VERSION_V2 & 0xFF) + ")");
+                            + ", 0x" + Integer.toHexString(EDGE_WIRE_VERSION_V2 & 0xFF)
+                            + ", or 0x" + Integer.toHexString(EDGE_WIRE_VERSION_V3 & 0xFF) + ")");
         }
         // Per-connection version pin (W5-11): on a connection that negotiated one version, a
         // frame stamped with the OTHER accepted version fails closed as BAD_WIRE_VERSION - so a
@@ -606,19 +634,20 @@ public final class EdgeFrameCodec {
         } catch (IllegalArgumentException e) {
             throw new CodecException(ErrorCode.FRAME_CORRUPT, e.getMessage());
         }
-        // A WATCH_* type is legal only on a 0x02-stamped frame (W5-11). On a 0x01 frame it
-        // is a protocol violation surfaced as FRAME_CORRUPT (consistent with the codec's
+        // A WATCH_* type is legal only on a 0x02-stamped frame (W5-11); on a 0x01 or 0x03 frame
+        // it is a protocol violation surfaced as FRAME_CORRUPT (consistent with the codec's
         // structural-error taxonomy; the CRC has already been verified, so this is a
         // deliberately-constructed frame, not a bit-flip).
-        if (version == EDGE_WIRE_VERSION && isWatchType(type)) {
+        if (version != EDGE_WIRE_VERSION_V2 && isWatchType(type)) {
             throw new CodecException(ErrorCode.FRAME_CORRUPT,
-                    type + " is a 0x02 watch frame and is not legal on a 0x01-stamped frame");
+                    type + " is a 0x02 watch frame and is not legal on a 0x"
+                            + Integer.toHexString(version & 0xFF) + "-stamped frame");
         }
 
         // Payload window: [HEADER_SIZE, crcOffset).
         ByteBuffer payload = ByteBuffer.wrap(data, HEADER_SIZE, crcOffset - HEADER_SIZE);
         try {
-            EdgeFrame frame = decodePayload(type, payload);
+            EdgeFrame frame = decodePayload(type, payload, version);
             if (payload.remaining() != 0) {
                 throw new CodecException(ErrorCode.FRAME_CORRUPT,
                         "trailing bytes after " + type + " payload: " + payload.remaining());
@@ -633,10 +662,10 @@ public final class EdgeFrameCodec {
         }
     }
 
-    private static EdgeFrame decodePayload(FrameType type, ByteBuffer p) {
+    private static EdgeFrame decodePayload(FrameType type, ByteBuffer p, byte version) {
         return switch (type) {
-            case SUBSCRIBE -> decodeSubscribe(p);
-            case SUBSCRIBE_OK -> decodeSubscribeOk(p);
+            case SUBSCRIBE -> decodeSubscribe(p, version);
+            case SUBSCRIBE_OK -> decodeSubscribeOk(p, version);
             case NOTIFY -> decodeNotify(p);
             case SNAPSHOT_BEGIN -> decodeSnapshotBegin(p);
             case SNAPSHOT_CHUNK -> decodeSnapshotChunk(p);
@@ -656,7 +685,7 @@ public final class EdgeFrameCodec {
         };
     }
 
-    private static EdgeFrame decodeSubscribe(ByteBuffer p) {
+    private static EdgeFrame decodeSubscribe(ByteBuffer p, byte version) {
         boolean fullStore = p.get() != 0;
         int prefixCount = p.getInt();
         if (prefixCount < 0 || prefixCount > p.remaining()) {
@@ -669,17 +698,41 @@ public final class EdgeFrameCodec {
         long resume = p.getLong();
         long failover = p.getLong();
         String edgeId = readString(p, "edgeId");
-        return new EdgeFrame.Subscribe(fullStore, prefixes, resume, failover, edgeId);
+        // The acceptsFiltered opt-in byte is present only under 0x03 (ADR-0044); a 0x01/0x02
+        // SUBSCRIBE decodes to false via the back-compat constructor.
+        boolean acceptsFiltered = false;
+        if (version == EDGE_WIRE_VERSION_V3) {
+            if (p.remaining() < 1) {
+                throw new CodecException(ErrorCode.FRAME_CORRUPT,
+                        "truncated reading SUBSCRIBE acceptsFiltered byte");
+            }
+            acceptsFiltered = p.get() != 0;
+        }
+        try {
+            return new EdgeFrame.Subscribe(fullStore, prefixes, resume, failover, edgeId, acceptsFiltered);
+        } catch (IllegalArgumentException e) {
+            throw new CodecException(ErrorCode.FRAME_CORRUPT, "invalid SUBSCRIBE: " + e.getMessage());
+        }
     }
 
-    private static EdgeFrame decodeSubscribeOk(ByteBuffer p) {
+    private static EdgeFrame decodeSubscribeOk(ByteBuffer p, byte version) {
         long latestSeq = p.getLong();
         int modeOrd = p.get() & 0xFF;
         EdgeFrame.Mode[] modes = EdgeFrame.Mode.values();
         if (modeOrd >= modes.length) {
             throw new CodecException(ErrorCode.FRAME_CORRUPT, "bad subscribe mode ordinal: " + modeOrd);
         }
-        return new EdgeFrame.SubscribeOk(latestSeq, modes[modeOrd]);
+        // The filtered confirm byte is present only under 0x03 (ADR-0044); a 0x01/0x02
+        // SUBSCRIBE_OK decodes to false via the back-compat constructor.
+        boolean filtered = false;
+        if (version == EDGE_WIRE_VERSION_V3) {
+            if (p.remaining() < 1) {
+                throw new CodecException(ErrorCode.FRAME_CORRUPT,
+                        "truncated reading SUBSCRIBE_OK filtered byte");
+            }
+            filtered = p.get() != 0;
+        }
+        return new EdgeFrame.SubscribeOk(latestSeq, modes[modeOrd], filtered);
     }
 
     private static EdgeFrame decodeNotify(ByteBuffer p) {
