@@ -105,11 +105,15 @@ fi
 # --- (a) PA-2021: at-rest integrity negatives + S4 durability re-run ----------
 echo "GATE-7 pa2021: snapshot/WAL/raft-state tamper+forge+downgrade refused; S4 cells still green..."
 PA="$LOGDIR/pa2021.txt"
-run_tests pa2021 "HkdfTest,IntegrityEnvelopeTest,SnapshotIntegrityTest,WalRecordIntegrityTest,DurableRaftStateIntegrityTest,SnapshotCrashRecoveryTest,WalSyncCrashTest,VotePersistenceCrashTest,RaftLogUnitTest" "$PA"
+run_tests pa2021 "HkdfTest,IntegrityEnvelopeTest,IntegrityEnvelopeEncryptionTest,SegmentKeyManagerTest,LocalKmsEncryptionIntegrationTest,SnapshotIntegrityTest,WalRecordIntegrityTest,RaftLogEncryptionTest,DurableRaftStateIntegrityTest,SnapshotCrashRecoveryTest,WalSyncCrashTest,VotePersistenceCrashTest,RaftLogUnitTest" "$PA"
 assert_class_green "$PA" "IntegrityEnvelopeTest"        # codec: tamper/downgrade/version/truncation
+assert_class_green "$PA" "IntegrityEnvelopeEncryptionTest" # AES-256-GCM codec: no-plaintext/tamper/downgrade refused
+assert_class_green "$PA" "SegmentKeyManagerTest"        # no-(key,nonce)-reuse invariant + fail-closed unknown term
+assert_class_green "$PA" "LocalKmsEncryptionIntegrationTest" # KMS-SPI end-to-end: restart round-trip + rotation
 assert_class_green "$PA" "HkdfTest"                     # HKDF RFC-5869 vectors
 assert_class_green "$PA" "SnapshotIntegrityTest"        # tampered/forged/downgrade/install-snapshot refused
 assert_class_green "$PA" "WalRecordIntegrityTest"       # tamper refused; torn tail tolerated
+assert_class_green "$PA" "RaftLogEncryptionTest"        # at-rest AES-GCM at the real WAL/snapshot seam
 assert_class_green "$PA" "DurableRaftStateIntegrityTest" # forged votedFor/term refused
 assert_class_green "$PA" "SnapshotCrashRecoveryTest"    # S4 no-regression (durable-prefix)
 assert_class_green "$PA" "WalSyncCrashTest"             # S4 no-regression (WAL fsync crash)

@@ -7,24 +7,48 @@
 > (2026-04-25)** is preserved as historical record and is **superseded by this section and the register**
 > wherever they differ.
 
-### 1. No encryption at rest -- do NOT store secrets
+### 1. At-rest encryption is available (OFF by default); with it OFF, do NOT store secrets
 
-Configd does **not** encrypt data at rest in v1. All config values - **including `secure/` (strong-read)
-keys** - are stored as **plaintext** bytes in the control-plane HAMT / WAL / snapshot, protected by an
-**integrity** envelope only (HMAC-SHA-256, ADR-0042), which detects tampering but provides **no
-confidentiality**. (At edge nodes, `secure/` values are kept **in-memory only**, never written to disk -
-the in-memory-only mitigation at edge nodes - which bounds, but does not remove, the exposure.)
+Configd can now encrypt data at rest, but it is **OFF by default**. With encryption OFF (the default),
+all config values - **including `secure/` (strong-read) keys** - are stored as **plaintext** bytes in the
+control-plane HAMT / WAL / snapshot, protected by an **integrity** envelope only (HMAC-SHA-256, ADR-0042),
+which detects tampering but provides **no confidentiality**. (At edge nodes, `secure/` values are kept
+**in-memory only**, never written to disk - the in-memory-only mitigation at edge nodes - which bounds,
+but does not remove, the exposure.)
 
 - **The `secure/` namespace is a *freshness* guarantee, not a security/encryption one.** `secure/` (the
   strong-read key class, ADR-0030 INV-1) means a key is **always read fresh** - linearizable, fail-closed,
   never served stale - for security-*critical decisions* like ACL/auth revocations, kill-switches, and
   legal gates. It does **not** mean the value is encrypted or confidential. Naming a key `secure/...` buys
   read **freshness**, not **secrecy**.
-- **Do not store secret material** (passwords, tokens, private keys, PII) in Configd. Use a dedicated
-  secret manager (e.g. Vault, a cloud KMS / secret store) and keep only non-secret references in Configd.
-- **At-rest encryption is a deferred v2 item (OPEN).** It is a *registered gap*, not a decided
-  non-goal: if a v1 deployment must store sensitive data or meets a compliance bar, this is a **blocker** -
-  raise it before deploying.
+- **With encryption OFF, do not store secret material** (passwords, tokens, private keys, PII) in Configd.
+  Use a dedicated secret manager (e.g. Vault, a cloud KMS / secret store) and keep only non-secret
+  references in Configd.
+- **Turning encryption ON.** Set `-Dconfigd.raft.encryption.enabled=true` (or env
+  `CONFIGD_ENCRYPTION_AT_REST=true`). This encrypts the WAL, snapshot blob, and durable Raft state with
+  **node-local AES-256-GCM** at the ADR-0042 seam (a new `algId=2` envelope; the GCM tag replaces the
+  HMAC, the CRC32C corruption layer stays). The default `local` key provider derives the encryption root
+  by HKDF from the cluster signing key (domain-separated from the integrity/audit keys); a KMS-provider
+  SPI exists for off-host key custody but no cloud provider ships in v1. No wire-format change, no
+  cluster-wide key distribution. See
+  [`deployer-must-know.md` section 1](deployer-must-know.md) for the full enabling procedure and the
+  operator warnings summarised below.
+- **Enabling is a ONE-WAY DOOR.** Once any `algId=2` record is written, encryption **cannot be disabled**
+  and the binary **cannot be rolled back** to a pre-encryption version - recovery fails closed (a
+  non-encrypting reader refuses the `algId=2` records). There is **no supported disable path in v1**; treat
+  it as permanent for a given data directory. Enabling on a node with existing plaintext/HMAC
+  (`algId=0/1`) records does **not** rewrite them - they stay plaintext until a snapshot/compaction; enable
+  from first boot or force a compaction, and use `-Dconfigd.raft.encryption.requireEncrypted=true` to
+  refuse legacy records once the plaintext prefix is gone.
+- **Fate-sharing + signing-key rotation.** With `local`, confidentiality fate-shares with the signing key:
+  a signing-key compromise decrypts all at-rest data, and rotating the signing key orphans existing
+  `algId=2` data (re-snapshot before rotating). Off-host key custody is a v2 KMS-provider item.
+- **Not encrypted at rest (v1):** the **audit log stays HMAC-only**, so audit metadata (config key
+  **names**, principals) is not confidential. **N>1 note (LOW, inherited):** the GCM AAD binds the
+  artifact-type magic but **not** the Raft groupId, and one key manager is shared across all groups -
+  nonce uniqueness is global and safe, but cross-group at-rest *integrity* (a record spliced from group
+  B's WAL into group A's) is caught only by the Raft log-consistency layer, not the envelope; bind
+  groupId into the AAD before an N>1 deployment relies on cross-group at-rest integrity.
 
 ### 2. Client-facing watches: the RFC section 2 protocol is implemented server-side (N=1); drivers + N>1 are next
 
