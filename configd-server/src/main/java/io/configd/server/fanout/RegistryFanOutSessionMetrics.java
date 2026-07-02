@@ -53,6 +53,12 @@ public final class RegistryFanOutSessionMetrics implements FanOutSessionMetrics 
     private final MetricsRegistry.Counter subscribeTail;
     private final MetricsRegistry.Counter subscribeSnapshotFirst;
 
+    // --- Server-side prefix-filtering counters (ADR-0044) ---
+    private final MetricsRegistry.Counter filteredDeltas;
+    private final MetricsRegistry.Counter deliveredDeltas;
+    private final MetricsRegistry.Counter cursorAdvances;
+    private final MetricsRegistry.Counter filteredSessions;
+
     // --- Slow-consumer policy counters (SlowConsumerGovernor) ---
     private final MetricsRegistry.Counter slowTransitions;
     private final MetricsRegistry.Counter quarantines;
@@ -122,6 +128,14 @@ public final class RegistryFanOutSessionMetrics implements FanOutSessionMetrics 
         // convention) + the horizon-distance input as a last-decision gauge.
         this.subscribeTail = registry.counter("edge.fanout.subscribe.tail");
         this.subscribeSnapshotFirst = registry.counter("edge.fanout.subscribe.snapshot_first");
+
+        // Server-side prefix-filtering series (ADR-0044). deltas dropped vs delivered gives the
+        // measured egress reduction; cursor advances count the coalesced covered-S heartbeats;
+        // filtered sessions is the cumulative count of subscribers that opted into filtering.
+        this.filteredDeltas = registry.counter("edge.fanout.filtered_deltas");
+        this.deliveredDeltas = registry.counter("edge.fanout.delivered_deltas");
+        this.cursorAdvances = registry.counter("edge.fanout.cursor_advances");
+        this.filteredSessions = registry.counter("edge.fanout.filtered_sessions");
 
         // Gauges (process-level aggregates; eagerly registered so the series exists at scrape 0).
         registry.gauge("edge.fanout.queue_depth", queueDepth::get);
@@ -203,6 +217,30 @@ public final class RegistryFanOutSessionMetrics implements FanOutSessionMetrics 
     public void onSubscribeMode(boolean snapshotFirst, long horizonDistance) {
         (snapshotFirst ? subscribeSnapshotFirst : subscribeTail).increment();
         subscribeHorizonDistance.set(horizonDistance);
+    }
+
+    // --- Server-side prefix filtering (ADR-0044) ---
+
+    @Override
+    public void onFilteredDeltas(int n) {
+        filteredDeltas.increment(n);
+    }
+
+    @Override
+    public void onDeliveredDeltas(int n) {
+        deliveredDeltas.increment(n);
+    }
+
+    @Override
+    public void onCursorAdvance() {
+        cursorAdvances.increment();
+    }
+
+    @Override
+    public void onFilterActive(boolean active) {
+        if (active) {
+            filteredSessions.increment();
+        }
     }
 
     // --- Slow-consumer policy (SlowConsumerGovernor) ---
