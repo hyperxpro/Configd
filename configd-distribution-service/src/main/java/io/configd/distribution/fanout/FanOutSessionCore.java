@@ -395,13 +395,27 @@ public final class FanOutSessionCore {
      * </ol>
      *
      * <p>The boundary {@code oldestRetainedSeq > cursor + 1} errs on the SAFE side: it NEVER
-     * masks a genuine fall-behind (genuine always implies it, as shown above), and in the
-     * common contiguous-seq case it matches the buffer's own {@code cursor < lastEvictedSeq}
-     * test exactly. Only with sparse seqs (no-op/RCFG entries skip sequence numbers) can it
-     * conservatively over-classify a still-served cursor sitting in a skipped-seq gap as
-     * genuine - a rare, self-correcting extra re-snapshot, never a missed demotion.
-     * {@code oldestRetainedSeq == -1} (empty ring) is transient: the buffer never emits a
-     * genuine GAP while empty (an eviction leaves the ring at capacity).
+     * permanently masks a genuine fall-behind (genuine always implies it, as shown above), and
+     * in the common contiguous-seq case it matches the buffer's own {@code cursor <
+     * lastEvictedSeq} test exactly. The "genuine implies {@code oldestRetainedSeq > cursor + 1}"
+     * argument holds for a consistent view; because {@code oldestRetainedSeq} is read lock-free
+     * and independently of the {@code lastEvictedSeq} the buffer fast-path used, a consumer
+     * lapped at the exact eviction instant can read as transient for ONE tick before the next
+     * eviction advances the tail and re-classifies it genuine - a self-correcting single-tick
+     * delay bounded by the live-lock backstop, never a permanently masked demotion.
+     *
+     * <p>The opposite (over-classification: a still-served transient race read as genuine) is
+     * possible but always SAFE - a spurious, self-correcting re-snapshot, never a missed
+     * demotion - and negligibly rare at real write rates. Two sources: (1) sparse seqs
+     * (no-op/RCFG entries skip sequence numbers) can leave a still-served cursor in a skipped-seq
+     * gap above {@code oldestRetainedSeq}; (2) {@code oldestSeqInternal} reads {@code tail} then
+     * the tail slot non-atomically, and on a FULL ring the evicting publish overwrites that same
+     * slot, so the read can observe a much newer seq and report an {@code oldestRetainedSeq}
+     * above the true oldest. Both need a concurrent write at the eviction boundary; at the
+     * production tick cadence versus the write rate they essentially never fire, so a caught-up
+     * edge is not demoted (the defect this fixes). {@code oldestRetainedSeq == -1} (empty ring)
+     * is transient: the buffer never emits a genuine GAP while empty (an eviction leaves the
+     * ring at capacity).
      */
     private boolean handleGap(Result.Gap gap) {
         long oldestRetainedSeq = gap.oldestRetainedSeq();

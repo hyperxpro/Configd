@@ -3,15 +3,23 @@ package io.configd.distribution.fanout;
 import io.configd.distribution.CommitNotification;
 import io.configd.distribution.CommitNotificationSource;
 import io.configd.distribution.CommitNotificationSource.Result;
+import io.configd.distribution.FanOutBuffer;
 import io.configd.distribution.ReplaySource;
 import io.configd.distribution.wire.EdgeFrame;
 import io.configd.distribution.wire.ErrorCode;
+import io.configd.store.ConfigDelta;
+import io.configd.store.ConfigMutation;
 import io.configd.store.ConfigSnapshot;
 import io.configd.store.HamtMap;
 
 import org.junit.jupiter.api.Test;
 
+import java.nio.charset.StandardCharsets;
 import java.util.List;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Consumer;
 import java.util.function.LongFunction;
 
@@ -20,22 +28,24 @@ import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * Regression matrix for the Gate 4.5 fan-out reliability fix: {@link FanOutSessionCore}
- * distinguishes a GENUINE fall-behind GAP (the consumer's needed data was evicted - demote)
- * from a TRANSIENT lock-free-read-race GAP (the data is still retained - retry next tick),
- * using the {@code oldestRetainedSeq} the {@link Result.Gap} carries.
+ * Verifies that {@link FanOutSessionCore} distinguishes a GENUINE fall-behind GAP (the
+ * consumer's needed data was evicted - demote) from a TRANSIENT lock-free-read-race GAP (the
+ * data is still retained - retry next tick), using the {@code oldestRetainedSeq} the
+ * {@link Result.Gap} carries.
  *
- * <p>The confirmed defect (live EC2, single edge at 50 w/s on a near-idle box): once the ring
- * is full and writes continue, a FULLY caught-up edge hits the buffer's Lamport
- * verify-after-read fallbacks on nearly every boundary read. Pre-fix each such GAP called
- * {@code demote(REASON_GAP)}, so {@code gapDemoteLimit} (10 within 60 s) walked a HEALTHY edge
- * straight to QUARANTINED (~28 min cooldown) and froze its frontier.
+ * <p>The behavior these tests pin reproduced under sustained writes (a single edge at 50 w/s,
+ * an otherwise near-idle box - not CPU contention): once the ring is full and writes continue,
+ * a FULLY caught-up edge hits the buffer's Lamport verify-after-read fallbacks on nearly every
+ * boundary read. Treating each such GAP as a demotion let {@code gapDemoteLimit} (10 within
+ * 60 s) walk a HEALTHY edge straight to QUARANTINED (~28 min cooldown) and freeze its frontier.
  *
- * <p>These tests drive the session against a {@link ScriptedSource} that returns a chosen
+ * <p>Most tests drive the session against a {@link ScriptedSource} that returns a chosen
  * transient-vs-genuine GAP deterministically (no threads, no timing), and wire the session's
  * demotion listener to a REAL {@link SlowConsumerGovernor} exactly as
  * {@code FanOutConnectionDriver.onDemotionEvent} does - so the proof is end-to-end into the
- * quarantine ladder.
+ * quarantine ladder. Two further tests drive the REAL {@link FanOutBuffer} (no mock) so the
+ * load-bearing eviction invariant ({@code oldestRetainedSeq >= lastEvictedSeq + 1}) the
+ * classifier rests on is locked against a future eviction refactor.
  */
 class FanOutSessionCoreGapClassificationTest {
 
@@ -79,6 +89,13 @@ class FanOutSessionCoreGapClassificationTest {
 
     private static EdgeFrame.Subscribe subscribe(long resume) {
         return new EdgeFrame.Subscribe(true, List.of(), resume, -1L, IDENTITY);
+    }
+
+    /** A commit notification with a contiguous, strictly-ascending seq (worst case for the boundary). */
+    private static CommitNotification note(long seq) {
+        return new CommitNotification(seq, 1_000L + seq,
+                new ConfigDelta(seq - 1, seq,
+                        List.of(new ConfigMutation.Put("k" + seq, ("v" + seq).getBytes(StandardCharsets.UTF_8)))));
     }
 
     /** Subscribes caught-up (cursor == latest, non-zero) so decideMode picks TAIL -> STREAMING. */
@@ -219,5 +236,137 @@ class FanOutSessionCoreGapClassificationTest {
                 "intermittent transient GAPs interleaved with clean reads must never trip the backstop");
         assertEquals(0, s.demotionCount(), "no demotion when clean reads keep resetting the streak");
         assertNotEquals(SlowConsumerGovernor.ConsumerState.QUARANTINED, governor.state(IDENTITY));
+    }
+
+    // ------------------------------------------------------------------------
+    // 5. REAL FanOutBuffer (no mock), single-threaded: a caught-up session draining a full
+    //    ring while single writes continue past capacity must NEVER demote. This exercises the
+    //    real drop-oldest eviction boundary and proves the boundary alone (no concurrency race)
+    //    never produces a spurious GAP for a reader that keeps up.
+    // ------------------------------------------------------------------------
+
+    @Test
+    void caughtUpSessionDrainingRealBufferPastCapacityNeverDemotes() {
+        int capacity = 8;
+        FanOutBuffer buffer = new FanOutBuffer(capacity);
+        // Subscribe on the EMPTY buffer -> TAIL -> STREAMING (cursor 0 on an empty ring tails).
+        Consumer<DemotionEvent> toGovernor =
+                ev -> governor.onDemotion(IDENTITY, ev, clock.currentTimeMillis());
+        FanOutSessionCore s = new FanOutSessionCore(buffer, replayAt(0L), sink, FanOutConfig.defaults(),
+                FanOutSessionMetrics.NOOP, clock, toGovernor);
+        s.onSubscribe(subscribe(0));
+        assertEquals(FanOutSessionCore.SessionState.STREAMING, s.state());
+
+        // Publish ONE, tick (stream it), ack it - repeated far past capacity. The reader's cursor
+        // tracks the tail every tick, so its needed data is always retained: readSince never GAPs
+        // even though every write past the 8th evicts the oldest entry.
+        long total = 200;
+        for (long seq = 1; seq <= total; seq++) {
+            buffer.publish(note(seq));
+            s.tick(clock.now());
+            s.onCursorAck(seq); // keep the edge fully caught up (no ack-lag, no queue growth)
+        }
+
+        assertTrue(buffer.droppedTotal() >= total - capacity,
+                "the ring must have evicted past capacity (we are in the eviction-boundary regime)");
+        assertEquals(FanOutSessionCore.SessionState.STREAMING, s.state(),
+                "a caught-up reader draining the real ring past capacity must never demote");
+        assertEquals(0, s.demotionCount(), "no demotion at the real drop-oldest eviction boundary");
+        assertEquals(total, s.cursor(), "the reader streamed every committed seq");
+        assertEquals(SlowConsumerGovernor.ConsumerState.HEALTHY, governor.state(IDENTITY));
+    }
+
+    // ------------------------------------------------------------------------
+    // 6. REAL FanOutBuffer (no mock), CONCURRENT hard-lapping writer: locks the SECURITY-CRITICAL
+    //    soundness direction - a genuinely lapped reader (cursor 0, whose data is truly evicted)
+    //    is NEVER masked, i.e. never receives a GAP the classifier would call transient and
+    //    refuse to demote. This is the load-bearing eviction invariant the whole fix rests on:
+    //    oldestRetainedSeq >= lastEvictedSeq + 1, so cursor < lastEvictedSeq => oldestRetainedSeq
+    //    > cursor + 1 (genuine). It locks that invariant against a future eviction refactor.
+    //
+    //    The concurrent run exercises the classifier against real-buffer GAPs (proving the
+    //    eviction regime is real and the classifier returns genuine under actual races). The
+    //    PERMANENT guarantee is then asserted deterministically on the QUIESCENT buffer after the
+    //    run: this is the honest form of the invariant, because oldestRetainedSeq is read
+    //    lock-free (oldestSeqInternal reads tail, then the slot) and can momentarily lag a
+    //    concurrent eviction - so a rare single transient-classified tick is allowed, provided it
+    //    self-corrects (see handleGap). The healthy caught-up direction ("never demotes at the
+    //    eviction boundary") is covered deterministically by
+    //    caughtUpSessionDrainingRealBufferPastCapacityNeverDemotes above, which models the real
+    //    10 ms-tick regime rather than a flat-out writer that manufactures nanosecond read-races.
+    // ------------------------------------------------------------------------
+
+    @Test
+    void realBufferConcurrentLappingNeverMasksAGenuinelyLappedReader() throws InterruptedException {
+        int capacity = 128;
+        long totalWrites = 100_000L;
+        long parked = 0L; // cursor 0 is genuinely lapped the instant anything is evicted
+        FanOutBuffer buffer = new FanOutBuffer(capacity);
+
+        CountDownLatch start = new CountDownLatch(1);
+        CountDownLatch writeDone = new CountDownLatch(1);
+        CopyOnWriteArrayList<Throwable> errors = new CopyOnWriteArrayList<>();
+        AtomicLong parkedGapsSeen = new AtomicLong();
+        AtomicLong parkedGenuineSeen = new AtomicLong();
+
+        Thread writer = new Thread(() -> {
+            try {
+                start.await();
+                for (long s = 1; s <= totalWrites; s++) {
+                    buffer.publish(note(s));
+                }
+            } catch (Throwable t) {
+                errors.add(t);
+            } finally {
+                writeDone.countDown();
+            }
+        }, "gap-real-writer");
+
+        // A reader pinned below the window: once lapped it classifies GENUINE. Under real races a
+        // rare lock-free oldestRetainedSeq read can lag one eviction and read transient for a
+        // tick, so this loop only proves the classifier is exercised and predominantly genuine;
+        // the permanent guarantee is the deterministic quiescent assertion below.
+        Thread parkedReader = new Thread(() -> {
+            try {
+                start.await();
+                boolean done = false;
+                while (!done) {
+                    done = writeDone.await(0, TimeUnit.MILLISECONDS);
+                    Result r = buffer.readSince(parked);
+                    if (r.isGap()) {
+                        parkedGapsSeen.incrementAndGet();
+                        if (((Result.Gap) r).oldestRetainedSeq() > parked + 1) {
+                            parkedGenuineSeen.incrementAndGet();
+                        }
+                    }
+                }
+            } catch (Throwable t) {
+                errors.add(t);
+            }
+        }, "gap-real-parked-reader");
+
+        writer.start();
+        parkedReader.start();
+        start.countDown();
+
+        assertTrue(writeDone.await(30, TimeUnit.SECONDS), "writer did not finish");
+        parkedReader.join(10_000);
+        assertTrue(errors.isEmpty(), "concurrent failures: " + errors);
+
+        // Non-vacuity: the ring really lapped and the classifier ran against real-buffer GAPs,
+        // returning genuine under actual concurrency (the eviction regime was exercised).
+        assertTrue(buffer.droppedTotal() >= totalWrites - capacity,
+                "the ring must have lapped hard (the eviction regime was exercised)");
+        assertTrue(parkedGapsSeen.get() > 0, "non-vacuous: the parked reader must have seen GAPs");
+        assertTrue(parkedGenuineSeen.get() > 0,
+                "the classifier returned genuine for the lapped reader under real concurrency");
+
+        // Permanent guarantee (deterministic - the buffer is now quiescent): a genuinely lapped
+        // reader gets a GENUINE GAP (oldestRetainedSeq > cursor+1). A future eviction refactor
+        // that let oldestRetainedSeq under-report would mask this reader's fall-behind and fail here.
+        Result quiescent = buffer.readSince(parked);
+        assertTrue(quiescent.isGap(), "a reader below the retention window must GAP");
+        assertTrue(((Result.Gap) quiescent).oldestRetainedSeq() > parked + 1,
+                "a genuinely lapped reader must be classified GENUINE, never masked as transient");
     }
 }
