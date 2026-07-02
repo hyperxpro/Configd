@@ -448,7 +448,7 @@ public final class FanOutServer implements FanOutEndpoint {
                         firstFrameRouted = true;
                         // Outbound flip: a WATCH_CREATE-first connection is a 0x02 watch connection,
                         // so offer() must stamp 0x02 for the client to decode the server's WATCH_* frames.
-                        // A 0x03-stamped SUBSCRIBE is a filtered-fan-out connection (ADR-0044), so
+                        // A 0x03-stamped SUBSCRIBE is a filtered-fan-out connection (ADR-0045), so
                         // offer() stamps 0x03 for the SUBSCRIBE_OK filtered confirm and every
                         // subsequent frame the edge's 0x03-pinned reader decodes. A plain 0x01
                         // SUBSCRIBE stays 0x01 (byte-identical). The flip happens-before any outbound

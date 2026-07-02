@@ -91,7 +91,7 @@ public final class DeltaApplier {
     private boolean gapDetected;
 
     /**
-     * True when the server is filtering this session server-side (ADR-0044). In filtered mode
+     * True when the server is filtering this session server-side (ADR-0045). In filtered mode
      * the delivered version chain is intentionally non-contiguous - dropped non-matching deltas
      * bumped the global version - so gap detection relaxes to forward-only (a jump is expected;
      * only a regression below the applied version is a genuine gap), and the store apply bridges
@@ -227,7 +227,7 @@ public final class DeltaApplier {
                 return ApplyResult.UNSIGNED_REJECTED;
             }
             // Defense-in-depth: the leader always signs with epoch > 0 (the position + epoch +
-            // nonce payload, ADR-0044). A signature carried on an epoch-0 delta is not a shape
+            // nonce payload, ADR-0045). A signature carried on an epoch-0 delta is not a shape
             // production emits; reject it rather than fall back to the legacy batch-only
             // verification form, which would strip the position binding.
             if (delta.epoch() == 0L) {
@@ -311,7 +311,7 @@ public final class DeltaApplier {
     }
 
     /**
-     * Selects the server-side-filtered apply mode (ADR-0044): forward-only gap detection and a
+     * Selects the server-side-filtered apply mode (ADR-0045): forward-only gap detection and a
      * version-bridged store apply. Set from the SUBSCRIBE_OK {@code filtered} confirm; the
      * default is the classic strict-contiguity mode.
      *

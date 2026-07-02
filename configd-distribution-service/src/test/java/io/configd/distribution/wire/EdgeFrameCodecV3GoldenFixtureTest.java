@@ -23,7 +23,7 @@ import static org.junit.jupiter.api.Assertions.fail;
  * {@link EdgeFrameGoldenBytes#forVersion(int)} for version 3.
  *
  * <p><b>This does NOT rebaseline the 0x01/0x02 fixtures.</b> The 0x03 fields are purely additive
- * (ADR-0044); the frozen 0x01/0x02 golden images are proven byte-identical by their own tests.
+ * (ADR-0045); the frozen 0x01/0x02 golden images are proven byte-identical by their own tests.
  */
 class EdgeFrameCodecV3GoldenFixtureTest {
 

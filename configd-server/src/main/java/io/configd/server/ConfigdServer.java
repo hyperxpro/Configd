@@ -960,7 +960,7 @@ public final class ConfigdServer {
             // Production edge fan-out is the Netty transport. The fast-revert is `git revert` of this
             // commit - restoring `new FanOutServer(...)` (the JDK transport is retained, fully tested by
             // the contract, and a drop-in FanOutEndpoint).
-            // Server-side prefix filtering posture (ADR-0044): default ON for the co-located
+            // Server-side prefix filtering posture (ADR-0045): default ON for the co-located
             // trusted deployment, so a prefix-scoped edge that opts in gets its stream filtered;
             // set OFF (full-chain) when a separate/untrusted relay tier terminates the fan-out. The
             // strong-read prefixes are always shipped regardless of the edge's prefix set. When off
@@ -1212,7 +1212,7 @@ public final class ConfigdServer {
                 || "true".equalsIgnoreCase(System.getenv("CONFIGD_ENCRYPTION_AT_REST"));
     }
 
-    /** System property that sets the edge fan-out server-side prefix-filtering posture (ADR-0044). */
+    /** System property that sets the edge fan-out server-side prefix-filtering posture (ADR-0045). */
     static final String EDGE_FILTER_PROP = "configd.edge.fanout.filter";
 
     /**

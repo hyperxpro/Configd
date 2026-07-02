@@ -133,7 +133,7 @@ public interface FanOutSessionMetrics {
                                   int quarantined, int unhealthy) { }
 
     // ------------------------------------------------------------------
-    // Server-side prefix-filtering series (ADR-0044). All default no-ops
+    // Server-side prefix-filtering series (ADR-0045). All default no-ops
     // so existing sinks (NOOP, the sim) are unaffected.
     // ------------------------------------------------------------------
 

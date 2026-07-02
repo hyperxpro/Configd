@@ -204,7 +204,7 @@ class EdgeFrameCodecPropertyTest {
     @Property(tries = 100)
     void wrongVersionWithValidCrcIsRejectedAsBadVersion(
             @ForAll @IntRange(min = 0, max = 255) int rawVersion) {
-        // 0x01, 0x02, and 0x03 are all accepted versions now (W1-3 / ADR-0044); only OTHER
+        // 0x01, 0x02, and 0x03 are all accepted versions now (W1-3 / ADR-0045); only OTHER
         // versions are BAD_WIRE_VERSION.
         if ((byte) rawVersion == EdgeFrameCodec.EDGE_WIRE_VERSION
                 || (byte) rawVersion == EdgeFrameCodec.EDGE_WIRE_VERSION_V2

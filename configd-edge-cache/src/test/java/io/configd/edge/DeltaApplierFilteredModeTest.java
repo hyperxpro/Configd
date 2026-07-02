@@ -16,7 +16,7 @@ import java.util.List;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
 /**
- * The edge filtered-stream apply matrix (ADR-0044 test (f), edge half): forward-only gap
+ * The edge filtered-stream apply matrix (ADR-0045 test (f), edge half): forward-only gap
  * detection and the version-bridged store apply. A forward version jump is expected under
  * server-side filtering (dropped non-matching deltas bumped the global version), a regression
  * below the applied version is a genuine gap, and classic mode is unchanged.

@@ -84,7 +84,7 @@ public final class EdgeFrameCodec {
     public static final byte EDGE_WIRE_VERSION_V2 = (byte) 0x02;
 
     /**
-     * The filtered-fan-out edge wire version (ADR-0044). A {@code 0x03} connection carries the
+     * The filtered-fan-out edge wire version (ADR-0045). A {@code 0x03} connection carries the
      * server-side-filtered SUBSCRIBE stream: {@link EdgeFrame.Subscribe} gains an
      * {@code acceptsFiltered} opt-in byte and {@link EdgeFrame.SubscribeOk} gains a
      * {@code filtered} confirm byte, both appended <b>only</b> under {@code 0x03} (mirroring the
@@ -295,7 +295,7 @@ public final class EdgeFrameCodec {
 
     private static void encodeSubscribeInto(EdgeFrame.Subscribe f, FrameSink sink, byte version) {
         // [1B fullStore][4B prefixCount][prefixes][8B resume][8B failoverResume][4B edgeIdLen][edgeId]
-        // and, ONLY under 0x03, a trailing [1B acceptsFiltered] (ADR-0044) - so a 0x01/0x02
+        // and, ONLY under 0x03, a trailing [1B acceptsFiltered] (ADR-0045) - so a 0x01/0x02
         // SUBSCRIBE is byte-identical (the extra byte is an appended field, not a reshape).
         sink.writeByte(f.fullStore() ? 1 : 0);
         sink.writeInt(f.prefixes().size());
@@ -317,7 +317,7 @@ public final class EdgeFrameCodec {
     private static void encodeSubscribeOkInto(EdgeFrame.SubscribeOk f, FrameSink sink, byte version) {
         sink.writeLong(f.latestSeq());
         sink.writeByte(f.mode().ordinal());
-        // ONLY under 0x03 a trailing [1B filtered] confirm byte (ADR-0044); 0x01/0x02 identical.
+        // ONLY under 0x03 a trailing [1B filtered] confirm byte (ADR-0045); 0x01/0x02 identical.
         if (version == EDGE_WIRE_VERSION_V3) {
             sink.writeByte(f.filtered() ? 1 : 0);
         }
@@ -607,7 +607,7 @@ public final class EdgeFrameCodec {
         }
 
         // Accept the built 0x01, the watch-capable 0x02, and the filtered-fan-out 0x03
-        // (W1-3 / W5-11 / ADR-0044); any other version is BAD_WIRE_VERSION. The negotiated
+        // (W1-3 / W5-11 / ADR-0045); any other version is BAD_WIRE_VERSION. The negotiated
         // version is a per-connection property the transport tracks; the codec accepts all
         // three and the FrameType gates which payloads are legal under which version (below).
         byte version = buf.get();
@@ -698,7 +698,7 @@ public final class EdgeFrameCodec {
         long resume = p.getLong();
         long failover = p.getLong();
         String edgeId = readString(p, "edgeId");
-        // The acceptsFiltered opt-in byte is present only under 0x03 (ADR-0044); a 0x01/0x02
+        // The acceptsFiltered opt-in byte is present only under 0x03 (ADR-0045); a 0x01/0x02
         // SUBSCRIBE decodes to false via the back-compat constructor.
         boolean acceptsFiltered = false;
         if (version == EDGE_WIRE_VERSION_V3) {
@@ -722,7 +722,7 @@ public final class EdgeFrameCodec {
         if (modeOrd >= modes.length) {
             throw new CodecException(ErrorCode.FRAME_CORRUPT, "bad subscribe mode ordinal: " + modeOrd);
         }
-        // The filtered confirm byte is present only under 0x03 (ADR-0044); a 0x01/0x02
+        // The filtered confirm byte is present only under 0x03 (ADR-0045); a 0x01/0x02
         // SUBSCRIBE_OK decodes to false via the back-compat constructor.
         boolean filtered = false;
         if (version == EDGE_WIRE_VERSION_V3) {

@@ -196,7 +196,7 @@ public final class EdgeConfigClient {
     }
 
     /**
-     * Filtered-mode apply (ADR-0044): applies the storage-filtered delta but bridges the
+     * Filtered-mode apply (ADR-0045): applies the storage-filtered delta but bridges the
      * intentional version jump. Under server-side filtering the delivered version chain is
      * non-contiguous - non-matching deltas were dropped server-side and bumped the global
      * version - so this edge's store steps straight from its current version to

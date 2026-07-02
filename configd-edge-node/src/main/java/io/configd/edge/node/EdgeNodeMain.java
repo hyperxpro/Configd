@@ -189,7 +189,7 @@ public final class EdgeNodeMain {
         }
     }
 
-    /** System property that opts a prefix-scoped edge into server-side filtering (ADR-0044). */
+    /** System property that opts a prefix-scoped edge into server-side filtering (ADR-0045). */
     static final String ACCEPT_FILTERED_PROP = "configd.edge.accept_filtered";
 
     /**

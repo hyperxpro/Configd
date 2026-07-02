@@ -117,13 +117,13 @@ public final class FanOutSessionCore {
     private int consecutiveTransientGaps;
 
     /**
-     * The server-side prefix filter for this session (ADR-0044), or null when filtering is
+     * The server-side prefix filter for this session (ADR-0045), or null when filtering is
      * inactive (match-all / full-chain passthrough - the byte-identical legacy path). Set at
      * {@link #onSubscribe}.
      */
     private ServerPrefixFilter prefixFilter;
 
-    /** Whether this session filters whole signed deltas server-side (ADR-0044). */
+    /** Whether this session filters whole signed deltas server-side (ADR-0045). */
     private boolean filterActive;
 
     /**
@@ -229,7 +229,7 @@ public final class FanOutSessionCore {
 
         // Server-side prefix filtering is active only when the deployment posture is on, the edge
         // opted in (acceptsFiltered), and the subscription is a non-empty prefix set. When inactive
-        // the session is the byte-identical full-chain legacy path (ADR-0044).
+        // the session is the byte-identical full-chain legacy path (ADR-0045).
         this.filterActive = ServerPrefixFilter.isActive(config, subscribe);
         this.prefixFilter = filterActive
                 ? new ServerPrefixFilter(subscribe.prefixes(), config.strongReadPrefixes())

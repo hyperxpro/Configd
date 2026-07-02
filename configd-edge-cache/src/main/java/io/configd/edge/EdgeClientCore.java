@@ -179,7 +179,7 @@ public final class EdgeClientCore {
     private EdgeFrame.Mode mode;
 
     /**
-     * Whether the server is filtering this session server-side (ADR-0044), from the SUBSCRIBE_OK
+     * Whether the server is filtering this session server-side (ADR-0045), from the SUBSCRIBE_OK
      * {@code filtered} confirm. In filtered mode {@link #cursor} is the dense covered-through
      * seq (advanced by delivered NOTIFYs AND the cursor-advance HEARTBEAT), the applied store
      * version is tracked separately by the {@link DeltaApplier}/{@link EdgeConfigClient}, and the
@@ -411,7 +411,7 @@ public final class EdgeClientCore {
     private void onSubscribeOk(EdgeFrame.SubscribeOk ok) {
         this.mode = ok.mode();
         // Select the filtered-stream apply mode from the server's confirm: forward-only gap
-        // detection + a version-bridged store apply (ADR-0044). A 0x01/0x02 SUBSCRIBE_OK always
+        // detection + a version-bridged store apply (ADR-0045). A 0x01/0x02 SUBSCRIBE_OK always
         // decodes filtered=false, so classic edges are unaffected.
         this.filtered = ok.filtered();
         applier.setFilteredMode(filtered);

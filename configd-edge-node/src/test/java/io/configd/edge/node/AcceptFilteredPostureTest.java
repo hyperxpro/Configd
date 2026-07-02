@@ -10,7 +10,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 /**
  * The edge accept-filtered opt-in flag ({@code configd.edge.accept_filtered}) defaults off and
  * fails LOUD on an unknown value - an unconfigured edge stays byte-identical on the 0x01 wire
- * (ADR-0044).
+ * (ADR-0045).
  */
 class AcceptFilteredPostureTest {
 

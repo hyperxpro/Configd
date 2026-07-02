@@ -53,7 +53,7 @@ public final class RegistryFanOutSessionMetrics implements FanOutSessionMetrics 
     private final MetricsRegistry.Counter subscribeTail;
     private final MetricsRegistry.Counter subscribeSnapshotFirst;
 
-    // --- Server-side prefix-filtering counters (ADR-0044) ---
+    // --- Server-side prefix-filtering counters (ADR-0045) ---
     private final MetricsRegistry.Counter filteredDeltas;
     private final MetricsRegistry.Counter deliveredDeltas;
     private final MetricsRegistry.Counter cursorAdvances;
@@ -129,7 +129,7 @@ public final class RegistryFanOutSessionMetrics implements FanOutSessionMetrics 
         this.subscribeTail = registry.counter("edge.fanout.subscribe.tail");
         this.subscribeSnapshotFirst = registry.counter("edge.fanout.subscribe.snapshot_first");
 
-        // Server-side prefix-filtering series (ADR-0044). deltas dropped vs delivered gives the
+        // Server-side prefix-filtering series (ADR-0045). deltas dropped vs delivered gives the
         // measured egress reduction; cursor advances count the coalesced covered-S heartbeats;
         // filtered sessions is the cumulative count of subscribers that opted into filtering.
         this.filteredDeltas = registry.counter("edge.fanout.filtered_deltas");
@@ -219,7 +219,7 @@ public final class RegistryFanOutSessionMetrics implements FanOutSessionMetrics 
         subscribeHorizonDistance.set(horizonDistance);
     }
 
-    // --- Server-side prefix filtering (ADR-0044) ---
+    // --- Server-side prefix filtering (ADR-0045) ---
 
     @Override
     public void onFilteredDeltas(int n) {

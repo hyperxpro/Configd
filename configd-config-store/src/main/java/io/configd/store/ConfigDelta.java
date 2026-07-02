@@ -127,7 +127,7 @@ public record ConfigDelta(
      * Binding both versions closes the position gap the anti-suppression
      * property previously leaned on TLS to protect: a key-less relay that drops
      * a delta and rewrites the next {@code fromVersion} now fails verification
-     * because the position is inside the signature (see ADR-0044). The mutation
+     * because the position is inside the signature (see ADR-0045). The mutation
      * bytes are unchanged, so per-delta authenticity and the leg-(a) no-coalesce
      * rule are untouched.
      *

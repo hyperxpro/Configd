@@ -302,7 +302,7 @@ public final class FanOutConnectionDriver {
         }
         EdgeFrame.Subscribe admitted = bound;
         // On a filtered legacy session, narrow the catch-up snapshot to the same prefix-plus-
-        // strong-read predicate the drain filters the live tail with (ADR-0044), so a re-snapshot
+        // strong-read predicate the drain filters the live tail with (ADR-0045), so a re-snapshot
         // does not stream the whole store to a narrow edge. Set on the session thread, before the
         // core's onSubscribe, mirroring the watch path's setTarget discipline. Off / full-store
         // leaves the predicate null => whole-store passthrough => byte-identical.

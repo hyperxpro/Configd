@@ -101,6 +101,18 @@ legacy in-process `WatchService` is unrelated server-internal plumbing (register
     until reconnect; revoke by disconnecting the session or rotating the edge cert. This is a broader
     exposure (the whole store) with weaker revocation (none) than a watch. NOT reachable-as-a-bypass in
     the default config (only `root`, which already holds whole-store).
+  - **Server-side prefix filtering (ADR-0045), default ON, is a trusted-domain posture.** A prefix-scoped
+    edge that opts in (`configd.edge.accept_filtered=on`, `0x03` wire) has its stream filtered to its prefix
+    set server-side, cutting egress. Whole signed deltas are dropped (never rewritten - per-delta Ed25519
+    stands), strong-read (`secure/`) keys are always shipped, and the edge learns the covered-through position
+    from the HEARTBEAT (a dense covered-S cursor + forward-only version chain). **The trust boundary:** the
+    edge trusts the server's covered-S assertion. A genuine data-loss gap (ring eviction) is still caught
+    **server-side** and re-snapshotted; a **malformed** covered-S (regression / skip below a delivered delta)
+    is caught **edge-side** and resynced; but a **well-formed suppression of a matching delta** behind a
+    correct covered-S is **not** edge-detectable - sound only within the co-located mTLS domain. **Set
+    `configd.edge.fanout.filter=off` (restore the full chain) the moment a separate or untrusted relay tier
+    terminates the fan-out** - a two-way door. This posture only ever narrows what a narrow edge already asked
+    for; it never widens exposure (an edge still needs whole-store READ to subscribe at all).
   - **mTLS + explicit grant required.** A watch needs a verified cert-DN **and** an explicit `READ  and  WATCH`
     grant to that DN; without mTLS all watches are rejected (fail-closed). The default config grants watch only
     to `root`, so out-of-the-box no edge cert can watch until the operator adds an `_acl/` grant.

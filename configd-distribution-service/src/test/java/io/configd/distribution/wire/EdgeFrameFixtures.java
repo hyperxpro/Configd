@@ -169,7 +169,7 @@ final class EdgeFrameFixtures {
      * filtered-fan-out {@link EdgeFrame.Subscribe} (with the {@code acceptsFiltered} opt-in byte)
      * and {@link EdgeFrame.SubscribeOk} (with the {@code filtered} confirm byte) in both the
      * opt-in and opt-out shapes. Every other frame is byte-identical to its 0x01 form save the
-     * version byte, so only these two frame types get 0x03 fixtures (ADR-0044).
+     * version byte, so only these two frame types get 0x03 fixtures (ADR-0045).
      */
     static Map<String, EdgeFrame> buildV3() {
         Map<String, EdgeFrame> m = new LinkedHashMap<>();

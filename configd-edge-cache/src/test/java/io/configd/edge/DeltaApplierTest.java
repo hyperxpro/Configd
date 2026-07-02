@@ -293,7 +293,7 @@ class DeltaApplierTest {
          * Helper: builds a leader-signed delta at a real epoch ({@code > 0}), signing the same
          * {@link ConfigDelta#signingPayload()} the edge verifier reconstructs - canonical
          * mutations, the version position ({@code fromVersion}, {@code toVersion}), the epoch,
-         * and the nonce (ADR-0044). Production never emits a signed epoch-0 delta.
+         * and the nonce (ADR-0045). Production never emits a signed epoch-0 delta.
          */
         private ConfigDelta signedDelta(long fromV, long toV, List<ConfigMutation> mutations,
                                         long epoch) throws Exception {
@@ -336,7 +336,7 @@ class DeltaApplierTest {
 
         @Test
         void signedDeltaWithEpochZeroIsRejected() throws Exception {
-            // Defense-in-depth (ADR-0044): the leader always signs with epoch > 0, so a
+            // Defense-in-depth (ADR-0045): the leader always signs with epoch > 0, so a
             // signature carried on an epoch-0 delta is not a shape production emits. The edge
             // rejects it rather than fall back to the legacy batch-only verification form.
             ConfigSigner verifier = new ConfigSigner(keyPair.getPublic());
@@ -359,7 +359,7 @@ class DeltaApplierTest {
             // Track 0 red-team regression: the version position is inside the signature, so a
             // relay that rewrites fromVersion/toVersion to splice a delta out of the chain
             // breaks verification (the property the anti-suppression claim used to lean on TLS
-            // for; ADR-0044).
+            // for; ADR-0045).
             ConfigSigner verifier = new ConfigSigner(keyPair.getPublic());
             DeltaApplier verifyingApplier = new DeltaApplier(client, verifier);
 

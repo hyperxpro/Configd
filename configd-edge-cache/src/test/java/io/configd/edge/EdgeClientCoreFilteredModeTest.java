@@ -17,7 +17,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * The edge filtered-stream engine proofs (ADR-0044 tests (d) convergence + covered-S dual
+ * The edge filtered-stream engine proofs (ADR-0045 tests (d) convergence + covered-S dual
  * cursor). Drives {@link EdgeClientCore} with a SUBSCRIBE_OK confirming filtering, a
  * non-contiguous (server-filtered) NOTIFY stream, and cursor-advance HEARTBEATs, and asserts:
  * the applied store converges to the full-then-local-filter result, the transport cursor

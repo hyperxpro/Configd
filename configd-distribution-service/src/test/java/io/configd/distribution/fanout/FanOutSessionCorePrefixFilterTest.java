@@ -22,7 +22,7 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * The server-side prefix-filtering drain proofs (ADR-0044, Track 1): a filtered session
+ * The server-side prefix-filtering drain proofs (ADR-0045, Track 1): a filtered session
  * delivers only the matching (plus strong-read) deltas, advances its cursor over the full
  * scanned range, and tells the edge the covered-through position with a cursor-advance
  * HEARTBEAT. Uses the same real {@link FanOutBuffer} / {@link RecordingTransportSink} /

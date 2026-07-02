@@ -112,7 +112,7 @@ public final class EdgeStreamClient implements AutoCloseable {
     private final List<String> prefixes;
     /**
      * The outbound edge wire version for this client: {@code 0x03} when the operator opted this
-     * prefix-scoped edge into server-side filtering (ADR-0044), else {@code 0x01} (byte-identical
+     * prefix-scoped edge into server-side filtering (ADR-0045), else {@code 0x01} (byte-identical
      * legacy). EVERY outbound frame - SUBSCRIBE and CURSOR_ACK - is stamped with it, because the
      * server pins the inbound version from the connection's first frame and fails a later frame
      * stamped otherwise closed.
@@ -162,7 +162,7 @@ public final class EdgeStreamClient implements AutoCloseable {
     }
 
     /**
-     * @param acceptFiltered opt this edge into server-side prefix filtering (ADR-0044). When true
+     * @param acceptFiltered opt this edge into server-side prefix filtering (ADR-0045). When true
      *                       AND the subscription is prefix-scoped (non-empty prefixes), the client
      *                       negotiates the {@code 0x03} wire and advertises {@code acceptsFiltered}
      *                       on SUBSCRIBE; a full-store edge always negotiates {@code 0x01}. The

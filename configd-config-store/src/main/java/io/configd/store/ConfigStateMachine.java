@@ -616,7 +616,7 @@ public final class ConfigStateMachine implements StateMachine {
      * @param command the raw command bytes to sign
      * @param seq     the applied-mutation sequence this command commits at (== the delta's
      *                {@code toVersion}; {@code seq - 1} is the {@code fromVersion}). Bound into
-     *                the signed payload so the version position is authenticated (ADR-0044).
+     *                the signed payload so the version position is authenticated (ADR-0045).
      */
     private void signCommand(byte[] command, long seq) {
         if (signer == null) {

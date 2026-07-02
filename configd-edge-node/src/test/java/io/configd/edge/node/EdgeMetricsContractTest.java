@@ -135,7 +135,7 @@ class EdgeMetricsContractTest {
             "edge_fanout_subscribe_tail_total",
             "edge_fanout_subscribe_snapshot_first_total",
             "edge_fanout_subscribe_horizon_distance",
-            // server-side prefix filtering (ADR-0044)
+            // server-side prefix filtering (ADR-0045)
             "edge_fanout_filtered_deltas_total",
             "edge_fanout_delivered_deltas_total",
             "edge_fanout_cursor_advances_total",

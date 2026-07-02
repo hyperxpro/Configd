@@ -11,7 +11,7 @@ import java.util.function.Predicate;
 /**
  * A {@link ReplaySource} decorator that filters the catch-up <b>snapshot</b> to a key predicate
  * before it is streamed - either a single watch's target (W5-10 / W7-4) as {@code
- * WATCH_SNAPSHOT_*}, or a filtered legacy SUBSCRIBE session's prefix set (ADR-0044) as
+ * WATCH_SNAPSHOT_*}, or a filtered legacy SUBSCRIBE session's prefix set (ADR-0045) as
  * {@code SNAPSHOT_*}, so the catch-up snapshot is narrowed the same way the live tail is.
  *
  * <p><b>Why this exists (the read-authz hole it closes).</b> The watch veneer drives the shared
@@ -61,7 +61,7 @@ final class FilteringReplaySource implements ReplaySource {
 
     /**
      * Sets the filter to an arbitrary key predicate - the filtered legacy SUBSCRIBE session's
-     * prefix-plus-strong-read matcher (ADR-0044). A {@code null} predicate leaves the snapshot
+     * prefix-plus-strong-read matcher (ADR-0045). A {@code null} predicate leaves the snapshot
      * whole (passthrough).
      */
     void setPredicate(Predicate<String> predicate) {

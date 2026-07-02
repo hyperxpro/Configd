@@ -23,7 +23,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
 
 /**
- * The flag-OFF byte-identity proof (ADR-0044 test (b)): with server-side filtering off, a
+ * The flag-OFF byte-identity proof (ADR-0045 test (b)): with server-side filtering off, a
  * prefix session's emitted frame stream is identical to the classic full-chain path, and the
  * genuine-eviction gap path is unchanged (server-side gap detection is preserved). The flag is
  * the only switch: the SAME subscribe under flag-ON diverges (it filters).

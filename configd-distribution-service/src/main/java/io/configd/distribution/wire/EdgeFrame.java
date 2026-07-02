@@ -84,7 +84,7 @@ public sealed interface EdgeFrame
      *                             {@link EdgeFrameCodec#EDGE_WIRE_VERSION_V3}; a {@code 0x01}/
      *                             {@code 0x02} decode always yields {@code false}. A full-store
      *                             subscription MUST set it {@code false} (a root edge wants the
-     *                             whole chain). See ADR-0044.
+     *                             whole chain). See ADR-0045.
      */
     record Subscribe(
             boolean fullStore,
@@ -157,7 +157,7 @@ public sealed interface EdgeFrame
      *                  then selects the filtered-stream apply mode). Encoded ONLY under
      *                  {@link EdgeFrameCodec#EDGE_WIRE_VERSION_V3}; a {@code 0x01}/{@code 0x02}
      *                  decode always yields {@code false} = the byte-identical full-chain
-     *                  session. See ADR-0044.
+     *                  session. See ADR-0045.
      */
     record SubscribeOk(long latestSeq, Mode mode, boolean filtered) implements EdgeFrame {
 

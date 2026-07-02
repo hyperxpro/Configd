@@ -29,7 +29,7 @@ import java.util.Set;
  * @param snapshotChunkBytes    snapshot chunk payload size (default 1 MiB; bounded at
  *                              {@link io.configd.distribution.wire.EdgeFrameCodec#MAX_SNAPSHOT_CHUNK_BYTES})
  * @param serverSidePrefixFilter whether the drain filters whole signed deltas to the
- *                              subscribed prefix set server-side (ADR-0044). The library default
+ *                              subscribed prefix set server-side (ADR-0045). The library default
  *                              is {@code false} (full-chain, byte-identical); the product default
  *                              is set at the deployment boundary ({@code ConfigdServer}).
  * @param strongReadPrefixes    the strong-read (always-shipped) key prefixes: a delta touching
@@ -117,7 +117,7 @@ public record FanOutConfig(
     }
 
     /**
-     * Returns a copy of this config with the server-side prefix-filter posture set (ADR-0044).
+     * Returns a copy of this config with the server-side prefix-filter posture set (ADR-0045).
      * The deployment boundary ({@code ConfigdServer}) uses this to flip the product default ON
      * with the resolved strong-read prefixes, leaving the library {@link #defaults()}
      * conservative.
