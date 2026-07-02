@@ -24,6 +24,7 @@ public final class ClusterNode {
     private final int raftPort;
     private final int apiPort;
     private final Path dataDir;
+    private final Path signingKeyFile;      // the node's Ed25519 signing key, OUTSIDE dataDir (D-1)
     private final String peersCsv;          // other node ids, comma-separated
     private final String peerAddressesCsv;  // id=host:port,... for ALL nodes
     private final Path jar;
@@ -35,12 +36,14 @@ public final class ClusterNode {
     /** Optional mTLS material (PKCS12 cert/key/trust paths). */
     public record TlsFiles(Path cert, Path key, Path trust) {}
 
-    public ClusterNode(int id, int raftPort, int apiPort, Path dataDir, String peersCsv,
-                       String peerAddressesCsv, Path jar, Path logFile, TlsFiles tls) {
+    public ClusterNode(int id, int raftPort, int apiPort, Path dataDir, Path signingKeyFile,
+                       String peersCsv, String peerAddressesCsv, Path jar, Path logFile,
+                       TlsFiles tls) {
         this.id = id;
         this.raftPort = raftPort;
         this.apiPort = apiPort;
         this.dataDir = dataDir;
+        this.signingKeyFile = signingKeyFile;
         this.peersCsv = peersCsv;
         this.peerAddressesCsv = peerAddressesCsv;
         this.jar = jar;
@@ -50,10 +53,27 @@ public final class ClusterNode {
 
     /** Launches (or relaunches) the node process against the same {@code --data-dir}. */
     public void launch() throws IOException {
+        ProcessBuilder pb = new ProcessBuilder(buildCommand())
+                .redirectErrorStream(true)
+                .redirectOutput(Redirect.appendTo(logFile.toFile())); // append so restart keeps history
+        process = pb.start();
+    }
+
+    /**
+     * Builds the exact server command line. Extracted from {@link #launch()} so it is
+     * deterministic and assertable without spawning a JVM. {@link #restart()} re-invokes
+     * {@code launch()}, so the same command - including the stable per-node signing-key path - is
+     * reused across a kill/relaunch cycle.
+     */
+    List<String> buildCommand() {
         List<String> cmd = new ArrayList<>(List.of(
                 javaBin(), "--enable-preview", "-jar", jar.toString(),
                 "--node-id", Integer.toString(id),
                 "--data-dir", dataDir.toString(),
+                // Mount the signing key OUTSIDE the data dir so the server's D-1 co-location guard
+                // (PA-2021) is SATISFIED, not disabled. The same stable path is reused on restart()
+                // after kill -9 so WAL recovery keeps a valid at-rest integrity chain.
+                "--signing-key-file", signingKeyFile.toString(),
                 "--peers", peersCsv,
                 "--bind-address", "127.0.0.1",
                 "--bind-port", Integer.toString(raftPort),
@@ -67,10 +87,7 @@ public final class ClusterNode {
             cmd.add("--tls-trust-store");
             cmd.add(tls.trust().toString());
         }
-        ProcessBuilder pb = new ProcessBuilder(cmd)
-                .redirectErrorStream(true)
-                .redirectOutput(Redirect.appendTo(logFile.toFile())); // append so restart keeps history
-        process = pb.start();
+        return cmd;
     }
 
     /**
@@ -112,6 +129,7 @@ public final class ClusterNode {
     public int raftPort() { return raftPort; }
     public int apiPort() { return apiPort; }
     public Path dataDir() { return dataDir; }
+    public Path signingKeyFile() { return signingKeyFile; }
     public Path logFile() { return logFile; }
     public String apiBase() { return "http://127.0.0.1:" + apiPort; }
 

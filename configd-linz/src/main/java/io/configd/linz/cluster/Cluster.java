@@ -26,6 +26,13 @@ public final class Cluster implements AutoCloseable {
         String peerAddresses = IntStream.rangeClosed(1, n)
                 .mapToObj(k -> k + "=127.0.0.1:" + (raftBase + k))
                 .collect(Collectors.joining(","));
+        // Each node's Ed25519 signing key lives OUTSIDE its data dir - in a sibling secrets/ dir
+        // under the cluster baseDir - so the server's D-1 co-location guard (PA-2021) is SATISFIED
+        // rather than disabled. SigningKeyStore.loadOrCreate auto-generates a missing key; the path is
+        // per-node and stable, so a kill -9 + restart recovers the WAL against the same signing key
+        // and the at-rest integrity chain stays valid.
+        Path secretsDir = baseDir.resolve("secrets");
+        Files.createDirectories(secretsDir);
         List<ClusterNode> ns = new ArrayList<>();
         for (int k = 1; k <= n; k++) {
             final int id = k;
@@ -35,8 +42,9 @@ public final class Cluster implements AutoCloseable {
                     .collect(Collectors.joining(","));
             Path dataDir = baseDir.resolve("n" + id);
             Files.createDirectories(dataDir);
+            Path signingKeyFile = secretsDir.resolve("n" + id + "-signing-key.bin");
             Path log = baseDir.resolve("n" + id + ".log");
-            ns.add(new ClusterNode(id, raftBase + id, apiBase + id, dataDir, peers,
+            ns.add(new ClusterNode(id, raftBase + id, apiBase + id, dataDir, signingKeyFile, peers,
                     peerAddresses, jar, log, tls));
         }
         return new Cluster(ns);
