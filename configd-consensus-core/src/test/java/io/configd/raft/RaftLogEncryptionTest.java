@@ -10,11 +10,15 @@ import io.configd.common.kms.RootKey;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
+import javax.crypto.SecretKey;
+import javax.crypto.spec.SecretKeySpec;
+import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
 import java.util.Arrays;
+import java.util.HashSet;
 import java.util.Map;
 import java.util.Set;
 import java.util.random.RandomGenerator;
@@ -46,10 +50,22 @@ class RaftLogEncryptionTest {
 
     /** A fresh encrypting envelope over a FIXED root - each call re-derives the same DEKs (restart-safe). */
     private static IntegrityEnvelope encryptingEnvelope() {
+        return encryptingEnvelopeWithLegacy(null);
+    }
+
+    /** An encrypting envelope over the FIXED root that ALSO reads legacy algId=1 records (migration path). */
+    private static IntegrityEnvelope encryptingEnvelopeWithLegacy(SecretKey legacyHmac) {
         byte[] rootBytes = new byte[32];
         Arrays.fill(rootBytes, (byte) 0x6B);
         RootKey root = new RootKey(rootBytes, new KeyId("local", "test", 1));
-        return IntegrityEnvelope.encrypting(new SegmentKeyManager(root), null);
+        return IntegrityEnvelope.encrypting(new SegmentKeyManager(root), legacyHmac);
+    }
+
+    /** A fixed keyed HMAC (algId=1) envelope + its key, for the pre-encryption phase of the mixed WAL. */
+    private static SecretKey fixedHmacKey() {
+        byte[] k = new byte[32];
+        Arrays.fill(k, (byte) 0x5A);
+        return new SecretKeySpec(k, "HmacSHA256");
     }
 
     private static RaftNode bootLeader(Storage storage, IntegrityEnvelope env,
@@ -147,6 +163,55 @@ class RaftLogEncryptionTest {
         // A keyless (or keyed-only) reader must refuse the algId=2 records rather than mis-parse them.
         assertThrows(IntegrityException.class,
                 () -> new RaftLog(storage, IntegrityEnvelope.keyless()));
+    }
+
+    @Test
+    void mixedAlgId1AndAlgId2WalRecoversThroughTheRealSeam(@TempDir Path tempDir) throws Exception {
+        Storage storage = Storage.file(tempDir);
+        SecretKey hmac = fixedHmacKey();
+
+        // Phase 1 - pre-encryption: a keyed HMAC envelope writes algId=1 records.
+        IntegrityEnvelope hmacEnv = new IntegrityEnvelope(hmac);
+        RaftNode n1 = bootLeader(storage, hmacEnv, new RaftLog(storage, hmacEnv), new KvStateMachine());
+        n1.propose(KvStateMachine.put("a", "1"));
+        n1.propose(KvStateMachine.put("b", "2"));
+
+        // Phase 2 - enable encryption: reopen with an encrypting envelope that carries the legacy HMAC
+        // key. Recovery reads the algId=1 records; new proposals are appended as algId=2 -> mixed WAL.
+        KvStateMachine sm2 = new KvStateMachine();
+        RaftNode n2 = bootLeader(storage, encryptingEnvelopeWithLegacy(hmac),
+                new RaftLog(storage, encryptingEnvelopeWithLegacy(hmac)), sm2);
+        assertEquals("1", sm2.snapshotState().get("a"), "phase-2 recovery must read the legacy algId=1 records");
+        n2.propose(KvStateMachine.put("c", SECRET));
+
+        // The on-disk WAL is genuinely mixed: it carries BOTH algId=1 and algId=2 frames.
+        assertEquals(Set.of((byte) IntegrityEnvelope.ALG_HMAC_SHA256, (byte) IntegrityEnvelope.ALG_AES256_GCM),
+                algIdsInWal(Files.readAllBytes(tempDir.resolve("raft-log.wal"))),
+                "the WAL must contain both a legacy HMAC record and an encrypted record");
+
+        // Phase 3 - restart over the mixed WAL: every record recovers, per-record algId dispatch.
+        KvStateMachine sm3 = new KvStateMachine();
+        bootLeader(storage, encryptingEnvelopeWithLegacy(hmac),
+                new RaftLog(storage, encryptingEnvelopeWithLegacy(hmac)), sm3);
+        assertEquals(Map.of("a", "1", "b", "2", "c", SECRET), sm3.snapshotState(),
+                "the mixed algId=1/algId=2 WAL must recover fully");
+    }
+
+    /** The distinct envelope algId bytes across all {@code [len][data][crc32]} frames of a WAL file. */
+    private static Set<Byte> algIdsInWal(byte[] wal) {
+        Set<Byte> algIds = new HashSet<>();
+        ByteBuffer buf = ByteBuffer.wrap(wal);
+        while (buf.remaining() >= 8) {
+            int len = buf.getInt();
+            if (len < IntegrityEnvelope.HEADER_SIZE || buf.remaining() < len + 4) {
+                break;
+            }
+            int dataStart = buf.position();
+            algIds.add(wal[dataStart + 6]); // algId is the 7th header byte: [magic:4][version:2][algId:1]
+            buf.position(dataStart + len);
+            buf.getInt(); // skip the frame CRC32
+        }
+        return algIds;
     }
 
     /**

@@ -46,10 +46,11 @@ import java.util.concurrent.atomic.AtomicReference;
  *   <li><b>Across restarts</b>, a restart builds a NEW manager, which draws a NEW random
  *       segmentId on first write; the counter's reset-to-0 therefore pairs with a
  *       brand-new DEK, never re-touching a prior session's {@code (DEK, nonce)}.</li>
- *   <li><b>Bounded invocations per DEK</b>: when a segment's counter reaches
- *       {@link #REKEY_LIMIT} it rolls to a fresh segmentId (a new DEK, counter reset),
- *       honouring NIST SP 800-38D's guidance to rekey well before 2^32 invocations. No
- *       nonce {@code >= REKEY_LIMIT} is ever emitted for a given segmentId.</li>
+ *   <li><b>Bounded invocations per DEK</b>: a segment emits counter values
+ *       {@code 0 .. REKEY_LIMIT-1} (exactly {@value #REKEY_LIMIT} = 2^32 records) and then rolls to a
+ *       fresh segmentId (a new DEK, counter reset), sitting AT NIST SP 800-38D's 2^32 invocation ceiling
+ *       for a single GCM key. No nonce {@code >= REKEY_LIMIT} is ever emitted for a given segmentId, and
+ *       with a deterministic counter IV those 2^32 nonces are all distinct (no collision).</li>
  * </ol>
  * A "segment" thus maps to a per-artifact writer session: all WAL records of one boot
  * share one segment (rolled only at the rekey ceiling); each of the snapshot and
@@ -69,9 +70,10 @@ public final class SegmentKeyManager implements AtRestKeys {
             "configd/raft-at-rest-encryption/dek/v1".getBytes(StandardCharsets.UTF_8);
 
     /**
-     * Rekey (roll to a fresh segmentId, hence a fresh DEK) before this many records
-     * under one DEK. 2^32 is NIST SP 800-38D's invocation ceiling for a single GCM key;
-     * rolling AT the ceiling keeps every DEK strictly under it.
+     * The number of records a single DEK encrypts before rolling to a fresh segmentId. A segment issues
+     * counter values {@code 0 .. REKEY_LIMIT-1} inclusive - exactly 2^32 records - then rolls, so it sits
+     * AT NIST SP 800-38D's 2^32 invocation ceiling for a single GCM key (the ceiling is a "shall not
+     * exceed 2^32" bound; 2^32 distinct deterministic counter nonces have zero collision).
      */
     static final long REKEY_LIMIT = 1L << 32;
 

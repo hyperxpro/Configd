@@ -12,27 +12,67 @@ measurement doc.
 
 ---
 
-## 1. Do NOT store secrets -- at-rest is integrity-only, NOT confidential
+## 1. At-rest encryption is OFF by default -- enable it if you store secrets, and heed the one-way door
 
-- **Requirement.** Configd's at-rest protection is **tamper-detection
-  (integrity), not encryption (confidentiality)**. Config values -- **including
-  `secure/` keys** -- are stored as **plaintext `byte[]`**.
-- **Why it matters.** There is **no `javax.crypto.Cipher` / AES anywhere in
-  `src/main`** (verified by grep -- zero matches). At-rest uses a keyed
-  **HMAC-SHA-256** integrity envelope (ADR-0042) that detects tampering but does
-  **nothing** to hide the bytes. Anyone with read access to the data dir, a
-  snapshot, or a backup reads every value in the clear. The `secure/` prefix buys
-  read **freshness** (fail-closed linearizable reads -- see
-  [runsheet Gate 6](operator-runsheet.md)), **not secrecy** -- the name is about
-  staleness, not confidentiality.
-- **What to do.** Keep passwords, tokens, private keys, and PII in a **dedicated
-  secret manager**; store only references/handles in Configd. Encryption-at-rest
-  is a **decided v2 item** (node-local AES-GCM at the ADR-0042 seam + a KMS-provider
-  SPI -- designed, not built). **It is a v1 blocker *for your deployment* iff you
-  must store sensitive data or meet a compliance bar** -- in that case address this
-  before deploying. (See the readiness review,
-  [section 4](../archive/readiness/v1-go-no-go-2026-07-01.md), item 4,
-  and the "Encryption at rest -- ABSENT - v2" row.)
+- **Requirement.** At-rest **confidentiality** is now AVAILABLE but **OFF by
+  default**. With encryption OFF (the default), Configd's at-rest protection is
+  **tamper-detection (integrity), not encryption**: config values -- **including
+  `secure/` keys** -- are stored as **plaintext `byte[]`** under a keyed
+  HMAC-SHA-256 integrity envelope (ADR-0042), which detects tampering but does
+  **nothing** to hide the bytes. The `secure/` prefix buys read **freshness**
+  (fail-closed linearizable reads -- see [runsheet Gate 6](operator-runsheet.md)),
+  **not secrecy**.
+- **Why it matters.** With encryption OFF, anyone with read access to the data dir,
+  a snapshot, or a backup reads every value in the clear. If you store sensitive
+  data or face a compliance bar, you MUST either keep secrets in a **dedicated
+  secret manager** (store only references in Configd) **or** turn on encryption at
+  rest.
+- **What to do -- enabling encryption at rest.** Set
+  `-Dconfigd.raft.encryption.enabled=true` (or env `CONFIGD_ENCRYPTION_AT_REST=true`).
+  This encrypts the WAL, snapshot blob, and durable Raft state with **node-local
+  AES-256-GCM** at the ADR-0042 seam (a new `algId=2` envelope; the GCM tag replaces
+  the HMAC). The default key provider is `local`: the encryption root is
+  **HKDF-derived from the cluster signing key**
+  (`-Dconfigd.raft.encryption.kms.provider=local`, the only provider built in v1;
+  naming any other provider is a **fail-loud startup refusal**, never a silent
+  downgrade). No wire-format change, no cluster-wide key distribution, no new boot
+  dependency.
+- **ONE-WAY DOOR (read this before enabling).** Once **any** encrypted (`algId=2`)
+  record is written, you **cannot disable encryption and cannot roll the binary
+  back** to a pre-encryption version: recovery **fails closed** -- a reader without
+  the encryption capability refuses the `algId=2` records rather than mis-read them,
+  so the node cannot replay its own WAL/snapshot. **There is no supported "disable
+  encryption" path in v1; treat enabling as permanent for a given data directory.**
+  (To move a node back to plaintext you must stand up a fresh data dir under a build
+  that still writes plaintext and re-replicate into it -- there is no in-place
+  downgrade.) This is the same irreversibility CockroachDB/etcd/Vault document for
+  storage encryption.
+- **Enable from FIRST BOOT (or force a compaction).** Enabling on a node that
+  already holds plaintext / HMAC records (`algId=0/1`) does **not** rewrite them --
+  they stay plaintext on disk until a snapshot/compaction rewrites them encrypted.
+  To avoid a plaintext residue, enable encryption from a node's **first boot**, or
+  **force a compaction/snapshot after enabling** so the historical WAL prefix is
+  rewritten as ciphertext and truncated. To then *enforce* that only encrypted
+  records are ever accepted (defending a rollback/replay of an old plaintext WAL
+  segment), set `-Dconfigd.raft.encryption.requireEncrypted=true` -- the reader then
+  REFUSES any `algId=0/1` record. Set this **only after** the plaintext prefix has
+  been compacted away, or the node will refuse to start.
+- **Signing-key rotation caveat + fate-sharing.** With the `local` provider the
+  encryption root is HKDF-derived from the cluster **signing key**, so **rotating
+  the signing key re-derives a different root and makes existing `algId=2` data
+  undecryptable.** Re-snapshot/re-encrypt under the old key **before** rotating the
+  signing key (the same coupling already holds for the integrity key and the D-1
+  co-location guard). Confidentiality therefore **fate-shares with the signing key**:
+  a signing-key compromise decrypts all at-rest data, and the `local` provider gives
+  **no off-host key custody**. Off-host custody (a cloud KMS / HSM provider) is a
+  **v2** item: the KMS-provider SPI is built and `local` slots into it, but no cloud
+  provider ships in v1, and adding one currently needs a core edit (`ServiceLoader`
+  discovery is deferred).
+- **Not covered by encryption at rest (v1).** The **audit log stays HMAC-only** --
+  audit metadata (config key **names**, principals) is **not** encrypted at rest.
+  The edge stays memoryless (no at-rest surface). A live-node RAM adversary is out
+  of scope (every at-rest scheme draws this line). (See the readiness review,
+  [section 4](../archive/readiness/v1-go-no-go-2026-07-01.md), item 4.)
 
 ## 2. Grant the edge hydration identity whole-store READ -- SUBSCRIBE is gated on it
 
@@ -210,7 +250,7 @@ measurement doc.
 
 | # | MUST-KNOW | The failure if ignored | Enforced by server? |
 |---|-----------|------------------------|---------------------|
-| 1 | Don't store secrets (integrity-only at rest) | Plaintext secrets readable from disk/snapshot/backup | No -- deployment choice |
+| 1 | At-rest encryption is OFF by default; enabling it is a one-way door | OFF: plaintext secrets readable from disk/snapshot/backup. ON: cannot disable/roll back; signing-key rotation orphans ciphertext | No -- deployment choice (`-Dconfigd.raft.encryption.enabled`) |
 | 2 | Grant edge hydration identity root READ | Edge SUBSCRIBE refused NOT_AUTHORIZED (auth on); whole-store read requires root READ | Yes -- gated at admission (auth on) |
 | 3 | `scope` is not tenant isolation | Cross-tenant read/write via scope-blind gate | No -- scope is metadata |
 | 4 | Upgrade all nodes together | Multi-chunk snapshot to an old node = silent state corruption; total snapshot bounded by heap/reassembly cap | No -- deploy-ordering is on you |

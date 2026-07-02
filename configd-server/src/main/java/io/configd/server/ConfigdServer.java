@@ -1175,16 +1175,26 @@ public final class ConfigdServer {
         byte[] info = "configd/raft-at-rest-integrity/v2"
                 .getBytes(java.nio.charset.StandardCharsets.UTF_8);
         byte[] k = io.configd.common.Hkdf.deriveKey(ikm, salt, info, 32);
-        javax.crypto.SecretKey integrityKey = new javax.crypto.spec.SecretKeySpec(k, "HmacSHA256");
+        try {
+            javax.crypto.SecretKey integrityKey = new javax.crypto.spec.SecretKeySpec(k, "HmacSHA256");
 
-        // Secure-by-config: when at-rest ENCRYPTION is enabled, wrap the same seam in an
-        // AES-256-GCM envelope (Layer C). K_integrity is carried as the legacy read key so an
-        // existing HMAC-only WAL still recovers during the enable-encryption upgrade. When
-        // encryption is OFF (the default) this returns the byte-identical keyed HMAC envelope.
-        if (encryptionAtRestEnabled()) {
-            return buildEncryptingEnvelope(ikm, salt, keyId, integrityKey);
+            // Secure-by-config: when at-rest ENCRYPTION is enabled, wrap the same seam in an
+            // AES-256-GCM envelope (Layer C). K_integrity is carried as the legacy read key so an
+            // existing HMAC-only WAL still recovers during the enable-encryption upgrade. When
+            // encryption is OFF (the default) this returns the byte-identical keyed HMAC envelope.
+            if (encryptionAtRestEnabled()) {
+                return buildEncryptingEnvelope(ikm, salt, keyId, integrityKey);
+            }
+            return new io.configd.common.IntegrityEnvelope(integrityKey);
+        } finally {
+            // Zeroize the transient secret-derived material now that the SecretKeySpec (which clones
+            // its input) and the LocalDerivedKmsProvider (which clones its IKM in its ctor and derives
+            // synchronously before buildEncryptingEnvelope returns) hold their own copies. Best-effort
+            // (the JCA SecretKeySpec copies are un-wipeable, JDK-8160206) but consistent discipline: the
+            // raw Ed25519 private-key encoding and K_integrity should not linger on the heap after boot.
+            java.util.Arrays.fill(ikm, (byte) 0);
+            java.util.Arrays.fill(k, (byte) 0);
         }
-        return new io.configd.common.IntegrityEnvelope(integrityKey);
     }
 
     /** True if at-rest encryption is enabled (system property, or the CI/docker-friendly env var). */
@@ -1201,6 +1211,12 @@ public final class ConfigdServer {
      * silent downgrade to no encryption or to a different provider (a silent downgrade is how a
      * "data is encrypted at rest" claim becomes fiction). Only {@code local} (HKDF-from-signing-key)
      * ships in v1; a cloud provider is added as a separate module that slots into this same seam.
+     *
+     * <b>requireEncrypted (post-migration hardening):</b> once the plaintext/HMAC WAL prefix has been
+     * compacted away, an operator can set {@code configd.raft.encryption.requireEncrypted} so the reader
+     * REFUSES any legacy {@code algId=0/1} record (we pass {@code null} as the legacy read key). This
+     * defends against a rollback/replay of an old plaintext WAL segment. Default: keep reading legacy
+     * records (the migration path).
      *
      * @param ikm             the signing private-key encoding (the {@code local} KEK IKM)
      * @param salt            the signing keyId bytes (HKDF salt)
@@ -1220,17 +1236,29 @@ public final class ConfigdServer {
                             + " how a 'data is encrypted at rest' claim becomes fiction. Add the matching"
                             + " configd-kms-<provider> module to the classpath, or unset the property.");
         }
+        boolean requireEncrypted = Boolean.getBoolean("configd.raft.encryption.requireEncrypted")
+                || "true".equalsIgnoreCase(System.getenv("CONFIGD_ENCRYPTION_REQUIRE_ENCRYPTED"));
+        // requireEncrypted: drop the legacy HMAC read key so the reader refuses algId=0/1 records.
+        javax.crypto.SecretKey readKey = requireEncrypted ? null : legacyReadKey;
         // The one boot-time provider call (R1). For 'local' the root is a deterministic HKDF
         // re-derivation, so it never fails closed; a cloud provider would unwrap a persisted
         // WrappedKey here and fail closed if the KMS is unreachable.
         try (KmsProvider kms = new LocalDerivedKmsProvider(ikm, salt, keyId.toString(), 1)) {
             kms.healthCheck();
             RootKey root = kms.generateRootKey().rootKey();
+            // GENUINE-WHY / INVARIANT: this is ONE SegmentKeyManager, and the SAME instance is shared
+            // across ALL N Raft groups (it rides inside the single raftIntegrity envelope passed to every
+            // buildRaftGroup). Global no-(key,nonce)-reuse holds because that one manager issues every
+            // nonce from a single per-magic atomic counter. If a future refactor gives each group its OWN
+            // manager, EACH manager MUST draw its OWN fresh random segmentId (hence its own DEK): sharing
+            // a DEK across managers while splitting the nonce counter per group WOULD reuse (key,nonce)
+            // and break GCM. Do not split the counter without splitting the segmentId/DEK.
             SegmentKeyManager keyManager = new SegmentKeyManager(root);
             LOG.log(Level.INFO,
-                    "At-rest encryption ENABLED (AES-256-GCM, provider={0})", kms.currentKeyId());
+                    "At-rest encryption ENABLED (AES-256-GCM, provider={0}, requireEncrypted={1})",
+                    new Object[]{kms.currentKeyId(), requireEncrypted});
             // The provider is dropped when this block exits (R2): the node runs on the cached root.
-            return io.configd.common.IntegrityEnvelope.encrypting(keyManager, legacyReadKey);
+            return io.configd.common.IntegrityEnvelope.encrypting(keyManager, readKey);
         } catch (KmsUnavailableException e) {
             // R3: fail closed. A node that cannot unseal its own at-rest key must not pretend it can.
             throw new IllegalStateException(
