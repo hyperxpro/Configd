@@ -1,11 +1,15 @@
 package io.configd.common;
 
+import javax.crypto.AEADBadTagException;
+import javax.crypto.Cipher;
 import javax.crypto.Mac;
 import javax.crypto.SecretKey;
+import javax.crypto.spec.GCMParameterSpec;
 import java.nio.ByteBuffer;
 import java.security.GeneralSecurityException;
 import java.security.MessageDigest;
 import java.util.Arrays;
+import java.util.Objects;
 import java.util.zip.CRC32C;
 
 /**
@@ -27,18 +31,36 @@ import java.util.zip.CRC32C;
  *       tamper/forgery control. Every header field is inside the MAC input so an
  *       attacker cannot downgrade {@code algId} to NONE, roll {@code formatVersion}
  *       back, or mutate {@code reserved} without invalidating the MAC.</li>
+ *   <li><b>Layer C (encrypting):</b> AES-256-GCM ({@code algId=AES256_GCM}) -
+ *       authenticated encryption that provides confidentiality AND authenticity in
+ *       one pass, so the GCM tag <em>replaces</em> the HMAC (there is no separate
+ *       MAC on an encrypted record). Layer A CRC32C stays for corruption detection.
+ *       The layout carries the keyring {@code keyTerm} + per-segment {@code segmentId}
+ *       + {@code nonce} so any reader re-derives the key and decrypts with zero
+ *       coordination, and rotation runs forward while old-term data stays readable.
+ *       The header ({@code MAGIC || formatVersion || algId || reserved}) plus
+ *       {@code keyTerm || segmentId || nonce} is bound into the GCM AAD, so those
+ *       fields are authenticated exactly as the HMAC input authenticates them, and
+ *       the per-artifact MAGIC still prevents cross-artifact confusion.</li>
  * </ul>
  *
- * <p><b>Posture.</b> An instance carries an optional {@link SecretKey}:
+ * <p><b>Posture.</b> An instance carries an optional HMAC {@link SecretKey} and an
+ * optional {@link AtRestKeys} encryption source:
  * <ul>
- *   <li><b>keyed</b> (key != null): writes {@code algId=HMAC_SHA256} with a MAC,
- *       and runs <em>fail-closed</em> on read - it REFUSES an envelope with
- *       {@code algId=NONE}/absent MAC (downgrade) as well as any CRC32C or MAC
+ *   <li><b>encrypting</b> (atRest != null): writes {@code algId=AES256_GCM} -
+ *       ciphertext at rest. On read it decrypts {@code algId=AES256_GCM} records
+ *       fail-closed (a bad tag or an unknown key term is refused), and, if an HMAC
+ *       key was also supplied, still verifies legacy {@code algId=HMAC_SHA256}
+ *       records (the enable-encryption-on-an-existing-WAL upgrade path). It REFUSES
+ *       {@code algId=NONE} (downgrade).</li>
+ *   <li><b>keyed</b> (key != null, atRest == null): writes {@code algId=HMAC_SHA256}
+ *       with a MAC, and runs <em>fail-closed</em> on read - it REFUSES an envelope
+ *       with {@code algId=NONE}/absent MAC (downgrade) as well as any CRC32C or MAC
  *       mismatch.</li>
- *   <li><b>keyless</b> (key == null): writes {@code algId=NONE} (Layer A only),
- *       verifies CRC32C, and additionally accepts legacy non-enveloped bytes via
- *       the {@link #unwrapOrNull} null-return path (back-compat migration /
- *       pre-production authentication-off mode).</li>
+ *   <li><b>keyless</b> (key == null, atRest == null): writes {@code algId=NONE}
+ *       (Layer A only), verifies CRC32C, and additionally accepts legacy
+ *       non-enveloped bytes via the {@link #unwrapOrNull} null-return path
+ *       (back-compat migration / pre-production authentication-off mode).</li>
  * </ul>
  *
  * <p>The MAC comparison is constant-time ({@link MessageDigest#isEqual}). The CRC
@@ -64,11 +86,37 @@ public final class IntegrityEnvelope {
     public static final byte ALG_NONE = 0;
     /** algId: HMAC-SHA-256 authentication (Layer B, keyed). */
     public static final byte ALG_HMAC_SHA256 = 1;
+    /** algId: AES-256-GCM authenticated encryption (Layer C, encrypting). */
+    public static final byte ALG_AES256_GCM = 2;
 
     private static final String HMAC = "HmacSHA256";
 
-    /** The integrity key, or {@code null} for keyless mode. */
+    // AES-256-GCM (algId=2) layout constants. The encrypted envelope is
+    //   [ header:8 ][ keyTerm:4 ][ segmentId:16 ][ nonce:12 ][ ciphertext+tag ][ CRC32C:4 ]
+    // and the AAD is the whole ENC_PREFIX (header + keyTerm + segmentId + nonce), so every
+    // header/routing field is authenticated by the GCM tag just as the HMAC input is.
+    private static final String GCM_TRANSFORM = "AES/GCM/NoPadding";
+    private static final int GCM_TAG_BITS = 128;
+    private static final int GCM_TAG_SIZE = GCM_TAG_BITS / 8;   // 16
+    private static final int KEY_TERM_SIZE = 4;
+    /** header(8) + keyTerm(4) + segmentId(16) + nonce(12) = the AAD-covered prefix. */
+    private static final int ENC_PREFIX_SIZE =
+            HEADER_SIZE + KEY_TERM_SIZE + AtRestKeys.SEGMENT_ID_LEN + AtRestKeys.NONCE_LEN; // 40
+    private static final int ENC_MIN_SIZE = ENC_PREFIX_SIZE + GCM_TAG_SIZE + CRC_SIZE;      // 60
+
+    /** One {@link Cipher} per thread - GCM is stateful per operation; each group's owner thread reuses its own. */
+    private static final ThreadLocal<Cipher> GCM_CIPHER = ThreadLocal.withInitial(() -> {
+        try {
+            return Cipher.getInstance(GCM_TRANSFORM);
+        } catch (GeneralSecurityException e) {
+            throw new IllegalStateException("AES/GCM/NoPadding unavailable", e);
+        }
+    });
+
+    /** The HMAC key (Layer B), or {@code null}. Also used to READ legacy HMAC records under encryption. */
     private final SecretKey key;
+    /** The at-rest encryption key source (Layer C), or {@code null} when not encrypting. */
+    private final AtRestKeys atRest;
 
     /**
      * Creates an envelope codec.
@@ -77,17 +125,51 @@ public final class IntegrityEnvelope {
      *            for keyless (Layer A only) mode
      */
     public IntegrityEnvelope(SecretKey key) {
+        this(key, null);
+    }
+
+    /**
+     * Creates an envelope codec with an optional at-rest encryption source.
+     *
+     * @param key    the HMAC-SHA-256 key (used to READ legacy {@code algId=HMAC_SHA256}
+     *               records during an enable-encryption upgrade), or {@code null}
+     * @param atRest the AES-256-GCM key source; when non-null this envelope ENCRYPTS on
+     *               write ({@code algId=AES256_GCM}) and decrypts on read
+     */
+    public IntegrityEnvelope(SecretKey key, AtRestKeys atRest) {
         this.key = key;
+        this.atRest = atRest;
     }
 
     /** A keyless envelope (Layer A only). */
     public static IntegrityEnvelope keyless() {
-        return new IntegrityEnvelope(null);
+        return new IntegrityEnvelope(null, null);
     }
 
-    /** Whether this envelope authenticates (keyed, fail-closed). */
+    /**
+     * An encrypting envelope (Layer C): writes AES-256-GCM ciphertext.
+     *
+     * @param atRest       the encryption key source (non-null)
+     * @param legacyReadKey the HMAC key for reading legacy {@code algId=HMAC_SHA256}
+     *                      records written before encryption was enabled, or {@code null}
+     */
+    public static IntegrityEnvelope encrypting(AtRestKeys atRest, SecretKey legacyReadKey) {
+        return new IntegrityEnvelope(legacyReadKey, Objects.requireNonNull(atRest, "atRest"));
+    }
+
+    /** Whether this envelope carries an HMAC key (Layer B). */
     public boolean isKeyed() {
         return key != null;
+    }
+
+    /** Whether this envelope encrypts on write (Layer C, AES-256-GCM). */
+    public boolean isEncrypting() {
+        return atRest != null;
+    }
+
+    /** Whether this reader refuses unauthenticated / absent-under-key bytes (keyed or encrypting). */
+    private boolean isAuthenticated() {
+        return isKeyed() || isEncrypting();
     }
 
     /**
@@ -102,6 +184,9 @@ public final class IntegrityEnvelope {
      * @return the enveloped bytes
      */
     public byte[] wrap(int magic, byte[] payload) {
+        if (isEncrypting()) {
+            return wrapEncrypted(magic, payload);
+        }
         byte algId = isKeyed() ? ALG_HMAC_SHA256 : ALG_NONE;
         int macLen = isKeyed() ? MAC_SIZE : 0;
         int total = HEADER_SIZE + payload.length + macLen + CRC_SIZE;
@@ -184,10 +269,10 @@ public final class IntegrityEnvelope {
         int magic = buf.getInt();
         if (magic != expectedMagic) {
             // A full-length buffer that does not carry our magic is unauthenticated
-            // input - a keyed reader refuses it (fail-closed). A buffer below the
-            // envelope floor is treated as structurally absent (torn, first boot,
-            // or a short legacy artifact) for every posture.
-            if (isKeyed() && enveloped.length >= HEADER_SIZE + CRC_SIZE) {
+            // input - a keyed OR encrypting reader refuses it (fail-closed). A buffer
+            // below the envelope floor is treated as structurally absent (torn, first
+            // boot, or a short legacy artifact) for every posture.
+            if (isAuthenticated() && enveloped.length >= HEADER_SIZE + CRC_SIZE) {
                 throw new IntegrityException(
                         "expected integrity envelope magic 0x" + Integer.toHexString(expectedMagic)
                                 + " but found 0x" + Integer.toHexString(magic)
@@ -204,7 +289,7 @@ public final class IntegrityEnvelope {
         // tamper under a key - a deliberate refusal, not an incidental downstream
         // underflow. Keyless keeps absent semantics.
         if (enveloped.length < HEADER_SIZE + CRC_SIZE) {
-            if (isKeyed()) {
+            if (isAuthenticated()) {
                 throw new IntegrityException("integrity envelope truncated (magic present, length "
                         + enveloped.length + ") for magic 0x" + Integer.toHexString(expectedMagic));
             }
@@ -221,12 +306,20 @@ public final class IntegrityEnvelope {
         byte algId = buf.get();
         byte reserved = buf.get(); // folded into the MAC input below
 
+        // Layer C: an AES-256-GCM record has a different body layout (keyTerm/segmentId/
+        // nonce/ciphertext instead of payload/MAC), so it is handled by its own reader,
+        // which fails closed on a bad tag, an unknown key term, or truncation.
+        if (algId == ALG_AES256_GCM) {
+            return unwrapEncrypted(expectedMagic, enveloped);
+        }
+
         int macLen;
         if (algId == ALG_NONE) {
             macLen = 0;
-            if (isKeyed()) {
-                // Downgrade attempt: a keyed reader refuses an unauthenticated
-                // artifact. Posture, not just bytes, defeats strip-the-MAC.
+            if (isAuthenticated()) {
+                // Downgrade attempt: a keyed OR encrypting reader refuses an
+                // unauthenticated artifact. Posture, not just bytes, defeats strip-the-MAC
+                // (and, under encryption, strip-the-ciphertext-to-plaintext).
                 throw new IntegrityException(
                         "integrity downgrade refused: algId=NONE under a configured key for magic 0x"
                                 + Integer.toHexString(expectedMagic));
@@ -298,5 +391,123 @@ public final class IntegrityEnvelope {
         } catch (GeneralSecurityException e) {
             throw new IllegalStateException("HmacSHA256 unavailable or bad key", e);
         }
+    }
+
+    // ---------------------------------------------------------------------------------------------
+    // Layer C: AES-256-GCM authenticated encryption (algId=2). The GCM tag subsumes the HMAC.
+    // ---------------------------------------------------------------------------------------------
+
+    /**
+     * Wraps {@code payload} as an AES-256-GCM encrypted envelope. Layout:
+     * {@code [magic][formatVersion][algId=2][reserved][keyTerm][segmentId][nonce][ciphertext+tag][CRC32C]}.
+     * The AAD is the whole prefix {@code [header][keyTerm][segmentId][nonce]}, so all those fields are
+     * authenticated by the tag. A fresh, never-reused {@code (segmentId, nonce)} for this DEK is issued
+     * by {@link AtRestKeys#nextSeal(int)} - the sole guarantor of GCM's no-(key,nonce)-reuse invariant.
+     */
+    private byte[] wrapEncrypted(int magic, byte[] payload) {
+        AtRestKeys.Seal seal = atRest.nextSeal(magic);
+        byte[] segmentId = seal.segmentId();
+        byte[] nonce = seal.nonce();
+
+        int total = ENC_PREFIX_SIZE + payload.length + GCM_TAG_SIZE + CRC_SIZE;
+        byte[] out = new byte[total];
+        ByteBuffer buf = ByteBuffer.wrap(out);
+        buf.putInt(magic);
+        buf.putShort(FORMAT_VERSION);
+        buf.put(ALG_AES256_GCM);
+        buf.put((byte) 0); // reserved
+        buf.putInt(seal.keyTerm());
+        buf.put(segmentId);
+        buf.put(nonce);
+
+        // AAD = the ENC_PREFIX bytes just written (header + keyTerm + segmentId + nonce). Binding the
+        // per-artifact MAGIC here is what stops a snapshot ciphertext being replayed as a WAL record.
+        byte[] aad = Arrays.copyOfRange(out, 0, ENC_PREFIX_SIZE);
+        byte[] cipherText = gcmEncrypt(seal.dek(), nonce, aad, payload);
+        buf.put(cipherText); // ciphertext + 16-byte tag
+
+        CRC32C crc = new CRC32C();
+        crc.update(out, 0, total - CRC_SIZE);
+        buf.putInt((int) crc.getValue());
+        return out;
+    }
+
+    /**
+     * Reads an AES-256-GCM envelope, verifying CRC32C (corruption) then the GCM tag (tamper/auth).
+     * FAILS CLOSED: a truncated body, a CRC mismatch, an unknown key term, or a bad GCM tag all throw
+     * {@link IntegrityException} - a record that cannot be authentically decrypted is refused, never
+     * returned as {@code null} or silently skipped.
+     */
+    private byte[] unwrapEncrypted(int expectedMagic, byte[] enveloped) {
+        if (!isEncrypting()) {
+            // A non-encrypting reader cannot decrypt - refuse loudly rather than mis-parse ciphertext.
+            throw new IntegrityException(
+                    "AES-256-GCM envelope encountered by a non-encrypting reader for magic 0x"
+                            + Integer.toHexString(expectedMagic));
+        }
+        if (enveloped.length < ENC_MIN_SIZE) {
+            throw new IntegrityException("AES-256-GCM envelope truncated (length " + enveloped.length
+                    + ", min " + ENC_MIN_SIZE + ") for magic 0x" + Integer.toHexString(expectedMagic));
+        }
+
+        // Layer A: CRC32C over everything preceding the trailer (corruption / bit-flip surfaces here).
+        int crcOffset = enveloped.length - CRC_SIZE;
+        CRC32C crc = new CRC32C();
+        crc.update(enveloped, 0, crcOffset);
+        int computedCrc = (int) crc.getValue();
+        int storedCrc = ByteBuffer.wrap(enveloped, crcOffset, CRC_SIZE).getInt();
+        if (computedCrc != storedCrc) {
+            throw new IntegrityException("AES-256-GCM envelope CRC32C mismatch for magic 0x"
+                    + Integer.toHexString(expectedMagic)
+                    + " (computed=0x" + Integer.toHexString(computedCrc)
+                    + ", stored=0x" + Integer.toHexString(storedCrc) + ")");
+        }
+
+        ByteBuffer buf = ByteBuffer.wrap(enveloped);
+        buf.position(HEADER_SIZE); // skip magic/formatVersion/algId/reserved (already validated)
+        int keyTerm = buf.getInt();
+        byte[] segmentId = new byte[AtRestKeys.SEGMENT_ID_LEN];
+        buf.get(segmentId);
+        byte[] nonce = new byte[AtRestKeys.NONCE_LEN];
+        buf.get(nonce);
+        int cipherLen = crcOffset - ENC_PREFIX_SIZE;
+        byte[] cipherText = new byte[cipherLen];
+        buf.get(cipherText);
+
+        // Fail-closed: an unknown key term throws IntegrityException (no key -> no decrypt).
+        SecretKey dek = atRest.resolveDek(keyTerm, segmentId);
+        // AAD = the same ENC_PREFIX bytes the writer bound; a flipped header/keyTerm/segmentId/nonce
+        // changes the AAD and makes the tag fail.
+        byte[] aad = Arrays.copyOfRange(enveloped, 0, ENC_PREFIX_SIZE);
+        try {
+            return gcmDecrypt(dek, nonce, aad, cipherText);
+        } catch (AEADBadTagException e) {
+            // The authenticity failure (tampered header/keyTerm/segmentId/nonce/ciphertext, or the
+            // wrong key) surfaces as a refusal - the encryption analogue of the HMAC-mismatch throw.
+            throw new IntegrityException("AES-256-GCM authentication failed (tamper detected) for magic 0x"
+                    + Integer.toHexString(expectedMagic), e);
+        } catch (GeneralSecurityException e) {
+            throw new IntegrityException("AES-256-GCM decrypt error for magic 0x"
+                    + Integer.toHexString(expectedMagic), e);
+        }
+    }
+
+    private static byte[] gcmEncrypt(SecretKey dek, byte[] nonce, byte[] aad, byte[] plaintext) {
+        try {
+            Cipher cipher = GCM_CIPHER.get();
+            cipher.init(Cipher.ENCRYPT_MODE, dek, new GCMParameterSpec(GCM_TAG_BITS, nonce));
+            cipher.updateAAD(aad);
+            return cipher.doFinal(plaintext);
+        } catch (GeneralSecurityException e) {
+            throw new IllegalStateException("AES-256-GCM encrypt failed", e);
+        }
+    }
+
+    private static byte[] gcmDecrypt(SecretKey dek, byte[] nonce, byte[] aad, byte[] cipherText)
+            throws GeneralSecurityException {
+        Cipher cipher = GCM_CIPHER.get();
+        cipher.init(Cipher.DECRYPT_MODE, dek, new GCMParameterSpec(GCM_TAG_BITS, nonce));
+        cipher.updateAAD(aad);
+        return cipher.doFinal(cipherText);
     }
 }

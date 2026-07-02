@@ -12,7 +12,12 @@ import io.configd.common.Clock;
 import io.configd.common.ConfigScope;
 import io.configd.common.IntegrityEnvelope;
 import io.configd.common.NodeId;
+import io.configd.common.SegmentKeyManager;
 import io.configd.common.Storage;
+import io.configd.common.kms.KmsProvider;
+import io.configd.common.kms.KmsUnavailableException;
+import io.configd.common.kms.LocalDerivedKmsProvider;
+import io.configd.common.kms.RootKey;
 import io.configd.distribution.CommitNotification;
 import io.configd.distribution.CommitNotificationSource;
 import io.configd.distribution.FanOutBuffer;
@@ -1150,7 +1155,9 @@ public final class ConfigdServer {
      * @param dataDir  the Raft data directory (where artifacts live)
      * @return a keyed, fail-closed integrity envelope
      */
-    private static io.configd.common.IntegrityEnvelope deriveRaftIntegrityEnvelope(
+    // Package-private (not private) so EncryptionAtRestWiringTest can assert the flag -> envelope
+    // wiring directly, mirroring how enforceSigningKeyNotColocated is exercised by D1FailClosedTest.
+    static io.configd.common.IntegrityEnvelope deriveRaftIntegrityEnvelope(
             SigningKeyStore keyStore, Path keyFile, Path dataDir) {
         // FAIL-CLOSED: refuse to derive the at-rest integrity key from a signing key co-located
         // inside the data dir it protects, BEFORE doing any crypto. Default = refuse to start; the
@@ -1168,9 +1175,68 @@ public final class ConfigdServer {
         byte[] info = "configd/raft-at-rest-integrity/v2"
                 .getBytes(java.nio.charset.StandardCharsets.UTF_8);
         byte[] k = io.configd.common.Hkdf.deriveKey(ikm, salt, info, 32);
-        var integrity = new io.configd.common.IntegrityEnvelope(
-                new javax.crypto.spec.SecretKeySpec(k, "HmacSHA256"));
-        return integrity;
+        javax.crypto.SecretKey integrityKey = new javax.crypto.spec.SecretKeySpec(k, "HmacSHA256");
+
+        // Secure-by-config: when at-rest ENCRYPTION is enabled, wrap the same seam in an
+        // AES-256-GCM envelope (Layer C). K_integrity is carried as the legacy read key so an
+        // existing HMAC-only WAL still recovers during the enable-encryption upgrade. When
+        // encryption is OFF (the default) this returns the byte-identical keyed HMAC envelope.
+        if (encryptionAtRestEnabled()) {
+            return buildEncryptingEnvelope(ikm, salt, keyId, integrityKey);
+        }
+        return new io.configd.common.IntegrityEnvelope(integrityKey);
+    }
+
+    /** True if at-rest encryption is enabled (system property, or the CI/docker-friendly env var). */
+    private static boolean encryptionAtRestEnabled() {
+        return Boolean.getBoolean("configd.raft.encryption.enabled")
+                || "true".equalsIgnoreCase(System.getenv("CONFIGD_ENCRYPTION_AT_REST"));
+    }
+
+    /**
+     * Builds the AES-256-GCM at-rest encryption envelope. Unseals a per-node root key through the
+     * configured {@link KmsProvider} ONCE at boot (R1/R2), then derives per-segment DEKs locally.
+     * <p>
+     * <b>Fail-closed (R3):</b> naming a provider that is not built in is a startup error - NEVER a
+     * silent downgrade to no encryption or to a different provider (a silent downgrade is how a
+     * "data is encrypted at rest" claim becomes fiction). Only {@code local} (HKDF-from-signing-key)
+     * ships in v1; a cloud provider is added as a separate module that slots into this same seam.
+     *
+     * @param ikm             the signing private-key encoding (the {@code local} KEK IKM)
+     * @param salt            the signing keyId bytes (HKDF salt)
+     * @param keyId           the signing keyId (the loggable KEK reference)
+     * @param legacyReadKey   K_integrity, used to READ any pre-encryption HMAC records (upgrade path)
+     * @return an encrypting {@link IntegrityEnvelope}
+     */
+    private static io.configd.common.IntegrityEnvelope buildEncryptingEnvelope(
+            byte[] ikm, byte[] salt, java.util.UUID keyId, javax.crypto.SecretKey legacyReadKey) {
+        String providerName = System.getProperty("configd.raft.encryption.kms.provider",
+                System.getenv().getOrDefault("CONFIGD_ENCRYPTION_KMS_PROVIDER", "local"));
+        if (!"local".equals(providerName)) {
+            throw new IllegalStateException(
+                    "configd.raft.encryption.kms.provider='" + providerName + "' is not available:"
+                            + " only the built-in 'local' provider (HKDF-from-signing-key) ships in v1."
+                            + " Refusing to start rather than silently downgrade - a silent downgrade is"
+                            + " how a 'data is encrypted at rest' claim becomes fiction. Add the matching"
+                            + " configd-kms-<provider> module to the classpath, or unset the property.");
+        }
+        // The one boot-time provider call (R1). For 'local' the root is a deterministic HKDF
+        // re-derivation, so it never fails closed; a cloud provider would unwrap a persisted
+        // WrappedKey here and fail closed if the KMS is unreachable.
+        try (KmsProvider kms = new LocalDerivedKmsProvider(ikm, salt, keyId.toString(), 1)) {
+            kms.healthCheck();
+            RootKey root = kms.generateRootKey().rootKey();
+            SegmentKeyManager keyManager = new SegmentKeyManager(root);
+            LOG.log(Level.INFO,
+                    "At-rest encryption ENABLED (AES-256-GCM, provider={0})", kms.currentKeyId());
+            // The provider is dropped when this block exits (R2): the node runs on the cached root.
+            return io.configd.common.IntegrityEnvelope.encrypting(keyManager, legacyReadKey);
+        } catch (KmsUnavailableException e) {
+            // R3: fail closed. A node that cannot unseal its own at-rest key must not pretend it can.
+            throw new IllegalStateException(
+                    "At-rest encryption is enabled but the '" + providerName + "' KMS provider could"
+                            + " not unseal the root key - refusing to start (fail-closed).", e);
+        }
     }
 
     /**
