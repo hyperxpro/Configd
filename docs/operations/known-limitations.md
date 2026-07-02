@@ -49,6 +49,11 @@ but does not remove, the exposure.)
   nonce uniqueness is global and safe, but cross-group at-rest *integrity* (a record spliced from group
   B's WAL into group A's) is caught only by the Raft log-consistency layer, not the envelope; bind
   groupId into the AAD before an N>1 deployment relies on cross-group at-rest integrity.
+- **Write-path overhead (measured, release SHA eb9b293).** Encryption ON vs OFF, single node, 256 B values:
+  sustained throughput knee 1210 -> 1180 w/s (-2.5%), commit latency p50 7.65 -> 7.77 ms (+1.5%), p99 14.6 ->
+  36.4 ms (+150%). Low on throughput and median; the cost is tail-weighted (per-record AES-GCM + ciphertext
+  allocation roughly doubles p99). Single loopback node, so this is the local encrypt-on-write cost only (no
+  cross-node replication fsync in the path) - a floor. See `docs/measurement/ec2-drive-to-green-2026-07-02/gate7-final/`.
 
 ### 2. Client-facing watches: the RFC section 2 protocol is implemented server-side (N=1); drivers + N>1 are next
 
@@ -127,6 +132,13 @@ longer unmeasured - it was **measured on real hardware** and is **near-linear ~2
   operability follow-up**: horizontal scale is **operator-managed** (one leader per box, not auto-balanced;
   see [`deployer-must-know.md` item 5](deployer-must-know.md)). No literal sustained 10k/s
   has been run (single-cluster max = 1607 w/s).
+- **Manual leadership transfer is now exposed; the auto-balancer is v2.** Post-failover leadership can drift
+  (multiple groups' leaders piling onto one box collapses the aggregate toward the single-group plateau). An
+  operator can now redistribute it manually via the ADMIN-gated
+  `POST /v1/admin/groups/{groupId}/transfer-leadership?target=<nodeId>` (refused when auth is off or ADMIN
+  cannot be evaluated; a bad target no longer wedges writes - the Raft section 3.10 transfer-abort resumes
+  writes after the election timeout). An **automatic leadership balancer is still v2** - leadership placement
+  remains an operator responsibility in v1.
 
 ### 4. Empirical validation: validated on metal (2026-06-30 / 07-01), with bounded residuals
 
@@ -143,10 +155,32 @@ GREEN against a `main`-identical server (register section 11.12). The honest res
   three modes, RTO **4.2 s** (WAL) / **5.9 s** (snapshot) (`docs/archive/measurement/ec2-2026-06-30/02-dr-drills.md`;
   register section 7.5). **Caveat:** single-box 3-co-located topology - cross-machine failover adds network RTT,
   but the correctness (no loss, bounded election) is topology-independent.
+- **Faulted linearizability (C3) - GREEN, re-run pending on the release bytes.** The faulted-linz harness
+  was fixed this arc (each test node's signing key mounted OUTSIDE its data dir, satisfying the real D-1
+  co-location guard rather than disabling it); the multi-process iptables-faulted matrix then ran GREEN
+  (8/8 LINEARIZABLE, reproducibility gate iv byte-identical) on the arc's intermediate commit
+  (`docs/measurement/ec2-drive-to-green-2026-07-02/README.md`). Because later gates changed consensus and
+  storage code, the definitive C3 was re-captured on the release SHA. **DONE: GREEN on release SHA
+  eb9b293** - 8/8 LINEARIZABLE (3- and 5-node, faults active), reproducibility gate iv byte-identical
+  (`docs/measurement/ec2-drive-to-green-2026-07-02/gate7-final/`). Condition C3 closed on the shipped bytes.
+- **Edge-staleness distribution (INV-S2) - re-run pending with the gap-quarantine fix.** The on-metal
+  INV-S2 distribution run this arc surfaced a real edge-fan-out bug: a perfectly caught-up edge
+  (`cursor == lastAckedSeq`) under any sustained write stream past the fan-out buffer capacity was
+  spuriously gap-demoted and quarantined, freezing its frontier and ramping measured staleness to the
+  histogram ceiling. The staleness **mechanism** itself validated (a subscribed edge hovers 2-251 ms,
+  bounded by the 250 ms heartbeat). The bug is now **fixed** (transient lock-free-read-race GAPs are
+  distinguished from a genuine fall-behind; register section 4.13). **DONE: re-run on release SHA eb9b293,
+  bound MET with large margin** - 4 edges/500 w/s/180 s: p99 24 ms, p9999 117 ms; 1 edge/100 w/s/30 min:
+  p99 13 ms, p9999 212 ms, max 232 ms (bound p99 < 500 ms / p9999 < 2 s met ~10-38x). A faithful deep-tail
+  measurement at high multi-edge density wants dedicated edge hardware (single-box co-location occasionally
+  starves an edge JVM); the clean per-edge steady-state distribution is representative and the bound is met.
+  See `docs/measurement/ec2-drive-to-green-2026-07-02/gate7-final/`.
 - **Residuals** (burn-in / v2): no literal sustained **10 k/s** or **100 k burst** (single-cluster max
-  1607 w/s), no **cross-region / WAN** measurement (single-region by design), and the edge-staleness
-  distribution at scale (INV-S2) is still owed (`consistency-contract.md` section 2). See the register section 11
-  empirical-validation rows and the [burn-in contract](burn-in-contract.md).
+  1607 w/s), no **cross-region / WAN** measurement (single-region by design), no full **24 h / 72 h** soak,
+  and a faithful **INV-S2 deep-tail at high multi-edge density** wants dedicated edge hardware (the release-SHA
+  re-run above met the bound on the clean per-edge distribution; single-box co-location limits the multi-edge
+  p9999). The definitive C3 and the INV-S2 bound are both DONE on the release SHA (above). See the register
+  section 11 empirical-validation rows and the [burn-in contract](burn-in-contract.md).
 
 ---
 
@@ -247,6 +281,8 @@ items rather than pre-GA gates:
   occurs - **no OOM, no corruption**, but that follower **stays out of quorum until an
   operator raises the cap** (or trims state). The cap **must exceed the largest expected
   total committed state**; the state has to fit in heap to be applied regardless.
+  **Disk-spilling reassembly** (streaming chunks to disk rather than buffering the whole
+  snapshot in heap) is a **v2** item - today reassembly is heap-bound.
 - **Over-cap observability:** the refusal logs `SEVERE` **per occurrence with no
   dedicated metric** - detection is log-watch only, and per-follower `matchIndex` lag is
   the proxy alert. A dedicated snapshot-reassembly-drop counter/alert is a documented

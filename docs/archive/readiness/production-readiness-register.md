@@ -42,6 +42,26 @@
 > go/no-go + the verifying artifact. **The counts table immediately below is left as the frozen 2026-06-26
 > audit snapshot** (a dated historical record, not re-tallied in place); the reconciled tally is the one in
 > this note. The go/no-go review remains the authoritative source of truth.
+>
+> **Reconciled 2026-07-02 (drive-to-green arc — DRAFT, pending the Gate-7 measurement fill-in).** The
+> drive-to-green arc closed several of the items the go/no-go carried as conditional or v2. Against the
+> per-row tables below this moves: **8.2 encryption at rest ❌→✅** (available behind a flag), **1.7 / 3.10 /
+> 11.9 snapshot 4 MiB cap 🟡→✅** (chunked InstallSnapshot lifts the ceiling), and adds three new ✅ rows
+> (**4.13** caught-up-edge spurious gap-quarantine, **7.13** manual leadership transfer, **8.13** legacy
+> SUBSCRIBE admission authorization). Net direction: the ❌ count drops from 2 to **1** (only 11.7 BATCH API
+> remains genuinely absent). The frozen 2026-06-26 counts table below is **not** re-tallied; the individual
+> rows carry dated per-row reconciliation notes. The definitive Gate-7 tally lands with the orchestrator's
+> measurement fill-in (C3 faulted-linz on the release SHA, INV-S2 re-run, encryption overhead). See §0.1 for
+> the frozen-shortlist errata.
+>
+> **Honest v2 remainder (what this arc did NOT close — do not over-claim v1).** External KMS providers
+> (AWS/Vault) + ServiceLoader discovery (only `LocalDerivedKmsProvider` ships; §8.2); the multi-Raft
+> leadership **auto-balancer** (only manual transfer is exposed; §7.13); **multi-shard watches** (v3; §4.8 /
+> §11.8); a conforming **client driver** (§6.6); **audit-log encryption** (audit stays HMAC-only; §8.2);
+> **groupId-in-AAD** for cross-group at-rest integrity at N>1 (§8.2); a **snapshot-drop / reassembly-cap-
+> refusal metric** (over-cap refusal is log-only today; §3.10 / D-7); **disk-spilling snapshot reassembly**
+> (heap-bound today; §3.10). Plus the pre-existing v2 items (sharding sustained-N>1 leadership balancing,
+> cross-region/WAN, BATCH API, full 24 h/72 h soak, literal sustained 10 k/s).
 
 | Status | Count | Meaning |
 |---|---:|---|
@@ -123,6 +143,27 @@ recommendation for the go/no-go, **not** a decision.
 > `docs/operations/known-limitations.md` ("Snapshot size cap" / "Encoder-drop observability") and
 > `docs/operations/deployer-must-know.md` section 4. The frozen #7 row below is left as-authored.
 
+> **Erratum 2026-07-02 (drive-to-green arc) — several frozen blockers are now closed in code.** This
+> non-destructively supersedes the frozen shortlist rows below; the rows are left as-authored.
+> **#3 (encryption at rest absent)** — encryption at rest is now **built and available behind a flag**
+> (`-Dconfigd.raft.encryption.enabled`, off by default): node-local AES-256-GCM at the ADR-0042 seam
+> (`IntegrityEnvelope.ALG_AES256_GCM=2`, `SegmentKeyManager`) + a `KmsProvider` SPI + `LocalDerivedKmsProvider`
+> (HKDF from the signing key). **RR-098 is closed for v1** (v1 *can* encrypt); external-KMS providers,
+> audit-log encryption, and groupId-in-AAD for N>1 are v2. The D-2 "accept-as-v2" posture is superseded —
+> v1 no longer *has* to ship without at-rest encryption. Caveat: enabling is a **ONE-WAY DOOR** (once an
+> `algId=2` record is written, no disable / no rollback). See §8.2 + known-limitations section 1.
+> **#7 (snapshot 4 MiB cap wedges a follower)** — the total-state ceiling is **lifted by chunked
+> InstallSnapshot** (`RaftNode` chunked transfer + offset-echo; per-chunk cap 4 MiB; fail-closed reassembly
+> cap `configd.raft.maxReassembledSnapshotBytes`, default 512 MiB). The Gate-3 "drop path" corrected above no
+> longer exists for the dominant (over-4-MiB snapshot) case; the follower-wedge risk is replaced by a
+> heap-bounded, fail-closed reassembly refusal that is **log-only** (a dedicated drop/refusal metric stays a
+> v2 observability follow-up). **HARD deploy requirement:** all nodes must be upgraded together (a
+> pre-chunking follower installs chunk 0 as the whole snapshot = silent corruption). See §1.7 / §3.10 / §11.9
+> + known-limitations "Snapshot transfer: chunked". Additionally, the frozen §0.1 "documented v2 limitations"
+> notes on **watches' SUBSCRIBE-path segregation** and **leadership operability** are refined by the new rows
+> §8.13 (SUBSCRIBE now authorized at admission when auth is on) and §7.13 (manual leadership transfer now
+> exposed; auto-balancer stays v2).
+
 ### Recommended **blockers** for an unqualified production claim
 
 1. **Empirical validation is deferred to production observation** (11.12, 9.7, 9.8, 7.5). No completed
@@ -185,7 +226,7 @@ recommendation for the go/no-go, **not** a decision.
 | 1.4 Membership change / joint consensus | ✅ | `ClusterConfig.joint()` dual-majority `:117-123`; `ReconfigurationTest`, `ReconfigPathUnitTest`; ConsensusSpec `ReconfigSafety` | Mechanism sim-verified; no wired prod admin reconfig trigger (`proposeConfigChange` has no live caller) |
 | 1.5 **ReadIndex linearizable reads** | ✅ | Real protocol: `readIndex():767` records (commitIndex,term), `confirmPendingReads():2622` via heartbeat-quorum, role/term re-check `:798`; INV-RI-2/3/4 twins `assertReadServeInvariants():928`; `ReadIndexSpec.tla` (TLC 12.4M states, tlc job); `ReadIndexStateTest`, `ReadIndexLinearizabilityReplayerTest` | — |
 | 1.6 Leader lease / no-stale-serve | ✅ | CheckQuorum step-down `:1495`; read serve re-checks `role==LEADER` `:798` + `no_stale_leader_serve` twin `:940` | **Quorum/heartbeat-based ReadIndex + CheckQuorum + role/term recheck, NOT a timed clock lease** — "lease" is loose terminology |
-| 1.7 Snapshot install + 4 MiB cap | 🟡 | `handleInstallSnapshot():552` (SnapshotInstallSpec twins); `InstallSnapshotTest`, `SnapshotCrashRecoveryTest` | **Single-blob, no chunking**; >4 MiB snapshot can't transfer → lagging follower can't bootstrap (v0.2) |
+| 1.7 Snapshot install (chunked) | ✅ (was 🟡; reconciled 2026-07-02) | `handleInstallSnapshot():552` (SnapshotInstallSpec twins); `InstallSnapshotTest`, `SnapshotCrashRecoveryTest`; **chunked transfer** `ChunkedInstallSnapshotTest` (drive-to-green Gate 5) | **Total-state 4 MiB ceiling LIFTED** — a large snapshot streams as ordered chunks (per-chunk cap `MAX_SNAPSHOT_CHUNK_BYTES`=4 MiB) driven off the follower's echoed `nextExpectedOffset`; heap-bounded, fail-closed reassembly cap `configd.raft.maxReassembledSnapshotBytes` (default 512 MiB). **Deploy-together requirement** (a pre-chunking follower would install chunk 0 as the whole snapshot = silent corruption). Detail in §3.10 |
 | 1.8 Pre-vote / election stability | ✅ | `handlePreVoteRequest/Response:1701/1758`; `RaftNodeTest.PreVoteTests.preVotePreventsTermInflationFromPartitionedNode:415` | Δ pre-fill 🟡→✅ (discriminating test exists). Not in ConsensusSpec.tla |
 | 1.9 Write-ack taxonomy (ADR-0033) | ✅ | `CommitOutcome.Kind{COMMITTED,LOST,INDETERMINATE_LOCALLY}` + `ProposeOutcome{NOT_LEADER,…,OVERLOADED}`; mapping `ConfigWriteService.java:299` + `ConfigdServer.java:1334`; **ADR-0033 Accepted**; `CommitOutcomeSeamTest` | Δ pre-fill named `HttpApiServer` — actual mapping is `ConfigWriteService`+`ConfigdServer` |
 | 1.10 Heartbeat coalescing (Phase 0 M3) | ✅ | `HeartbeatCoalescer`/`CoalescingRaftTransport`; `HeartbeatCoalescerTest`, `CoalescedHeartbeatLivenessTest`; gate-phase0 | — |
@@ -197,7 +238,7 @@ recommendation for the go/no-go, **not** a decision.
 | Item | Status | Evidence | Gap / note |
 |---|---|---|---|
 | 10.1 Deterministic simulation (ADR-0007 Accepted) | ✅ | `RaftSimulation` seeded PRNG; `SeedSweepTest` 10k seeds (build-and-test job) | — |
-| 10.2 **Linearizability (Porcupine)** | ✅ † | Real `github.com/anishathalye/porcupine v1.2.0` (the etcd checker, NOT hand-rolled); gate-1 step b builds + runs `CheckerSelfTest` **8/8**; gate-2 checks sim-history LINEARIZABLE (`SimHistoryCheck`); ADR-0032 | † the **live multi-process iptables-faulted matrix is `GATE2_FAULTED`-gated → skipped in cloud CI** (self-hosted/nightly only) — carried forward as go/no-go condition **C3**. **ADR-0032 discharged 2026-07-01: now Accepted** (ratified 2026-06-27; `docs/decisions/adr-0032-linearizability-harness.md:5`) — was *Proposed* at audit time |
+| 10.2 **Linearizability (Porcupine)** | ✅ † | Real `github.com/anishathalye/porcupine v1.2.0` (the etcd checker, NOT hand-rolled); gate-1 step b builds + runs `CheckerSelfTest` **8/8**; gate-2 checks sim-history LINEARIZABLE (`SimHistoryCheck`); ADR-0032 | † the **live multi-process iptables-faulted matrix is `GATE2_FAULTED`-gated → skipped in cloud CI** (self-hosted/nightly only) — carried forward as go/no-go condition **C3**. **ADR-0032 discharged 2026-07-01: now Accepted** (ratified 2026-06-27; `docs/decisions/adr-0032-linearizability-harness.md:5`) — was *Proposed* at audit time. **C3 update (drive-to-green Gate 4):** the faulted-linz harness was fixed (each test node's signing key mounted OUTSIDE its data dir via `--signing-key-file`, satisfying the real D-1 co-location guard rather than disabling it; `ClusterSigningKeyTest`) — the matrix now runs GREEN (8/8 LINEARIZABLE, reproducibility gate iv byte-identical) on `9e1f191` (`docs/measurement/ec2-drive-to-green-2026-07-02/README.md`). Because Gates 5/6 changed consensus/storage after that capture, the definitive C3 was re-run on the release SHA. **DONE 2026-07-02: GREEN on release SHA `eb9b293`** — 8/8 LINEARIZABLE (3- and 5-node, faults active), reproducibility gate iv byte-identical (`docs/measurement/ec2-drive-to-green-2026-07-02/gate7-final/`). Condition C3 closed on the shipped bytes. |
 | 10.3 TLA+ specs (Consensus/ReadIndex/SnapshotInstall) | ✅ | all three `.tla` in `spec/`; `tlc-model-check` job runs all; cross-check replayers | — |
 | 10.4 Invariant net / runtime assertions + twins | ✅ | `InvariantMonitor` + `RaftNode.InvariantChecker`; `AssertionTwinFiringTest:55` drives every twin to fire; gate-2 step (g) | — |
 | 10.5 jcstress concurrency (gate-2) | ✅ | configd-jcstress 10 tests; gate-2 step (f) uber-jar, no forbidden outcomes | — |
@@ -250,7 +291,7 @@ recommendation for the go/no-go, **not** a decision.
 | 3.7 durable_prefix_no_gap (RR-003) | ✅ | `applyCommitted` refuses to advance past a gap `RaftNode.java:2203`; recovery-side ctor check `:359`; `SnapshotCrashRecoveryTest.gapDetectionFires…` | — |
 | 3.8 Config store (VersionedConfigStore, HamtMap) | ✅ | `HamtMapTest`/Property/Collision + `VersionedConfigStoreTest`/Property/Concurrency/Allocation | — |
 | 3.9 Compaction | ✅ | Raft-log: `RaftNode.maybeCompact` via `MultiRaftDriver:174` (RR-005), `RaftLogCompactionTriggerTest`; config-snapshot: `Compactor`+`CompactorTest` | — |
-| 3.10 Snapshot 4 MiB cap / chunked deferred | 🟡 | `MAX_SNAPSHOT_BLOB_LEN=4*1024*1024` (`RaftMessageCodec.java:74,111`); leader always sends `offset=0,done=true`; **over-cap snapshot DROPPED to stderr** (`RaftNode.java:2074`) | follower-wedge risk (v0.2 chunking) — surface in known-limitations, not just "chunking deferred" |
+| 3.10 Snapshot transfer chunked (4 MiB ceiling lifted) | ✅ (was 🟡; reconciled 2026-07-02) | chunked `InstallSnapshot` in `RaftNode` (ordered chunks, offset-echo `InstallSnapshotResponse.nextExpectedOffset`), `ChunkedInstallSnapshotTest` (drive-to-green Gate 5); per-chunk cap `MAX_SNAPSHOT_CHUNK_BYTES`=4 MiB in `RaftMessageCodec` (the Raft dissertation §3.10 leadership transfer-abort is a separate fix — see §7.13) | **Bounded by follower HEAP** (whole snapshot reassembled in memory to apply); fail-closed reassembly cap `configd.raft.maxReassembledSnapshotBytes` (default 512 MiB, clamped ~2 GiB) refuses **before OOM** — partial dropped, `SEVERE` logged, follower stays out of quorum until an operator raises the cap. **Over-cap refusal is log-only (no metric — v2 observability).** **Deploy-together requirement** (silent corruption if mixed with a pre-chunking follower) |
 | 3.11 Storage abstraction + real fsync | ✅ | `FileStorage.force(true)` real (data `:88`, dir-fsync `:96`, log `:136`); `FileStorageTest` | — |
 | 3.12 Recovery/restart from WAL+snapshot | ✅ | `RaftLog` ctor replays WAL + recovers snapshot (`:137`); `RaftNode` ctor restores SM before replay; `SnapshotCrashRecoveryTest.recoversCleanlyFromTornFinalWalRecord:155` real FileStorage | — |
 
@@ -265,11 +306,12 @@ recommendation for the go/no-go, **not** a decision.
 | 4.5 Slow-consumer governor / backpressure | ✅ | `fanout/SlowConsumerGovernor` + `SubscriberOverflowDemotionTest`, `QuarantineReBootstrapTest` | — |
 | 4.6 Signed-chain streaming (ADR-0038) | ✅ | `FanOutSessionCore`; `FrameBatchingChainIntegrityTest`, `FullChainDeliveryTest` | — |
 | 4.7 Edge frame wire format | ✅ | `EdgeFrameCodec` + golden/property/fuzz/boundary tests | — |
-| 4.8 **Watches** | ✅ (N=1, server-side) | RFC §2 watch protocol implemented server-side on the edge endpoint: wire `0x02` + `WATCH_*` frames + cursor vector, multiplex/filter veneer, whole-target authz gate, target-filtered delivery + catch-up snapshots, **bounded revocation (W7-7)** (PRs #28/#29/#30); the unrelated legacy in-process `WatchService` stays server-internal | **DECISION UPDATED 2026-06-29: the v1 (N=1) client watch protocol is now built server-side** (supersedes the 2026-06-27 "watches are v2" decision for N=1). Caveats: **no shipped client driver yet** (next arc); watch ACL conditional on SUBSCRIBE-path segregation; single-scope at N=1; **N>1 multi-shard watch = v3** (fail-closed). See known-limitations §2. |
+| 4.8 **Watches** | ✅ (N=1, server-side) | RFC §2 watch protocol implemented server-side on the edge endpoint: wire `0x02` + `WATCH_*` frames + cursor vector, multiplex/filter veneer, whole-target authz gate, target-filtered delivery + catch-up snapshots, **bounded revocation (W7-7)** (PRs #28/#29/#30); the unrelated legacy in-process `WatchService` stays server-internal | **DECISION UPDATED 2026-06-29: the v1 (N=1) client watch protocol is now built server-side** (supersedes the 2026-06-27 "watches are v2" decision for N=1). Caveats: **no shipped client driver yet** (next arc); watch ACL conditional on SUBSCRIBE-path segregation (**reconciled 2026-07-02:** the legacy SUBSCRIBE feed is now authorized at admission on a whole-store READ cover when auth is ON — §8.13 — so the segregation caveat now applies only to the **auth-off / mTLS-only** posture); single-scope at N=1; **N>1 multi-shard watch = v3** (fail-closed). See known-limitations §2. |
 | 4.9 Subscription manager / prefix subs (ADR-0020) | ✅ | `SubscriptionManager` wired `:852`; `SubscriptionManagerTest`; edge `PrefixStorageFilter` | — |
 | 4.10 Rollout controller (ADR-0008) | 🟡 | constructed `:526` + accessor `:1565` | **Parked library — zero `rolloutController.` call sites in main**, no rollout endpoint |
 | 4.11 Cross-region / WAN replication | ⛔ | single-region per ADR-0030/ADR-0024 (Accepted, defers per-DC Raft to v0.2); WAN leg modeled only in `EdgeStalenessDistributionLoadSimTest` | no cross-region path in code; WAN staleness 🔬 unmeasured |
 | 4.12 gate-3 CI-wired | ✅ | `ci.yml:186` runs `gate-3.sh` push/PR + nightly; 4-phase 3CP+3edge `e2e-compose-scenario.sh` runs as a gate-3 step | — |
+| 4.13 **Caught-up edge not spuriously gap-quarantined** | ✅ (new; drive-to-green Gate 4.5 — PR #47) | `FanOutSessionCore.classifyGap` distinguishes a **GENUINE fall-behind** (data evicted from the ring: `cursor < lastEvictedSeq` / `oldestRetainedSeq > cursor+1` ⇒ demote toward quarantine) from a **TRANSIENT lock-free-read race** (torn/not-yet-published slot at the eviction boundary ⇒ retry next tick, not counted as a demotion), with a live-lock backstop `MAX_CONSECUTIVE_TRANSIENT_GAPS=128`; `FanOutSessionCoreGapClassificationTest` | **Real edge-fan-out reliability fix.** Found during the Gate-4 INV-S2 run: a perfectly caught-up edge (`cursor == lastAckedSeq`) at 50 w/s on an idle box was gap-demoted and quarantined (~28 min cooldown) under any sustained write stream past buffer capacity. Ties to 4.5; unblocks the INV-S2 distribution re-run (5.12) |
 
 ## §5. Edge replicas / read plane
 
@@ -286,7 +328,7 @@ recommendation for the go/no-go, **not** a decision.
 | 5.9 Strong-read key class at edge | ✅ | `StrongReadKeyClass` wired in `EdgeClientCore`; server fail-closed `AdminApiHandler:200` | — |
 | 5.10 Frontier staleness (ADR-0039) | ✅ | `StalenessTracker.recordFrontier`; `EdgeFrame.Heartbeat(latestSeq, serverNowMillis)`; `EdgeStalenessFrontierSimTest` | — |
 | 5.11 Delta applier / bloom filter | 🟡 | `DeltaApplier` wired `EdgeClientCore:331` | **Δ ✅→🟡 — `BloomFilter` DORMANT, no main caller** (only class + tests) |
-| 5.12 **p99 staleness distribution (INV-S2)** | 🟡 | `EdgeStalenessDistributionLoadSimTest:69` asserts `p99<500ms`/`p9999<2s` over real frontier; `EdgeStalenessDistributionSimTest` (gate-3, mechanism-only) | the real-bound test is **local-component-only, sim-level, NOT gate/CI-pinned**; global/WAN p99 ENV-BLOCKED |
+| 5.12 **p99 staleness distribution (INV-S2)** | ✅ (release-SHA re-run; was 🟡) | `EdgeStalenessDistributionLoadSimTest:69` asserts `p99<500ms`/`p9999<2s` over real frontier; `EdgeStalenessDistributionSimTest` (gate-3, mechanism-only) | the real-bound test is **local-component-only, sim-level, NOT gate/CI-pinned**; global/WAN p99 ENV-BLOCKED. **Drive-to-green Gate 4:** the on-metal INV-S2 distribution run was **blocked by the spurious edge gap-quarantine bug** (the mechanism itself validated — a subscribed edge hovers 2–251 ms, bounded by the 250 ms heartbeat); that bug is now fixed (4.13). **DONE 2026-07-02 on release SHA `eb9b293`, bound MET ~10-38x:** 4 edges/500 w/s/180 s p99 24 ms / p9999 117 ms; 1 edge/100 w/s/30 min p99 13 ms / p9999 212 ms / max 232 ms (bound p99 < 500 ms, p9999 < 2 s). A faithful deep-tail at high multi-edge density wants dedicated edge hardware (single-box co-location occasionally starves an edge JVM); the clean per-edge steady-state distribution is representative and meets the bound (`docs/measurement/ec2-drive-to-green-2026-07-02/gate7-final/`). |
 
 ## §6. Client SDK
 
@@ -327,17 +369,25 @@ recommendation for the go/no-go, **not** a decision.
 | 7.10 **Per-shard observability** | 🟡 (was ❌; reconciled 2026-07-01) | Seam E per-shard health gauges added (`ConfigdServer.java:610` `registerPerShardMetrics`); mirrors 2.8. go/no-go §2.2 | **Partial:** node-level apply-backlog gauge + election counter still group-0-only (`:1063-1079` `if (owner == 0)`). Only material at N>1; ties to 2.8 |
 | 7.11 gate-6 operability CI-wired | ✅ | `ci.yml` `gate-6 needs: gate-5` + promtool; capture `session-6/captures/gate-6-local-green.txt` | checked-in capture labeled "local-green" (CI job is wired) |
 | 7.12 Alert thresholds (PROPOSED vs enforced) | 🟡 | `configd-slo-alerts.yaml` (concrete expr/for/severity) promtool fires/quiet-tested in gate-6 | rule mechanism CI-enforced; **threshold VALUES are design-set, not calibrated** against measured production SLO |
+| 7.13 **Leadership transfer (manual, ADMIN-gated)** | ✅ (new; drive-to-green Gate 2 — PR #44) | `POST /v1/admin/groups/{groupId}/transfer-leadership?target=<nodeId>` on `AdminApiHandler` (both HTTP adapters delegate); `DriverLeadershipAdmin` posts `RaftNode.transferLeadership` to the group owner-executor under a bounded deadline (wedged owner ⇒ 503, never blocks the HTTP thread); `AdminService` shapes outcomes (NotLeader ⇒ 503 + `X-Leader-Hint`, precondition ⇒ 409, Success ⇒ 200); Raft §3.10 transfer-abort so a bad target no longer wedges writes | **MANUAL only — the multi-Raft leadership AUTO-balancer is v2** (go/no-go §3.2; the operability gap filed after the horizontal run). Remedies post-failover leadership drift (which collapses the sharded aggregate toward the single-group plateau). Fail-closed: **refused when auth is OFF or ADMIN cannot be evaluated** (stricter than the config gate). Dormant/byte-identical when the seam is not wired (route ⇒ 404) |
 
 ## §8. Security
 
 > **Two headline findings:** (1) **Config data is NOT encrypted at rest** (integrity ≠ confidentiality) —
 > a registered OPEN gap. (2) **Security mechanisms ARE wired into the live path** (the historical
 > "interface-only" caveat is stale) **but are off-by-default** — only rate-limiting is unconditionally on.
+>
+> **Reconciled 2026-07-02 (drive-to-green arc).** Finding (1) is now addressed: **at-rest encryption is
+> available behind a flag** (drive-to-green Gate 6; §8.2 ❌→✅) — node-local AES-256-GCM + a KMS-provider SPI.
+> The **default is still integrity-only** (encryption off), so the "do not store secrets by default" posture
+> stands. Finding (2) (off-by-default posture) is unchanged here and is being hardened by the separate
+> secure-by-config work. New this arc: **§8.13** (legacy SUBSCRIBE authorized at admission when auth is on —
+> the "any valid mTLS cert pulls the whole store" gap is closed for the auth-on posture).
 
 | Item | Status | Evidence | Gap / note |
 |---|---|---|---|
 | 8.1 At-rest **integrity** HMAC (ADR-0042 Accepted) | ✅ | `IntegrityEnvelope.java:104` keyed HMAC-SHA256 + CRC32C fail-closed; gate-7 `SnapshotIntegrityTest`/`WalRecordIntegrityTest`/`DurableRaftStateIntegrityTest` | **integrity / tamper-detection, NOT encryption** |
-| 8.2 **Encryption at rest** | ❌ → v2 | **no `javax.crypto.Cipher`/AES anywhere in `src/main`**; `security-report.md` MAJOR-4 "config values plaintext, no encryption at rest"; **RR-098 OPEN → v2** | config (incl. `secure/` keys) plaintext in control-plane HAMT/WAL/snapshot. **DECIDED 2026-06-27: accept-as-v2** (operator). `secure/` is a read-*freshness* class, **NOT** confidentiality; "do not store secrets" documented (known-limitations / README / Integration-Guide / consistency-contract). (edge store is in-memory → bounded exposure) |
+| 8.2 **Encryption at rest** | ✅ (available behind a flag; was ❌→v2; reconciled 2026-07-02) | **node-local AES-256-GCM** at the ADR-0042 seam: `IntegrityEnvelope` `ALG_AES256_GCM=2` (GCM tag replaces the HMAC; CRC32C layer stays), `SegmentKeyManager`, `AtRestKeys`; enabled by `-Dconfigd.raft.encryption.enabled` / `CONFIGD_ENCRYPTION_AT_REST` (`ConfigdServer.java:1202`); KMS-provider SPI `KmsProvider` + default `LocalDerivedKmsProvider` (HKDF from the signing key, domain-separated); `IntegrityEnvelopeEncryptionTest`, `RaftLogEncryptionTest`, `SegmentKeyManagerTest`, `LocalKmsEncryptionIntegrationTest`, `EncryptionAtRestWiringTest`; gate-7. **RR-098 closed for v1** (drive-to-green Gate 6) | **OFF by default** (default is integrity-only; "do not store secrets" still applies with encryption off). **ONE-WAY DOOR:** once any `algId=2` record is written, encryption cannot be disabled and the binary cannot be rolled back (recovery fails closed). Encrypts WAL/snapshot/durable-Raft-state; **audit log stays HMAC-only** (v2). No wire change, no cluster key distribution. **v2:** external KMS providers (AWS/Vault) + ServiceLoader discovery, audit-log encryption, groupId-in-AAD for cross-group at-rest integrity at N>1. `secure/` remains a read-*freshness* class, not confidentiality. **Write-path overhead measured 2026-07-02 (release SHA `eb9b293`, single node, 256 B):** throughput knee 1210 -> 1180 w/s (-2.5%), commit p50 7.65 -> 7.77 ms (+1.5%), p99 14.6 -> 36.4 ms (+150%) - low on throughput/median, tail-weighted (per-record AES-GCM + allocation); local-encrypt cost only, no replication fsync in the path (`docs/measurement/ec2-drive-to-green-2026-07-02/gate7-final/`). |
 | 8.3 TLS / mTLS in transit | ✅ | `NettyRaftTransport:301` + `NettyFanOutServer:215` `setNeedClientAuth(true)`; fail-closed `ConfigdServer:345`; gate-7 `RaftTransportMtlsAttackTest`, `EdgeTransportSanMismatchTest` | mTLS required **when TLS configured**, but **TLS is off-by-default** (plaintext single-node); admin HTTP is server-TLS+Bearer, not mTLS |
 | 8.4 Config signing (sign-or-fail-close, ADR-0027 Accepted) | ✅ | `ConfigStateMachine.signCommand` re-throws on failure (`:620`); Ed25519 `ConfigSigner:51`; `ConfigStateMachineTest.signFailureFailsClose` | — |
 | 8.5 Signing-key co-location (D-1) | ✅ | `enforceSigningKeyNotColocated:1066` default `SecurityException`; `D1FailClosedTest`; ADR-0043 | **Δ 🟡→✅.** Caveat: ADR-0043 claims default-relocation but code still defaults to `dataDir` → **server refuses to boot out-of-box** (secure, not as ADR describes); no gate-7.5; HKDF crypto-review pending |
@@ -348,6 +398,7 @@ recommendation for the go/no-go, **not** a decision.
 | 8.10 Rate limiting | ✅ | unconditional global 10k/s `ConfigdServer:646` + per-principal `ConfigWriteService:283`; gates before Raft propose | **Δ 🟡→✅** (only security control not off-by-default) |
 | 8.11 Supply chain | 🟡 | gate-7 OWASP dependency-check (`failBuildOnCVSS=7`) + gitleaks; **nightly-only** (`ci.yml:420`, loud-skip on push/PR); `.gitleaks.toml` clean | CVE + gitleaks **not gated on every merge** |
 | 8.12 gate-7 CI-wired + residuals | ✅ / 🟡 | gate-7 real CI job (`ci.yml:371` `needs: gate-6`), all steps negative tests | residuals OPEN: **F-S7-TLS-1 leaf-anchor cert-expiry**, **active-replay** (passive-only), **WAL tail-truncation**; slowloris/per-principal-RL/metrics-auth **CLOSED in S7.5** |
+| 8.13 **Legacy SUBSCRIBE admission authorization** | ✅ (new; drive-to-green Gate 1 — PR #43) | `FanOutConnectionDriver.admitLegacySubscribe` authorizes the verified identity on a **whole-store READ cover** (`coversTarget(effectiveRules, "", READ)` — root-prefix READ, any intersecting READ deny blocks it) **before** governor admission and before any session command posts (denied ⇒ `NOT_AUTHORIZED`, zero data frames); `WatchAuthorizer.authorizeSubscribe` fail-closed default + `AclServiceWatchAuthorizer` override; `LegacySubscribeAuthzTest`, `AclServiceWatchAuthorizerTest` | **Closes the "any valid mTLS cert pulls the whole store with no per-key ACL" gap when auth is ON.** WATCH is not required (SUBSCRIBE is a read feed). **Caveats:** gated **only when ACL/auth is enabled** — with auth **OFF** but mTLS **ON** the authorizer is absent and every valid cert still pulls the whole store (network segregation is the control); **admission-time only, no bounded revocation** (revoke by disconnecting the session / rotating the edge cert). The edge/hydration cert-DN MUST hold root READ or hydration is refused. See known-limitations section 2 |
 
 ## §9. Performance
 
@@ -387,7 +438,7 @@ recommendation for the go/no-go, **not** a decision.
 | 11.6 Multi-region write topology deferred | ⛔ | **ADR-0024 Accepted**: "v0.1 supports exactly one DC per cluster" | — |
 | 11.7 BATCH API not wired (CM-033) | ❌ | `HttpApiServer` exposes only `GET\|PUT\|DELETE /v1/config/{key}` — no BATCH route; contract §1 "PLANNED, not yet wired" | absent; documented; guard + single-shard atomic-BATCH semantics designed |
 | 11.8 Watches scope decision | ✅ (N=1; was "🟡 → v2"; reconciled 2026-07-01) | **Superseded 2026-06-29 (watch arc, PRs #28/#29/#30):** the RFC §2 client watch protocol is implemented server-side at N=1 — wire `0x02` + `WATCH_*` frames + per-shard cursor vector, whole-target authz gate, bounded revocation (see §4.8/6.6). `docs/rfc/driver-protocol/02-watches.md`. Matches the §0 watch note + go/no-go §2.2 | **N>1 multi-shard watch = v3** (fail-closed); no shipped client driver yet. The prior "watches are v2" call held only for the pre-watch-arc window |
-| 11.9 Snapshot 4 MiB cap / chunked deferred | 🟡 | `known-limitations.md:76`; `RaftMessageCodec.java:74` enforced | followers can't bootstrap from >4 MiB snapshot in v1 |
+| 11.9 Snapshot transfer chunked (4 MiB ceiling lifted) | ✅ (was 🟡; reconciled 2026-07-02) | chunked `InstallSnapshot` (drive-to-green Gate 5); known-limitations "Snapshot transfer: chunked"; `ChunkedInstallSnapshotTest` | followers can now bootstrap from an arbitrarily large snapshot (streamed as chunks), bounded by follower heap + a fail-closed 512 MiB reassembly cap; deploy-together requirement. See §1.7 / §3.10 |
 | 11.10 Wire epoch field deferred (DL-P1-04) | 🟡 | in-memory `ShardMap.epoch()` returns 0; wire field deferred | **OPEN operator decision** (reserve-now vs v2 wire break) |
 | 11.11 Write-availability target renegotiated | ⛔ | **ADR-0031 Accepted, option (a)** (ratified by owner): keep 99.999% flat target; **sub-second auto region-failover = a GA BLOCKER** | declares an open GA blocker |
 | 11.12 Empirical-validation deferred to prod observation | ✅ (was 🟡; reconciled 2026-07-01) — **with residuals** | **Substantially discharged on metal** (two EC2 runs): DR drills (7.5), 6 h soak (9.7), near-linear N×knee (2.11/9.2). `docs/measurement/ec2-2026-06-30/05-go-no-go-summary.md` + `docs/measurement/ec2-horizontal-2026-07-01/04-verdict.md` | **Residuals (burn-in, precisely bounded):** no 24 h/72 h soak, no literal 10 k/s sustained, no WAN; DR on single-box topology. go/no-go §5.1 / condition C4 |
@@ -397,12 +448,12 @@ recommendation for the go/no-go, **not** a decision.
 | # | Open call | Evidence today | Decision needed |
 |---|---|---|---|
 | D-1 | **RESOLVED 2026-06-27 — ADR-0030 + ADR-0032 ratified (Accepted)** | both were *Proposed*; now **Accepted** with reality-update notes (pre-EC2 cleanup) | ✅ done — consistency contract + linz proof now rest on Accepted ADRs |
-| D-2 | **DECIDED 2026-06-27 — encryption at rest = accept-as-v2** (operator) | 8.2 ❌; RR-098 OPEN → v2 | ✅ decided — v1 ships without at-rest encryption; `secure/` = freshness-not-confidentiality + "do not store secrets" documented (known-limitations / README / Integration-Guide / contract); RR-098 tracked to v2 |
+| D-2 | **RESOLVED 2026-07-02 — encryption at rest BUILT + available behind a flag** (drive-to-green Gate 6); supersedes the 2026-06-27 accept-as-v2 | 8.2 ✅ (was ❌); **RR-098 closed for v1** | ✅ done — v1 *can* encrypt (node-local AES-256-GCM, `-Dconfigd.raft.encryption.enabled`, off by default) + a KMS-provider SPI. ONE-WAY DOOR once enabled. Default stays integrity-only so "do not store secrets (with encryption off)" still applies; external KMS / audit-log encryption / groupId-in-AAD (N>1) = v2 |
 | D-3 | **Security on-by-default vs operator-config** | auth/TLS/audit/replay off-by-default (8.3/8.6/8.8/8.9); signing-key already refuses-to-boot | choose secure-by-default (or refuse-to-boot-insecure) + document required operator config |
 | D-4 | **Empirical-validation / burn-in posture** | 9.7 soak incomplete; 7.5 drills never run; 11.12 | accept the "first-30-days = burn-in" contract, or gate v1 on a completed soak + DR drills |
 | D-5 | **Wire epoch reservation (DL-P1-04)** | in-memory epoch present; wire field deferred | reserve now (one v1 `WIRE_VERSION` bump) vs accept a v2 wire break |
 | D-6 | **Sub-second region failover (ADR-0031 GA blocker)** | Accepted ADR declares it a GA blocker; not built | confirm v1 ships without it (single-DC) and it's a tracked GA gate |
-| D-7 | **Snapshot 4 MiB cap** | 1.7/3.10 enforced; over-cap dropped to stderr | accept as documented v1 limitation + add the drop metric/alert, or pull chunked install into v1 |
+| D-7 | **RESOLVED 2026-07-02 — chunked InstallSnapshot pulled into v1** (drive-to-green Gate 5); 4 MiB total-state ceiling lifted | 1.7/3.10/11.9 ✅; heap-bounded fail-closed reassembly cap (default 512 MiB) | ✅ done via chunked install (not "accept-as-limitation") — the over-cap **drop path is removed** for the snapshot case. Residual: **deploy-together requirement** (silent corruption if mixed with a pre-chunking node) + the reassembly-cap refusal is **log-only** (a dedicated drop/refusal metric stays a v2 observability follow-up) |
 | D-8 | **Dead code: BloomFilter / Buggify / RolloutController** | 5.11/10.12/4.10 dormant, zero callers | wire or delete before v1 (avoid shipping shelfware that reads as "done") |
 
 ---

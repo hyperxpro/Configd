@@ -1,0 +1,5 @@
+INV-S2 DEFINITIVE (release SHA eb9b293):
+  SMOKE 4-edge/500wps/180s/7200: p50=8 p99=24 p999=107 p9999=117 max=117 ms (CLEAN)
+  30MIN 1-edge/100wps/18000: p50=12 p99=13 p999=43 p9999=212 max=232 ms (CLEAN)
+  BOUND: p99<500ms MET (38x), p9999<2s MET (9.4x). PASS.
+  Note: multi-edge sustained runs hit co-location contention; naive reducer contaminated by aborted-run stale samples; clean per-edge steady-state excellent.
