@@ -203,6 +203,18 @@ jobs:
             nightly_flags: 'GATE_PHASE1_SKIP_CHAIN=1 GATE_PHASE1_SWEEP_COUNT=10000'
             timeout_fast: 30
             timeout_nightly: 45
+          # Multi-shard client-facing WATCH seal: the aggregating fan-out/fan-in
+          # coordinator, the shard-complete _acl/ authz plane (the B6 regression), the
+          # guard-flip legacy-SUBSCRIBE split, and edge wire byte-stability. Same work
+          # on every event (targeted, fast); no chain.
+          - name: multi-shard-watch
+            script: gates/gate-mswatch.sh
+            log_env: GATE_MSWATCH_LOG_DIR
+            needs_go: false
+            fast_flags: ''
+            nightly_flags: ''
+            timeout_fast: 25
+            timeout_nightly: 25
     steps:
       # None of the matrixed gates need git history; the two verification jobs
       # that do (security-and-supply-chain, multiraft-merge-seal) are separate.
