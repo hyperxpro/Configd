@@ -235,12 +235,14 @@ final class WatchMultiplexSink implements TransportSink {
     }
 
     private boolean translateNotify(EdgeFrame.Notify n) {
-        // Fan one connection-level NOTIFY out to each live watch, filtered by its target. One
-        // WATCH_EVENT per (matching) shard-commit (W5-6) - never split, never coalesced. A
-        // refused delegate.offer is the W8-6 shared-fate backpressure: return false so the core
-        // demotes (clears in-flight, snapshots); the undelivered tail is re-driven and the
-        // driver dedups by S (W6-1). Iterate watches outer / notifications inner so each
-        // (watch_id, gid) substream stays contiguous and ascending in S.
+        // Fan this shard's NOTIFY out to each live watch, filtered by its target. One WATCH_EVENT per
+        // (matching) shard-commit (W5-6) - never split, never coalesced - tagged with this shard's gid.
+        // A watch whose target has no key on this shard matches nothing here (a KEY on another shard),
+        // so per-shard cores need no per-watch coverage subsetting for delivery. A refused delegate.offer
+        // is the W8-6 shared-fate backpressure: return false so the core demotes (clears in-flight,
+        // snapshots); the undelivered tail is re-driven and the driver dedups by S (W6-1). Iterate
+        // watches outer / notifications inner so each (watch_id, gid) substream stays contiguous and
+        // ascending in S.
         for (WatchRegistry.WatchEntry entry : registry.liveEntries()) {
             WatchTarget target = entry.target();
             for (CommitNotification cn : n.notifications()) {
