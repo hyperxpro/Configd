@@ -967,8 +967,24 @@ public final class ConfigdServer {
             // primary-shard-only view. The edge endpoint binds the primary shard's buffer/replay below.
             io.configd.server.fanout.RegistryFanOutSessionMetrics fanOutMetrics =
                     new io.configd.server.fanout.RegistryFanOutSessionMetrics(metricsRegistry);
-            io.configd.distribution.ReplaySource edgeReplaySource =
-                    new io.configd.distribution.SnapshotReplaySource(stateMachine.store()::snapshot);
+            // The per-shard sources + replay sources + shard set + resolver the multi-shard
+            // fan-out/fan-in coordinator (Gate 3) fans a watch across: one FanOutBuffer and one
+            // snapshot replay per group (the same per-gid runtimes registerShardedFanOut / the ACL
+            // loader read), the shard set, and a ShardMap-backed resolver (KEY -> shardFor; PREFIX/FULL
+            // -> shardIds()). At N=1 - the boot guard's invariant for the edge endpoint - these are
+            // single-entry maps and the single-shard resolver, so one core is the pre-Gate-3 drain
+            // (byte-identical). The N>1 wiring is dormant until Gate 4 lifts the guard.
+            Map<Integer, io.configd.distribution.CommitNotificationSource> edgeShardSources =
+                    new java.util.LinkedHashMap<>(shardFanOutBuffers);
+            Map<Integer, io.configd.distribution.ReplaySource> edgeShardReplaySources =
+                    new java.util.LinkedHashMap<>();
+            for (RaftGroupRuntime rt : runtimes) {
+                edgeShardReplaySources.put(rt.groupId(),
+                        new io.configd.distribution.SnapshotReplaySource(rt.configStore()::snapshot));
+            }
+            int[] edgeAllGids = shardMap.shardIds().toArray();
+            io.configd.distribution.fanout.ShardResolver edgeShardResolver =
+                    new io.configd.server.fanout.ShardMapResolver(shardMap);
             // The slow-consumer governor (per-cert-identity quarantine / unhealthy policy) - consulted
             // by the FanOutServer at SUBSCRIBE and fed by the per-session demotion/ack/queue signals.
             io.configd.distribution.fanout.SlowConsumerGovernor slowConsumerGovernor =
@@ -1000,8 +1016,9 @@ public final class ConfigdServer {
                             .withServerSidePrefixFilter(resolveEdgeFilterPosture(),
                                     strongReadPolicy.prefixes());
             fanOutServer = new io.configd.server.fanout.NettyFanOutServer(
+                    edgeShardSources, edgeShardReplaySources, edgeAllGids, edgeShardResolver,
                     new InetSocketAddress(config.bindAddress(), config.edgePort()),
-                    tlsManager, fanOutBuffer, edgeReplaySource,
+                    tlsManager,
                     fanOutConfig,
                     io.configd.server.fanout.FanOutServer.DEFAULT_TRANSPORT_QUEUE_FRAMES,
                     io.configd.server.fanout.FanOutServer.DEFAULT_MAX_SESSIONS,

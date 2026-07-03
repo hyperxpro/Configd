@@ -6,6 +6,7 @@ import io.configd.distribution.ReplaySource;
 import io.configd.distribution.fanout.FanOutConfig;
 import io.configd.distribution.fanout.FanOutConnectionDriver;
 import io.configd.distribution.fanout.FanOutSessionCore;
+import io.configd.distribution.fanout.ShardResolver;
 import io.configd.distribution.fanout.SlowConsumerGovernor;
 import io.configd.distribution.fanout.SlowConsumerPolicyConfig;
 import io.configd.distribution.fanout.TransportSink;
@@ -26,6 +27,7 @@ import java.io.OutputStream;
 import java.net.InetSocketAddress;
 import java.net.ServerSocket;
 import java.net.Socket;
+import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.ConcurrentHashMap;
@@ -88,10 +90,19 @@ public final class FanOutServer implements FanOutEndpoint {
      */
     public static final int DEFAULT_MAX_SESSIONS = 1_024;
 
+    /** The single-shard resolver the pre-Gate-3 (single-source) constructors bind: every target -> gid 0. */
+    private static final ShardResolver SINGLE_SHARD = t -> new int[]{0};
+
     private final InetSocketAddress bindAddress;
     private final TlsManager tlsManager;
-    private final CommitNotificationSource source;
-    private final ReplaySource replaySource;
+    /** gid -> that shard's commit source; single-entry {@code {0 -> source}} for the single-shard ctors. */
+    private final Map<Integer, CommitNotificationSource> shardSources;
+    /** gid -> that shard's replay source; single-entry for the single-shard ctors. */
+    private final Map<Integer, ReplaySource> shardReplaySources;
+    /** The connection's shard set, ascending ({@code [0, N)}); {@code {0}} for the single-shard ctors. */
+    private final int[] allGids;
+    /** Resolves a watch target to its covered shard set; {@link #SINGLE_SHARD} for the single-shard ctors. */
+    private final ShardResolver shardResolver;
     private final FanOutConfig config;
     private final int transportQueueFrames;
     private final int maxSessions;
@@ -182,10 +193,38 @@ public final class FanOutServer implements FanOutEndpoint {
                         RegistryFanOutSessionMetrics metrics,
                         Clock clock,
                         WatchAuthorizer authorizer) {
+        this(Map.of(0, java.util.Objects.requireNonNull(source, "source")),
+                Map.of(0, java.util.Objects.requireNonNull(replaySource, "replaySource")),
+                new int[]{0}, SINGLE_SHARD, bindAddress, tlsManager, config, transportQueueFrames,
+                maxSessions, governor, metrics, clock, authorizer);
+    }
+
+    /**
+     * The multi-shard constructor: the per-shard commit sources + replay sources + shard set +
+     * resolver the fan-out/fan-in coordinator fans a watch across. At {@code N = 1} the single-source
+     * constructors delegate here with single-entry maps and the single-shard resolver, so one core is
+     * the pre-Gate-3 drain (byte-identical). {@code ConfigdServer} threads the real per-shard maps.
+     */
+    public FanOutServer(Map<Integer, CommitNotificationSource> shardSources,
+                        Map<Integer, ReplaySource> shardReplaySources,
+                        int[] allGids,
+                        ShardResolver shardResolver,
+                        InetSocketAddress bindAddress,
+                        TlsManager tlsManager,
+                        FanOutConfig config,
+                        int transportQueueFrames,
+                        int maxSessions,
+                        SlowConsumerGovernor governor,
+                        RegistryFanOutSessionMetrics metrics,
+                        Clock clock,
+                        WatchAuthorizer authorizer) {
+        this.shardSources = Map.copyOf(java.util.Objects.requireNonNull(shardSources, "shardSources"));
+        this.shardReplaySources =
+                Map.copyOf(java.util.Objects.requireNonNull(shardReplaySources, "shardReplaySources"));
+        this.allGids = java.util.Objects.requireNonNull(allGids, "allGids").clone();
+        this.shardResolver = java.util.Objects.requireNonNull(shardResolver, "shardResolver");
         this.bindAddress = java.util.Objects.requireNonNull(bindAddress, "bindAddress");
         this.tlsManager = tlsManager; // null = plaintext (test/single-node)
-        this.source = java.util.Objects.requireNonNull(source, "source");
-        this.replaySource = java.util.Objects.requireNonNull(replaySource, "replaySource");
         this.config = java.util.Objects.requireNonNull(config, "config");
         if (transportQueueFrames <= 0) {
             throw new IllegalArgumentException("transportQueueFrames must be positive: " + transportQueueFrames);
@@ -415,8 +454,9 @@ public final class FanOutServer implements FanOutEndpoint {
             // the reader sees SUBSCRIBE so onSubscribe (run on the session thread) can emit
             // SUBSCRIBE_OK; the driver's demotion arm tears the connection down with the on-wire
             // ErrorCode.QUARANTINED (code 8) + socket close when policy trips.
-            this.driver = new FanOutConnectionDriver(source, replaySource, this, config, metrics,
-                    clock, governor, edgeIdentity, this::teardown, authorizer);
+            this.driver = new FanOutConnectionDriver(shardSources, shardReplaySources, allGids,
+                    shardResolver, this, config, metrics, clock, governor, edgeIdentity, this::teardown,
+                    authorizer);
             metrics.onSubscriberConnected();
 
             Thread writer = Thread.ofVirtual().name("edge-writer-" + edgeIdentity).unstarted(this::writerLoop);
