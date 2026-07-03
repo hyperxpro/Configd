@@ -168,6 +168,12 @@ public final class ConfigdServer {
     private final RaftTransportEndpoint tcpTransport; // Netty consensus transport; nullable when peer addresses not configured
     /** Fan-out edge endpoint; null when {@code --edge-port} is absent. */
     private final io.configd.server.fanout.FanOutEndpoint fanOutServer;
+    /**
+     * The config-policy loader ({@code null} when auth is disabled). Retained so {@link #shutdown()} can
+     * drain its worker thread; at N&gt;1 the loader owns a daemon {@code configd-acl-policy-loader} thread
+     * that would otherwise park for the process lifetime (a leak across repeated N&gt;1 start/stop cycles).
+     */
+    private final AclConfigPolicyLoader aclPolicyLoader;
 
     // Distribution layer
     private final WatchService watchService;
@@ -189,6 +195,7 @@ public final class ConfigdServer {
                           NettyHttpApiServer httpApiServer,
                           RaftTransportEndpoint tcpTransport,
                           io.configd.server.fanout.FanOutEndpoint fanOutServer,
+                          AclConfigPolicyLoader aclPolicyLoader,
                           WatchService watchService,
                           FanOutBuffer fanOutBuffer,
                           Compactor compactor,
@@ -205,6 +212,7 @@ public final class ConfigdServer {
         this.tlsReloadExecutor = tlsReloadExecutor;
         this.httpApiServer = httpApiServer;
         this.tcpTransport = tcpTransport;
+        this.aclPolicyLoader = aclPolicyLoader;
         this.fanOutServer = fanOutServer;
         this.watchService = watchService;
         this.fanOutBuffer = fanOutBuffer;
@@ -681,6 +689,7 @@ public final class ConfigdServer {
         // ---------------------------------------------------------------
         AuthInterceptor authInterceptor = null;
         AclService aclService = null;
+        AclConfigPolicyLoader aclPolicyLoader = null;
         if (!config.authEnabled()) {
             System.err.println("WARNING: ************************************************************");
             System.err.println("WARNING: Authentication is DISABLED (--auth-token not set).");
@@ -709,14 +718,35 @@ public final class ConfigdServer {
             // Config-sourced policy under `_acl/`. ADDITIVE on top of the static grant above (no `_acl/`
             // keys in production = empty snapshot = byte-identical). Registered BEFORE the tick loop so it
             // observes every `_acl/`-touching apply; the snapshot-install hook covers follower catch-up;
-            // the boot seed (rebuild) catches a snapshot-restored prefix. Fail-closed-to-last-good on
-            // malformed policy; the reserved role/principal names neutralize the carve footgun.
-            AclConfigPolicyLoader aclPolicyLoader = new AclConfigPolicyLoader(
-                    aclService, stateMachine.store(),
-                    AclConfigPolicyLoader.RESERVED_ROLES, AclConfigPolicyLoader.RESERVED_PRINCIPALS, metricsRegistry);
-            stateMachine.addListener(aclPolicyLoader::onConfigChange);
-            stateMachine.addSnapshotListener(aclPolicyLoader::onSnapshotInstalled);
-            aclPolicyLoader.rebuild(); // boot seed
+            // the boot seed catches a snapshot-restored prefix. Fail-closed-to-last-good on malformed
+            // policy; the reserved role/principal names neutralize the carve footgun.
+            if (shardCount == 1) {
+                // N=1: single-store loader on the primary state machine - byte-identical to the prior wiring.
+                aclPolicyLoader = new AclConfigPolicyLoader(
+                        aclService, stateMachine.store(),
+                        AclConfigPolicyLoader.RESERVED_ROLES, AclConfigPolicyLoader.RESERVED_PRINCIPALS,
+                        metricsRegistry);
+                stateMachine.addListener(aclPolicyLoader::onConfigChange);
+                stateMachine.addSnapshotListener(aclPolicyLoader::onSnapshotInstalled);
+            } else {
+                // N>1: `_acl/` keys hash-scatter across all groups, so the loader must scatter-gather every
+                // group's store and observe every group's applies. Otherwise a role/binding/DENY on a
+                // non-primary shard is silently absent from the policy snapshot (an under-deny bypass) and
+                // its apply never advances configPolicyVersion() (so bounded watch revocation misses it).
+                List<VersionedConfigStore> perShardStores = new ArrayList<>(runtimes.size());
+                for (RaftGroupRuntime rt : runtimes) {
+                    perShardStores.add(rt.configStore());
+                }
+                aclPolicyLoader = new AclConfigPolicyLoader(
+                        aclService, perShardStores,
+                        AclConfigPolicyLoader.RESERVED_ROLES, AclConfigPolicyLoader.RESERVED_PRINCIPALS,
+                        metricsRegistry);
+                for (RaftGroupRuntime rt : runtimes) {
+                    rt.stateMachine().addListener(aclPolicyLoader::onConfigChange);
+                    rt.stateMachine().addSnapshotListener(aclPolicyLoader::onSnapshotInstalled);
+                }
+            }
+            aclPolicyLoader.bootSeed(); // boot seed (N=1 inline; N>1 serialized through the worker, awaited)
         }
 
         // ---------------------------------------------------------------
@@ -998,7 +1028,7 @@ public final class ConfigdServer {
         ConfigdServer server = new ConfigdServer(
                 config, driver, stateMachine,
                 ownerPool, readDispatchExecutor, tlsReloadExecutor,
-                httpApiServer, tcpTransport, fanOutServer,
+                httpApiServer, tcpTransport, fanOutServer, aclPolicyLoader,
                 watchService, fanOutBuffer, compactor, plumtreeNode, hyParViewOverlay,
                 subscriptionManager, rolloutController, prometheusExporter);
 
@@ -1131,6 +1161,12 @@ public final class ConfigdServer {
         // fallback as the other executors, preserving the prior single-`tickExecutor` semantics.
         for (int i = 0; i < ownerPool.size(); i++) {
             shutdownExecutor(ownerPool.ownerByIndex(i), "raft-owner-" + i, 5);
+        }
+        // Drain the config-policy loader worker AFTER the owner pool is stopped: no apply-thread
+        // onConfigChange can then enqueue onto a shut worker (which would throw RejectedExecutionException).
+        // No-op at N=1 (no worker) and when auth is disabled (null loader).
+        if (aclPolicyLoader != null) {
+            aclPolicyLoader.close();
         }
         // Slow I/O executor can be shut down last - it is independent.
         shutdownExecutor(tlsReloadExecutor, "tls-reload", 2);

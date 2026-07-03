@@ -15,6 +15,12 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 
@@ -40,16 +46,42 @@ import java.util.logging.Logger;
  *
  * <h2>Threading - non-blocking on the apply/owner thread</h2>
  * {@link #onConfigChange} runs on the Raft apply/owner thread. It first does a cheap O(delta) scan of the
- * mutation list and returns immediately unless an {@code _acl/} key was touched; only then does it run the
+ * mutation list and returns immediately unless an {@code _acl/} key was touched; only then does it request a
  * rebuild. The rebuild scan is <b>O(total store keys)</b> (a full snapshot scan - the HAMT has no ordered
- * prefix iteration), <b>not</b> O(policy size); it runs on the owner thread, so on a very large store an
- * {@code _acl/}-touching apply (or a snapshot install) is a bounded but non-trivial owner-thread cost. In
+ * prefix iteration), <b>not</b> O(policy size); at N=1 it runs on the owner thread, so on a very large store
+ * an {@code _acl/}-touching apply (or a snapshot install) is a bounded but non-trivial owner-thread cost. In
  * production no {@code _acl/} key is ever written, so the gate always short-circuits and the apply loop
  * carries <b>zero</b> added cost; {@code _acl/} writes are rare admin ops. ({@link #onSnapshotInstalled}
  * rebuilds unconditionally - snapshot installs are rare and carry no per-key signal.) The loader holds no
  * mutable state beyond thread-safe counters; concurrent boot-seed / apply-thread rebuilds are safe AND
  * recency-correct because the publish is <b>version-ordered</b> - a rebuild that scanned an older store
  * version cannot clobber a newer one (see {@link AclService#publishConfigPolicy(long, ConfigPolicy)}).
+ *
+ * <h2>Sharding - single-store at N=1, scatter-gather at N&gt;1</h2>
+ * {@code _acl/roles/X} / {@code _acl/bindings/Y} are ordinary keys routed by {@code shardFor(scope, key)},
+ * so at N&gt;1 they <b>scatter across all N Raft groups</b>. Every node holds every group's store, so a
+ * loader that read only the primary group's store would observe ~1/N of the policy - a role/binding/DENY on
+ * a non-primary shard would be silently absent (an under-deny authorization bypass) and its apply would not
+ * advance {@link AclService#configPolicyVersion()} (so bounded watch revocation would never fire for it).
+ * This loader therefore runs in one of two modes, selected by construction:
+ * <ul>
+ *   <li><b>Single-store (N=1)</b> - the historical path, byte-identical: one store, listeners on the primary
+ *       state machine, {@link #rebuild} inline on the owner/restore/boot thread, publish ordered by the
+ *       scanned {@code store.getPrefixVersioned(...)} version.</li>
+ *   <li><b>Multi-shard (N&gt;1)</b> - the loader is constructed with every group's store and its listeners
+ *       are registered on every group's state machine. A rebuild is a <b>scatter-gather</b>: read
+ *       {@code _acl/} from every store (keys are disjoint across stores by deterministic routing, so the
+ *       merge never collides) into one map, then the SAME parse / reserved-validate / publish. Every rebuild
+ *       runs on ONE dedicated daemon worker thread ({@code configd-acl-policy-loader}), so all rebuilds are
+ *       serialized: the last rebuild after the last {@code _acl/} apply reads every shard's latest committed
+ *       state and converges to the union, with no cross-shard version vector and no lost update. Because the
+ *       per-shard store versions are incomparable, the publish order is a <b>node-local monotonic counter</b>
+ *       instead of a store version; that counter is exactly the {@link AclService#configPolicyVersion()} the
+ *       per-connection W7-7 re-authorization consumes on the same node (nothing compares it across nodes).
+ *       The apply-thread listener does only the cheap O(delta) gate then hands the scan to the worker, so it
+ *       is strictly lighter than the N=1 inline rebuild - fully aligned with the non-blocking listener
+ *       contract.</li>
+ * </ul>
  *
  * <h2>"admin" footgun neutralization (reserved names)</h2>
  * The break-glass root principal's authority is its static {@code acls} grant; a config role could only
@@ -58,7 +90,7 @@ import java.util.logging.Logger;
  * to a reserved principal ({@code root}) or defines a reserved role name ({@code admin}). So no
  * config-loaded role can carve root.
  */
-final class AclConfigPolicyLoader {
+final class AclConfigPolicyLoader implements AutoCloseable {
 
     private static final Logger LOG = Logger.getLogger(AclConfigPolicyLoader.class.getName());
 
@@ -81,13 +113,30 @@ final class AclConfigPolicyLoader {
     static final Set<String> RESERVED_PRINCIPALS = Set.of(RESERVED_PRINCIPAL_ROOT);
 
     private final AclService aclService;
-    private final VersionedConfigStore store;
+    /** The config stores to scan: exactly one at N=1, or one per group (gid-ordered) at N&gt;1. */
+    private final List<VersionedConfigStore> stores;
+    private final boolean multiShard;
+    /**
+     * The serialization worker for multi-shard rebuilds ({@code null} at N=1). One daemon thread runs every
+     * rebuild in FIFO order so a fresh scatter-gather always follows the applies that enqueued it.
+     */
+    private final ExecutorService worker;
+    /**
+     * The node-local publish-ordering counter for multi-shard mode ({@code null} at N=1). Assigned on the
+     * worker thread, strictly increasing, so {@link AclService#publishConfigPolicy(long, ConfigPolicy)}'s
+     * monotonic guard never spuriously drops a publish (per-shard store versions are incomparable, so a
+     * store version cannot serve as the cross-shard order).
+     */
+    private final AtomicLong nodeLocalVersion;
     private final Set<String> reservedRoles;
     private final Set<String> reservedPrincipals;
     private final MetricsRegistry.Counter loadFailed;
     private final MetricsRegistry.Counter reloaded;
 
     /**
+     * Single-store loader (N=1) - the historical, byte-identical path: one store, inline rebuild, publish
+     * ordered by the scanned store version.
+     *
      * @param aclService         the ACL service to publish the config-policy snapshot into (non-null)
      * @param store              the primary config store to read the {@code _acl/} subtree from (non-null)
      * @param reservedRoles      role names a config policy may NOT define (e.g. {@code admin}) (non-null)
@@ -97,33 +146,99 @@ final class AclConfigPolicyLoader {
     AclConfigPolicyLoader(AclService aclService, VersionedConfigStore store,
                           Set<String> reservedRoles, Set<String> reservedPrincipals,
                           MetricsRegistry metricsRegistry) {
+        this(aclService, List.of(Objects.requireNonNull(store, "store must not be null")), false,
+                reservedRoles, reservedPrincipals, metricsRegistry);
+    }
+
+    /**
+     * Multi-shard loader (N&gt;1): scatter-gather {@code _acl/} across every group's store, serialized on a
+     * dedicated worker thread, published under a node-local monotonic counter. The caller registers this
+     * loader's {@link #onConfigChange} / {@link #onSnapshotInstalled} on EVERY group's state machine so no
+     * shard's {@code _acl/} apply is missed.
+     *
+     * @param perShardStores     every group's config store, one entry per shard (size &gt;= 2; non-null)
+     * @param reservedRoles      role names a config policy may NOT define (e.g. {@code admin}) (non-null)
+     * @param reservedPrincipals principals a config policy may NOT bind roles to (e.g. {@code root}) (non-null)
+     * @param metricsRegistry    registry for the load-failed / reload counters (non-null)
+     * @throws IllegalArgumentException if {@code perShardStores} has fewer than 2 stores (use the
+     *                                  single-store constructor at N=1)
+     */
+    AclConfigPolicyLoader(AclService aclService, List<VersionedConfigStore> perShardStores,
+                          Set<String> reservedRoles, Set<String> reservedPrincipals,
+                          MetricsRegistry metricsRegistry) {
+        this(aclService, requireMultiShardStores(perShardStores), true,
+                reservedRoles, reservedPrincipals, metricsRegistry);
+    }
+
+    private AclConfigPolicyLoader(AclService aclService, List<VersionedConfigStore> stores, boolean multiShard,
+                                  Set<String> reservedRoles, Set<String> reservedPrincipals,
+                                  MetricsRegistry metricsRegistry) {
         this.aclService = Objects.requireNonNull(aclService, "aclService must not be null");
-        this.store = Objects.requireNonNull(store, "store must not be null");
+        this.stores = List.copyOf(stores);
+        this.multiShard = multiShard;
         this.reservedRoles = Set.copyOf(Objects.requireNonNull(reservedRoles, "reservedRoles must not be null"));
         this.reservedPrincipals =
                 Set.copyOf(Objects.requireNonNull(reservedPrincipals, "reservedPrincipals must not be null"));
         Objects.requireNonNull(metricsRegistry, "metricsRegistry must not be null");
+        if (multiShard) {
+            this.worker = Executors.newSingleThreadExecutor(r -> {
+                Thread t = new Thread(r, "configd-acl-policy-loader");
+                t.setDaemon(true);
+                return t;
+            });
+            this.nodeLocalVersion = new AtomicLong();
+        } else {
+            this.worker = null;
+            this.nodeLocalVersion = null;
+        }
         // Eager creation so the first scrape emits "_total 0" (no blind-dashboard series).
         this.loadFailed = metricsRegistry.counter(NAME_POLICY_LOAD_FAILED);
         this.reloaded = metricsRegistry.counter(NAME_POLICY_RELOAD);
     }
 
+    private static List<VersionedConfigStore> requireMultiShardStores(List<VersionedConfigStore> stores) {
+        Objects.requireNonNull(stores, "perShardStores must not be null");
+        if (stores.size() < 2) {
+            throw new IllegalArgumentException(
+                    "multi-shard loader requires >= 2 stores (use the single-store constructor at N=1), got "
+                            + stores.size());
+        }
+        return stores;
+    }
+
     /**
      * Idempotent whole-subtree rebuild: re-read {@code _acl/}, parse + validate, and atomically publish.
-     * On any failure, keeps the last-good snapshot (fail-closed; never deny-all / allow-all).
+     * On any failure, keeps the last-good snapshot (fail-closed; never deny-all / allow-all). At N=1 the
+     * scan is the single store and the publish is ordered by its store version; at N&gt;1 the scan is a
+     * scatter-gather over every group's store, published under the node-local monotonic counter (and this
+     * method runs only on the serialization worker). The parse / reserved-validate / publish / metrics /
+     * fail-closed catch are shared across both modes.
      */
     void rebuild() {
         try {
-            // Scan the _acl/ subtree AND the store version it was read at, from ONE consistent snapshot, so
-            // the publish below can be ordered monotonically (a stale rebuild never clobbers a newer one).
-            VersionedConfigStore.PrefixScan scan = store.getPrefixVersioned(PolicySerializer.ACL_PREFIX);
-            Map<String, byte[]> bytes = new HashMap<>(scan.entries().size());
-            for (Map.Entry<String, ReadResult> e : scan.entries().entrySet()) {
-                bytes.put(e.getKey(), e.getValue().value());
+            Map<String, byte[]> bytes;
+            long singleShardVersion = 0L;
+            if (multiShard) {
+                // Scatter-gather: merge every group's _acl/ keys. Keys are disjoint across stores by
+                // deterministic routing (shardFor), so no put ever overwrites another shard's entry.
+                bytes = new HashMap<>();
+                for (VersionedConfigStore s : stores) {
+                    mergeInto(s.getPrefixVersioned(PolicySerializer.ACL_PREFIX), bytes);
+                }
+            } else {
+                // Scan the _acl/ subtree AND the store version it was read at, from ONE consistent snapshot,
+                // so the publish below is ordered monotonically (a stale rebuild never clobbers a newer one).
+                VersionedConfigStore.PrefixScan scan = stores.get(0).getPrefixVersioned(PolicySerializer.ACL_PREFIX);
+                bytes = new HashMap<>(scan.entries().size());
+                mergeInto(scan, bytes);
+                singleShardVersion = scan.version();
             }
             ConfigPolicy policy = PolicySerializer.parse(bytes);
             validateReserved(policy);
-            aclService.publishConfigPolicy(scan.version(), policy);
+            // N=1: order by the scanned store version. N>1: the per-shard versions are incomparable, so
+            // order by a node-local counter bumped only on a successful reload (strictly increasing).
+            long version = multiShard ? nodeLocalVersion.incrementAndGet() : singleShardVersion;
+            aclService.publishConfigPolicy(version, policy);
             reloaded.increment();
             LOG.info(() -> "ACL config policy loaded: " + policy.roles().size() + " role(s), "
                     + policy.bindings().size() + " binding(s)");
@@ -135,14 +250,32 @@ final class AclConfigPolicyLoader {
         }
     }
 
+    private static void mergeInto(VersionedConfigStore.PrefixScan scan, Map<String, byte[]> out) {
+        for (Map.Entry<String, ReadResult> e : scan.entries().entrySet()) {
+            out.put(e.getKey(), e.getValue().value());
+        }
+    }
+
     /**
-     * Apply-thread listener. Gated on the delta actually touching {@code _acl/} so the expensive rebuild
-     * runs only when policy changed; otherwise returns immediately (zero added apply-loop cost).
+     * Requests a rebuild: inline at N=1 (byte-identical to the historical path); enqueued onto the
+     * serialization worker at N&gt;1 so the expensive scatter-gather runs off the apply/restore thread.
+     */
+    private void requestRebuild() {
+        if (multiShard) {
+            worker.execute(this::rebuild);
+        } else {
+            rebuild();
+        }
+    }
+
+    /**
+     * Apply-thread listener. Gated on the delta actually touching {@code _acl/} so a rebuild runs only when
+     * policy changed; otherwise returns immediately (zero added apply-loop cost).
      */
     void onConfigChange(List<ConfigMutation> mutations, long version) {
         for (ConfigMutation m : mutations) {
             if (m.key().startsWith(PolicySerializer.ACL_PREFIX)) {
-                rebuild();
+                requestRebuild();
                 return;
             }
         }
@@ -150,7 +283,82 @@ final class AclConfigPolicyLoader {
 
     /** Snapshot-install listener: a wholesale store replacement may have changed {@code _acl/}; rebuild. */
     void onSnapshotInstalled() {
-        rebuild();
+        requestRebuild();
+    }
+
+    /**
+     * Seeds the initial policy before the node serves. At N=1 this is an inline {@link #rebuild} (identical
+     * to the historical boot call); at N&gt;1 it is submitted through the worker and awaited, so the policy
+     * is seeded before serving AND is serialized with any apply-triggered rebuilds that fired between
+     * listener registration and this call (whichever runs last reads the freshest state - convergence). The
+     * wait is uninterruptible: a boot must complete its seed regardless of an interrupt.
+     */
+    void bootSeed() {
+        if (multiShard) {
+            getUninterruptibly(worker.submit(this::rebuild));
+        } else {
+            rebuild();
+        }
+    }
+
+    /**
+     * Test/drain seam: block until every enqueued rebuild has completed (no-op at N=1, where rebuilds run
+     * inline). A pure FIFO barrier submitted behind any pending rebuilds, so on return the worker has
+     * quiesced. Not part of the runtime contract; used by tests to make the asynchronous path deterministic.
+     */
+    void awaitQuiescence() {
+        if (multiShard) {
+            getUninterruptibly(worker.submit(() -> { }));
+        }
+    }
+
+    /**
+     * Waits for a worker task uninterruptibly, restoring the interrupt flag on return. A {@code rebuild}
+     * task is itself fail-closed and never throws a {@link RuntimeException}; an {@link Error} (or an
+     * unexpected throwable) surfaces here as an {@link ExecutionException} and is rethrown so a boot/seed
+     * failure is loud rather than swallowed.
+     */
+    private static void getUninterruptibly(Future<?> future) {
+        boolean interrupted = false;
+        try {
+            while (true) {
+                try {
+                    future.get();
+                    return;
+                } catch (InterruptedException e) {
+                    interrupted = true;
+                } catch (ExecutionException e) {
+                    Throwable cause = e.getCause();
+                    if (cause instanceof RuntimeException re) {
+                        throw re;
+                    }
+                    if (cause instanceof Error err) {
+                        throw err;
+                    }
+                    throw new IllegalStateException("ACL config policy worker task failed", cause);
+                }
+            }
+        } finally {
+            if (interrupted) {
+                Thread.currentThread().interrupt();
+            }
+        }
+    }
+
+    /**
+     * Shuts down the multi-shard worker (best-effort drain). A no-op at N=1. The worker thread is a daemon,
+     * so an unclosed loader never blocks JVM exit; {@code close()} gives a deterministic drain.
+     */
+    @Override
+    public void close() {
+        if (worker != null) {
+            worker.shutdown();
+            try {
+                worker.awaitTermination(5, TimeUnit.SECONDS);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+        }
     }
 
     private void validateReserved(ConfigPolicy policy) {
