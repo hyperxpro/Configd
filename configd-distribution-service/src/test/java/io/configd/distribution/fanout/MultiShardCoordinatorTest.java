@@ -23,6 +23,7 @@ import java.util.Map;
 import java.util.function.LongSupplier;
 import java.util.function.Supplier;
 
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -74,9 +75,13 @@ class MultiShardCoordinatorTest {
             gids[g] = g;
         }
         int[] allGids = gids;
-        ShardResolver resolver = t -> t.targetKind() == EdgeFrame.WATCH_TARGET_KEY
-                ? new int[]{shardOf(t.path())}
-                : allGids.clone();
+        // Mirror the production ShardMapResolver: a match-all target (FULL, or any kind carrying
+        // full_chain_verify) scatters to every shard - checked BEFORE the KEY branch so a
+        // KEY+full_chain_verify target covers all shards, not just the one its path names.
+        ShardResolver resolver = t -> t.isMatchAll() ? allGids.clone()
+                : (t.targetKind() == EdgeFrame.WATCH_TARGET_KEY
+                        ? new int[]{shardOf(t.path())}
+                        : allGids.clone());
         SlowConsumerGovernor gov =
                 new SlowConsumerGovernor(SlowConsumerPolicyConfig.defaults(), FanOutSessionMetrics.NOOP);
         this.driver = new FanOutConnectionDriver(sources, replays, gids, resolver, out,
@@ -355,6 +360,26 @@ class MultiShardCoordinatorTest {
         EdgeFrame.WatchCreated created = created(1L);
         assertEquals(1, created.shards().size(), "coverage is target-driven: only shard 1, not the spoofed shard 2");
         assertEquals(1, created.shards().get(0).gid());
+    }
+
+    @Test
+    void keyTargetCarryingFullChainVerifyCoversAllShardsAndDeliversFromEach() {
+        setup(3, ALLOW);
+        // A KEY target with the full_chain_verify flag matches every key and is root-authorized, so
+        // it must cover ALL shards - the coverage vector agrees with matches(), not with the literal
+        // path (the coverage/completeness inconsistency this gate prevents).
+        feed(new EdgeFrame.WatchCreate(1, 0, EdgeFrame.WATCH_TARGET_KEY,
+                "/s1/key".getBytes(StandardCharsets.UTF_8), WatchCursor.fromNow(),
+                EdgeFrame.WATCH_FLAG_FULL_CHAIN_VERIFY));
+        EdgeFrame.WatchCreated created = created(1L);
+        assertArrayEquals(new int[]{0, 1, 2},
+                created.shards().stream().mapToInt(EdgeFrame.ShardMode::gid).toArray(),
+                "KEY+full_chain_verify seeds and advertises every shard, not just the one its path names");
+        // A change on a shard the literal KEY path does not name is still delivered (match-all).
+        buffers[2].publish(put(1, "/unrelated/on/shard2", "v"));
+        sweep();
+        assertTrue(eventsFor(1L).stream().anyMatch(e -> e.gid() == 2),
+                "a change on a shard the literal KEY path does not name is delivered (match-all fcv)");
     }
 
     // =====================================================================

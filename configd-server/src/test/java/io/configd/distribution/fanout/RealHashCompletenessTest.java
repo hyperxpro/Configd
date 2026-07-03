@@ -133,6 +133,35 @@ class RealHashCompletenessTest {
         assertEquals(key, events.get(0).changes().get(0).key());
     }
 
+    @Test
+    void keyWatchCarryingFullChainVerifyCoversEveryShardOverTheRealResolver() {
+        setup();
+        // A KEY target with the full_chain_verify flag matches every key and is root-authorized, so
+        // the real ShardMapResolver must scatter it to ALL shards - never the single shard its path
+        // hashes to (which would silently miss the other shards' state).
+        driver.onInboundFrame(new EdgeFrame.WatchCreate(1, 0, EdgeFrame.WATCH_TARGET_KEY,
+                "/app/db/host".getBytes(StandardCharsets.UTF_8), WatchCursor.fromNow(),
+                EdgeFrame.WATCH_FLAG_FULL_CHAIN_VERIFY));
+        driver.drainInboundCommands();
+
+        EdgeFrame.WatchCreated created = out.frames().stream()
+                .filter(f -> f instanceof EdgeFrame.WatchCreated).map(f -> (EdgeFrame.WatchCreated) f)
+                .findFirst().orElseThrow();
+        assertArrayEquals(new int[]{0, 1, 2, 3},
+                created.shards().stream().mapToInt(EdgeFrame.ShardMode::gid).toArray(),
+                "KEY+full_chain_verify covers every shard over the real ShardMapResolver");
+
+        for (int g = 0; g < N; g++) {
+            buffers[g].publish(put(1, keyHashingTo(g), "v"));
+        }
+        driver.sweep(clock.currentTimeMillis());
+        for (int g = 0; g < N; g++) {
+            int shard = g;
+            assertTrue(out.events().stream().anyMatch(e -> e.gid() == shard),
+                    "shard " + shard + " change delivered under KEY+full_chain_verify (match-all)");
+        }
+    }
+
     // ---- helpers ------------------------------------------------------------
 
     /** A key that {@link StaticShardMap#shardFor} routes to shard {@code g} (GLOBAL scope). */
