@@ -448,13 +448,17 @@ public final class FanOutServer implements FanOutEndpoint {
                         firstFrameRouted = true;
                         // Outbound flip: a WATCH_CREATE-first connection is a 0x02 watch connection,
                         // so offer() must stamp 0x02 for the client to decode the server's WATCH_* frames.
-                        // A SUBSCRIBE-first legacy connection stays 0x01 (byte-identical). The
-                        // flip happens-before any outbound watch frame the session thread later produces
-                        // (it is posted as a session command AFTER this flip). (A WATCH_CREATE is always
-                        // 0x02-stamped - the codec forbids WATCH_* under 0x01 - so the type-based flip and
-                        // the stamp-based inbound pin agree for every real connection.)
+                        // A 0x03-stamped SUBSCRIBE is a filtered-fan-out connection (ADR-0045), so
+                        // offer() stamps 0x03 for the SUBSCRIBE_OK filtered confirm and every
+                        // subsequent frame the edge's 0x03-pinned reader decodes. A plain 0x01
+                        // SUBSCRIBE stays 0x01 (byte-identical). The flip happens-before any outbound
+                        // frame the session thread later produces (posted as a session command AFTER
+                        // this flip).
                         if (frame instanceof EdgeFrame.WatchCreate) {
                             wireVersion = EdgeFrameCodec.EDGE_WIRE_VERSION_V2;
+                        } else if (frame instanceof EdgeFrame.Subscribe
+                                && inboundNegotiatedVersion == EdgeFrameCodec.EDGE_WIRE_VERSION_V3) {
+                            wireVersion = EdgeFrameCodec.EDGE_WIRE_VERSION_V3;
                         }
                     }
                     driver.onInboundFrame(frame);
@@ -494,7 +498,7 @@ public final class FanOutServer implements FanOutEndpoint {
             if (inboundNegotiatedVersion == 0) {
                 // First frame: accept either version (CRC-validated), then PIN to its stamp.
                 EdgeFrame frame = EdgeFrameCodec.decode(frameBytes);
-                inboundNegotiatedVersion = EdgeFrameCodec.peekVersion(frameBytes); // known 0x01/0x02
+                inboundNegotiatedVersion = EdgeFrameCodec.peekVersion(frameBytes); // known 0x01/0x02/0x03
                 return frame;
             }
             // Pinned: a frame stamped with the OTHER accepted version -> BAD_WIRE_VERSION (fail closed).

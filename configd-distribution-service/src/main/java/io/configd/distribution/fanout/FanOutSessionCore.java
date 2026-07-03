@@ -88,6 +88,17 @@ public final class FanOutSessionCore {
     /** Last applied-mutation seq S the session has STREAMED to the edge (the cursor). */
     private long cursor;
 
+    /**
+     * The highest seq the session has DELIVERED to the edge as data - a NOTIFY batch max, or a
+     * snapshot cutover seq - the ack-lag basis. It tracks {@link #cursor} in classic mode, but on
+     * a filtered session it does NOT advance over the covered-S skip: the filtered range the edge
+     * acks wholesale on the HEARTBEAT is not a backlog of unconfirmed data, so charging it to
+     * ack-lag would spuriously demote a healthy narrow edge. A snapshot cutover advances it (the
+     * snapshot IS unconfirmed data), preserving the self-healing re-demote of an unconfirmed
+     * snapshot.
+     */
+    private long highestDeliveredSeq;
+
     /** Highest seq the edge has acknowledged via CURSOR_ACK. */
     private long lastAckedSeq;
 
@@ -115,6 +126,24 @@ public final class FanOutSessionCore {
      * {@link #MAX_CONSECUTIVE_TRANSIENT_GAPS}, the live-lock backstop.
      */
     private int consecutiveTransientGaps;
+
+    /**
+     * The server-side prefix filter for this session (ADR-0045), or null when filtering is
+     * inactive (match-all / full-chain passthrough - the byte-identical legacy path). Set at
+     * {@link #onSubscribe}.
+     */
+    private ServerPrefixFilter prefixFilter;
+
+    /** Whether this session filters whole signed deltas server-side (ADR-0045). */
+    private boolean filterActive;
+
+    /**
+     * The highest covered seq S the edge has been told about - via a delivered NOTIFY's seq or
+     * a cursor-advance HEARTBEAT - on a filtered session. Coalesces the cursor-advance emission
+     * to at most once per drain pass and only when the covered position actually moved past what
+     * the delivered frames already conveyed.
+     */
+    private long lastAdvertisedCoveredS;
 
     /**
      * The in-progress (possibly transport-paused) snapshot transfer; null when none.
@@ -207,6 +236,17 @@ public final class FanOutSessionCore {
         subscribed = true;
         this.cursor = subscribe.effectiveResumeCursor();
         this.lastAckedSeq = cursor;
+        this.lastAdvertisedCoveredS = cursor;
+        this.highestDeliveredSeq = cursor;
+
+        // Server-side prefix filtering is active only when the deployment posture is on, the edge
+        // opted in (acceptsFiltered), and the subscription is a non-empty prefix set. When inactive
+        // the session is the byte-identical full-chain legacy path (ADR-0045).
+        this.filterActive = ServerPrefixFilter.isActive(config, subscribe);
+        this.prefixFilter = filterActive
+                ? new ServerPrefixFilter(subscribe.prefixes(), config.strongReadPrefixes())
+                : null;
+        metrics.onFilterActive(filterActive);
 
         long latest = source.latestSeq();
         EdgeFrame.Mode mode = decideMode(cursor, latest);
@@ -218,7 +258,10 @@ public final class FanOutSessionCore {
         long horizonDistance = (oldest < 0) ? cursor + 1 : cursor - (oldest - 1);
         metrics.onSubscribeMode(mode == EdgeFrame.Mode.SNAPSHOT_FIRST, horizonDistance);
 
-        emit(new EdgeFrame.SubscribeOk(latest, mode));
+        // The filtered confirm bit tells the edge to select the filtered-stream apply mode (a
+        // dense covered-S cursor + a forward-only version chain). It is set only under a 0x03
+        // connection; a 0x01/0x02 SubscribeOk drops it and the edge stays in classic mode.
+        emit(new EdgeFrame.SubscribeOk(latest, mode, filterActive));
         if (mode == EdgeFrame.Mode.SNAPSHOT_FIRST) {
             state = SessionState.CATCHUP;
             catchupSnapshotOwed = true;
@@ -302,9 +345,15 @@ public final class FanOutSessionCore {
      * frame was emitted. Demotes on GAP / queue overflow / ack-lag / transport block.
      */
     private boolean drainStreaming(long nowMillis) {
-        // Ack-lag breach check FIRST (a stuck consumer that never acks must demote even if
-        // new data keeps it under the frame cap).
-        if (cursor - lastAckedSeq > config.ackLagDemoteSeqs()) {
+        // Ack-lag breach check FIRST (a stuck consumer that never acks must demote even if new
+        // data keeps it under the frame cap). Charge the DELIVERED-as-data seq span
+        // (highestDeliveredSeq - lastAcked), NOT the raw cursor: under filtering the cursor
+        // advances over skipped deltas via the covered-S, which the edge acks wholesale on the
+        // HEARTBEAT and is not a backlog of unconfirmed data, so charging it would spuriously
+        // demote a healthy narrow edge. In classic mode highestDeliveredSeq == cursor, so this is
+        // byte-identical to the previous cursor-based check (incl. the post-snapshot re-demote of
+        // an unconfirmed snapshot, whose cutover advances highestDeliveredSeq).
+        if (highestDeliveredSeq - lastAckedSeq > config.ackLagDemoteSeqs()) {
             demote(DemotionEvent.REASON_ACK_LAG);
             return true; // demoted (the notice is emitted, or parked per RR-104 would-block)
         }
@@ -322,18 +371,36 @@ public final class FanOutSessionCore {
 
         boolean emitted = false;
         int idx = 0;
+        // The furthest seq consumed from the ring this pass (matching OR filtered). Under
+        // filtering the cursor advances over the ENTIRE scanned range - filtering changes only
+        // what is emitted, never how far readSince is consumed - so a narrow edge never
+        // spuriously falls behind. When filtering is off this equals the last delivered seq.
+        long scannedThroughSeq = cursor;
+        boolean skippedAny = false;
         while (idx < pending.size()) {
             // Bounded outbound queue: never exceed queueFrames unacked NOTIFY frames.
             if (inFlightFrameMaxSeq.size() >= config.queueFrames()) {
                 demote(DemotionEvent.REASON_QUEUE_OVERFLOW);
                 return true;
             }
-            // Assemble one batch respecting batchMaxNotifications / batchMaxBytes.
+            // Assemble one batch of MATCHING notifications, skipping (dropping whole) any the
+            // filter rejects, respecting batchMaxNotifications / batchMaxBytes.
             List<CommitNotification> batch = new ArrayList<>();
             int batchBytes = 4; // NOTIFY count field
             long batchMaxSeq = cursor;
+            int filteredInBatch = 0;
             while (idx < pending.size() && batch.size() < config.batchMaxNotifications()) {
                 CommitNotification n = pending.get(idx);
+                if (filterActive && !prefixFilter.keep(n)) {
+                    // Drop the whole signed delta (leg (a): never rewrite/coalesce). The cursor
+                    // still advances over it; the edge learns the covered position from the
+                    // cursor-advance HEARTBEAT below.
+                    scannedThroughSeq = n.seq();
+                    skippedAny = true;
+                    filteredInBatch++;
+                    idx++;
+                    continue;
+                }
                 int encodedBytes = encodedNotificationBytes(n);
                 if (!batch.isEmpty() && batchBytes + encodedBytes > config.batchMaxBytes()) {
                     break; // byte cap - close this batch, start the next frame
@@ -341,7 +408,17 @@ public final class FanOutSessionCore {
                 batch.add(n);
                 batchBytes += encodedBytes;
                 batchMaxSeq = n.seq();
+                scannedThroughSeq = n.seq();
                 idx++;
+            }
+            if (filteredInBatch > 0) {
+                metrics.onFilteredDeltas(filteredInBatch);
+            }
+            if (batch.isEmpty()) {
+                // Every notification scanned this inner pass was filtered out - emit no empty
+                // NOTIFY. idx advanced on each skip, so the outer loop exits when it reaches
+                // the end of the run.
+                continue;
             }
             EdgeFrame.Notify frame = new EdgeFrame.Notify(batch);
             if (!sink.offer(frame)) {
@@ -352,13 +429,54 @@ public final class FanOutSessionCore {
             }
             inFlightFrameMaxSeq.addLast(batchMaxSeq);
             cursor = batchMaxSeq;
+            highestDeliveredSeq = batchMaxSeq; // the ack-lag basis: real delivered data
+            // A delivered NOTIFY conveys the covered position through its highest seq.
+            lastAdvertisedCoveredS = Math.max(lastAdvertisedCoveredS, batchMaxSeq);
             metrics.onNotifyBatch(batch.size(), batchBytes);
+            if (filterActive) {
+                metrics.onDeliveredDeltas(batch.size());
+            }
             metrics.onQueueDepth(inFlightFrameMaxSeq.size());
             maybeWarnSlowConsumer();
             lastTrafficMillis = nowMillis;
             emitted = true;
         }
+        // Advance the cursor over any trailing filtered range (deltas dropped after the last
+        // delivered NOTIFY), then tell the edge the new covered position with one coalesced
+        // cursor-advance HEARTBEAT.
+        if (filterActive) {
+            if (scannedThroughSeq > cursor) {
+                cursor = scannedThroughSeq;
+            }
+            if (skippedAny) {
+                emitted |= maybeAdvanceCoveredCursor(nowMillis);
+            }
+        }
         return emitted;
+    }
+
+    /**
+     * On a filtered session, tells the edge the new covered-through position with a single
+     * coalesced cursor-advance HEARTBEAT whose {@code latestSeq} carries the DRAINED-THROUGH
+     * cursor (clamped - never the raw buffer tip; the W5-7 lesson). Emitted only when the
+     * covered position actually moved past what the delivered NOTIFYs already conveyed. This is
+     * what keeps the edge's ack watermark climbing so a healthy narrow-prefix edge is never
+     * demoted for ack-lag caused by filtering. Best-effort and idempotent: the cursor is
+     * absolute and supersedes, so a refused offer is simply dropped (the next pass carries a
+     * fresher cursor) - it NEVER closes or demotes the session (transport pressure is the
+     * NOTIFY path's concern). Returns true iff a frame was emitted.
+     */
+    private boolean maybeAdvanceCoveredCursor(long nowMillis) {
+        if (cursor <= lastAdvertisedCoveredS) {
+            return false; // the edge already knows this covered position (a delivered NOTIFY reached it)
+        }
+        if (sink.offer(new EdgeFrame.Heartbeat(cursor, nowMillis))) {
+            lastAdvertisedCoveredS = cursor;
+            lastTrafficMillis = nowMillis;
+            metrics.onCursorAdvance();
+            return true;
+        }
+        return false; // would-block: dropped; the next drain pass re-offers a fresher cursor
     }
 
     /**
@@ -509,6 +627,7 @@ public final class FanOutSessionCore {
         catchupSnapshotOwed = false;
         metrics.onSnapshotTransfer();
         cursor = t.seq;
+        highestDeliveredSeq = t.seq; // the snapshot IS unconfirmed data until the edge acks it
         inFlightFrameMaxSeq.clear();
         slowConsumerWarned = false;
         state = SessionState.STREAMING;
@@ -527,7 +646,15 @@ public final class FanOutSessionCore {
             return;
         }
         if (nowMillis - lastTrafficMillis >= config.heartbeatMs()) {
-            emit(new EdgeFrame.Heartbeat(source.latestSeq(), nowMillis));
+            // On a filtered session the HEARTBEAT.latestSeq is the DRAINED-THROUGH covered-S
+            // (clamped), NOT the raw buffer tip: advertising the tip would tell the edge a
+            // covered position it has not been delivered/scanned-through for (a silent gap). On
+            // an unfiltered session it is the buffer tip, the staleness clock, as before.
+            long latest = filterActive ? cursor : source.latestSeq();
+            emit(new EdgeFrame.Heartbeat(latest, nowMillis));
+            if (filterActive) {
+                lastAdvertisedCoveredS = Math.max(lastAdvertisedCoveredS, cursor);
+            }
             metrics.onHeartbeat();
             lastTrafficMillis = nowMillis;
         }

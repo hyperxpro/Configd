@@ -297,11 +297,23 @@ public final class FanOutConnectionDriver {
                 return;
             }
             case ALLOW_FORCE_SNAPSHOT -> bound = new EdgeFrame.Subscribe(
-                    bound.fullStore(), bound.prefixes(), 0L, -1L, bound.edgeId());
+                    bound.fullStore(), bound.prefixes(), 0L, -1L, bound.edgeId(),
+                    bound.acceptsFiltered());
             case ALLOW -> { /* admit as requested */ }
         }
         EdgeFrame.Subscribe admitted = bound;
-        sessionCommands.add(s -> s.onSubscribe(admitted));
+        // On a filtered legacy session, narrow the catch-up snapshot to the same prefix-plus-
+        // strong-read predicate the drain filters the live tail with (ADR-0045), so a re-snapshot
+        // does not stream the whole store to a narrow edge. Set on the session thread, before the
+        // core's onSubscribe, mirroring the watch path's setTarget discipline. Off / full-store
+        // leaves the predicate null => whole-store passthrough => byte-identical.
+        sessionCommands.add(s -> {
+            if (ServerPrefixFilter.isActive(config, admitted)) {
+                filteringReplaySource.setPredicate(new ServerPrefixFilter(
+                        admitted.prefixes(), config.strongReadPrefixes()).keyPredicate());
+            }
+            s.onSubscribe(admitted);
+        });
     }
 
     /**
@@ -360,8 +372,10 @@ public final class FanOutConnectionDriver {
         if ("plaintext".equals(edgeIdentity)) {
             return wire;
         }
+        // Carry acceptsFiltered through the identity rebind - dropping it here would silently
+        // disable server-side filtering on every mTLS connection (the production path).
         return new EdgeFrame.Subscribe(wire.fullStore(), wire.prefixes(), wire.resumeCursor(),
-                wire.failoverResumeCursor(), edgeIdentity);
+                wire.failoverResumeCursor(), edgeIdentity, wire.acceptsFiltered());
     }
 
     // -----------------------------------------------------------------------

@@ -292,9 +292,9 @@ public final class ConfigStateMachine implements StateMachine {
                 long prevSeq = sequenceCounter;
                 long seq = prevSeq + 1;
                 // Sign BEFORE mutating so a sign failure leaves the store untouched. The signing
-                // payload is computed from the input command - no post-mutation state is needed -
-                // so this ordering is byte-equivalent on the happy path.
-                signCommand(command);
+                // payload is computed from the input command and seq - no post-mutation state is
+                // needed - so this ordering is byte-equivalent on the happy path.
+                signCommand(command, seq);
                 // sequence_monotonic / sequence_gap_free checks were removed here: with
                 // seq := prevSeq + 1 they are locally vacuous (tautologies that can never fire).
                 // Global apply-order is enforced by RaftNode; per-key order is the real check below.
@@ -312,7 +312,7 @@ public final class ConfigStateMachine implements StateMachine {
             case CommandCodec.DecodedCommand.Delete del -> {
                 long prevSeq = sequenceCounter;
                 long seq = prevSeq + 1;
-                signCommand(command);
+                signCommand(command, seq);
                 // sequence_monotonic/sequence_gap_free removed here - locally vacuous (see Put case).
                 sequenceCounter = seq;
                 store.delete(del.key(), seq);
@@ -321,7 +321,7 @@ public final class ConfigStateMachine implements StateMachine {
             case CommandCodec.DecodedCommand.Batch batch -> {
                 long prevSeq = sequenceCounter;
                 long seq = prevSeq + 1;
-                signCommand(command);
+                signCommand(command, seq);
                 // sequence_monotonic/sequence_gap_free removed here - locally vacuous (see Put case).
                 sequenceCounter = seq;
                 store.applyBatch(batch.mutations(), seq);
@@ -614,8 +614,11 @@ public final class ConfigStateMachine implements StateMachine {
      * even though they carry the same logical mutation.
      *
      * @param command the raw command bytes to sign
+     * @param seq     the applied-mutation sequence this command commits at (== the delta's
+     *                {@code toVersion}; {@code seq - 1} is the {@code fromVersion}). Bound into
+     *                the signed payload so the version position is authenticated (ADR-0045).
      */
-    private void signCommand(byte[] command) {
+    private void signCommand(byte[] command, long seq) {
         if (signer == null) {
             return;
         }
@@ -628,13 +631,16 @@ public final class ConfigStateMachine implements StateMachine {
         byte[] nonce = new byte[ConfigDelta.NONCE_LEN];
         secureRandom.nextBytes(nonce);
         try {
-            // Bind epoch + nonce into the signed payload so replays under a rolled-back edge are
-            // rejected. The payload layout matches ConfigDelta.signingPayload(). The canonical
-            // form is computed from the input command - no post-mutation state is referenced -
-            // so this can run before store.put / applyBatch.
+            // Bind the version position (fromVersion=seq-1, toVersion=seq) plus epoch + nonce into
+            // the signed payload so a relay can neither replay under a rolled-back edge nor rewrite
+            // the version linkage undetectably. The payload layout matches
+            // ConfigDelta.signingPayload(). The canonical form and the seq are both known before
+            // any store mutation, so this can run before store.put / applyBatch.
             byte[] canonical = canonicalize(command);
-            ByteBuffer buf = ByteBuffer.allocate(canonical.length + Long.BYTES + nonce.length);
+            ByteBuffer buf = ByteBuffer.allocate(canonical.length + 3 * Long.BYTES + nonce.length);
             buf.put(canonical);
+            buf.putLong(seq - 1);
+            buf.putLong(seq);
             buf.putLong(epoch);
             buf.put(nonce);
             byte[] sig = signer.sign(buf.array());

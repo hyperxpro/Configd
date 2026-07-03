@@ -139,7 +139,7 @@ public final class EdgeNodeMain {
         EdgeStreamClient streamClient = new EdgeStreamClient(
                 config.fanOutEndpoints(), config.edgeId(), config.subscribePrefixes(),
                 tlsManager, config.reconnectBackoffMs(), config.heartbeatSilenceFactor(),
-                clock, metrics, null, terminal);
+                clock, metrics, null, terminal, resolveAcceptFiltered());
 
         PoisonPillPolicy poisonPolicy = new PoisonPillPolicy(config.poisonMaxRetries(),
                 metrics.poisonRetriesCounter(), metrics.poisonPillCounter(),
@@ -187,6 +187,26 @@ public final class EdgeNodeMain {
         } catch (Exception e) {
             throw new RuntimeException("Failed to load Ed25519 verify key from " + path, e);
         }
+    }
+
+    /** System property that opts a prefix-scoped edge into server-side filtering (ADR-0045). */
+    static final String ACCEPT_FILTERED_PROP = "configd.edge.accept_filtered";
+
+    /**
+     * Resolves the {@value #ACCEPT_FILTERED_PROP} posture: {@code on}/{@code off} (aliases
+     * {@code true}/{@code false}); default {@code off}, fail-loud on any other value (mirroring the
+     * server's transport / filter posture flags). A prefix-scoped edge with this on negotiates the
+     * 0x03 wire and advertises {@code acceptsFiltered} so the server filters its stream server-side;
+     * default off keeps every edge on the byte-identical 0x01 wire.
+     */
+    static boolean resolveAcceptFiltered() {
+        String v = System.getProperty(ACCEPT_FILTERED_PROP, "off").trim().toLowerCase();
+        return switch (v) {
+            case "on", "true" -> true;
+            case "off", "false" -> false;
+            default -> throw new IllegalArgumentException(
+                    ACCEPT_FILTERED_PROP + " must be 'on'/'off' (or 'true'/'false'), got: '" + v + "'");
+        };
     }
 
     /** Stops the edge node: stream client first (clean socket end), then the HTTP surface. */

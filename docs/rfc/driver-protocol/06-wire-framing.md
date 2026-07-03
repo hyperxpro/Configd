@@ -54,10 +54,17 @@ connection after the handshake.
 
 ### 1.3 Versioning — first-frame pin, not negotiation
 
-The edge wire is versioned by a **1-byte version stamp on every frame** (`0x01` or `0x02`), **pinned by the
-first frame of the connection** (F4). There is **no** hello/capabilities frame and **no** negotiation
+The edge wire is versioned by a **1-byte version stamp on every frame** (`0x01`, `0x02`, or `0x03`), **pinned
+by the first frame of the connection** (F4). There is **no** hello/capabilities frame and **no** negotiation
 round-trip. This **corrects the aspirational "negotiated at connection setup" language** of §02 (W1-2 / W1-3,
 and W5-11 "Wire version and negotiation"): the real mechanism is **first-frame-wins + pin + fail-closed** (F4).
+
+`0x03` is the **filtered-fan-out** version (ADR-0045): it carries a server-side-filtered SUBSCRIBE stream.
+Under `0x03`, `SUBSCRIBE` gains a trailing `acceptsFiltered` opt-in byte and `SUBSCRIBE_OK` a trailing
+`filtered` confirm byte (F6-1a / F6-2a below); every other frame is byte-identical to its `0x01` form save the
+version byte, and the `0x0A`–`0x12` watch frames are **not** legal under `0x03` (they remain `0x02`-only). A
+`0x03` SUBSCRIBE to a server that only speaks `0x01`/`0x02` **fails closed** with `BAD_WIRE_VERSION` (no silent
+misparse); an old edge to a new server sends `0x01` and gets the unfiltered legacy stream.
 
 ---
 
@@ -69,7 +76,7 @@ and W5-11 "Wire version and negotiation"): the real mechanism is **first-frame-w
 ```
  offset  size  field        notes
  0       4     Length  u32  BIG-ENDIAN; covers the WHOLE frame (Length + Version + Type + Payload + CRC)
- 4       1     Version u8   0x01 (built) | 0x02 (watch-capable)
+ 4       1     Version u8   0x01 (built) | 0x02 (watch-capable) | 0x03 (filtered fan-out, ADR-0045)
  5       1     Type    u8   FrameType code (F6 / §02)
  6       L-10  Payload      type-specific (F6, §02)
  L-4     4     CRC32C  u32  BIG-ENDIAN; Castagnoli (CRC-32C) over bytes [0, L-4) — i.e. Length..end-of-payload
@@ -108,10 +115,10 @@ records or TCP segments.
 4. **CRC32C over `[0, Length-4)` == trailer** (else **`FRAME_CORRUPT`**). **The CRC is verified BEFORE the
    version and type bytes are interpreted** — so a flipped version/type byte reads as corruption, never as a
    misleading `BAD_WIRE_VERSION`.
-5. `Version ∈ {0x01, 0x02}` (else **`BAD_WIRE_VERSION`**); **and** if the connection is pinned (F4), `Version`
-   == the pinned version (else **`BAD_WIRE_VERSION`**).
+5. `Version ∈ {0x01, 0x02, 0x03}` (else **`BAD_WIRE_VERSION`**); **and** if the connection is pinned (F4),
+   `Version` == the pinned version (else **`BAD_WIRE_VERSION`**).
 6. `Type` resolves to a known `FrameType` (else **`FRAME_CORRUPT`**); a `0x0A`–`0x12` watch type on a `0x01`
-   frame ⇒ **`FRAME_CORRUPT`** (a watch frame is legal only under `0x02`).
+   or `0x03` frame ⇒ **`FRAME_CORRUPT`** (a watch frame is legal only under `0x02`).
 7. decode the payload `[6, Length-4)`; **any** underflow / malformed field / out-of-range value ⇒
    **`FRAME_CORRUPT`**; **any trailing byte left after the payload ⇒ `FRAME_CORRUPT`** (F11).
 
@@ -130,8 +137,10 @@ A value being "validated non-negative" (F5) is **not** an upper bound — the dr
 negotiation handshake (`ByteToEdgeFrameDecoder` :56–63). The connection's wire **version** is decided by the
 **first frame's version byte** (offset 4), in practice:
 
-- a first **`SUBSCRIBE`** (**type `0x01`**, a v1 frame) ⇒ the connection is pinned to **version `0x01`**
+- a first **`SUBSCRIBE`** (**type `0x01`**) stamped **`0x01`** ⇒ the connection is pinned to **version `0x01`**
   (byte-identical to the legacy pre-watch path);
+- a first **`SUBSCRIBE`** stamped **`0x03`** ⇒ the connection is pinned to **version `0x03`** (the filtered
+  fan-out; the server stamps `0x03` on `SUBSCRIBE_OK` and every subsequent frame, ADR-0045);
 - a first **`WATCH_CREATE`** (**type `0x0A`**, a v2 frame) ⇒ the connection is pinned to **version `0x02`**.
 
 > *Type vs. version (do not conflate):* `0x01`/`0x02` above are wire **versions** (offset 4); a frame's **type**
@@ -214,6 +223,18 @@ names are cited for cross-language verification.
 [edgeIdLen] edgeId        (UTF-8; ADVISORY — the server overrides identity with the mTLS cert DN, §03 AU3-2)
 ```
 
+**F6-1a `SUBSCRIBE` under `0x03`** (filtered fan-out, ADR-0045) — the F6-1 payload with **one trailing byte**:
+
+```
+... (the F6-1 payload) ...
+[1  u8 ] acceptsFiltered   (0x03 ONLY; 1 = the edge understands filtered-stream semantics)
+```
+
+The edge sets `acceptsFiltered = 1` to opt this prefix-scoped subscription into server-side filtering. A
+full-store SUBSCRIBE **MUST** set it `0` (a root edge wants the whole chain). The byte is present **only** on a
+`0x03` frame; a `0x01`/`0x02` SUBSCRIBE has no such byte (`acceptsFiltered` decodes false), so those golden
+images are unchanged. Golden `subscribe_prefixes_filtered.bin` (v3).
+
 **F6-2 `SUBSCRIBE_OK` (`0x02`)** — *server→client*; golden `subscribe_ok_tail.bin`,
 `subscribe_ok_snapshot_first.bin`:
 
@@ -221,6 +242,19 @@ names are cited for cross-language verification.
 [8 u64] latestSeq         (the shard's current applied-mutation seq; RAW u64 — F5-2)
 [1 u8 ] mode              (0 = tail / resume-from-cursor; 1 = snapshot-first — the EdgeFrame.Mode ordinal)
 ```
+
+**F6-2a `SUBSCRIBE_OK` under `0x03`** (filtered fan-out, ADR-0045) — the F6-2 payload with **one trailing byte**:
+
+```
+... (the F6-2 payload) ...
+[1  u8 ] filtered          (0x03 ONLY; 1 = the server is filtering this session server-side)
+```
+
+`filtered = 1` tells the edge to select the filtered-stream apply mode: a dense **covered-S** cursor advanced
+by the HEARTBEAT (F6-8a) and a **forward-only** version chain (a `NOTIFY` whose `fromVersion` is **greater
+than** the applied version is expected — the dropped non-matching deltas bumped the global version — not a
+gap; a regression below the applied version **is** a gap). Golden `subscribe_ok_filtered.bin`,
+`subscribe_ok_unfiltered.bin` (v3).
 
 **F6-3 `NOTIFY` (`0x03`)** — *server→client*; golden `notify_single_unsigned.bin`, `notify_batch_signed.bin`,
 `notify_empty.bin`. A batch of commit notifications (the *encoder* caps it at **64** = `MAX_NOTIFY_BATCH` and
@@ -246,6 +280,15 @@ driver **MUST** bound a received `NOTIFY` by the **2 MiB frame cap** (F3-2), not
 > The `sigLen = -1` sentinel (a **signed** `i32`) distinguishes "unsigned" from "empty signature"; a driver
 > doing `full_chain_verify` (§02) **MUST** decode the `mutationsBlob` with F7-1 to recompute the signing
 > payload. `notify_empty.bin` is `count = 0`.
+>
+> **Signing payload (ADR-0045, Track 0).** For a signed (`epoch > 0`) delta the Ed25519 signature covers
+> `encodeBatch(mutations) || BE(fromVersion,8) || BE(toVersion,8) || BE(epoch,8) || nonce` — the **version
+> position is inside the signature**, so a relay cannot rewrite `fromVersion`/`toVersion` to splice a delta out
+> of the chain undetectably. A legacy `epoch == 0` delta keeps the batch-only payload
+> (`encodeBatch(mutations)`). This is a signing-payload-composition change, **not** a wire-layout change
+> (the position fields and the signature are already on the wire), so it does **not** bump the wire version
+> or rebaseline any golden fixture. A verifying driver **MUST** reject a signature carried on an `epoch == 0`
+> delta (production never emits that shape).
 
 **F6-4 `SNAPSHOT_BEGIN` (`0x04`)** — *server→client*; golden `snapshot_begin.bin`:
 
@@ -278,7 +321,22 @@ mismatched snapshot — it **MUST NOT** apply a partial snapshot as complete (si
 
 **F6-8 `HEARTBEAT` (`0x08`)** — *server→client*; golden `heartbeat.bin`: `[8 u64] latestSeq` (RAW — F5-2)
 `[8 u64] serverNowMillis` (`[0,2^63)` — F5-1). A driver **SHOULD** treat a prolonged absence of `HEARTBEAT`
-(beyond a configured read-idle deadline) as a liveness failure and reconnect (F10-3).
+(beyond a configured read-idle deadline) as a liveness failure and reconnect (F10-3). On an unfiltered
+session `latestSeq` is the buffer tip (the staleness clock); a driver **MUST NOT** advance its applied cursor
+from it (the tip may include commits it has not received).
+
+**F6-8a filtered-HEARTBEAT semantics** (a `0x03` session that got `SUBSCRIBE_OK.filtered = 1`, ADR-0045). The
+frame layout is unchanged; `latestSeq` is **re-typed as the drained-through covered-S**: the server MUST have
+delivered every matching delta with `toVersion ≤ latestSeq` **before** emitting the heartbeat (drain-then-
+heartbeat ordering). The edge advances its dense covered cursor to it and acks it (`CURSOR_ACK.seq = covered-S`),
+so a narrow-prefix edge is never demoted for ack-lag caused by filtering. The edge advances the covered cursor
+**monotonically** (advance-if-greater) and **MUST NOT** regress it; a **regressed** covered-S on the HEARTBEAT
+is **safely ignored**, not a resync trigger. A genuine gap is signalled instead by a **delivered `NOTIFY`**
+whose position regresses below the applied version (the forward-only gap check, F6-2a), which triggers resync.
+"Caught up and quiet" is `covered-S == latestSeq`; a frozen covered-S while the server keeps committing is
+"stalled." A well-formed suppression of a matching delta behind a correct covered-S is **not** edge-detectable
+— the documented trusted-server boundary (ADR-0045; a genuine data-loss gap from ring eviction is still
+detected server-side and healed by a re-snapshot).
 
 **F6-9 `ERROR_CLOSE` (`0x09`)** — *server→client* terminal; golden `error_*.bin` (codes 1–10):
 

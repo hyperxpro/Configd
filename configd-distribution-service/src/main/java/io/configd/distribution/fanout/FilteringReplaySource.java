@@ -6,10 +6,13 @@ import io.configd.store.HamtMap;
 import io.configd.store.VersionedValue;
 
 import java.util.Objects;
+import java.util.function.Predicate;
 
 /**
- * A {@link ReplaySource} decorator that filters the catch-up <b>snapshot</b> to a single watch's
- * target (W5-10 / W7-4) before it is streamed as {@code WATCH_SNAPSHOT_*}.
+ * A {@link ReplaySource} decorator that filters the catch-up <b>snapshot</b> to a key predicate
+ * before it is streamed - either a single watch's target (W5-10 / W7-4) as {@code
+ * WATCH_SNAPSHOT_*}, or a filtered legacy SUBSCRIBE session's prefix set (ADR-0045) as
+ * {@code SNAPSHOT_*}, so the catch-up snapshot is narrowed the same way the live tail is.
  *
  * <p><b>Why this exists (the read-authz hole it closes).</b> The watch veneer drives the shared
  * connection core with a <b>full-store</b> subscribe, so the core's catch-up snapshot
@@ -40,38 +43,47 @@ final class FilteringReplaySource implements ReplaySource {
 
     private final ReplaySource delegate;
 
-    /** The drain-owner's target; {@code null} means passthrough (legacy connection, or not yet set). */
-    private WatchTarget target;
+    /** The snapshot key filter; {@code null} means passthrough (legacy connection, or not yet set). */
+    private Predicate<String> predicate;
 
     FilteringReplaySource(ReplaySource delegate) {
         this.delegate = Objects.requireNonNull(delegate, "delegate");
     }
 
     /**
-     * Sets the filter target to the connection drain-owner's. A {@code null} or
+     * Sets the filter to a watch drain-owner's target. A {@code null} or
      * {@linkplain WatchTarget#isMatchAll() match-all} (FULL / {@code full_chain_verify}) target
-     * leaves the snapshot whole.
+     * leaves the snapshot whole (passthrough). Preserves the watch-plane behavior exactly.
      */
     void setTarget(WatchTarget target) {
-        this.target = target;
+        this.predicate = (target == null || target.isMatchAll()) ? null : target::matches;
+    }
+
+    /**
+     * Sets the filter to an arbitrary key predicate - the filtered legacy SUBSCRIBE session's
+     * prefix-plus-strong-read matcher (ADR-0045). A {@code null} predicate leaves the snapshot
+     * whole (passthrough).
+     */
+    void setPredicate(Predicate<String> predicate) {
+        this.predicate = predicate;
     }
 
     @Override
     public Replay replayFromSnapshot() {
         Replay replay = delegate.replayFromSnapshot();
-        WatchTarget t = this.target;
-        if (t == null || t.isMatchAll()) {
+        Predicate<String> p = this.predicate;
+        if (p == null) {
             return replay; // legacy / FULL / full_chain_verify: whole store (root-authorized)
         }
         ConfigSnapshot snap = replay.snapshot();
-        // Rebuild a snapshot carrying ONLY the target's matching keys - the same literal match the
-        // per-NOTIFY filter uses - preserving the snapshot's version/seq (the resume floor is the
-        // same point in history; only the content is narrowed to the authorized target).
+        // Rebuild a snapshot carrying ONLY the matching keys - the same literal match the
+        // per-NOTIFY / drain filter uses - preserving the snapshot's version/seq (the resume
+        // floor is the same point in history; only the content is narrowed).
         var acc = new Object() {
             HamtMap<String, VersionedValue> map = HamtMap.empty();
         };
         snap.data().forEach((key, value) -> {
-            if (t.matches(key)) {
+            if (p.test(key)) {
                 acc.map = acc.map.put(key, value);
             }
         });

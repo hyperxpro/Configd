@@ -196,6 +196,27 @@ public final class EdgeConfigClient {
     }
 
     /**
+     * Filtered-mode apply (ADR-0045): applies the storage-filtered delta but bridges the
+     * intentional version jump. Under server-side filtering the delivered version chain is
+     * non-contiguous - non-matching deltas were dropped server-side and bumped the global
+     * version - so this edge's store steps straight from its current version to
+     * {@code delta.toVersion()} rather than requiring {@code fromVersion == currentVersion}. The
+     * bridged apply delta is unsigned/legacy form (never re-verified, never re-serialized);
+     * signature verification already happened over the ORIGINAL delta upstream
+     * ({@link DeltaApplier}).
+     *
+     * @param delta                 the original (verified) delta (non-null)
+     * @param commitTimestampMillis the leader commit timestamp (the covered-frontier clock)
+     */
+    public void applyDeltaBridged(ConfigDelta delta, long commitTimestampMillis) {
+        Objects.requireNonNull(delta, "delta must not be null");
+        ConfigDelta filtered = filterForStorage(delta);
+        store.applyDelta(new ConfigDelta(
+                store.currentVersion(), filtered.toVersion(), filtered.mutations()));
+        stalenessTracker.recordUpdate(delta.toVersion(), commitTimestampMillis);
+    }
+
+    /**
      * Returns the subscription-filtered view of {@code delta} this edge stores: only
      * mutations whose key matches a subscribed prefix (empty subscription = full store) or
      * is a strong-read key, with {@code fromVersion}/{@code toVersion} preserved so the

@@ -4,6 +4,8 @@
 - **Date:** 2026-06-11
 - **Interacts with:** ADR-0034 (boundary semantics: contiguous signed deltas or GAP), F-0052 (per-delta Ed25519 signature + epoch/nonce replay protection, verified at the edge by `DeltaApplier`), ADR-0020 (prefix subscription model), ADR-0030 (Quicksilver-shaped topology: centralized write, async full fan-out), architecture section 7 (subscription model + coalescing)
 
+> **Amendment (2026-07-02, ADR-0045).** This ADR's two legs are now split by trust. **Leg (a) - no coalescing/rewrite - STANDS unconditionally** (a trust-independent authenticity requirement). **Leg (b) - no server-side prefix filtering - is RELAXED under a posture flag** (`configd.edge.fanout.filter`, default on) for the co-located trusted deployment: the drain may drop **whole** signed deltas to a prefix-scoped edge, with the edge trusting the server's covered-through assertion on the HEARTBEAT. The no-suppression guarantee must be restored (posture off, or the v2 leader-signed Merkle skip-evidence this ADR names) the moment a separate/untrusted relay tier is deployed. Independently, the signed payload now covers the version position (ADR-0045 Track 0), closing the §3.1 gap this ADR's anti-suppression claim previously leaned on TLS for. See ADR-0045.
+
 ## Context
 
 Three requirements collide at C1:

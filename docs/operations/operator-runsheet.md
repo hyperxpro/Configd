@@ -236,6 +236,34 @@ Source of truth for the gate set: the readiness review, [section 4](../archive/r
 
 ---
 
+## Edge fan-out prefix filtering (ADR-0045) - a posture, not a gate
+
+- **What:** on a co-located trusted deployment the fan-out drain filters whole signed deltas to a
+  prefix-scoped edge's subscription server-side, cutting per-edge egress by ~1/f (an edge wanting 1% of the
+  keyspace moves ~100x less). It preserves per-delta Ed25519 authenticity (whole deltas dropped, never
+  rewritten) and always ships strong-read (`secure/`) keys. The trust spent is the edge trusting the server's
+  covered-through assertion on the HEARTBEAT - sound **only** within the operator's mTLS domain.
+- **Server posture:** `-Dconfigd.edge.fanout.filter=on|off`, **default on**, fails loud on any other value.
+  Set **off** (full-chain feed) the moment a **separate or untrusted relay tier** terminates the fan-out - the
+  no-suppression guarantee then matters again. This is a **two-way door**.
+- **Edge opt-in:** `-Dconfigd.edge.accept_filtered=on|off`, **default off**, fails loud on any other value. A
+  prefix-scoped edge with this on negotiates the `0x03` wire; an unconfigured or full-store edge stays on the
+  byte-identical `0x01` wire. Server-and-edge is a **lockstep upgrade** (a `0x03` edge to an old server fails
+  loud with `BAD_WIRE_VERSION` and reconnects; keep them in step).
+- **What to WATCH:** `edge_fanout_filtered_deltas_total` vs `edge_fanout_delivered_deltas_total`
+  (delivered / (delivered + filtered) is the measured keyspace fraction), `edge_fanout_cursor_advances_total`
+  (the covered-S heartbeats), `edge_fanout_filtered_sessions_total`.
+- **Do NOT watch seq-lag for a filtered edge:** a filtered edge shows **~0 seq-lag by design** - its
+  `HEARTBEAT.latestSeq` is the covered-S cursor, not the buffer tip, so cursor-lag is trivially ~0. Watch the
+  **commit-timestamp staleness gauge** (`edge_staleness_ms` / `edge_staleness_state`) for filtered edges, not
+  seq-lag.
+- **Trust note:** filtering trusts the serving node's assertion "(A,B] had nothing under your prefixes." Do
+  **not** enable it across an untrusted relay. A genuine data-loss gap (ring eviction) is still caught
+  server-side and re-snapshotted; a malformed covered-S is caught edge-side; a well-formed suppression of a
+  matching delta is **not** detectable under this posture (see `known-limitations.md`).
+
+---
+
 ## Sign-off
 
 A cluster is **not** production-ready until Gates 1-6 are each **verified by their

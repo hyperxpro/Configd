@@ -118,9 +118,18 @@ public record ConfigDelta(
      * format, preserving existing signatures.
      * <p>
      * For signed deltas with a non-zero epoch, the payload binds the mutation
-     * set together with the epoch and nonce, so a replayed delta re-signed
-     * under a fresh epoch cannot be substituted:
-     * {@code encodeBatch(mutations) || BE(epoch, 8) || nonce}.
+     * set together with the version position and the epoch and nonce, so a
+     * relay can neither replay a captured delta under a fresh epoch nor rewrite
+     * the {@code fromVersion}/{@code toVersion} linkage to splice a delta out of
+     * the chain undetectably:
+     * {@code encodeBatch(mutations) || BE(fromVersion, 8) || BE(toVersion, 8) || BE(epoch, 8) || nonce}.
+     * <p>
+     * Binding both versions closes the position gap the anti-suppression
+     * property previously leaned on TLS to protect: a key-less relay that drops
+     * a delta and rewrites the next {@code fromVersion} now fails verification
+     * because the position is inside the signature (see ADR-0045). The mutation
+     * bytes are unchanged, so per-delta authenticity and the leg-(a) no-coalesce
+     * rule are untouched.
      *
      * @return the canonical signable payload
      */
@@ -129,8 +138,10 @@ public record ConfigDelta(
         if (epoch == 0L && nonce.length == 0) {
             return batch; // legacy form - keeps old signatures valid
         }
-        ByteBuffer buf = ByteBuffer.allocate(batch.length + Long.BYTES + nonce.length);
+        ByteBuffer buf = ByteBuffer.allocate(batch.length + 3 * Long.BYTES + nonce.length);
         buf.put(batch);
+        buf.putLong(fromVersion);
+        buf.putLong(toVersion);
         buf.putLong(epoch);
         buf.put(nonce);
         return buf.array();

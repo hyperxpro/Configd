@@ -164,6 +164,33 @@ final class EdgeFrameFixtures {
         return m;
     }
 
+    /**
+     * Canonical, deterministic 0x03 ({@link EdgeFrameCodec#EDGE_WIRE_VERSION_V3}) fixtures: the
+     * filtered-fan-out {@link EdgeFrame.Subscribe} (with the {@code acceptsFiltered} opt-in byte)
+     * and {@link EdgeFrame.SubscribeOk} (with the {@code filtered} confirm byte) in both the
+     * opt-in and opt-out shapes. Every other frame is byte-identical to its 0x01 form save the
+     * version byte, so only these two frame types get 0x03 fixtures (ADR-0045).
+     */
+    static Map<String, EdgeFrame> buildV3() {
+        Map<String, EdgeFrame> m = new LinkedHashMap<>();
+        // A full-store SUBSCRIBE never accepts filtering (the ctor enforces it): acceptsFiltered=0.
+        m.put("subscribe_full_store.bin",
+                new EdgeFrame.Subscribe(true, List.of(), 0L, -1L, "edge-A", false));
+        // A prefix SUBSCRIBE opting into server-side filtering: acceptsFiltered=1.
+        m.put("subscribe_prefixes_filtered.bin",
+                new EdgeFrame.Subscribe(false, List.of("svc/", "db/"), 4096L, 5000L, "edge-B", true));
+        m.put("subscribe_ok_filtered.bin",
+                new EdgeFrame.SubscribeOk(12345L, EdgeFrame.Mode.TAIL, true));
+        m.put("subscribe_ok_unfiltered.bin",
+                new EdgeFrame.SubscribeOk(67890L, EdgeFrame.Mode.SNAPSHOT_FIRST, false));
+        return m;
+    }
+
+    /** v3 has no oversize (inline-hex-too-large) fixture. */
+    static List<String> oversizeV3FixtureNames() {
+        return new ArrayList<>();
+    }
+
     /** A deterministic 1 MiB byte fill for the at-cap snapshot-chunk fixture. */
     static byte[] oneMiBFill() {
         byte[] b = new byte[EdgeFrameCodec.MAX_SNAPSHOT_CHUNK_BYTES];

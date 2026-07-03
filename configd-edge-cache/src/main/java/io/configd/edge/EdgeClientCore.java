@@ -6,6 +6,7 @@ import io.configd.distribution.wire.EdgeFrame;
 import io.configd.distribution.wire.EdgeSnapshotCodec;
 import io.configd.observability.InvariantMonitor;
 import io.configd.observability.MetricsRegistry;
+import io.configd.store.ConfigDelta;
 import io.configd.store.ConfigSigner;
 import io.configd.store.ConfigSnapshot;
 import io.configd.store.ReadResult;
@@ -176,6 +177,15 @@ public final class EdgeClientCore {
 
     /** Server-chosen subscription mode from SUBSCRIBE_OK; null until subscribed. */
     private EdgeFrame.Mode mode;
+
+    /**
+     * Whether the server is filtering this session server-side (ADR-0045), from the SUBSCRIBE_OK
+     * {@code filtered} confirm. In filtered mode {@link #cursor} is the dense covered-through
+     * seq (advanced by delivered NOTIFYs AND the cursor-advance HEARTBEAT), the applied store
+     * version is tracked separately by the {@link DeltaApplier}/{@link EdgeConfigClient}, and the
+     * gap check is forward-only.
+     */
+    private boolean filtered;
 
     /** Snapshot reassembly state (between SNAPSHOT_BEGIN and SNAPSHOT_END). */
     private final List<EdgeFrame.SnapshotChunk> pendingChunks = new ArrayList<>();
@@ -400,6 +410,11 @@ public final class EdgeClientCore {
 
     private void onSubscribeOk(EdgeFrame.SubscribeOk ok) {
         this.mode = ok.mode();
+        // Select the filtered-stream apply mode from the server's confirm: forward-only gap
+        // detection + a version-bridged store apply (ADR-0045). A 0x01/0x02 SUBSCRIBE_OK always
+        // decodes filtered=false, so classic edges are unaffected.
+        this.filtered = ok.filtered();
+        applier.setFilteredMode(filtered);
         // SNAPSHOT_FIRST: the server owes us a snapshot -- the heal is already in flight,
         // so the gap/DISCONNECTED resubscribe directives stay suppressed until it lands.
         this.snapshotExpected = (ok.mode() == EdgeFrame.Mode.SNAPSHOT_FIRST);
@@ -454,8 +469,14 @@ public final class EdgeClientCore {
                 // so it stays byte-identical to the client's internal store and reads route
                 // through the real INV-M1 (monotonic-read) seam. (filterForStorage is the
                 // lockstep contract; a pure function of the current subscription, so both
-                // stores agree.)
-                readStore.applyDelta(client.filterForStorage(notification.delta()));
+                // stores agree.) In filtered mode the read store bridges the same intentional
+                // version jump the client store did, keeping the two in lockstep.
+                ConfigDelta storeDelta = client.filterForStorage(notification.delta());
+                if (filtered) {
+                    storeDelta = new ConfigDelta(readStore.currentVersion(),
+                            storeDelta.toVersion(), storeDelta.mutations());
+                }
+                readStore.applyDelta(storeDelta);
             }
         } catch (RuntimeException e) {
             actOnPoison(poisonPolicy.onApplyFailure(notification.seq(), e),
@@ -582,6 +603,28 @@ public final class EdgeClientCore {
         heartbeatsObserved++;
         lastHeartbeatLatestSeq = h.latestSeq();
         lastHeartbeatAtMillis = clock.currentTimeMillis();
+        if (filtered) {
+            // On a filtered stream latestSeq is the server's DRAINED-THROUGH covered-S (not the
+            // buffer tip): everything matching this edge's prefixes through it has been delivered
+            // or filtered. Advance the transport cursor to it MONOTONICALLY (advance-if-greater),
+            // so the edge acks the covered-S and the server's ack-lag never trips on filtered
+            // skips; the applied store version is tracked separately by the applier. A REGRESSED
+            // covered-S is safely IGNORED here (the edge never regresses its covered cursor) - a
+            // genuine gap is instead surfaced by a delivered NOTIFY whose position regresses below
+            // the applied version (DeltaApplier's forward-only check).
+            if (h.latestSeq() > cursor) {
+                cursor = h.latestSeq();
+            }
+            // cursor now == latestSeq (when the covered-S advanced), so the frontier advances -
+            // the edge is caught up to the covered position.
+            boolean advanced = client.recordHeartbeatFrontier(h.latestSeq(), cursor, h.serverNowMillis());
+            if (advanced) {
+                frontierAdvances++;
+            }
+            refreshCursorLag();
+            ackCursor(); // ack the covered-S so the server releases in-flight frames / clears ack-lag
+            return;
+        }
         // Advance the covered frontier ONLY when latestSeq == cursor (cursor-matched).
         boolean advanced = client.recordHeartbeatFrontier(h.latestSeq(), cursor, h.serverNowMillis());
         if (advanced) {

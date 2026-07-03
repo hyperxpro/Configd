@@ -1,5 +1,7 @@
 package io.configd.distribution.fanout;
 
+import java.util.Set;
+
 /**
  * Named, validated configuration for a {@link FanOutSessionCore}. Every policy
  * threshold is a named config with a metric. Defaults: see {@link #defaults()}.
@@ -26,6 +28,14 @@ package io.configd.distribution.fanout;
  * @param idlePollMs            adaptive idle-poll backoff cap (default 5)
  * @param snapshotChunkBytes    snapshot chunk payload size (default 1 MiB; bounded at
  *                              {@link io.configd.distribution.wire.EdgeFrameCodec#MAX_SNAPSHOT_CHUNK_BYTES})
+ * @param serverSidePrefixFilter whether the drain filters whole signed deltas to the
+ *                              subscribed prefix set server-side (ADR-0045). The library default
+ *                              is {@code false} (full-chain, byte-identical); the product default
+ *                              is set at the deployment boundary ({@code ConfigdServer}).
+ * @param strongReadPrefixes    the strong-read (always-shipped) key prefixes: a delta touching
+ *                              any such key is never filtered, regardless of the subscribed
+ *                              prefixes, so the edge holds them for suppression-detectability.
+ *                              Empty when {@code serverSidePrefixFilter} is off (unused).
  */
 public record FanOutConfig(
         int queueFrames,
@@ -35,10 +45,13 @@ public record FanOutConfig(
         long ackLagDemoteSeqs,
         long heartbeatMs,
         long idlePollMs,
-        int snapshotChunkBytes
+        int snapshotChunkBytes,
+        boolean serverSidePrefixFilter,
+        Set<String> strongReadPrefixes
 ) {
 
     public FanOutConfig {
+        strongReadPrefixes = strongReadPrefixes == null ? Set.of() : Set.copyOf(strongReadPrefixes);
         if (queueFrames <= 0) {
             throw new IllegalArgumentException("queueFrames must be positive: " + queueFrames);
         }
@@ -78,7 +91,19 @@ public record FanOutConfig(
         }
     }
 
-    /** Defaults: 256 / 80% / 64 / 256 KiB / 8192 / 250 ms / 5 ms / 1 MiB. */
+    /**
+     * A config with the pre-filtering field set (the eight-arg canonical policy), server-side
+     * prefix filtering OFF and no strong-read prefixes. Existing callers use this arity
+     * unchanged and stay byte-identical.
+     */
+    public FanOutConfig(int queueFrames, int queueWarnPct, int batchMaxNotifications,
+                        int batchMaxBytes, long ackLagDemoteSeqs, long heartbeatMs,
+                        long idlePollMs, int snapshotChunkBytes) {
+        this(queueFrames, queueWarnPct, batchMaxNotifications, batchMaxBytes, ackLagDemoteSeqs,
+                heartbeatMs, idlePollMs, snapshotChunkBytes, false, Set.of());
+    }
+
+    /** Defaults: 256 / 80% / 64 / 256 KiB / 8192 / 250 ms / 5 ms / 1 MiB; filtering OFF. */
     public static FanOutConfig defaults() {
         return new FanOutConfig(
                 256,        // queueFrames
@@ -89,6 +114,17 @@ public record FanOutConfig(
                 250L,       // heartbeatMs
                 5L,         // idlePollMs
                 1_048_576); // snapshotChunkBytes (1 MiB)
+    }
+
+    /**
+     * Returns a copy of this config with the server-side prefix-filter posture set (ADR-0045).
+     * The deployment boundary ({@code ConfigdServer}) uses this to flip the product default ON
+     * with the resolved strong-read prefixes, leaving the library {@link #defaults()}
+     * conservative.
+     */
+    public FanOutConfig withServerSidePrefixFilter(boolean on, Set<String> strongReadPrefixes) {
+        return new FanOutConfig(queueFrames, queueWarnPct, batchMaxNotifications, batchMaxBytes,
+                ackLagDemoteSeqs, heartbeatMs, idlePollMs, snapshotChunkBytes, on, strongReadPrefixes);
     }
 
     /** The queue depth (in frames) at which a slow-consumer warning fires. */

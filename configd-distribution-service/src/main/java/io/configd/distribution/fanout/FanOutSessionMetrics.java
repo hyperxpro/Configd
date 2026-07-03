@@ -132,6 +132,45 @@ public interface FanOutSessionMetrics {
     default void onConsumerStates(int healthy, int slow, int catchup,
                                   int quarantined, int unhealthy) { }
 
+    // ------------------------------------------------------------------
+    // Server-side prefix-filtering series (ADR-0045). All default no-ops
+    // so existing sinks (NOOP, the sim) are unaffected.
+    // ------------------------------------------------------------------
+
+    /**
+     * {@code n} whole signed deltas were dropped by the server-side prefix filter (egress
+     * saved). Series {@code edge_fanout_filtered_deltas_total} (counter).
+     *
+     * @param n the number of deltas dropped in this drain pass
+     */
+    default void onFilteredDeltas(int n) { }
+
+    /**
+     * {@code n} deltas were delivered to a filtered edge post-filter. Series
+     * {@code edge_fanout_delivered_deltas_total} (counter). {@code delivered / (delivered +
+     * filtered)} is the measured keyspace fraction the edge subscribes to.
+     *
+     * @param n the number of deltas delivered in this NOTIFY batch
+     */
+    default void onDeliveredDeltas(int n) { }
+
+    /**
+     * A cursor-advance HEARTBEAT (carrying the drained-through covered-S) was emitted on a
+     * filtered session after the drain skipped deltas. Series
+     * {@code edge_fanout_cursor_advances_total} (counter).
+     */
+    default void onCursorAdvance() { }
+
+    /**
+     * The session's server-side-filtering posture at subscribe time. A session that filters
+     * increments {@code edge_fanout_filtered_sessions_total} (counter). A monotonic count of
+     * filtered-session subscribes rather than a current-active gauge, because the session
+     * lifecycle offers no filter-aware teardown hook to decrement a gauge honestly.
+     *
+     * @param active true when this session filters server-side
+     */
+    default void onFilterActive(boolean active) { }
+
     /** No-op sink - the default for tests and any wiring that does not export metrics. */
     FanOutSessionMetrics NOOP = new FanOutSessionMetrics() {
         @Override public void onNotifyBatch(int n, int bytes) { }
