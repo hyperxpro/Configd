@@ -13,7 +13,7 @@ package io.configd.distribution.fanout;
  * <p>The interface lives in the transport-agnostic fan-out plane; the server implements it over its
  * {@code ShardMap} (KEY -&gt; {@code shardFor(scope, path)}; else all {@code shardIds()}), so the
  * fan-out plane stays decoupled from the replication engine's routing. At {@code N = 1} every target
- * resolves to the single-element set {@code {0}} (byte-identical to the pre-Gate-3 single drain).
+ * resolves to the single-element set {@code {0}} (byte-identical to the single-shard drain).
  */
 @FunctionalInterface
 public interface ShardResolver {

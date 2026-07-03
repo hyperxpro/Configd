@@ -111,7 +111,7 @@ class WatchMultiplexSinkTest {
         assertEquals("/app/db/host", change.key());
     }
 
-    // ---- gid stamp (the lifted §3.2 hardcode #2) ---------------------------
+    // ---- gid stamp (the real shard gid on every WATCH_EVENT / WATCH_SNAPSHOT_*) ----
 
     @Test
     void notifyTranslatesToWatchEventTaggedWithThisShardsGid() {

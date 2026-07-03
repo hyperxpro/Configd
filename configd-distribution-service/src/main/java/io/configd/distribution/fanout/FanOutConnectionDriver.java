@@ -50,8 +50,9 @@ import java.util.function.BooleanSupplier;
  *       for <b>every</b> shard in {@code allGids} (each with its own gid-stamped
  *       {@link WatchMultiplexSink} and {@link FilteringReplaySource}). {@code WATCH_CREATE} is
  *       validated (path grammar, W2-4), <b>authorized</b> via the optional {@link WatchAuthorizer} SPI
- *       <b>once over the whole logical target before any shard leg streams a byte</b> (INV-MSW-ATOMIC;
- *       fail-closed when the authorizer is absent/unauthenticated/throwing), then registered. The
+ *       <b>once over the whole logical target before any shard leg streams a byte</b> - a single
+ *       indivisible whole-target decision, all N legs served or none, fail-closed when the authorizer
+ *       is absent/unauthenticated/throwing - then registered. The
  *       first authorized watch seeds all N cores; each shard's decorator translates that core's
  *       structured output into per-watch {@code WATCH_*} frames tagged with the real gid, and the
  *       coordinator coalesces the two cross-shard frames ({@code WATCH_CREATED} vector,
@@ -102,7 +103,7 @@ public final class FanOutConnectionDriver implements WatchMultiplexSink.Coordina
     /** The connection's shard set, ascending (StaticShardMap: {@code [0, N)}). */
     private final int[] allGids;
 
-    /** Fast membership test for the cursor gid-spoof guard (B4): a component gid MUST be a known gid. */
+    /** Fast membership test for the cursor gid-spoof guard: a component gid MUST be a known gid. */
     private final Set<Integer> knownGids;
 
     /** The primary shard - core built eagerly (legacy byte-identity + the {@link #session()} accessor). */
@@ -225,7 +226,7 @@ public final class FanOutConnectionDriver implements WatchMultiplexSink.Coordina
      * Single-shard constructor: the N=1 form and the shape every existing caller (JDK
      * {@code FanOutServer}, Netty, sim, tests) uses. Delegates to the multi-shard constructor with a
      * one-entry {@code {0 -> source}} map and the {@link #SINGLE_SHARD} resolver, so one core == the
-     * pre-Gate-3 single drain and the output is byte-identical.
+     * single-shard drain and the output is byte-identical.
      *
      * @param authorizer the authorization gate (W7), or {@code null} when no principal model is wired.
      */
@@ -482,7 +483,7 @@ public final class FanOutConnectionDriver implements WatchMultiplexSink.Coordina
 
     /**
      * Handles one {@code WATCH_CREATE} on the session thread. The order is load-bearing for the
-     * security contract (INV-MSW-ATOMIC - one whole-target decision, all N legs or none):
+     * security contract - one whole-target authorization decision, all N shard legs served or none:
      * <ol>
      *   <li><b>validate</b> the target (path grammar / scope+kind range, W2-4) -> {@code BAD_SUBSCRIBE}
      *       on a malformed target;</li>
@@ -491,7 +492,7 @@ public final class FanOutConnectionDriver implements WatchMultiplexSink.Coordina
      *       (W7-5): NO shard core is seeded/tailed until every check passes;</li>
      *   <li><b>reject id-reuse</b> (W2-8) -> {@code BAD_SUBSCRIBE}; a {@code watch_id} is never
      *       reused;</li>
-     *   <li><b>reject a gid-spoofed cursor</b> (B4): a cursor component naming a gid not in the shard
+     *   <li><b>reject a gid-spoofed cursor</b>: a cursor component naming a gid not in the shard
      *       set -> {@code BAD_SUBSCRIBE} (fail-closed); an in-range but irrelevant component is ignored
      *       (the target, never the cursor, sets coverage);</li>
      *   <li><b>register</b> with the target-driven covered set, then either seed all N cores (first
@@ -523,8 +524,8 @@ public final class FanOutConnectionDriver implements WatchMultiplexSink.Coordina
         // (the create is then rejected below, so the value is unused).
         long versionAtCreate = (authorizer != null) ? authorizer.policyVersion() : 0L;
 
-        // (2) AUTHORIZE the whole target ONCE - the security crux (INV-MSW-ATOMIC). Zero data frames,
-        // and NO shard leg seeded/tailed, precede a reject.
+        // (2) AUTHORIZE the whole target ONCE - the security crux. Zero data frames, and NO shard leg
+        // seeded/tailed, precede a reject.
         if (!authorize(target)) {
             rejectWatch(watchId, ErrorCode.NOT_AUTHORIZED,
                     "watch not authorized: principal lacks READ ∧ WATCH over the whole target");
@@ -553,10 +554,10 @@ public final class FanOutConnectionDriver implements WatchMultiplexSink.Coordina
             return;
         }
 
-        // (3c) gid-spoof guard (B4): a cursor component naming a gid outside the shard set is
+        // (3c) gid-spoof guard: a cursor component naming a gid outside the shard set is
         // unroutable - under static-N it can only be a cursor from a different deployment, and a
         // silent drop would let the client believe it is covered. Fail closed. An in-range-but-
-        // irrelevant component is IGNORED (the target sets coverage, §2.1).
+        // irrelevant component is IGNORED (the target sets coverage).
         for (WatchCursor.Component c : create.cursor().components()) {
             if (!knownGids.contains(c.gid())) {
                 rejectWatch(watchId, ErrorCode.BAD_SUBSCRIBE,
@@ -594,7 +595,8 @@ public final class FanOutConnectionDriver implements WatchMultiplexSink.Coordina
      * Materializes a core for EVERY shard in {@code allGids} (the primary is already built) and flips
      * every decorator to watch translation. All N cores exist from the first watch, so
      * {@code cores.keySet() == allGids}: every covered shard has a drain (completeness by
-     * construction) and there is no late-leg path (INV-MSW-ATOMIC B2 structurally satisfied).
+     * construction) and there is no late-opened leg that could ride a since-revoked authorization -
+     * every leg exists from the one authorized create.
      */
     private void materializeAllCores() {
         for (int g : allGids) {
@@ -676,7 +678,7 @@ public final class FanOutConnectionDriver implements WatchMultiplexSink.Coordina
     /**
      * Emits the {@code WATCH_CREATED} ack for a subsequent watch: TAIL from the current per-shard
      * frontier over its covered shards (the shared drains are already positioned). At {@code N = 1}
-     * this is one {@code ShardMode(0, latest, TAIL)} - byte-identical to the pre-Gate-3 path.
+     * this is one {@code ShardMode(0, latest, TAIL)} - byte-identical to the single-shard path.
      */
     private void emitSubsequentWatchCreated(long watchId, int[] coveredGids) {
         List<EdgeFrame.ShardMode> shards = new ArrayList<>(coveredGids.length);
@@ -794,7 +796,7 @@ public final class FanOutConnectionDriver implements WatchMultiplexSink.Coordina
     /**
      * The resume seq one shard's drain starts from: the component whose {@code gid == g}, or 0 for
      * "from now for that shard" (W3-4) when the vector has no component for {@code g}. At {@code N = 1}
-     * with {@code g = 0} this is the pre-Gate-3 single-component demux.
+     * with {@code g = 0} this is the single-shard single-component demux.
      */
     private static long startCursorS(WatchCursor cursor, int g) {
         for (WatchCursor.Component c : cursor.components()) {
@@ -860,7 +862,7 @@ public final class FanOutConnectionDriver implements WatchMultiplexSink.Coordina
      * idle-but-healthy shard's component advances over non-matching commits (the core drains the whole
      * shard); a lagging shard's freezes while {@code server_now} advances - quiet distinguishable from
      * lagging (§6). A refused offer is the shared-fate backpressure (W8-6): return false so the
-     * triggering core reads it as transport-gone (the pre-Gate-3 close-on-refused-heartbeat behavior).
+     * triggering core reads it as transport-gone (the prior close-on-refused-heartbeat behavior).
      */
     private boolean emitCoalescedProgress(long serverNowMillis) {
         for (WatchRegistry.WatchEntry e : watchRegistry.liveEntries()) {

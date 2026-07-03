@@ -968,12 +968,12 @@ public final class ConfigdServer {
             io.configd.server.fanout.RegistryFanOutSessionMetrics fanOutMetrics =
                     new io.configd.server.fanout.RegistryFanOutSessionMetrics(metricsRegistry);
             // The per-shard sources + replay sources + shard set + resolver the multi-shard
-            // fan-out/fan-in coordinator (Gate 3) fans a watch across: one FanOutBuffer and one
-            // snapshot replay per group (the same per-gid runtimes registerShardedFanOut / the ACL
-            // loader read), the shard set, and a ShardMap-backed resolver (KEY -> shardFor; PREFIX/FULL
-            // -> shardIds()). At N=1 - the boot guard's invariant for the edge endpoint - these are
-            // single-entry maps and the single-shard resolver, so one core is the pre-Gate-3 drain
-            // (byte-identical). The N>1 wiring is dormant until Gate 4 lifts the guard.
+            // fan-out/fan-in coordinator fans a watch across: one FanOutBuffer and one snapshot replay
+            // per group (the same per-gid runtimes registerShardedFanOut / the ACL loader read), the
+            // shard set, and a ShardMap-backed resolver (KEY -> shardFor; PREFIX/FULL -> shardIds()).
+            // At N=1 - the invariant the N>1-edge boot guard enforces for the edge endpoint - these are
+            // single-entry maps and the single-shard resolver, so one core is the single-shard drain
+            // (byte-identical). The N>1 wiring stays dormant until that boot guard is lifted.
             Map<Integer, io.configd.distribution.CommitNotificationSource> edgeShardSources =
                     new java.util.LinkedHashMap<>(shardFanOutBuffers);
             Map<Integer, io.configd.distribution.ReplaySource> edgeShardReplaySources =

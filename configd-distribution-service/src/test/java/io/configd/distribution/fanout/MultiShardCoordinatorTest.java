@@ -29,7 +29,7 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * The Gate-3 multi-shard fan-out/fan-in coordinator proofs. Drives {@link FanOutConnectionDriver}
+ * The multi-shard fan-out/fan-in coordinator proofs. Drives {@link FanOutConnectionDriver}
  * over N in-memory {@link FanOutBuffer}s + a frame-capturing {@link RecordingTransportSink}, sweeping
  * ticks (the same deterministic, thread-free harness as {@code FanOutSessionCoreGapClassificationTest}
  * generalized to N shards). The boot guard stays in place; these tests exercise the coordinator
@@ -111,13 +111,13 @@ class MultiShardCoordinatorTest {
     }
 
     // =====================================================================
-    // Proof 11 - N=1 differential oracle (the byte-identity regression floor)
+    // N=1 differential oracle (the byte-identity regression floor)
     // =====================================================================
 
     @Test
-    void proof11_nEquals1IsFrameIdenticalToTheReferenceTranslator() {
-        // Drive the SAME subscribe + publishes + ticks through (A) the Gate-3 N=1 coordinator and
-        // (B) an independent re-implementation of the pre-Gate-3 single-shard translation. If the
+    void nEquals1IsFrameIdenticalToTheReferenceTranslator() {
+        // Drive the SAME subscribe + publishes + ticks through (A) the N=1 coordinator and
+        // (B) an independent re-implementation of the single-shard translation. If the
         // frame lists match, the N=1 coalescer is byte-identical to the incumbent veneer.
         WatchTarget full = new WatchTarget(0, EdgeFrame.WATCH_TARGET_FULL, "", false);
 
@@ -151,7 +151,7 @@ class MultiShardCoordinatorTest {
         List<EdgeFrame> referenceFrames = List.copyOf(refOut.sent());
 
         assertEquals(referenceFrames, coordinatorFrames,
-                "the N=1 coordinator emits frames identical to the independent pre-Gate-3 translator");
+                "the N=1 coordinator emits frames identical to the independent single-shard translator");
         // And concretely: WATCH_CREATED[ShardMode(0,...)], two WATCH_EVENT(gid=0), one WATCH_PROGRESS.
         assertEquals(1, out.sentOfType(EdgeFrame.WatchCreated.class).size());
         assertEquals(1, out.sentOfType(EdgeFrame.WatchCreated.class).get(0).shards().size());
@@ -161,11 +161,11 @@ class MultiShardCoordinatorTest {
     }
 
     // =====================================================================
-    // Proof 1 - completeness under coverage (a change on shard != 0 IS delivered)
+    // completeness under coverage (a change on shard != 0 IS delivered)
     // =====================================================================
 
     @Test
-    void proof1_aChangeOnANonZeroShardIsDeliveredTaggedWithThatGid() {
+    void aChangeOnANonZeroShardIsDeliveredTaggedWithThatGid() {
         setup(3, ALLOW);
         feed(fullCreate(1, WatchCursor.fromNow())); // FULL scatters to all 3 shards
         buffers[2].publish(put(1, "/anything", "v")); // a commit ONLY on shard 2
@@ -178,11 +178,11 @@ class MultiShardCoordinatorTest {
     }
 
     // =====================================================================
-    // Proof 2 - a not-ready-at-subscribe leg is materialized, never omitted
+    // a not-ready-at-subscribe leg is materialized, never omitted
     // =====================================================================
 
     @Test
-    void proof2_emptyShardLegIsMaterializedAndDeliversWhenDataArrives() {
+    void emptyShardLegIsMaterializedAndDeliversWhenDataArrives() {
         setup(3, ALLOW);
         buffers[0].publish(put(1, "/x0", "v")); // shards 0 non-empty; shard 1 EMPTY; shard 2 non-empty
         buffers[2].publish(put(1, "/x2", "v"));
@@ -201,11 +201,11 @@ class MultiShardCoordinatorTest {
     }
 
     // =====================================================================
-    // Proof 3 - no silent partial: a lagging shard freezes its component, never truncates
+    // no silent partial: a lagging shard freezes its component, never truncates
     // =====================================================================
 
     @Test
-    void proof3_laggingShardComponentFreezesWhileServerNowAdvancesAndSiblingsDeliver() {
+    void laggingShardComponentFreezesWhileServerNowAdvancesAndSiblingsDeliver() {
         setup(2, ALLOW);
         feed(fullCreate(1, WatchCursor.fromNow()));
         sweepAt(1_000L); // anchor cadence (both idle)
@@ -236,11 +236,11 @@ class MultiShardCoordinatorTest {
     }
 
     // =====================================================================
-    // Proof 4 - per-shard order preserved through the merge
+    // per-shard order preserved through the merge
     // =====================================================================
 
     @Test
-    void proof4_eachPerShardSubstreamIsContiguousAscendingInS() {
+    void eachPerShardSubstreamIsContiguousAscendingInS() {
         setup(2, ALLOW);
         feed(prefixCreate(1, "/app/", WatchCursor.fromNow())); // PREFIX scatters to all shards
         // Interleave publishes across two shards; per-shard S sequences are independent.
@@ -258,11 +258,11 @@ class MultiShardCoordinatorTest {
     }
 
     // =====================================================================
-    // Proof 5 - no cross-shard order (the tags separate the substreams; S is per-shard)
+    // no cross-shard order (the tags separate the substreams; S is per-shard)
     // =====================================================================
 
     @Test
-    void proof5_theTagsSeparateSubstreamsAndSIsIncomparableAcrossShards() {
+    void theTagsSeparateSubstreamsAndSIsIncomparableAcrossShards() {
         setup(2, ALLOW);
         feed(prefixCreate(1, "/app/", WatchCursor.fromNow()));
         buffers[0].publish(put(1, "/app/a", "a1"));
@@ -280,11 +280,11 @@ class MultiShardCoordinatorTest {
     }
 
     // =====================================================================
-    // Proof 6 - resume across a multi-shard reconnect (mixed TAIL / SNAPSHOT_FIRST, max-merge)
+    // resume across a multi-shard reconnect (mixed TAIL / SNAPSHOT_FIRST, max-merge)
     // =====================================================================
 
     @Test
-    void proof6_resumeWithPartialVectorMixesTailAndSnapshotPerShard() {
+    void resumeWithPartialVectorMixesTailAndSnapshotPerShard() {
         setup(2, ALLOW, "edge-1", 4); // tiny buffers so shard 0 can evict
         // Shard 0: 1..10 published into a cap-4 buffer => early seqs evicted; resume (0,2) will GAP.
         for (long i = 1; i <= 10; i++) {
@@ -312,11 +312,11 @@ class MultiShardCoordinatorTest {
     }
 
     // =====================================================================
-    // Proof 7 - INV-MSW-ATOMIC: one whole-target decision; deny => zero leaks, whole-watch reject
+    // one whole-target decision; deny => zero leaks from any shard, whole-watch reject
     // =====================================================================
 
     @Test
-    void proof7_deniedWatchLeaksZeroFramesFromAnyShard() {
+    void deniedWatchLeaksZeroFramesFromAnyShard() {
         setup(3, DENY);
         // Data exists on EVERY shard - a leaking leg would emit a WATCH_EVENT / WATCH_SNAPSHOT.
         buffers[0].publish(put(1, "/x0", "v"));
@@ -335,11 +335,11 @@ class MultiShardCoordinatorTest {
     }
 
     // =====================================================================
-    // Proof 8 - B4: a gid-spoofed cursor component fails closed; in-range-irrelevant is ignored
+    // a gid-spoofed cursor component fails closed; an in-range-irrelevant one is ignored
     // =====================================================================
 
     @Test
-    void proof8a_cursorNamingAnOutOfRangeShardIsRejectedBadSubscribe() {
+    void cursorNamingAnOutOfRangeShardIsRejectedBadSubscribe() {
         setup(2, ALLOW);
         // A cursor component naming gid 5 on a 2-shard cluster is unroutable (a foreign deployment).
         WatchCursor spoof = new WatchCursor(List.of(new WatchCursor.Component(5, 1)));
@@ -350,7 +350,7 @@ class MultiShardCoordinatorTest {
     }
 
     @Test
-    void proof8b_inRangeButIrrelevantCursorComponentIsIgnoredNotMaterialized() {
+    void inRangeButIrrelevantCursorComponentIsIgnoredNotMaterialized() {
         setup(3, ALLOW);
         // A KEY watch on shard 1, but the cursor carries an extra (in-range) component for shard 2.
         // The TARGET sets coverage: the watch covers ONLY shard 1; shard 2's component is ignored.
@@ -383,11 +383,11 @@ class MultiShardCoordinatorTest {
     }
 
     // =====================================================================
-    // Proof 9 - B2/B3: resume is create for authz; revoke-then-resume => NOT_AUTHORIZED, zero frames
+    // resume is a create for authz; revoke-then-resume => NOT_AUTHORIZED, zero frames
     // =====================================================================
 
     @Test
-    void proof9_resumeWithAValidCursorStillPassesTheGateAndIsDeniedIfRevoked() {
+    void resumeWithAValidCursorStillPassesTheGateAndIsDeniedIfRevoked() {
         setup(2, DENY); // the "revoked" state: the authorizer now denies
         buffers[0].publish(put(1, "/app/a", "v"));
         buffers[1].publish(put(1, "/app/b", "v"));
@@ -398,15 +398,15 @@ class MultiShardCoordinatorTest {
         feed(prefixCreate(1, "/app/", resume));
         sweep();
         assertEquals(ErrorCode.NOT_AUTHORIZED, ((EdgeFrame.WatchCanceled) out.sent().get(0)).code());
-        assertTrue(out.sentOfType(EdgeFrame.WatchEvent.class).isEmpty(), "a resume cannot skip the gate (B3)");
+        assertTrue(out.sentOfType(EdgeFrame.WatchEvent.class).isEmpty(), "a resume cannot skip the gate");
     }
 
     // =====================================================================
-    // Proof 10 - W7-7 at N: revoke mid-stream cuts ALL covered legs atomically
+    // revoke mid-stream cuts ALL covered legs atomically (W7-7 generalized to N shards)
     // =====================================================================
 
     @Test
-    void proof10_revocationCutsAllShardLegsAtomically() {
+    void revocationCutsAllShardLegsAtomically() {
         RevocableAuthorizer auth = new RevocableAuthorizer();
         setup(3, auth);
         feed(fullCreate(1, WatchCursor.fromNow())); // covers all 3 shards
@@ -432,11 +432,11 @@ class MultiShardCoordinatorTest {
     }
 
     // =====================================================================
-    // Proof 12 - per-shard Gap isolation: one shard SNAPSHOT_FIRSTs, siblings uninterrupted
+    // per-shard Gap isolation: one shard SNAPSHOT_FIRSTs, siblings uninterrupted
     // =====================================================================
 
     @Test
-    void proof12_midStreamGapOnOneShardResnapshotsOnlyThatShard() {
+    void midStreamGapOnOneShardResnapshotsOnlyThatShard() {
         setup(2, ALLOW, "edge-1", 4); // tiny buffers
         feed(fullCreate(1, WatchCursor.fromNow())); // both TAIL from now (empty)
         sweep(); // caught up, nothing to deliver
@@ -617,11 +617,11 @@ class MultiShardCoordinatorTest {
     }
 
     /**
-     * An independent re-implementation of the pre-Gate-3 single-shard {@link WatchMultiplexSink}
+     * An independent re-implementation of the single-shard {@link WatchMultiplexSink}
      * translation for ONE drain-owner watch - the differential-oracle reference. It codes the old
      * contract from scratch (SUBSCRIBE_OK -> WATCH_CREATED[ShardMode(0,..)], NOTIFY -> filtered
      * WATCH_EVENT(gid 0), HEARTBEAT -> WATCH_PROGRESS[(0, drainedCursor)], SNAPSHOT_* -> gid 0), so a
-     * frame-equality against the Gate-3 N=1 coordinator proves byte-identity against a distinct codepath.
+     * frame-equality against the N=1 coordinator proves byte-identity against a distinct codepath.
      */
     private static final class ReferenceSink implements TransportSink {
         private final RecordingTransportSink out;

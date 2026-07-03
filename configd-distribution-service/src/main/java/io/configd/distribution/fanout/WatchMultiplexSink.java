@@ -15,8 +15,8 @@ import java.util.List;
  * <b>translates</b> the core's structured output into <b>per-watch</b> {@code WATCH_*} frames, each
  * <b>filtered by the watch's target</b> and <b>tagged with this sink's shard {@code gid}</b>.
  *
- * <p>At {@code N = 1} there is one sink (gid 0) over one core - byte-identical to the pre-Gate-3
- * single drain. At {@code N > 1} the connection owns one sink per shard; the two cross-shard
+ * <p>At {@code N = 1} there is one sink (gid 0) over one core - byte-identical to the single-shard
+ * drain. At {@code N > 1} the connection owns one sink per shard; the two cross-shard
  * frames - {@code WATCH_CREATED} (a vector of N {@link EdgeFrame.ShardMode}s) and
  * {@code WATCH_PROGRESS} (an N-component cursor vector) - cannot be built from one shard's state, so
  * this sink <b>forwards</b> its {@code SUBSCRIBE_OK} and its idle {@code HEARTBEAT} to the
@@ -99,7 +99,7 @@ final class WatchMultiplexSink implements TransportSink {
          * per live watch (deduped so several idle shards in one sweep produce a single frame).
          *
          * @return the transport offer result - {@code false} means the outbound would block, which
-         *         the triggering core reads as transport-gone (preserving the pre-Gate-3
+         *         the triggering core reads as transport-gone (preserving the prior single-shard
          *         close-on-refused-heartbeat behavior exactly at {@code N = 1})
          */
         boolean onIdleProgress(long serverNowMillis);

@@ -90,7 +90,7 @@ public final class FanOutServer implements FanOutEndpoint {
      */
     public static final int DEFAULT_MAX_SESSIONS = 1_024;
 
-    /** The single-shard resolver the pre-Gate-3 (single-source) constructors bind: every target -> gid 0. */
+    /** The single-shard resolver the single-source constructors bind: every target -> gid 0. */
     private static final ShardResolver SINGLE_SHARD = t -> new int[]{0};
 
     private final InetSocketAddress bindAddress;
@@ -203,7 +203,7 @@ public final class FanOutServer implements FanOutEndpoint {
      * The multi-shard constructor: the per-shard commit sources + replay sources + shard set +
      * resolver the fan-out/fan-in coordinator fans a watch across. At {@code N = 1} the single-source
      * constructors delegate here with single-entry maps and the single-shard resolver, so one core is
-     * the pre-Gate-3 drain (byte-identical). {@code ConfigdServer} threads the real per-shard maps.
+     * the single-shard drain (byte-identical). {@code ConfigdServer} threads the real per-shard maps.
      */
     public FanOutServer(Map<Integer, CommitNotificationSource> shardSources,
                         Map<Integer, ReplaySource> shardReplaySources,
