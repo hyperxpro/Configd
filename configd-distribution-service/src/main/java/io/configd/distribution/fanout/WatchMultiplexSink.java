@@ -3,20 +3,24 @@ package io.configd.distribution.fanout;
 import io.configd.distribution.CommitNotification;
 import io.configd.distribution.wire.EdgeFrame;
 import io.configd.distribution.wire.ErrorCode;
-import io.configd.distribution.wire.WatchCursor;
 import io.configd.store.ConfigMutation;
 
 import java.util.ArrayList;
 import java.util.List;
-import java.util.function.LongSupplier;
 
 /**
- * The watch multiplex/filter veneer: a {@link TransportSink} <b>decorator</b> placed
- * between the untouched {@link FanOutSessionCore} and the real transport sink. The core
- * drains the single connection-level signed chain forward exactly as before (one shard at
- * N=1, one cursor, one ack, connection-level snapshot / heartbeat / backpressure - the W8-6
- * per-connection shared fate); this decorator <b>translates</b> the core's structured output
- * frames into <b>per-watch</b> {@code WATCH_*} frames, each <b>filtered by its target</b>.
+ * One shard's watch multiplex/filter veneer: a {@link TransportSink} <b>decorator</b> placed
+ * between one per-shard {@link FanOutSessionCore} and the connection's real transport sink. Its
+ * core drains that <b>one shard's</b> signed chain forward (one cursor, one ack); this decorator
+ * <b>translates</b> the core's structured output into <b>per-watch</b> {@code WATCH_*} frames, each
+ * <b>filtered by the watch's target</b> and <b>tagged with this sink's shard {@code gid}</b>.
+ *
+ * <p>At {@code N = 1} there is one sink (gid 0) over one core - byte-identical to the pre-Gate-3
+ * single drain. At {@code N > 1} the connection owns one sink per shard; the two cross-shard
+ * frames - {@code WATCH_CREATED} (a vector of N {@link EdgeFrame.ShardMode}s) and
+ * {@code WATCH_PROGRESS} (an N-component cursor vector) - cannot be built from one shard's state, so
+ * this sink <b>forwards</b> its {@code SUBSCRIBE_OK} and its idle {@code HEARTBEAT} to the
+ * driver-side {@link Coordinator}, which coalesces across the shards.
  *
  * <h2>Two modes (one decorator, always installed)</h2>
  * <ul>
@@ -31,19 +35,21 @@ import java.util.function.LongSupplier;
  *
  * <h2>Translation table (W5-*)</h2>
  * <pre>
- *   SUBSCRIBE_OK(latestSeq, mode)      -&gt; WATCH_CREATED(pendingWatch, [ShardMode(0, latestSeq, mode)])
+ *   SUBSCRIBE_OK(latestSeq, mode)      -&gt; Coordinator.onShardCreated(gid, latestSeq, mode)
+ *                                         (collected for the ONE coalesced WATCH_CREATED the driver
+ *                                         emits after seeding every shard - a per-shard sink cannot
+ *                                         build the N-ShardMode vector)
  *   NOTIFY([CommitNotification])       -&gt; per live watch, per notification: filter target; if any
- *                                         change matches, WATCH_EVENT(watchId, 0, seq, commitTs, changes)
+ *                                         change matches, WATCH_EVENT(watchId, gid, seq, commitTs, changes)
  *                                         (one event per shard-commit, W5-6; never split/coalesce)
- *   HEARTBEAT(latestSeq, serverNow)    -&gt; per live watch: WATCH_PROGRESS(watchId, [(0, drainedS)], serverNow)
- *                                         where drainedS is the core's drained cursor, NOT the raw
- *                                         latestSeq (the W5-7 upper-bound / no-silent-gap clamp)
- *   SNAPSHOT_{BEGIN,CHUNK,END}         -&gt; WATCH_SNAPSHOT_{BEGIN,CHUNK,END}(snapshotOwner, 0, ...)
- *                                         (the connection-level catch-up maps to the FIXED drain-
- *                                         owning watch - captured once, not per-frame, W5-5/F2;
- *                                         the snapshot BYTES are pre-filtered to that watch's
- *                                         target by FilteringReplaySource, W5-10/W7-4; v1
- *                                         single-snapshotting-watch boundary)
+ *   HEARTBEAT(latestSeq, serverNow)    -&gt; Coordinator.onIdleProgress(serverNow) (the driver emits ONE
+ *                                         coalesced N-component WATCH_PROGRESS per live watch; each
+ *                                         component is that shard's drained cursor, the W5-7 clamp)
+ *   SNAPSHOT_{BEGIN,CHUNK,END}         -&gt; WATCH_SNAPSHOT_{BEGIN,CHUNK,END}(snapshotOwner, gid, ...)
+ *                                         (this shard's catch-up maps to the FIXED drain-owning
+ *                                         watch - captured once, not per-frame, W5-5/F2; the snapshot
+ *                                         BYTES are pre-filtered to that watch's target by
+ *                                         FilteringReplaySource, W5-10/W7-4; v1 boundary)
  *   ERROR_CLOSE(DEMOTED_TO_CATCHUP)    -&gt; passthrough (the connection-level demotion notice the
  *                                         core offers; W8-6 - a driver MUST tolerate it)
  *   close(code, msg)                   -&gt; per live watch: WATCH_CANCELED(watchId, code, -, msg)
@@ -51,71 +57,86 @@ import java.util.function.LongSupplier;
  *                                         GAP_UNRECOVERABLE, as a per-watch terminal, W5-9/W6-4),
  *                                         then delegate.close
  * </pre>
- * The per-watch terminals that originate in the <b>router</b> - {@code NOT_AUTHORIZED} rejects
- * and subsequent-watch {@code WATCH_CREATED} acks - are NOT produced here; the driver emits
- * them directly via {@link #offerWatchFrame(EdgeFrame)} (which bypasses translation).
+ * The per-watch terminals that originate in the <b>router</b> - {@code NOT_AUTHORIZED} rejects,
+ * the coalesced {@code WATCH_CREATED}, and the coalesced {@code WATCH_PROGRESS} - are NOT produced
+ * here; the driver emits them directly via {@link #offerWatchFrame(EdgeFrame)} (which bypasses
+ * translation).
  *
  * <h2>v1 boundary (W8-6 shared drain)</h2>
- * All watches on a connection share <b>one</b> core drain, <b>one</b> cursor, and <b>one</b>
- * backpressure fate. The connection drain starts at the <b>first</b> watch's resume cursor;
- * a watch that needs to resume from an independent position MUST use a separate connection.
- * Backpressure is per-connection ({@code CURSOR_ACK} is a connection-level scalar), so a
- * single slow/greedy watch can demote every sibling - head-of-line blocking inherent to one
- * shared mTLS transport. Per-watch flow-control / fairness is the named v2 extension W10-8.
+ * All watches on a connection share the per-shard core drains, <b>one</b> cursor per shard, and
+ * <b>one</b> connection-level backpressure fate. The drains start at the <b>first</b> watch's resume
+ * cursor (demuxed per shard); a watch that needs to resume from an independent position MUST use a
+ * separate connection. Backpressure is per-connection ({@code CURSOR_ACK} is a connection-level
+ * scalar broadcast to every shard core), so a single slow/greedy shard substream can demote every
+ * sibling - the head-of-line blocking inherent to one shared mTLS transport. Per-watch/per-shard
+ * flow-control / fairness is the named v2 extension W10-8.
  *
  * <h2>Threading</h2>
  * {@code watchConnection} is set by the reader thread (the first {@code WATCH_CREATE} decides
  * the connection type) and read by the session thread in {@link #offer}; it is therefore
- * {@code volatile}. Everything else ({@code pendingCreateWatchId}, the registry, all
- * translation) is session-thread-confined - the core only calls {@code offer}/{@code close}
- * on its single session-loop thread, and the driver posts the router state changes as session
- * commands.
+ * {@code volatile}. Everything else (the registry, the {@link Coordinator} callbacks, all
+ * translation) is session-thread-confined - a shard's core only calls {@code offer}/{@code close}
+ * during the driver's single-threaded sequential sweep on the session-loop thread.
  */
 final class WatchMultiplexSink implements TransportSink {
 
-    /** The single-shard group id at N=1 (W3-5: the one-element vector is {@code (0, S)}). */
-    private static final int GID_0 = 0;
+    /**
+     * The cross-shard coalescing seam. A per-shard sink knows only its own shard, so the two frames
+     * that carry an N-shard vector are built by the driver: a shard's {@code SUBSCRIBE_OK} is
+     * collected for the one coalesced {@code WATCH_CREATED}, and a shard's idle heartbeat triggers
+     * the one coalesced {@code WATCH_PROGRESS}. Both callbacks run on the session thread.
+     */
+    interface Coordinator {
+
+        /**
+         * A shard core acknowledged its {@code SUBSCRIBE_OK}; record its initial mode for the
+         * coalesced {@code WATCH_CREATED} the driver emits after every covered shard is seeded.
+         */
+        void onShardCreated(int gid, long latestSeq, EdgeFrame.Mode mode);
+
+        /**
+         * A shard core's idle heartbeat cadence fired; emit ONE coalesced {@code WATCH_PROGRESS}
+         * per live watch (deduped so several idle shards in one sweep produce a single frame).
+         *
+         * @return the transport offer result - {@code false} means the outbound would block, which
+         *         the triggering core reads as transport-gone (preserving the pre-Gate-3
+         *         close-on-refused-heartbeat behavior exactly at {@code N = 1})
+         */
+        boolean onIdleProgress(long serverNowMillis);
+    }
 
     private final TransportSink delegate;
     private final WatchRegistry registry;
 
-    /**
-     * The core's drained cursor supplier - {@code () -> session.cursor()}. Read lazily (only
-     * during translation, long after construction) so it can be wired before the session is
-     * constructed. It is the W5-7 clamp source: the seq the edge has actually drained
-     * (verified + filtered), never the raw {@code HEARTBEAT.latestSeq} which may run ahead.
-     */
-    private final LongSupplier drainedCursor;
+    /** This sink's shard group id - stamped on every {@code WATCH_EVENT} / {@code WATCH_SNAPSHOT_*}. */
+    private final int gid;
+
+    /** The cross-shard coalescer (the driver); receives this shard's SUBSCRIBE_OK and idle heartbeat. */
+    private final Coordinator coordinator;
 
     /** Reader-set, session-read: false means legacy passthrough (byte-identical), true means translate. */
     private volatile boolean watchConnection;
 
     /**
-     * Session-thread-only: the watch awaiting the connection-level {@code SUBSCRIBE_OK} to its
-     * {@code WATCH_CREATED}. Set by the driver immediately before it drives the first
-     * authorized watch's {@code onSubscribe}; consumed by the next {@code SUBSCRIBE_OK}.
-     */
-    private long pendingCreateWatchId = WatchRegistry.NO_WATCH;
-
-    /**
-     * Session-thread-only: the watch that <b>owns the shared connection drain</b> (the first
-     * authorized watch, whose {@code onSubscribe} started the drain) - the id every
-     * {@code WATCH_SNAPSHOT_*} frame is tagged with. Captured ONCE when the drain starts, NOT
-     * re-evaluated per frame: a connection-level snapshot transfer pauses across ticks on
-     * backpressure, and if the owner cancels mid-transfer, {@code firstLiveWatchId()} would flip to
-     * a sibling that was acked {@code TAIL} - mis-attributing the snapshot to a watch promised none
-     * (W2-8 / W5-5). Tagging the fixed owner means a snapshot to a since-canceled owner is simply
-     * discarded by the client (its watch is gone), never mis-delivered to a live sibling.
+     * Session-thread-only: the watch that <b>owns this shard's drain</b> (the first authorized
+     * watch, whose {@code onSubscribe} started the drain) - the id every {@code WATCH_SNAPSHOT_*}
+     * frame from this shard is tagged with. Captured ONCE when the drain starts, NOT re-evaluated
+     * per frame: a snapshot transfer pauses across ticks on backpressure, and if the owner cancels
+     * mid-transfer, a per-frame re-pick would flip to a sibling that was acked {@code TAIL} -
+     * mis-attributing the snapshot to a watch promised none (W2-8 / W5-5). Tagging the fixed owner
+     * means a snapshot to a since-canceled owner is simply discarded by the client (its watch is
+     * gone), never mis-delivered to a live sibling.
      */
     private long snapshotOwnerWatchId = WatchRegistry.NO_WATCH;
 
     /** Session-thread-only close-once guard (the core closes at most once; defensive). */
     private boolean closed;
 
-    WatchMultiplexSink(TransportSink delegate, WatchRegistry registry, LongSupplier drainedCursor) {
+    WatchMultiplexSink(TransportSink delegate, WatchRegistry registry, int gid, Coordinator coordinator) {
         this.delegate = delegate;
         this.registry = registry;
-        this.drainedCursor = drainedCursor;
+        this.gid = gid;
+        this.coordinator = coordinator;
     }
 
     // -----------------------------------------------------------------------
@@ -133,18 +154,9 @@ final class WatchMultiplexSink implements TransportSink {
     }
 
     /**
-     * Arms the next {@code SUBSCRIBE_OK} to be translated into a {@code WATCH_CREATED} for
-     * {@code watchId} (the first authorized watch, whose {@code onSubscribe} the driver is
-     * about to drive). Session-thread-only.
-     */
-    void expectWatchCreated(long watchId) {
-        this.pendingCreateWatchId = watchId;
-    }
-
-    /**
-     * Records the drain-owning watch id that every {@code WATCH_SNAPSHOT_*} frame is tagged with
-     * (the first authorized watch; see {@link #snapshotOwnerWatchId}). Session-thread-only, set
-     * once when the shared drain starts.
+     * Records the drain-owning watch id that every {@code WATCH_SNAPSHOT_*} frame from this shard is
+     * tagged with (the first authorized watch; see {@link #snapshotOwnerWatchId}). Session-thread-
+     * only, set once when this shard's drain starts.
      */
     void setSnapshotOwner(long watchId) {
         this.snapshotOwnerWatchId = watchId;
@@ -196,13 +208,13 @@ final class WatchMultiplexSink implements TransportSink {
         return switch (frame) {
             case EdgeFrame.SubscribeOk ok -> translateSubscribeOk(ok);
             case EdgeFrame.Notify n -> translateNotify(n);
-            case EdgeFrame.Heartbeat hb -> translateHeartbeat(hb);
+            case EdgeFrame.Heartbeat hb -> coordinator.onIdleProgress(hb.serverNowMillis());
             case EdgeFrame.SnapshotBegin sb -> delegate.offer(new EdgeFrame.WatchSnapshotBegin(
-                    snapshotOwnerWatchId, GID_0, sb.snapshotSeq(), sb.chunkCount(), sb.totalBytes()));
+                    snapshotOwnerWatchId, gid, sb.snapshotSeq(), sb.chunkCount(), sb.totalBytes()));
             case EdgeFrame.SnapshotChunk sc -> delegate.offer(new EdgeFrame.WatchSnapshotChunk(
-                    snapshotOwnerWatchId, GID_0, sc.index(), sc.bytes()));
+                    snapshotOwnerWatchId, gid, sc.index(), sc.bytes()));
             case EdgeFrame.SnapshotEnd se -> delegate.offer(new EdgeFrame.WatchSnapshotEnd(
-                    snapshotOwnerWatchId, GID_0, se.snapshotSeq()));
+                    snapshotOwnerWatchId, gid, se.snapshotSeq()));
             // The only ErrorClose the core OFFERS is the non-fatal DEMOTED_TO_CATCHUP notice
             // (terminal closes go via close()). Forward it verbatim - a driver MUST tolerate
             // the connection-level demotion (W8-6); the WATCH_SNAPSHOT_* catch-up follows.
@@ -214,11 +226,12 @@ final class WatchMultiplexSink implements TransportSink {
     }
 
     private boolean translateSubscribeOk(EdgeFrame.SubscribeOk ok) {
-        long watchId = pendingCreateWatchId;
-        pendingCreateWatchId = WatchRegistry.NO_WATCH;
-        EdgeFrame.ShardMode shard =
-                new EdgeFrame.ShardMode(GID_0, Math.max(0L, ok.latestSeq()), ok.mode());
-        return delegate.offer(new EdgeFrame.WatchCreated(watchId, List.of(shard)));
+        // A per-shard sink cannot build the N-ShardMode WATCH_CREATED vector; forward this shard's
+        // initial mode to the driver, which emits the ONE coalesced WATCH_CREATED after seeding
+        // every covered shard. Reads latestSeq + mode; ignores the 0x03 filtered bit (always false
+        // on the watch plane - the watch cores drive fullStore/empty-prefixes, so no server filter).
+        coordinator.onShardCreated(gid, Math.max(0L, ok.latestSeq()), ok.mode());
+        return true;
     }
 
     private boolean translateNotify(EdgeFrame.Notify n) {
@@ -236,27 +249,13 @@ final class WatchMultiplexSink implements TransportSink {
                     continue; // no matching key for this watch - cursor advances via the next event / progress
                 }
                 EdgeFrame.WatchEvent event = new EdgeFrame.WatchEvent(
-                        entry.watchId(), GID_0, cn.seq(), cn.commitTimestampMillis(), changes);
+                        entry.watchId(), gid, cn.seq(), cn.commitTimestampMillis(), changes);
                 if (!delegate.offer(event)) {
                     return false; // would block - core demotes (W8-6); remaining events via snapshot resync
                 }
             }
         }
         return true; // all matching events accepted (or nothing matched: vacuously accepted)
-    }
-
-    private boolean translateHeartbeat(EdgeFrame.Heartbeat hb) {
-        // The bookmark (W5-7): carry the drained cursor (verified + filtered frontier), clamped
-        // to never exceed it - NOT the raw HEARTBEAT.latestSeq, which can run ahead of what the
-        // edge has examined (a bookmark past unexamined commits would be a silent gap, W6-1).
-        long drainedS = Math.max(0L, drainedCursor.getAsLong());
-        WatchCursor cursor = WatchCursor.of(GID_0, drainedS);
-        for (WatchRegistry.WatchEntry entry : registry.liveEntries()) {
-            if (!delegate.offer(new EdgeFrame.WatchProgress(entry.watchId(), cursor, hb.serverNowMillis()))) {
-                return false; // shared-fate backpressure (W8-6)
-            }
-        }
-        return true;
     }
 
     /**
