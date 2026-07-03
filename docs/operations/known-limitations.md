@@ -59,16 +59,20 @@ but does not remove, the exposure.)
   allocation roughly doubles p99). Single loopback node, so this is the local encrypt-on-write cost only (no
   cross-node replication fsync in the path) - a floor. See `docs/measurement/ec2-drive-to-green-2026-07-02/gate7-final/`.
 
-### 2. Client-facing watches: the RFC section 2 protocol is implemented server-side (N=1); drivers + N>1 are next
+### 2. Client-facing watches: the RFC section 2 protocol is implemented server-side (N>=1, single- and multi-shard); a client driver is next
 
 v1 now implements the **server side of the RFC section 2 driver-protocol watch surface** on the edge endpoint
 (`--edge-port`): the `0x02` edge wire (the `WATCH_*` frames + the per-shard cursor vector), the
 multiplex/filter veneer, the **whole-target authorization gate** (`READ  and  WATCH`, reject-not-filter,
 fail-closed), per-watch target-filtered delivery + catch-up snapshots, and **bounded revocation under
-live ACL reload** (W7-7). It is **N=1** (single Raft group); an **N>1 multi-shard** watch is **v3** (the
-watch protocol layered on top of the separately-deferred v2 sharded edge data plane) - the edge endpoint
-fail-closes at N>1 unless an operator opts into the primary-shard-only partial view. The
-legacy in-process `WatchService` is unrelated server-internal plumbing (register section 4.8).
+live ACL reload** (W7-7). **Multi-shard (N>1) client-facing watches are delivered in v1** by the
+server-side aggregating coordinator: one `FanOutSessionCore` per covered shard behind one connection, every
+event tagged `(gid, S)`, a per-shard cursor vector, coalesced `WATCH_CREATED` / `WATCH_PROGRESS` vectors,
+and independent per-shard resume (mixed TAIL / SNAPSHOT_FIRST). Every serving node hosts replicas of all N
+Raft groups, so the scatter-gather is in-process and leadership-independent. What is **not** yet built is
+the disjoint sharded-edge topology (edges serving shard subsets, the driver merging client-side - the same
+wire, more connections) - a v2 item. The legacy in-process `WatchService` is unrelated server-internal
+plumbing (register section 4.8).
 
 - **No shipped client driver yet.** The protocol is server-ready, but a **conforming client driver**
   (RFC sections 1-3) is the **next deliverable** - until one ships, watches are not consumable out-of-the-box.
@@ -79,6 +83,33 @@ legacy in-process `WatchService` is unrelated server-internal plumbing (register
   `S <= cursor[gid]`); bounded-staleness (edge-served, **ordered not linearizable** - use the strong-read
   path for read-after-write); bounded revocation latency (<= the edge idle-poll interval after an `_acl/`
   reload).
+- **Ordering is per-shard, never global (W6-2a / W5-4b).** Two events with different `gid` are
+  **concurrent** - a driver MUST NOT infer order from arrival sequence, from `S` magnitude across shards, or
+  from `commit_ts` (a per-leader wall clock). A `with_initial_snapshot` at N>1 is **per-shard-current** (each
+  covered shard snapshots at its own `snapshot_seq`, captured at different instants), **NOT** a cross-shard
+  consistent cut - there is no global clock to take one against.
+- **Completeness stalls, never lies (never a silent partial).** Coverage is driven by the shard set
+  (`shardIds()`), never inferred from the client's cursor. A lagging or unreachable shard surfaces as a
+  **frozen `WATCH_PROGRESS` component while `server_now` advances** - it is never a silent gap and never
+  fails the whole watch; the healthy shards keep delivering, and the frozen component is the explicit
+  "this shard is behind" signal.
+- **Shared-fate backpressure across a connection's shards (W8-6 / W10-8).** The N shard substreams behind
+  one connection share **one** connection-level `CURSOR_ACK` scalar and **one** `SlowConsumerGovernor` fate,
+  so a single slow shard can demote or quarantine its siblings (cross-shard head-of-line blocking). Per-
+  (watch, shard) flow control is v2. Segregate latency-sensitive watchers onto their own connections.
+- **`GAP_UNRECOVERABLE` recovery is re-list + re-create (W5-9a).** When a component has fallen too far
+  behind even for a snapshot, the server sends `WATCH_CANCELED(GAP_UNRECOVERABLE)` with **`has_oldest=0`**
+  (no `oldest` vector) at both N=1 and N>1; a driver recovers by re-listing current state and re-creating
+  the watch from its own last-held cursor vector. The per-shard `oldest` smart-resume payload is a v1.x
+  follow-up.
+- **KEY vs FULL / `full_chain_verify` shard reach.** A KEY watch resolves to exactly **one** shard
+  (`shardFor(scope, key)`); a PREFIX / FULL / `full_chain_verify` target scatters to **all N** shards
+  (`shardIds()`) and is authorized over the **whole** target - FULL / `full_chain_verify` requires the
+  **root-scope** grant (W7-3). A `full_chain_verify` / FULL watch now covers **all** shards under one
+  whole-store authorization (the Gate-3 F1 fix - it is no longer primary-shard-only).
+- **Single-scope at N>1 (B5).** `scope` still carries **no** authorization isolation (the gate, store keys,
+  read path, and filter are uniformly scope-blind over the flat keyspace); v1 is effectively single-scope
+  (GLOBAL). Scope-aware ACLs are a prerequisite before any multi-scope watch at N>1.
 - **Security model a deployer MUST know** (from the Gate-1 security review - the watch path is internally
   sound; these are system-boundary/deployment conditions):
   - **Co-resident legacy SUBSCRIBE (now authorized).** The same `--edge-port` also serves the
@@ -100,7 +131,15 @@ legacy in-process `WatchService` is unrelated server-internal plumbing (register
     revoking an edge identity's root READ does NOT tear down its existing whole-store feed, which streams
     until reconnect; revoke by disconnecting the session or rotating the edge cert. This is a broader
     exposure (the whole store) with weaker revocation (none) than a watch. NOT reachable-as-a-bypass in
-    the default config (only `root`, which already holds whole-store).
+    the default config (only `root`, which already holds whole-store). **Primary-shard-only at N>1.**
+    Unlike a WATCH (multi-shard-complete), the legacy whole-store SUBSCRIBE plane serves only the
+    **primary** shard's keys at N>1 - a partial keyspace view (a downstream cache would believe it holds
+    the whole store). The server therefore **refuses** a legacy SUBSCRIBE connection **per-connection** at
+    N>1 (`BAD_SUBSCRIBE`, zero data frames) unless the operator sets
+    `-Dconfigd.edge.allowPartialShardView=true` to accept the primary-only view explicitly.
+    `allowPartialShardView` gates **only** this legacy SUBSCRIBE plane - a multi-shard WATCH is served at
+    N>1 regardless of the flag. At N=1 the flag is never consulted (one shard is the whole keyspace), so
+    the legacy plane is byte-identical to a non-sharded build.
   - **Server-side prefix filtering (ADR-0045), default ON, is a trusted-domain posture.** A prefix-scoped
     edge that opts in (`configd.edge.accept_filtered=on`, `0x03` wire) has its stream filtered to its prefix
     set server-side, cutting egress. Whole signed deltas are dropped (never rewritten - per-delta Ed25519
@@ -137,9 +176,11 @@ legacy in-process `WatchService` is unrelated server-internal plumbing (register
 - **v1 boundaries:** per-connection **shared drain** (W8-6) - all watches on a connection share one cursor,
   one ack, and one backpressure fate (a slow watch can demote its siblings; per-watch fairness is v2); a
   connection-level catch-up snapshot maps to the drain-owning (first) watch (single-snapshotting-watch).
-- **Deferred:** N>1 multi-shard watch (v3); per-watch flow-control (W10-8); the `prev_value` /
-  leader-served / long-poll-gateway named extensions (W10-2/4/7); the reserved-prefix watch-gate
-  hardening; a conforming client driver + a shared conformance suite (the next arc).
+- **Deferred:** the disjoint sharded-edge topology (edges serving shard subsets, driver-side merge - v2);
+  the legacy whole-store SUBSCRIBE multi-shard lift (it stays primary-shard-only at N>1); the
+  `GAP_UNRECOVERABLE` per-shard `oldest`-vector population (v1.x, W5-9a); per-watch flow-control (W10-8);
+  the `prev_value` / leader-served / long-poll-gateway named extensions (W10-2/4/7); the reserved-prefix
+  watch-gate hardening; a conforming client driver + a shared conformance suite (the next arc).
 
 ### 3. Sharding: v1 ships single-group (N=1); multi-shard is built, server-wired, and metal-proven
 
