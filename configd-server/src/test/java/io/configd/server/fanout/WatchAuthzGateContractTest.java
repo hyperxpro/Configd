@@ -20,10 +20,10 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * Characterization of the shard-independent watch-authorization gate contract that the multi-shard watch
- * coordinator (Gate 3) enforces across N legs. These are read-only pins of EXISTING behavior; they add no
+ * coordinator enforces across N legs. These are read-only pins of EXISTING behavior; they add no
  * production code and change none.
  *
- * <h2>What Gate 3 will rely on and where it is pinned</h2>
+ * <h2>What the multi-shard watch coordinator relies on and where it is pinned</h2>
  * <ul>
  *   <li><b>Shard-independence (pinned here).</b> {@link AclService#coversTarget}/{@link
  *       AclService#authorizesWatch} are pure, {@code static} functions of {@code (rules, target, cap)} with
@@ -131,7 +131,7 @@ class WatchAuthzGateContractTest {
     void keyFloorIsNotBlockedByADescendantDenyThatBlocksThePrefixSubtree() {
         // A descendant-key DENY under a.b (on a.b.c) must NOT block a KEY watch on a.b (exact-key floor),
         // but MUST block a PREFIX watch over the a.b subtree (interior DENY). One merged rule set, no shard
-        // input - the same asymmetry Gate 3 relies on.
+        // input - the same asymmetry the multi-shard watch coordinator relies on.
         AclService acl = new AclService();
         acl.grant("a.b", "p", EnumSet.of(Permission.READ, Permission.WATCH));
         acl.deny("a.b.c", "p", EnumSet.of(Permission.READ));

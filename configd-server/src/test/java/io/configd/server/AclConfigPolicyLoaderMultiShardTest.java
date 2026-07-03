@@ -28,19 +28,20 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * Tests for {@link AclConfigPolicyLoader}'s multi-shard mode (N&gt;1): the scatter-gather rebuild over every
- * group's store, the serialized single-thread worker, the node-local monotonic version, and the P0 it fixes.
+ * group's store, the serialized single-thread worker, the node-local monotonic version, and the under-deny
+ * authorization bypass it fixes.
  *
- * <p>The P0 (investigation §4.5 / B6): {@code _acl/roles/*} and {@code _acl/bindings/*} are ordinary keys
- * routed by {@code shardFor(scope, key)}, so at N&gt;1 they hash-scatter across all groups. A loader wired to
- * the primary group's store alone observes only ~1/N of the policy - a role/binding/DENY on a non-primary
- * shard is silently absent (under-deny =&gt; a watch an interior DENY should reject is authorized). The
- * centerpiece {@link #tB6_multiShard_appliesNonPrimaryShardDeny_watchRejected} proves the fix; its sibling
+ * <p>{@code _acl/roles/*} and {@code _acl/bindings/*} are ordinary keys routed by {@code shardFor(scope, key)},
+ * so at N&gt;1 they hash-scatter across all groups. A loader wired to the primary group's store alone observes
+ * only ~1/N of the policy - a role, binding, or DENY on a non-primary shard is silently absent, so a watch an
+ * interior DENY should reject is authorized. The centerpiece
+ * {@link #tB6_multiShard_appliesNonPrimaryShardDeny_watchRejected} proves the fix; its sibling
  * {@link #tB6_redProof_singleStorePrimaryOnly_missesNonPrimaryShardDeny_watchStillAuthorized} pins the live
  * bug the multi-shard path removes (the single-store construction over the primary store misses the DENY).
  *
  * <p>Reserved-name validation, fail-closed-to-last-good, the apply-thread gate, and the N=1 boot path are
- * covered by {@link AclConfigPolicyLoaderTest}; this class additionally asserts N=1 byte-identity via a
- * differential oracle ({@link #tN1Diff_multiShardOverOneStore_equalsSingleStore}).
+ * covered by {@link AclConfigPolicyLoaderTest}; this class additionally asserts that the scatter-gather union
+ * over one store equals the single-store scan content ({@link #scatterGatherUnionEqualsSingleStoreContent}).
  */
 class AclConfigPolicyLoaderMultiShardTest {
 
@@ -178,13 +179,18 @@ class AclConfigPolicyLoaderMultiShardTest {
                 "BUG: the watch stays authorized because the primary-only loader never saw the DENY (under-deny bypass)");
     }
 
-    // ---------------- T-N1-DIFF: N=1 byte-identity via a differential oracle ----------------
+    // ---------------- scatter-gather union content == the single-store scan ----------------
 
+    /**
+     * The scatter-gather union over a set of stores publishes the same {@link ConfigPolicy} the single-store
+     * loader publishes from the same key set. This is a content-equality oracle for the merge, NOT the proof
+     * of N=1 byte-identity - that rests on the untouched single-store code path plus the unmodified
+     * {@link AclConfigPolicyLoaderTest} passing as-is.
+     */
     @Test
-    void tN1Diff_multiShardOverOneStore_equalsSingleStore() {
-        // A battery of _acl/ scenarios; for each, a single-store loader and a "multi-shard" loader built over
-        // that ONE store must publish an EQUAL ConfigPolicy. (Two stores are the multi-shard minimum, so the
-        // strict single-store equivalence is asserted structurally: identical scan input => identical policy.)
+    void scatterGatherUnionEqualsSingleStoreContent() {
+        // A battery of _acl/ scenarios; for each, a single-store loader and a multi-shard loader built over a
+        // store set holding the same keys must publish an EQUAL ConfigPolicy.
         List<List<String[]>> scenarios = List.of(
                 List.<String[]>of(),
                 List.<String[]>of(new String[]{"_acl/roles/reader", "allow READ app."}),
