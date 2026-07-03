@@ -128,6 +128,7 @@ class EdgeMetricsContractTest {
             "edge_fanout_sessions_closed_auth_fail_total",
             "edge_fanout_sessions_closed_gap_unrecoverable_total",
             "edge_fanout_sessions_closed_quarantined_total",
+            "edge_fanout_sessions_closed_bad_subscribe_total",
             "edge_fanout_sessions_closed_transport_gone_total",
             "edge_fanout_sessions_closed_other_total",
             // admission + subscribe-time decision

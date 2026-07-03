@@ -39,6 +39,8 @@ class RegistryFanOutSessionMetricsTest {
         // Per-reason session-closed counters.
         assertTrue(out.contains("edge_fanout_sessions_closed_server_shutdown_total"), out);
         assertTrue(out.contains("edge_fanout_sessions_closed_quarantined_total"), out); // C4
+        // The legacy-SUBSCRIBE refusal at N>1 gets its own series (not folded into other).
+        assertTrue(out.contains("edge_fanout_sessions_closed_bad_subscribe_total"), out);
         // C4 slow-consumer policy series (design section 2 names, verbatim).
         assertTrue(out.contains("edge_fanout_slow_transitions_total"), out);
         assertTrue(out.contains("edge_fanout_quarantines_total"), out);

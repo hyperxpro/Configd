@@ -213,8 +213,8 @@ jobs:
             needs_go: false
             fast_flags: ''
             nightly_flags: ''
-            timeout_fast: 25
-            timeout_nightly: 25
+            timeout_fast: 30
+            timeout_nightly: 30
     steps:
       # None of the matrixed gates need git history; the two verification jobs
       # that do (security-and-supply-chain, multiraft-merge-seal) are separate.
