@@ -1,18 +1,10 @@
 package io.configd.distribution.fanout;
 
 import io.configd.distribution.CommitNotification;
-import io.configd.distribution.CommitNotificationSource;
 import io.configd.distribution.ReplaySource;
 import io.configd.distribution.FanOutBuffer;
 import io.configd.distribution.SnapshotReplaySource;
 import io.configd.distribution.wire.EdgeFrame;
-import io.configd.distribution.wire.WatchCursor;
-import io.configd.store.ConfigDelta;
-import io.configd.store.ConfigMutation;
-import io.configd.store.ConfigSnapshot;
-import io.configd.store.HamtMap;
-import io.configd.store.VersionedValue;
-
 import org.junit.jupiter.api.Test;
 
 import java.nio.charset.StandardCharsets;
@@ -21,20 +13,25 @@ import java.util.List;
 import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * Unit matrix for {@link WatchMultiplexSink}: the per-watch filter, the core-frame to
- * {@code WATCH_*} translation table, the {@code WATCH_PROGRESS} W5-7 upper-bound clamp, and
- * the legacy-passthrough byte-identity guarantee. Drives a real {@link FanOutSessionCore}
- * through the decorator (registering watches directly in the {@link WatchRegistry}, the same
- * state the driver would post on the session thread) and records the translated frames at a
- * {@link RecordingTransportSink} delegate.
+ * Unit matrix for {@link WatchMultiplexSink}: the per-watch filter, the gid stamp, the
+ * {@code SUBSCRIBE_OK}/{@code HEARTBEAT} forwarding to the cross-shard {@link
+ * WatchMultiplexSink.Coordinator} (the two frames that carry an N-shard vector are coalesced by the
+ * driver, not built here), and the legacy-passthrough byte-identity guarantee. Drives a real
+ * {@link FanOutSessionCore} through the decorator (registering watches directly in the
+ * {@link WatchRegistry}, the same state the driver would post on the session thread) and records the
+ * translated frames at a {@link RecordingTransportSink} delegate. The coalesced {@code WATCH_CREATED}
+ * / {@code WATCH_PROGRESS} vectors and the W5-7 drained-cursor clamp are proven at the driver level
+ * ({@link MultiShardCoordinatorTest}).
  */
 class WatchMultiplexSinkTest {
 
     private final FakeClock clock = new FakeClock(1_000L);
     private final RecordingTransportSink out = new RecordingTransportSink();
+    private final RecordingCoordinator coord = new RecordingCoordinator();
 
     private WatchRegistry registry;
     private FanOutBuffer buffer;
@@ -42,16 +39,20 @@ class WatchMultiplexSinkTest {
 
     /** Builds a single-watch translating session over an empty buffer (TAIL => live streaming). */
     private void singleWatch(WatchTarget target) {
+        singleWatch(target, 0);
+    }
+
+    /** Builds a single-watch translating session on shard {@code gid} over an empty buffer. */
+    private void singleWatch(WatchTarget target, int gid) {
         registry = new WatchRegistry();
         buffer = new FanOutBuffer(64);
-        FanOutSessionCore[] holder = new FanOutSessionCore[1];
-        WatchMultiplexSink sink = new WatchMultiplexSink(out, registry, () -> holder[0].cursor());
+        WatchMultiplexSink sink = new WatchMultiplexSink(out, registry, gid, coord);
         core = new FanOutSessionCore(buffer, snapshotAt(0), sink, FanOutConfig.defaults(),
                 FanOutSessionMetrics.NOOP, clock);
-        holder[0] = core;
         sink.setWatchConnection(true);
-        registry.register(new WatchRegistry.WatchEntry(1L, "edge", Set.of(), target, 0L, 0));
-        sink.expectWatchCreated(1L);
+        registry.register(new WatchRegistry.WatchEntry(1L, "edge", Set.of(), target,
+                new int[]{gid}, 0L, 0));
+        sink.setSnapshotOwner(1L);
         core.onSubscribe(new EdgeFrame.Subscribe(true, List.of(), 0L, -1L, "edge"));
     }
 
@@ -97,7 +98,7 @@ class WatchMultiplexSinkTest {
         buffer.publish(threeKeys(7));
         core.tick(clock.now());
         assertTrue(out.sentOfType(EdgeFrame.WatchEvent.class).isEmpty(), "no event for a non-matching commit");
-        assertEquals(7L, core.cursor(), "the shared drain still advances over non-matching commits (W4-4)");
+        assertEquals(7L, core.cursor(), "the shard drain still advances over non-matching commits (W4-4)");
     }
 
     @Test
@@ -110,61 +111,76 @@ class WatchMultiplexSinkTest {
         assertEquals("/app/db/host", change.key());
     }
 
-    // ---- translation table (W5-3..W5-7) ------------------------------------
+    // ---- gid stamp (the real shard gid on every WATCH_EVENT / WATCH_SNAPSHOT_*) ----
 
     @Test
-    void subscribeOkTranslatesToWatchCreatedWithShardModeVector() {
-        singleWatch(fullTarget(false)); // empty buffer => TAIL
-        EdgeFrame.WatchCreated created = out.sentOfType(EdgeFrame.WatchCreated.class).get(0);
-        assertEquals(1L, created.watchId());
-        assertEquals(1, created.shards().size(), "one shard at N=1");
-        assertEquals(0, created.shards().get(0).gid());
-        assertEquals(EdgeFrame.Mode.TAIL, created.shards().get(0).mode());
-        assertEquals(0L, created.shards().get(0).latestSeq(), "empty buffer latestSeq (-1) clamps to 0");
-    }
-
-    @Test
-    void notifyTranslatesToWatchEventTaggedGid0WithCommitMetadata() {
-        singleWatch(fullTarget(false));
+    void notifyTranslatesToWatchEventTaggedWithThisShardsGid() {
+        singleWatch(fullTarget(false), 3); // this decorator is shard 3
         buffer.publish(put(7, "/k/x", "vx"));
         core.tick(clock.now());
         EdgeFrame.WatchEvent event = onlyEvent();
         assertEquals(1L, event.watchId());
-        assertEquals(0, event.gid());
+        assertEquals(3, event.gid(), "the WATCH_EVENT carries this decorator's real shard gid, not a constant 0");
         assertEquals(7L, event.s());
         assertEquals(1_007L, event.commitTs(), "commit timestamp passes through (1000 + seq)");
         assertEquals(EdgeFrame.CHANGE_KIND_PUT, event.changes().get(0).kind());
     }
 
     @Test
-    void heartbeatProgressClampsToDrainedCursorNotRawLatestSeq() {
-        // The W5-7 upper-bound clamp: a source whose latestSeq() runs AHEAD of what readSince
-        // delivers. The bookmark MUST carry the drained cursor (5), never the raw HEARTBEAT
-        // latestSeq (10) - advancing past unexamined commits would be a silent gap (W6-1).
+    void snapshotFramesCarryThisShardsGidAndOwner() {
+        // A behind-buffer resume drives SNAPSHOT_FIRST; the per-(watchId, gid) snapshot frames carry
+        // this decorator's real gid and the drain owner set via setSnapshotOwner.
+        FanOutBuffer tiny = new FanOutBuffer(4);
+        for (long i = 1; i <= 10; i++) {
+            tiny.publish(put(i, "/k/" + i, "v"));
+        }
         registry = new WatchRegistry();
-        CommitNotificationSource ahead = new AheadOfDrainSource(/* latest */ 10, /* drainTo */ 5);
-        FanOutSessionCore[] holder = new FanOutSessionCore[1];
-        WatchMultiplexSink sink = new WatchMultiplexSink(out, registry, () -> holder[0].cursor());
-        core = new FanOutSessionCore(ahead, snapshotAt(0), sink, FanOutConfig.defaults(),
+        WatchMultiplexSink sink = new WatchMultiplexSink(out, registry, 2, coord);
+        core = new FanOutSessionCore(tiny,
+                snapshotAt(10, "/k/9", "v9", "/k/10", "v10"), sink, FanOutConfig.defaults(),
                 FanOutSessionMetrics.NOOP, clock);
-        holder[0] = core;
         sink.setWatchConnection(true);
-        registry.register(new WatchRegistry.WatchEntry(1L, "edge", Set.of(), fullTarget(false), 1L, 0));
-        sink.expectWatchCreated(1L);
-        core.onSubscribe(new EdgeFrame.Subscribe(true, List.of(), 1L, -1L, "edge")); // cursor 1 => TAIL
+        registry.register(new WatchRegistry.WatchEntry(1L, "edge", Set.of(), fullTarget(false),
+                new int[]{2}, 0L, 0));
+        sink.setSnapshotOwner(1L);
+        core.onSubscribe(new EdgeFrame.Subscribe(true, List.of(), 2L, -1L, "edge")); // readSince(2) GAPs
+        core.tick(clock.now());
 
-        core.tick(2_000L); // drains seqs 2..5 => cursor 5 (latestSeq stays 10)
-        assertEquals(5L, core.cursor());
-        out.clear();
-        core.tick(2_000L + FanOutConfig.defaults().heartbeatMs()); // idle => heartbeat => WATCH_PROGRESS
+        EdgeFrame.WatchSnapshotBegin begin = out.sentOfType(EdgeFrame.WatchSnapshotBegin.class).get(0);
+        assertEquals(1L, begin.watchId());
+        assertEquals(2, begin.gid());
+        EdgeFrame.WatchSnapshotEnd end = out.sentOfType(EdgeFrame.WatchSnapshotEnd.class).get(0);
+        assertEquals(2, end.gid());
+    }
 
-        EdgeFrame.WatchProgress progress = out.sentOfType(EdgeFrame.WatchProgress.class).get(0);
-        assertEquals(1L, progress.watchId());
-        assertEquals(1, progress.cursor().components().size());
-        assertEquals(0, progress.cursor().components().get(0).gid());
-        assertEquals(5L, progress.cursor().components().get(0).s(),
-                "WATCH_PROGRESS S is the drained cursor (5), NOT the raw HEARTBEAT latestSeq (10)");
-        assertEquals(2_000L + FanOutConfig.defaults().heartbeatMs(), progress.serverNowMillis());
+    // ---- SUBSCRIBE_OK / HEARTBEAT forwarding (the coalescing seam) ----------
+
+    @Test
+    void subscribeOkForwardsThisShardsModeToTheCoordinator() {
+        singleWatch(fullTarget(false), 4); // empty buffer => TAIL; this decorator is shard 4
+        // The sink does NOT emit WATCH_CREATED (a per-shard sink cannot build the N-ShardMode vector);
+        // it forwards this shard's initial mode to the coordinator, which coalesces.
+        assertTrue(out.sentOfType(EdgeFrame.WatchCreated.class).isEmpty(),
+                "the per-shard sink emits no WATCH_CREATED; the driver coalesces it");
+        assertEquals(1, coord.shardCreated.size());
+        RecordingCoordinator.ShardCreated sc = coord.shardCreated.get(0);
+        assertEquals(4, sc.gid());
+        assertEquals(0L, sc.latestSeq(), "empty buffer latestSeq (-1) clamps to 0");
+        assertEquals(EdgeFrame.Mode.TAIL, sc.mode());
+    }
+
+    @Test
+    void idleHeartbeatIsForwardedToTheCoordinatorNotEmittedDirectly() {
+        singleWatch(fullTarget(false));
+        core.tick(clock.now());                                          // anchors the heartbeat cadence
+        long hbAt = clock.now() + FanOutConfig.defaults().heartbeatMs();
+        core.tick(hbAt);                                                 // idle past heartbeatMs => heartbeat
+        // The sink swallows the core HEARTBEAT and forwards it; the driver emits the coalesced
+        // WATCH_PROGRESS. The per-shard sink never emits a WATCH_PROGRESS itself.
+        assertTrue(out.sentOfType(EdgeFrame.WatchProgress.class).isEmpty(),
+                "the per-shard sink emits no WATCH_PROGRESS; the driver coalesces it");
+        assertEquals(1, coord.idleProgressServerNow.size());
+        assertEquals(hbAt, coord.idleProgressServerNow.get(0).longValue());
     }
 
     // ---- legacy byte-identity ----------------------------------------------
@@ -183,9 +199,9 @@ class WatchMultiplexSinkTest {
 
     private List<EdgeFrame> runLegacy(boolean decorate, CommitNotification... notifications) {
         RecordingTransportSink rec = new RecordingTransportSink();
-        // watchConnection stays false (the default) => pure passthrough.
+        // watchConnection stays false (the default) => pure passthrough; the coordinator is untouched.
         TransportSink sink = decorate
-                ? new WatchMultiplexSink(rec, new WatchRegistry(), () -> 0L)
+                ? new WatchMultiplexSink(rec, new WatchRegistry(), 0, coord)
                 : rec;
         FanOutBuffer buf = new FanOutBuffer(64);
         FanOutSessionCore session = new FanOutSessionCore(buf, snapshotAt(0), sink,
@@ -196,6 +212,8 @@ class WatchMultiplexSinkTest {
         }
         session.tick(1_000L);  // NOTIFY
         session.tick(1_300L);  // idle past heartbeatMs => HEARTBEAT
+        assertTrue(coord.shardCreated.isEmpty() && coord.idleProgressServerNow.isEmpty(),
+                "a legacy passthrough connection never touches the coordinator");
         return rec.sent();
     }
 
@@ -228,63 +246,49 @@ class WatchMultiplexSinkTest {
     }
 
     private static CommitNotification put(long seq, String key, String val) {
-        return new CommitNotification(seq, 1_000L + seq, new ConfigDelta(seq - 1, seq,
-                List.of(new ConfigMutation.Put(key, val.getBytes(StandardCharsets.UTF_8)))));
+        return new CommitNotification(seq, 1_000L + seq, new io.configd.store.ConfigDelta(seq - 1, seq,
+                List.of(new io.configd.store.ConfigMutation.Put(key, val.getBytes(StandardCharsets.UTF_8)))));
     }
 
     private static CommitNotification delete(long seq, String key) {
-        return new CommitNotification(seq, 1_000L + seq, new ConfigDelta(seq - 1, seq,
-                List.of(new ConfigMutation.Delete(key))));
+        return new CommitNotification(seq, 1_000L + seq, new io.configd.store.ConfigDelta(seq - 1, seq,
+                List.of(new io.configd.store.ConfigMutation.Delete(key))));
     }
 
     private static CommitNotification threeKeys(long seq) {
-        return new CommitNotification(seq, 1_000L + seq, new ConfigDelta(seq - 1, seq, List.of(
-                new ConfigMutation.Put("/app/db/host", "h".getBytes(StandardCharsets.UTF_8)),
-                new ConfigMutation.Put("/app/db/port", "p".getBytes(StandardCharsets.UTF_8)),
-                new ConfigMutation.Put("/app/web/port", "w".getBytes(StandardCharsets.UTF_8)))));
+        return new CommitNotification(seq, 1_000L + seq, new io.configd.store.ConfigDelta(seq - 1, seq, List.of(
+                new io.configd.store.ConfigMutation.Put("/app/db/host", "h".getBytes(StandardCharsets.UTF_8)),
+                new io.configd.store.ConfigMutation.Put("/app/db/port", "p".getBytes(StandardCharsets.UTF_8)),
+                new io.configd.store.ConfigMutation.Put("/app/web/port", "w".getBytes(StandardCharsets.UTF_8)))));
     }
 
-    private static ReplaySource snapshotAt(long version) {
-        ConfigSnapshot snap = new ConfigSnapshot(HamtMap.<String, VersionedValue>empty(), version, 0L);
+    private static ReplaySource snapshotAt(long version, String... kv) {
+        io.configd.store.HamtMap<String, io.configd.store.VersionedValue> data = io.configd.store.HamtMap.empty();
+        for (int i = 0; i + 1 < kv.length; i += 2) {
+            data = data.put(kv[i],
+                    new io.configd.store.VersionedValue(kv[i + 1].getBytes(StandardCharsets.UTF_8), version, 0L));
+        }
+        io.configd.store.ConfigSnapshot snap = new io.configd.store.ConfigSnapshot(data, version, 0L);
         return new SnapshotReplaySource(() -> snap);
     }
 
-    /**
-     * A source whose {@code latestSeq()} deliberately runs ahead of what {@code readSince}
-     * delivers - to prove the {@code WATCH_PROGRESS} clamp uses the drained cursor, not the raw
-     * latest. {@code readSince(c)} returns the contiguous run {@code (c, drainTo]}.
-     */
-    private static final class AheadOfDrainSource implements CommitNotificationSource {
-        private final long latest;
-        private final long drainTo;
+    /** Records the sink's two coalescing forwards so the sink's contract can be asserted in isolation. */
+    private static final class RecordingCoordinator implements WatchMultiplexSink.Coordinator {
+        final List<ShardCreated> shardCreated = new ArrayList<>();
+        final List<Long> idleProgressServerNow = new ArrayList<>();
 
-        AheadOfDrainSource(long latest, long drainTo) {
-            this.latest = latest;
-            this.drainTo = drainTo;
+        @Override
+        public void onShardCreated(int gid, long latestSeq, EdgeFrame.Mode mode) {
+            shardCreated.add(new ShardCreated(gid, latestSeq, mode));
         }
 
         @Override
-        public Result readSince(long cursor) {
-            List<CommitNotification> run = new ArrayList<>();
-            for (long s = cursor + 1; s <= drainTo; s++) {
-                run.add(put(s, "/k/" + s, "v"));
-            }
-            return Result.ok(run);
+        public boolean onIdleProgress(long serverNowMillis) {
+            idleProgressServerNow.add(serverNowMillis);
+            return true; // accepted (a real driver would emit the coalesced WATCH_PROGRESS)
         }
 
-        @Override
-        public long latestSeq() {
-            return latest;
-        }
-
-        @Override
-        public long oldestSeq() {
-            return 1L;
-        }
-
-        @Override
-        public long droppedTotal() {
-            return 0L;
+        record ShardCreated(int gid, long latestSeq, EdgeFrame.Mode mode) {
         }
     }
 }

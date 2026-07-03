@@ -7,6 +7,7 @@ import io.configd.distribution.fanout.FanOutConfig;
 import io.configd.distribution.fanout.FanOutConnectionDriver;
 import io.configd.distribution.fanout.FanOutSessionCore;
 import io.configd.distribution.fanout.SlowConsumerGovernor;
+import io.configd.distribution.fanout.ShardResolver;
 import io.configd.distribution.fanout.SlowConsumerPolicyConfig;
 import io.configd.distribution.fanout.TransportSink;
 import io.configd.distribution.fanout.WatchAuthorizer;
@@ -34,6 +35,7 @@ import javax.net.ssl.SSLContext;
 import javax.net.ssl.SSLEngine;
 import java.io.IOException;
 import java.net.InetSocketAddress;
+import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -81,10 +83,19 @@ public final class NettyFanOutServer implements FanOutEndpoint {
     /** Named config {@code edge.fanout.transport.maxSessions} (== JDK; hard rule 4). */
     public static final int DEFAULT_MAX_SESSIONS = FanOutServer.DEFAULT_MAX_SESSIONS;
 
+    /** The single-shard resolver the single-source constructors bind: every target -> gid 0. */
+    private static final ShardResolver SINGLE_SHARD = t -> new int[]{0};
+
     private final InetSocketAddress bindAddress;
     private final TlsManager tlsManager;
-    private final CommitNotificationSource source;
-    private final ReplaySource replaySource;
+    /** gid -> that shard's commit source; single-entry {@code {0 -> source}} for the single-shard ctors. */
+    private final Map<Integer, CommitNotificationSource> shardSources;
+    /** gid -> that shard's replay source; single-entry for the single-shard ctors. */
+    private final Map<Integer, ReplaySource> shardReplaySources;
+    /** The connection's shard set, ascending ({@code [0, N)}); {@code {0}} for the single-shard ctors. */
+    private final int[] allGids;
+    /** Resolves a watch target to its covered shard set; {@link #SINGLE_SHARD} for the single-shard ctors. */
+    private final ShardResolver shardResolver;
     private final FanOutConfig config;
     private final int transportQueueFrames;
     private final int maxSessions;
@@ -170,10 +181,37 @@ public final class NettyFanOutServer implements FanOutEndpoint {
                              RegistryFanOutSessionMetrics metrics,
                              Clock clock,
                              WatchAuthorizer authorizer) {
+        this(Map.of(0, Objects.requireNonNull(source, "source")),
+                Map.of(0, Objects.requireNonNull(replaySource, "replaySource")),
+                new int[]{0}, SINGLE_SHARD, bindAddress, tlsManager, config, transportQueueFrames,
+                maxSessions, governor, metrics, clock, authorizer);
+    }
+
+    /**
+     * The multi-shard constructor: the per-shard commit sources + replay sources + shard set +
+     * resolver the fan-out/fan-in coordinator fans a watch across. At {@code N = 1} the single-source
+     * constructors delegate here with single-entry maps and the single-shard resolver, so one core is
+     * the single-shard drain (byte-identical). {@code ConfigdServer} threads the real per-shard maps.
+     */
+    public NettyFanOutServer(Map<Integer, CommitNotificationSource> shardSources,
+                             Map<Integer, ReplaySource> shardReplaySources,
+                             int[] allGids,
+                             ShardResolver shardResolver,
+                             InetSocketAddress bindAddress,
+                             TlsManager tlsManager,
+                             FanOutConfig config,
+                             int transportQueueFrames,
+                             int maxSessions,
+                             SlowConsumerGovernor governor,
+                             RegistryFanOutSessionMetrics metrics,
+                             Clock clock,
+                             WatchAuthorizer authorizer) {
+        this.shardSources = Map.copyOf(Objects.requireNonNull(shardSources, "shardSources"));
+        this.shardReplaySources = Map.copyOf(Objects.requireNonNull(shardReplaySources, "shardReplaySources"));
+        this.allGids = Objects.requireNonNull(allGids, "allGids").clone();
+        this.shardResolver = Objects.requireNonNull(shardResolver, "shardResolver");
         this.bindAddress = Objects.requireNonNull(bindAddress, "bindAddress");
         this.tlsManager = tlsManager; // null = plaintext (test/single-node)
-        this.source = Objects.requireNonNull(source, "source");
-        this.replaySource = Objects.requireNonNull(replaySource, "replaySource");
         this.config = Objects.requireNonNull(config, "config");
         if (transportQueueFrames <= 0) {
             throw new IllegalArgumentException("transportQueueFrames must be positive: " + transportQueueFrames);
@@ -381,8 +419,9 @@ public final class NettyFanOutServer implements FanOutEndpoint {
                 return;
             }
             started = true;
-            this.driver = new FanOutConnectionDriver(source, replaySource, this, config, metrics,
-                    clock, governor, identity, this::teardown, authorizer);
+            this.driver = new FanOutConnectionDriver(shardSources, shardReplaySources, allGids,
+                    shardResolver, this, config, metrics, clock, governor, identity, this::teardown,
+                    authorizer);
             metrics.onSubscriberConnected();
             connectedCounted = true;
             Thread.ofVirtual().name("edge-netty-session-" + identity)

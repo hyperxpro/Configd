@@ -90,18 +90,23 @@ final class WatchRegistry {
 
     /**
      * One live watch. Immutable; the per-connection shared drain (W8-6) means a watch carries
-     * no independent cursor/queue state - only its identity, principal, target, and the resume
-     * seq it requested (used only by the FIRST watch to position the shared core drain).
+     * no independent cursor/queue state - only its identity, principal, target, the covered shard
+     * set, and the resume seq it requested (used only by the FIRST watch to position the shared
+     * per-shard core drains).
      *
      * @param watchId      the client-assigned multiplex id (W2-8)
      * @param principal    the authenticated identity that created (and is authorized for) it
      * @param roles        the asserted roles at creation ({@code Set.of()} on the cert-DN edge)
      * @param target       the authorized watch target (the per-watch routing filter)
+     * @param coveredGids  the shard gids this target scatters to (ascending), the client-facing
+     *                     narrowing for {@code WATCH_CREATED} / {@code WATCH_PROGRESS}: one element
+     *                     for KEY, all shards for PREFIX/FULL. At {@code N = 1} it is {@code {0}}.
+     *                     Coverage is target-driven, never cursor-inferred.
      * @param startCursorS the requested resume seq {@code S} (the {@code gid=0} cursor
      *                     component, or 0 for "from now"); positions only the first watch's drain
      * @param flags        the raw {@code WATCH_CREATE} flag byte (diagnostic / forward-compat)
      */
     record WatchEntry(long watchId, String principal, Set<String> roles, WatchTarget target,
-                      long startCursorS, int flags) {
+                      int[] coveredGids, long startCursorS, int flags) {
     }
 }
