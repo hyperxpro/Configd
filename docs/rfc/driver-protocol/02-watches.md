@@ -233,9 +233,11 @@ re-send the **full** cursor vector on a new `WATCH_CREATE` (§5.2). The server r
 substream from its component via the buffer's `readSince(S_i)` boundary **independently** — a `readSince`
 returns either a contiguous run (`Ok`) or a `Gap` (W6-3). The **per-shard-independence** obligation — one
 shard's gap or failover **MUST NOT** perturb another shard's substream or cursor component (W6-3, the vector
-payoff) — is a **v2 server obligation**: it is **vacuous at N = 1** (one shard, one `readSince`, one
-substream — the built single-session `FanOutSessionCore`) and becomes a live MUST only when the v2 sharded
-edge serves N > 1 substreams (W9-3). The **driver** contract is vector-native from v1 regardless (W1-1).
+payoff) — is a **v1 server obligation, delivered by the Gate-3 aggregating coordinator**: it is trivial at
+N = 1 (one shard, one `readSince`, one substream — the built single-session `FanOutSessionCore`) and is
+enforced at N > 1 by one `FanOutSessionCore` per shard + an independent `readSince` per shard (one shard's
+gap or failover never perturbs another's substream or component; W9-3). The **driver** contract is
+vector-native from v1 regardless (W1-1).
 
 ---
 
@@ -279,9 +281,11 @@ each shard compacts independently; `configd-analysis.md` §8.1.)*
 
 **W4-5 (topology).** Two server-side topologies satisfy W4-1:
 
-- **Aggregating endpoint (v1 / N = 1 / full-store edge):** the driver sends **one** `WATCH_CREATE` to an
+- **Aggregating endpoint (v1; serves N ≥ 1 shards):** the driver sends **one** `WATCH_CREATE` to an
   endpoint that materializes **all** shards; that endpoint scatter-gathers internally and returns **one**
-  `(gid, S)`-tagged stream. The driver does **no** cross-endpoint merge. **This is the v1 path.**
+  `(gid, S)`-tagged stream. The driver does **no** cross-endpoint merge. **This is the v1 path** — the
+  Gate-3 coordinator materializes one `FanOutSessionCore` per covered shard over the node's N **local**
+  buffers (every node hosts all N groups), so a single connection serves a full multi-shard watch.
 - **Sharded endpoints (v2):** if edges each serve only a **subset** of shards, the driver opens enough
   substreams to cover all N shards and unions them client-side per W4-2. This is the v2 sharded-edge work
   (W9-3); the protocol is **identical** — only the number of transport connections differs.
@@ -364,6 +368,14 @@ or progress frame for it. `watch_id` **MUST** be unique per connection (W2-8). F
 
 A server **MUST** reject (or ignore, per the bit's rule above) a flag bit it does not recognize per the
 fail-closed-on-unknown discipline (W1-3); a driver **MUST NOT** set a flag it has not negotiated.
+
+**W5-4b (multi-shard initial snapshot is per-shard, not a consistent cut).** With `with_initial_snapshot`
+at N > 1, each covered shard delivers its state as of its **own** `snapshot_seq`, captured independently
+at different instants, then tails from that `snapshot_seq`. The union is **NOT** a global point-in-time
+cut. A driver **MUST NOT** treat the assembled initial state as a cross-shard consistent snapshot; it is
+per-shard-current, then per-shard-tailed. *(There is no cross-shard consistent snapshot to take — no
+global clock, cross-shard atomicity DISCLAIMed; §6 W6-1. Each covered shard's `SNAPSHOT_FIRST` is seeded
+independently, W5-5 / W5-10.)*
 
 ### 5.3 `WATCH_CREATED` (server→client)
 
@@ -477,6 +489,15 @@ existing taxonomy plus the §2 addition, W7-5) and, for the `GAP_UNRECOVERABLE` 
 `oldestRetainedSeq` vector so the driver knows where a re-list must land. The connection and other watches
 survive. *(A connection-level fatal error uses `ERROR_CLOSE`, W5-2.)*
 
+**W5-9a (v1 deferral — the `oldest` vector is not yet populated).** In v1 the server emits
+`WATCH_CANCELED(GAP_UNRECOVERABLE)` with **`has_oldest = 0`** (no `oldest` vector) at **both** N = 1 and
+N > 1. The frame is wire-complete (the `oldest` field is optional by construction, §5.7); the per-shard
+`oldestRetainedSeq` smart-resume payload is a **v1.x follow-up**. A v1 driver receiving
+`GAP_UNRECOVERABLE` **MUST** recover by re-listing current state (§1 `list`) and re-creating the watch
+from its own last-held cursor vector — it **MUST NOT** depend on a server-supplied `oldest`. *(The wire and
+codec already carry `has_oldest`; only the server-side population is deferred. W6-4 cross-refs this
+deferral.)*
+
 ### 5.8 The catch-up substream (`WATCH_SNAPSHOT_*`)
 
 ```
@@ -558,20 +579,32 @@ watch covering both **MAY** deliver the `B` event before the `A` event. A driver
 surface **per-key** and **per-shard** order only, and **SHOULD** document this explicitly so application
 authors do not encode a false global-order assumption.
 
+**W6-2a (the orderedness predicate — how a client reads the tags).** Two delivered events e1, e2 are
+**ORDERED** iff they carry the same `gid`, and then their order is ascending `S` (e1 before e2 iff
+`e1.S < e2.S`); this relation is transitive and is the **only** order the stream asserts. Two events for
+the same key are always same-`gid` (a key maps to one shard for the cluster's lifetime, W2-3 / INV-PATH)
+and hence always ordered — this **is** per-key order. Two events with different `gid` are **CONCURRENT**:
+no order in either direction, ever. A driver **MUST NOT** infer order from arrival sequence, from `S`
+magnitude across gids, or from `commit_ts` (a per-leader wall clock, W3-3). A driver **MUST** surface
+exactly this to the application: per-gid / per-key order only; the cross-gid interleaving it presents is
+an arbitrary, non-normative merge (W4-2).
+
 **W6-3 (compaction / too-old ⇒ inline per-shard snapshot resync, not whole-watch cancel).** When a
 component `S_i` has fallen behind shard `i`'s retained window, the buffer's `readSince(S_i)` returns
 `Gap(oldestRetainedSeq)`. The server **MUST** then put **only that shard's** substream into
 `SNAPSHOT_FIRST` and perform an **inline per-shard catch-up snapshot** (§5.8), then resume tailing. That the
-**other shards' substreams continue uninterrupted** is a **v2 server obligation** — vacuous at N = 1 (one
-shard, one substream, the built single-session path), live only when the v2 sharded edge serves N > 1
-substreams (W3-7, W9-3). A driver **MUST** handle a mid-stream `WATCH_SNAPSHOT_*` substream for one `gid`
+**other shards' substreams continue uninterrupted** is a **v1 obligation delivered by the coordinator**:
+each shard has its own core + buffer + `FilteringReplaySource`, so only the lagging shard goes
+`SNAPSHOT_FIRST` while the others keep tailing (per-shard isolation is structural; W3-7, W9-3). A driver
+**MUST** handle a mid-stream `WATCH_SNAPSHOT_*` substream for one `gid`
 without tearing down the whole watch. *(Contrast for implementors: etcd cancels the **whole** watch on
 compaction (`ErrCompacted`) and the client re-lists everything — `prior-art.md` §1.4; Configd re-lists
 **one shard, inline**, and keeps the rest streaming; `configd-analysis.md` §8.)*
 
 **W6-4 (the genuinely-unrecoverable case ⇒ terminal `WATCH_CANCELED(GAP_UNRECOVERABLE)`).** If the replay
 source cannot cover the needed range **at all** (not even via snapshot), the server **MUST** terminate that
-watch with `WATCH_CANCELED(watch_id, GAP_UNRECOVERABLE, oldest=<per-shard oldestRetainedSeq>)`. The driver
+watch with `WATCH_CANCELED(watch_id, GAP_UNRECOVERABLE, oldest=<per-shard oldestRetainedSeq>)` (in v1 the
+`oldest` vector is **not yet populated** — the server sends `has_oldest = 0`; W5-9a). The driver
 **MUST** then **re-list current state** (per §1's paginated `list`, §1
 [§4.2](01-paths-and-access.md#42-the-list-operation), using the **same** cursor-vector type) and
 **re-create** the watch from the new frontier. This is the only case where a driver rebuilds its baseline
@@ -588,9 +621,11 @@ deterministic and leader-independent (W3-2), resume against a freshly elected le
 run `S > S_i` (or a `Gap` → W6-3) — **no missed events, no duplicates beyond the resume boundary** (the
 driver dedups by `S`, W6-1). **Shards fail over independently** — a failover on one shard **MUST NOT**
 perturb another's cursor or stream (the vector payoff vs a single global cursor, which would rebuild
-wholesale; `configd-analysis.md` §7). This cross-shard failover-independence is, like W3-7 and W6-3, a
-**v2 server obligation** (vacuous at N = 1, where there is one shard and one failover timeline); the
-driver's per-component max-merge is vector-native from v1 regardless (W1-1).
+wholesale; `configd-analysis.md` §7). This cross-shard failover-independence is, like W3-7 and W6-3,
+**delivered in v1** by the per-shard cores; shards fail over independently because each drains its own
+group's local replica buffer with deterministic leader-independent `S` (trivial at N = 1, where there is
+one shard and one failover timeline). The driver's per-component max-merge is vector-native from v1
+regardless (W1-1).
 
 **W6-6 (per-shard read-your-writes, not cross-shard).** A write ack returns the `(gid, S)` of the commit
 (ADR-0033/0019). A driver that wants to observe its **own** write on a watched key **MUST** ensure its
@@ -836,17 +871,27 @@ item.
 | **Bounded watch revocation** on an ACL policy-version change (composes with the Increment-5 monotonic ACL-snapshot version; session/edge-layer) | §7 (W7-7) |
 | The **bookmark upper-bound clamp** (`WATCH_PROGRESS` ≤ verified+filtered frontier; reuses `StalenessTracker.recordFrontier`) | §5.5 (W5-7) |
 
-**W9-3 (v1 = N = 1; multi-shard wire = v2; the protocol is vector-native from v1).** The built per-shard
-`FanOutBuffer` exists but the **sharded edge client (cursor-vector + multi-shard scatter-gather) is
-v2-deferred** — the edge endpoint **fail-closes at N > 1** today
-([`configd-analysis.md`](../../archive/research/watches/configd-analysis.md) §4.2), unless an operator sets
-`-Dconfigd.edge.allowPartialShardView=true` — a **primary-shard-only, partial** view, **not** a real
-multi-shard watch. Therefore an
-**N = 1 edge-served watch is the v1-capable productization** of the hardened plane (a one-element cursor
-vector; at N = 1 a single shard even has a total order, so the cross-shard caveats are **dormant**), while
-the **multi-shard (N > 1) cursor-vector watch is v2**, riding the already-scoped v2 sharded edge. **The
-wire and the drivers are specified vector-native from v1** (W1-1) so nothing breaks when the cluster shards;
-the dormant complexity costs ~nothing at N = 1.
+Every ADDS row above is **delivered server-side** (the multiplex/filter veneer + the Gate-3 multi-shard
+aggregating coordinator, at N ≥ 1) on the `--edge-port` endpoint; a **conforming client driver** consuming
+them is the next deliverable and is **not** yet shipped (W9-3, §11).
+
+**W9-3 (multi-shard watches are v1-delivered by the aggregating endpoint; only the disjoint sharded-edge
+topology is v2).** The built per-shard `FanOutBuffer` and the **server-side aggregating endpoint** (W4-5)
+serve N > 1 multi-shard watches in **v1**: one `FanOutSessionCore` per covered shard behind **one**
+connection, every frame `(gid, S)`-tagged, coalesced `WATCH_CREATED` / `WATCH_PROGRESS` vectors, and
+per-shard demuxed resume (mixed TAIL / SNAPSHOT_FIRST). The v1 capability is this aggregating endpoint over
+the node's N **local** buffers — every node hosts replicas of all N Raft groups, so the scatter-gather is
+in-process and leadership-independent
+([`configd-analysis.md`](../../archive/research/watches/configd-analysis.md) §4). What remains **v2** is
+only the **disjoint sharded-edge topology** (edges serving shard subsets, the driver merging substreams
+client-side, W4-5 bullet 2) — the **same** wire, only more transport connections. At N = 1 the aggregating
+endpoint is a one-element cursor vector (a single shard even has a total order, so the cross-shard caveats
+are dormant); **the wire and the drivers are vector-native from v1** (W1-1) so nothing breaks when the
+cluster shards. The **legacy whole-store SUBSCRIBE** edge-hydration plane (W5-12; the connection-level
+fan-out) is a **separate, unbuilt** lift and remains **primary-shard-only at N > 1**;
+`-Dconfigd.edge.allowPartialShardView=true` now gates **that legacy plane only** (accepting its
+primary-shard-only partial view), **not** watches — a legacy SUBSCRIBE at N > 1 without the opt-in is
+refused per-connection (`BAD_SUBSCRIBE`), while a multi-shard WATCH is served regardless.
 
 ---
 
