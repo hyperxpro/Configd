@@ -709,14 +709,36 @@ public final class ConfigdServer {
             // Config-sourced policy under `_acl/`. ADDITIVE on top of the static grant above (no `_acl/`
             // keys in production = empty snapshot = byte-identical). Registered BEFORE the tick loop so it
             // observes every `_acl/`-touching apply; the snapshot-install hook covers follower catch-up;
-            // the boot seed (rebuild) catches a snapshot-restored prefix. Fail-closed-to-last-good on
-            // malformed policy; the reserved role/principal names neutralize the carve footgun.
-            AclConfigPolicyLoader aclPolicyLoader = new AclConfigPolicyLoader(
-                    aclService, stateMachine.store(),
-                    AclConfigPolicyLoader.RESERVED_ROLES, AclConfigPolicyLoader.RESERVED_PRINCIPALS, metricsRegistry);
-            stateMachine.addListener(aclPolicyLoader::onConfigChange);
-            stateMachine.addSnapshotListener(aclPolicyLoader::onSnapshotInstalled);
-            aclPolicyLoader.rebuild(); // boot seed
+            // the boot seed catches a snapshot-restored prefix. Fail-closed-to-last-good on malformed
+            // policy; the reserved role/principal names neutralize the carve footgun.
+            AclConfigPolicyLoader aclPolicyLoader;
+            if (shardCount == 1) {
+                // N=1: single-store loader on the primary state machine - byte-identical to the prior wiring.
+                aclPolicyLoader = new AclConfigPolicyLoader(
+                        aclService, stateMachine.store(),
+                        AclConfigPolicyLoader.RESERVED_ROLES, AclConfigPolicyLoader.RESERVED_PRINCIPALS,
+                        metricsRegistry);
+                stateMachine.addListener(aclPolicyLoader::onConfigChange);
+                stateMachine.addSnapshotListener(aclPolicyLoader::onSnapshotInstalled);
+            } else {
+                // N>1: `_acl/` keys hash-scatter across all groups, so the loader must scatter-gather every
+                // group's store and observe every group's applies. Otherwise a role/binding/DENY on a
+                // non-primary shard is silently absent from the policy snapshot (an under-deny bypass) and
+                // its apply never advances configPolicyVersion() (so bounded watch revocation misses it).
+                List<VersionedConfigStore> perShardStores = new ArrayList<>(runtimes.size());
+                for (RaftGroupRuntime rt : runtimes) {
+                    perShardStores.add(rt.configStore());
+                }
+                aclPolicyLoader = new AclConfigPolicyLoader(
+                        aclService, perShardStores,
+                        AclConfigPolicyLoader.RESERVED_ROLES, AclConfigPolicyLoader.RESERVED_PRINCIPALS,
+                        metricsRegistry);
+                for (RaftGroupRuntime rt : runtimes) {
+                    rt.stateMachine().addListener(aclPolicyLoader::onConfigChange);
+                    rt.stateMachine().addSnapshotListener(aclPolicyLoader::onSnapshotInstalled);
+                }
+            }
+            aclPolicyLoader.bootSeed(); // boot seed (N=1 inline; N>1 serialized through the worker, awaited)
         }
 
         // ---------------------------------------------------------------
