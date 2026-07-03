@@ -36,9 +36,12 @@ import java.util.concurrent.atomic.AtomicReferenceArray;
  *       (a volatile {@link AtomicLong}) <em>before</em> advancing {@code tail}. A
  *       reader whose cursor is below that watermark is missing an evicted
  *       notification and is told GAP - never served a silently-truncated run.
- *       This is exact even when seq has natural gaps (no-op/RCFG entries skip
- *       sequence numbers) because it compares the cursor against an actual
- *       evicted seq, not a position arithmetic.</li>
+ *       This is gap-agnostic: it compares the cursor against an actual evicted
+ *       seq, not position arithmetic, so it holds whether or not seq is dense.
+ *       (Production seq is dense - only a mutating apply advances S, and no-op/RCFG
+ *       entries emit no notification and consume no seq - but the mechanism never
+ *       relies on that; it needs only strict monotonicity and readSince
+ *       contiguity.)</li>
  *   <li><b>Verify-after-read with evict-before-overwrite.</b> The reader
  *       reads {@code tail} (t1), then {@code head} (h), copies the window
  *       {@code [t1, h)}, then re-reads {@code tail} (t2) and returns GAP unless

@@ -10,7 +10,8 @@ import java.util.Objects;
  *
  * @param data      the immutable HAMT containing all config key-value pairs
  * @param version   monotonic sequence number
- * @param timestamp HLC timestamp in milliseconds
+ * @param timestamp the applying node's local wall-clock millis (freshness only, not a
+ *                  cross-shard HLC or a global order; non-deterministic across replicas)
  */
 public record ConfigSnapshot(
         HamtMap<String, VersionedValue> data,

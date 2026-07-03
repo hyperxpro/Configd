@@ -2,7 +2,6 @@ package io.configd.server;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
-import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.configd.raft.ProposalResult;
@@ -105,11 +104,15 @@ class NGreaterThanOneBootSmokeTest {
     }
 
     @Test
-    @Timeout(30)
-    void edgeEndpointAtNGreaterThanOneIsRefusedWithoutOptIn(@TempDir Path dataDir) {
-        // (red-team MEDIUM): N>1 + the edge endpoint would silently serve only the PRIMARY
-        // shard. The server must REFUSE this (fail-closed) unless the operator explicitly opts in - never
-        // a silent partial-view data plane. The refusal is fail-fast (before allocating), so no leak.
+    @Timeout(90)
+    void edgeEndpointAtNGreaterThanOneNowBootsServingMultiShardWatches(@TempDir Path dataDir)
+            throws Exception {
+        // The guard flip: N>1 + --edge-port now BOOTS. The fan-out coordinator serves the multi-shard
+        // WATCH plane (one core per shard, (gid,S)-tagged cursor vector). The co-resident legacy whole-
+        // store SUBSCRIBE plane is still primary-shard-only at N>1, so it is refused PER CONNECTION at
+        // runtime (BAD_SUBSCRIBE) unless -Dconfigd.edge.allowPartialShardView - that runtime refusal is
+        // proven at the driver by FanOutConnectionDriver's tests, not here. This smoke proves only that
+        // boot no longer throws and the edge endpoint is bound at N>1.
         System.setProperty(SHARD_PROP, "2");
         System.setProperty(POOL_PROP, "2");
         ServerConfig config = ServerConfig.parse(new String[]{
@@ -117,19 +120,21 @@ class NGreaterThanOneBootSmokeTest {
                 "--data-dir", dataDir.toString(),
                 "--peers", "",
                 "--api-port", "0",
-                "--edge-port", "0"   // edge enabled + N>1 + no opt-in => refused
+                "--edge-port", "0"   // edge enabled + N>1: BOOTS now (multi-shard WATCH supported)
         });
-        IllegalStateException e = assertThrows(IllegalStateException.class,
-                () -> ConfigdServer.start(config),
-                "N>1 with --edge-port and no opt-in must be refused (silent partial-view footgun)");
-        assertTrue(e.getMessage().contains("partial") || e.getMessage().contains("PRIMARY shard"),
-                () -> "refusal should explain the partial-view reason: " + e.getMessage());
-        assertTrue(e.getMessage().contains("allowPartialShardView"),
-                () -> "refusal should name the explicit opt-in escape: " + e.getMessage());
-        // A REFUSED boot must NOT persist the fixed-at-deploy marker (else it would
-        // poison a later boot at a different N). The edge guard runs BEFORE resolveShardCount persists.
-        assertTrue(java.nio.file.Files.notExists(dataDir.resolve("raft-shard-count.meta")),
-                "a refused N>1+edge boot must not persist the fixed-at-deploy marker");
+        ConfigdServer server = ConfigdServer.start(config); // <-- before the guard flip this threw
+        try {
+            assertNotNull(server.fanOutServer(),
+                    "the edge endpoint must be bound at N>1 (the boot guard is gone)");
+            assertNotNull(server.driver().getGroup(1),
+                    "shard 1 must be registered at N=2 (N>1 + edge boots)");
+        } finally {
+            server.shutdown();
+        }
+        // A SUPPORTED N>1+edge boot now persists the fixed-at-deploy marker (it is a real deploy, not a
+        // refused boot) - the inverse of the pre-flip assertion.
+        assertTrue(java.nio.file.Files.exists(dataDir.resolve("raft-shard-count.meta")),
+                "a booted N>1+edge deploy must persist the fixed-at-deploy marker");
     }
 
     /** Polls the group's owner-published monitor view until it is LEADER (single-node self-election). */

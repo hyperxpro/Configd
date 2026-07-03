@@ -109,6 +109,7 @@ public final class RegistryFanOutSessionMetrics implements FanOutSessionMetrics 
                 "AUTH_FAIL", registry.counter("edge.fanout.sessions_closed.auth_fail"),
                 "GAP_UNRECOVERABLE", registry.counter("edge.fanout.sessions_closed.gap_unrecoverable"),
                 "QUARANTINED", registry.counter("edge.fanout.sessions_closed.quarantined"),
+                "BAD_SUBSCRIBE", registry.counter("edge.fanout.sessions_closed.bad_subscribe"),
                 "transport_gone", registry.counter("edge.fanout.sessions_closed.transport_gone"));
         this.closedOther = registry.counter("edge.fanout.sessions_closed.other");
 

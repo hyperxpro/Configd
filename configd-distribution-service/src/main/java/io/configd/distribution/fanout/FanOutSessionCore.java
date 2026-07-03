@@ -524,9 +524,11 @@ public final class FanOutSessionCore {
      *
      * <p>The opposite (over-classification: a still-served transient race read as genuine) is
      * possible but always SAFE - a spurious, self-correcting re-snapshot, never a missed
-     * demotion - and negligibly rare at real write rates. Two sources: (1) sparse seqs
-     * (no-op/RCFG entries skip sequence numbers) can leave a still-served cursor in a skipped-seq
-     * gap above {@code oldestRetainedSeq}; (2) {@code oldestSeqInternal} reads {@code tail} then
+     * demotion - and negligibly rare at real write rates. Two sources: (1) were seq ever
+     * non-dense, a still-served cursor could sit in a skipped-seq gap above
+     * {@code oldestRetainedSeq} - but production seq is dense (no-op/RCFG entries emit no
+     * notification and consume no seq), so this source does not arise in practice, and the
+     * classification is gap-agnostic regardless; (2) {@code oldestSeqInternal} reads {@code tail} then
      * the tail slot non-atomically, and on a FULL ring the evicting publish overwrites that same
      * slot, so the read can observe a much newer seq and report an {@code oldestRetainedSeq}
      * above the true oldest. Both need a concurrent write at the eviction boundary; at the

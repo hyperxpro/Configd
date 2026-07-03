@@ -19,6 +19,7 @@ import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.locks.LockSupport;
 import java.util.function.BiConsumer;
 import java.util.function.BooleanSupplier;
+import java.util.logging.Logger;
 
 /**
  * The transport-agnostic brain of one edge subscriber connection - the multi-shard fan-out/fan-in
@@ -80,6 +81,8 @@ import java.util.function.BooleanSupplier;
  * already.
  */
 public final class FanOutConnectionDriver implements WatchMultiplexSink.Coordinator {
+
+    private static final Logger LOG = Logger.getLogger(FanOutConnectionDriver.class.getName());
 
     /** The connection type, decided by the first inbound frame (reader-thread-only). */
     private enum ConnType {
@@ -339,6 +342,27 @@ public final class FanOutConnectionDriver implements WatchMultiplexSink.Coordina
 
     private void routeFirstFrame(EdgeFrame frame) {
         if (frame instanceof EdgeFrame.Subscribe sub) {
+            // The legacy whole-store SUBSCRIBE (edge hydration) is served from the PRIMARY shard core
+            // only (handleSubscribe drives cores.get(primaryGid)); at N>1 that is a SILENT PARTIAL
+            // keyspace view. Refuse fail-closed, per connection, unless the operator explicitly accepts
+            // the primary-only edge view. Zero data frames flow. The multi-shard WATCH path is complete
+            // and is NOT gated here (a WatchCreate-first connection routes below). At N=1 (one shard)
+            // this never trips - byte-identical to a non-sharded build.
+            //
+            // allGids.length equals the cluster shard count N only because every node hosts a replica of
+            // ALL N groups (the aggregating-endpoint topology). A future disjoint sharded-edge topology
+            // (a node holding only a SUBSET of the groups) would make allGids a subset of N, so this
+            // predicate would need revisiting - a legacy SUBSCRIBE could then be whole-keyspace over the
+            // node's own shards yet still not the cluster whole store.
+            if (allGids.length > 1 && !config.allowPartialShardView()) {
+                LOG.info(() -> "edge_fanout_bad_subscribe_refused reason=N>1 legacy SUBSCRIBE without"
+                        + " allowPartialShardView identity=" + edgeIdentity + " shards=" + allGids.length);
+                teardownHook.accept(ErrorCode.BAD_SUBSCRIBE,
+                        "legacy whole-store SUBSCRIBE serves the primary shard only at N>1 (partial "
+                              + "keyspace); use a WATCH (multi-shard-complete) or set "
+                              + "-Dconfigd.edge.allowPartialShardView=true to accept the primary-only view");
+                return;
+            }
             connType = ConnType.LEGACY;
             admitLegacySubscribe(sub);
         } else if (frame instanceof EdgeFrame.WatchCreate create) {

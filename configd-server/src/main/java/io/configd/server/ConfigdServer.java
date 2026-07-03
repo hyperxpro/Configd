@@ -245,26 +245,13 @@ public final class ConfigdServer {
         // tunables), validated to [1, MAX_SHARD_COUNT], and FIXED AT DEPLOY (see resolveShardCount).
         // The StaticShardMap routes (scope,key)->shard.
         // ---------------------------------------------------------------
-        // FAIL FAST, and BEFORE resolveShardCount persists the fixed-at-deploy marker (a refused boot
-        // never persists a marker). The edge endpoint's single-cursor wire protocol serves ONE shard, so
-        // at N>1 a subscriber would silently receive only the PRIMARY shard's keys (a downstream cache
-        // believing it has the full keyspace). The sharded edge client that multiplexes the N per-shard
-        // streams (a cursor vector) is v2. Consistent with the fail-closed discipline (a loud refusal,
-        // never silent partial data), REFUSE N>1 + the edge endpoint together unless the operator
-        // EXPLICITLY opts in. Never trips at N=1 (the primary is the only shard - full view).
-        int configuredShardCount = Integer.getInteger("configd.raft.shardCount", 1);
-        if (configuredShardCount > 1 && config.edgeEnabled()
-                && !Boolean.getBoolean("configd.edge.allowPartialShardView")) {
-            throw new IllegalStateException(
-                    "configd.raft.shardCount=" + configuredShardCount + " (N>1) with the edge endpoint"
-                            + " enabled (--edge-port): the edge endpoint serves the PRIMARY shard (group "
-                            + DEFAULT_RAFT_GROUP + ") ONLY — a subscriber would silently receive a SUBSET"
-                            + " of the keyspace (the sharded edge client that multiplexes all "
-                            + configuredShardCount + " per-shard streams is v2 — docs/multiraft/phase1)."
-                            + " Refusing to start to avoid a silent partial-view data plane. Either run the"
-                            + " edge endpoint at N=1, or set -Dconfigd.edge.allowPartialShardView=true to"
-                            + " accept the primary-shard-only edge view explicitly.");
-        }
+        // N>1 with the edge endpoint boots. The fan-out coordinator serves multi-shard WATCH across all
+        // N shards (one FanOutSessionCore per shard, (gid,S)-tagged cursor vector, per-shard resume). The
+        // co-resident legacy whole-store SUBSCRIBE plane serves the primary shard only, so the fan-out
+        // driver refuses a legacy SUBSCRIBE per connection at N>1 (BAD_SUBSCRIBE) unless the operator sets
+        // -Dconfigd.edge.allowPartialShardView; a WATCH is never refused. See the
+        // fanOutConfig.withAllowPartialShardView wiring below. At N=1 (one shard is the whole keyspace)
+        // the refusal never fires - byte-identical.
         int shardCount = resolveShardCount(dataDir);
         StaticShardMap shardMap = new StaticShardMap(shardCount);
         System.out.println("  Shard map    : " + shardMap + " [Multi-Raft Phase 1 C4a; N fixed at deploy,"
@@ -962,18 +949,17 @@ public final class ConfigdServer {
         // ---------------------------------------------------------------
         io.configd.server.fanout.FanOutEndpoint fanOutServer = null;
         if (config.edgeEnabled()) {
-            // N>1 + the edge endpoint without -Dconfigd.edge.allowPartialShardView was already refused
-            // fail-fast at the top of start(), so here shardCount==1 OR the operator opted into the
-            // primary-shard-only view. The edge endpoint binds the primary shard's buffer/replay below.
+            // The coordinator serves multi-shard WATCH across all N shards. A legacy whole-store SUBSCRIBE
+            // is served from the primary shard only, so the driver refuses it per connection at N>1 unless
+            // allowPartialShardView (wired into fanOutConfig below); a WATCH is never refused.
             io.configd.server.fanout.RegistryFanOutSessionMetrics fanOutMetrics =
                     new io.configd.server.fanout.RegistryFanOutSessionMetrics(metricsRegistry);
             // The per-shard sources + replay sources + shard set + resolver the multi-shard
             // fan-out/fan-in coordinator fans a watch across: one FanOutBuffer and one snapshot replay
             // per group (the same per-gid runtimes registerShardedFanOut / the ACL loader read), the
             // shard set, and a ShardMap-backed resolver (KEY -> shardFor; PREFIX/FULL -> shardIds()).
-            // At N=1 - the invariant the N>1-edge boot guard enforces for the edge endpoint - these are
-            // single-entry maps and the single-shard resolver, so one core is the single-shard drain
-            // (byte-identical). The N>1 wiring stays dormant until that boot guard is lifted.
+            // At N=1 these are single-entry maps and the single-shard resolver, so one core is the
+            // single-shard drain (byte-identical); at N>1 the coordinator fans a WATCH across all N.
             Map<Integer, io.configd.distribution.CommitNotificationSource> edgeShardSources =
                     new java.util.LinkedHashMap<>(shardFanOutBuffers);
             Map<Integer, io.configd.distribution.ReplaySource> edgeShardReplaySources =
@@ -1011,10 +997,14 @@ public final class ConfigdServer {
             // set OFF (full-chain) when a separate/untrusted relay tier terminates the fan-out. The
             // strong-read prefixes are always shipped regardless of the edge's prefix set. When off
             // (or for a full-store / non-opting edge) the drain is byte-identical to the legacy path.
+            // allowPartialShardView gates the legacy whole-store SUBSCRIBE plane at N>1 (primary-shard-
+            // only); it never affects a multi-shard WATCH and is inert at N=1.
+            boolean allowPartialShardView = Boolean.getBoolean("configd.edge.allowPartialShardView");
             io.configd.distribution.fanout.FanOutConfig fanOutConfig =
                     io.configd.distribution.fanout.FanOutConfig.defaults()
                             .withServerSidePrefixFilter(resolveEdgeFilterPosture(),
-                                    strongReadPolicy.prefixes());
+                                    strongReadPolicy.prefixes())
+                            .withAllowPartialShardView(allowPartialShardView);
             fanOutServer = new io.configd.server.fanout.NettyFanOutServer(
                     edgeShardSources, edgeShardReplaySources, edgeAllGids, edgeShardResolver,
                     new InetSocketAddress(config.bindAddress(), config.edgePort()),
@@ -1034,6 +1024,13 @@ public final class ConfigdServer {
                 fanOutServer.start();
                 System.out.println("  Edge port    : " + fanOutServer.localPort()
                         + (tlsManager != null ? " (mTLS)" : " (PLAINTEXT)") + " [C1 fan-out, ADR-0037]");
+                if (shardCount > 1) {
+                    System.out.println("  Edge plane   : N>1 multi-shard WATCH supported; legacy whole-store"
+                            + " SUBSCRIBE is primary-shard-only"
+                            + (allowPartialShardView
+                                    ? " (allowPartialShardView=ON - admitted, partial view)"
+                                    : " -> refused unless -Dconfigd.edge.allowPartialShardView=true"));
+                }
             } catch (java.io.IOException e) {
                 throw new RuntimeException("Failed to start FanOutServer on port " + config.edgePort(), e);
             }
