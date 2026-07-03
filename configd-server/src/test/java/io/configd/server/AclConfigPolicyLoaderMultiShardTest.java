@@ -15,6 +15,7 @@ import org.junit.jupiter.api.Test;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.EnumSet;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
 import java.util.concurrent.CountDownLatch;
@@ -381,6 +382,41 @@ class AclConfigPolicyLoaderMultiShardTest {
     }
 
     // ---------------- constructor guards ----------------
+
+    // ---------------- close() drains the worker (no daemon-thread leak) ----------------
+
+    @Test
+    void close_terminatesTheWorkerThread_noLeak() throws InterruptedException {
+        Set<Thread> before = aliveThreadsNamed("configd-acl-policy-loader");
+        AclService acl = new AclService();
+        List<VersionedConfigStore> stores = stores(2);
+        AclConfigPolicyLoader loader = multiShardLoader(acl, stores, new MetricsRegistry());
+        loader.bootSeed(); // starts and uses the worker
+
+        Set<Thread> spawned = aliveThreadsNamed("configd-acl-policy-loader");
+        spawned.removeAll(before);
+        assertEquals(1, spawned.size(), "the loader started exactly one worker thread");
+        Thread worker = spawned.iterator().next();
+
+        loader.close(); // awaits termination internally
+
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
+        while (worker.isAlive() && System.nanoTime() < deadline) {
+            Thread.sleep(20);
+        }
+        assertFalse(worker.isAlive(),
+                "close() drained the worker - no lingering configd-acl-policy-loader daemon thread");
+    }
+
+    private static Set<Thread> aliveThreadsNamed(String name) {
+        Set<Thread> matches = new HashSet<>();
+        for (Thread t : Thread.getAllStackTraces().keySet()) {
+            if (t.isAlive() && name.equals(t.getName())) {
+                matches.add(t);
+            }
+        }
+        return matches;
+    }
 
     @Test
     void multiShardConstructor_rejectsFewerThanTwoStores() {
