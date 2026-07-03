@@ -248,6 +248,16 @@ measurement doc.
     to eleven busy leaders saturate a 16-vCPU box before CPU becomes the bottleneck
     (see the archived horizontal measurement,
     [`../archive/measurement/ec2-horizontal-2026-07-01/`](../archive/measurement/ec2-horizontal-2026-07-01/)).
+  - **Edge endpoint at N>1 -- `allowPartialShardView` meaning NARROWED.** With `--edge-port`
+    at N>1 the server now **boots** and serves **multi-shard client-facing WATCH** across all
+    shards. The legacy whole-store `SUBSCRIBE` feed stays **primary-shard-only** at N>1, so it
+    is refused per connection (`BAD_SUBSCRIBE`, counted as
+    `edge_fanout_sessions_closed_bad_subscribe_total`) unless you set
+    `-Dconfigd.edge.allowPartialShardView=true` to accept the primary-only view.
+    `allowPartialShardView` previously gated the whole edge endpoint's boot; it now gates
+    **only** the legacy `SUBSCRIBE` plane (WATCH is served regardless). Migration is safe --
+    strictly more permissive: a config that set the flag keeps working, and one that did not
+    now boots and serves WATCH instead of refusing to start.
   - **Monitor leadership distribution continuously** and re-balance (by controlled
     restart) after failovers.
   - Do **not** rely on **sustained** multi-shard horizontal scale in v1 until the

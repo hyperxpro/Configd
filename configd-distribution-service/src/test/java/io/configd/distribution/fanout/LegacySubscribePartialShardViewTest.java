@@ -23,14 +23,13 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * The guard-flip split, proven at the driver. When the N&gt;1 edge boot guard was lifted, the
- * legacy whole-store SUBSCRIBE plane stayed <b>primary-shard-only</b> - it drains
- * {@code cores.get(primaryGid)} alone, so at N&gt;1 it is a partial keyspace view. The driver
- * therefore refuses a legacy SUBSCRIBE <b>per connection</b> at N&gt;1 with {@code BAD_SUBSCRIBE}
- * and zero data frames, unless the operator sets {@code allowPartialShardView}. The multi-shard
- * {@code WATCH} plane is complete and is NEVER gated by this split. At N=1 the split is inert (one
- * shard is the whole keyspace) - the flag is never consulted, so the legacy plane is byte-identical
- * to a non-sharded build.
+ * The legacy whole-store SUBSCRIBE refusal at N&gt;1, proven at the driver. The legacy SUBSCRIBE
+ * plane is <b>primary-shard-only</b> - it drains {@code cores.get(primaryGid)} alone, so at N&gt;1
+ * it is a partial keyspace view. The driver therefore refuses a legacy SUBSCRIBE <b>per
+ * connection</b> at N&gt;1 with {@code BAD_SUBSCRIBE} and zero data frames, unless the operator sets
+ * {@code allowPartialShardView}. The multi-shard {@code WATCH} plane is complete and is NEVER
+ * refused here. At N=1 the refusal never fires (one shard is the whole keyspace) - the flag is
+ * never consulted, so the legacy plane is byte-identical to a non-sharded build.
  *
  * <p>Drives {@link FanOutConnectionDriver} over N in-memory {@link FanOutBuffer}s + a recording
  * {@link RecordingTransportSink} - no threads, no I/O - the same harness family as
@@ -41,7 +40,7 @@ class LegacySubscribePartialShardViewTest {
     /** Authorizes WATCH over any target - the SUBSCRIBE half stays default-closed. */
     private static final WatchAuthorizer ALLOW_WATCH = (p, r, t) -> true;
 
-    /** Grants SUBSCRIBE (and WATCH) - used to prove the split guard fires BEFORE the authz gate. */
+    /** Grants SUBSCRIBE (and WATCH) - used to prove the partial-view refusal fires BEFORE the authz gate. */
     private static WatchAuthorizer grantSubscribe(String... allowed) {
         Set<String> ok = Set.of(allowed);
         return new WatchAuthorizer() {
@@ -105,8 +104,8 @@ class LegacySubscribePartialShardViewTest {
         feed(subscribe());
 
         assertEquals(List.of(ErrorCode.BAD_SUBSCRIBE), teardowns,
-                "a legacy SUBSCRIBE at N>1 without the opt-in is refused BAD_SUBSCRIBE (the split guard, "
-                        + "not the authz gate)");
+                "a legacy SUBSCRIBE at N>1 without the opt-in is refused BAD_SUBSCRIBE (the partial-view "
+                        + "refusal, not the authz gate)");
         assertTrue(out.sent().isEmpty(),
                 "zero data frames precede the refusal - not even SUBSCRIBE_OK or a snapshot");
     }
@@ -137,7 +136,8 @@ class LegacySubscribePartialShardViewTest {
         assertEquals(1, created.size(), "the multi-shard WATCH is admitted at N>1 with the flag OFF");
         assertEquals(3, created.get(0).shards().size(),
                 "a FULL watch covers all 3 shards (never gated by allowPartialShardView)");
-        assertFalse(teardowns.contains(ErrorCode.BAD_SUBSCRIBE), "a WATCH is never refused by the split");
+        assertFalse(teardowns.contains(ErrorCode.BAD_SUBSCRIBE),
+                "a WATCH is never refused by the partial-view gate");
     }
 
     // ---- (d) N=1 legacy SUBSCRIBE is byte-identical; the flag is never read --

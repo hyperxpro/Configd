@@ -245,13 +245,13 @@ public final class ConfigdServer {
         // tunables), validated to [1, MAX_SHARD_COUNT], and FIXED AT DEPLOY (see resolveShardCount).
         // The StaticShardMap routes (scope,key)->shard.
         // ---------------------------------------------------------------
-        // N>1 + the edge endpoint BOOTS: the fan-out coordinator serves multi-shard WATCH soundly (one
-        // FanOutSessionCore per shard, (gid,S)-tagged cursor vector, per-shard resume). The co-resident
-        // legacy whole-store SUBSCRIBE plane is still primary-shard-only, so its partial-view refusal is
-        // enforced PER CONNECTION in the fan-out driver (BAD_SUBSCRIBE unless the operator sets
-        // -Dconfigd.edge.allowPartialShardView) rather than by a blanket boot refusal - a WATCH is never
-        // refused, only a legacy SUBSCRIBE at N>1. See the fanOutConfig.withAllowPartialShardView wiring
-        // below. At N=1 the split is inert (one shard is the whole keyspace) - byte-identical.
+        // N>1 with the edge endpoint boots. The fan-out coordinator serves multi-shard WATCH across all
+        // N shards (one FanOutSessionCore per shard, (gid,S)-tagged cursor vector, per-shard resume). The
+        // co-resident legacy whole-store SUBSCRIBE plane serves the primary shard only, so the fan-out
+        // driver refuses a legacy SUBSCRIBE per connection at N>1 (BAD_SUBSCRIBE) unless the operator sets
+        // -Dconfigd.edge.allowPartialShardView; a WATCH is never refused. See the
+        // fanOutConfig.withAllowPartialShardView wiring below. At N=1 (one shard is the whole keyspace)
+        // the refusal never fires - byte-identical.
         int shardCount = resolveShardCount(dataDir);
         StaticShardMap shardMap = new StaticShardMap(shardCount);
         System.out.println("  Shard map    : " + shardMap + " [Multi-Raft Phase 1 C4a; N fixed at deploy,"
@@ -949,10 +949,9 @@ public final class ConfigdServer {
         // ---------------------------------------------------------------
         io.configd.server.fanout.FanOutEndpoint fanOutServer = null;
         if (config.edgeEnabled()) {
-            // N>1 + the edge endpoint boots (the boot guard was replaced by the per-connection legacy-
-            // SUBSCRIBE refusal). The coordinator serves multi-shard WATCH across all N shards; a legacy
-            // whole-store SUBSCRIBE is refused per-connection at N>1 unless allowPartialShardView (wired
-            // into fanOutConfig below).
+            // The coordinator serves multi-shard WATCH across all N shards. A legacy whole-store SUBSCRIBE
+            // is served from the primary shard only, so the driver refuses it per connection at N>1 unless
+            // allowPartialShardView (wired into fanOutConfig below); a WATCH is never refused.
             io.configd.server.fanout.RegistryFanOutSessionMetrics fanOutMetrics =
                     new io.configd.server.fanout.RegistryFanOutSessionMetrics(metricsRegistry);
             // The per-shard sources + replay sources + shard set + resolver the multi-shard

@@ -233,7 +233,7 @@ re-send the **full** cursor vector on a new `WATCH_CREATE` (§5.2). The server r
 substream from its component via the buffer's `readSince(S_i)` boundary **independently** — a `readSince`
 returns either a contiguous run (`Ok`) or a `Gap` (W6-3). The **per-shard-independence** obligation — one
 shard's gap or failover **MUST NOT** perturb another shard's substream or cursor component (W6-3, the vector
-payoff) — is a **v1 server obligation, delivered by the Gate-3 aggregating coordinator**: it is trivial at
+payoff) — is a **v1 server obligation, delivered by the server-side aggregating coordinator**: it is trivial at
 N = 1 (one shard, one `readSince`, one substream — the built single-session `FanOutSessionCore`) and is
 enforced at N > 1 by one `FanOutSessionCore` per shard + an independent `readSince` per shard (one shard's
 gap or failover never perturbs another's substream or component; W9-3). The **driver** contract is
@@ -284,7 +284,7 @@ each shard compacts independently; `configd-analysis.md` §8.1.)*
 - **Aggregating endpoint (v1; serves N ≥ 1 shards):** the driver sends **one** `WATCH_CREATE` to an
   endpoint that materializes **all** shards; that endpoint scatter-gathers internally and returns **one**
   `(gid, S)`-tagged stream. The driver does **no** cross-endpoint merge. **This is the v1 path** — the
-  Gate-3 coordinator materializes one `FanOutSessionCore` per covered shard over the node's N **local**
+  server-side aggregating coordinator materializes one `FanOutSessionCore` per covered shard over the node's N **local**
   buffers (every node hosts all N groups), so a single connection serves a full multi-shard watch.
 - **Sharded endpoints (v2):** if edges each serve only a **subset** of shards, the driver opens enough
   substreams to cover all N shards and unions them client-side per W4-2. This is the v2 sharded-edge work
@@ -871,7 +871,7 @@ item.
 | **Bounded watch revocation** on an ACL policy-version change (composes with the Increment-5 monotonic ACL-snapshot version; session/edge-layer) | §7 (W7-7) |
 | The **bookmark upper-bound clamp** (`WATCH_PROGRESS` ≤ verified+filtered frontier; reuses `StalenessTracker.recordFrontier`) | §5.5 (W5-7) |
 
-Every ADDS row above is **delivered server-side** (the multiplex/filter veneer + the Gate-3 multi-shard
+Every ADDS row above is **delivered server-side** (the multiplex/filter veneer + the server-side multi-shard
 aggregating coordinator, at N ≥ 1) on the `--edge-port` endpoint; a **conforming client driver** consuming
 them is the next deliverable and is **not** yet shipped (W9-3, §11).
 
