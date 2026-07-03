@@ -339,6 +339,19 @@ public final class FanOutConnectionDriver implements WatchMultiplexSink.Coordina
 
     private void routeFirstFrame(EdgeFrame frame) {
         if (frame instanceof EdgeFrame.Subscribe sub) {
+            // The legacy whole-store SUBSCRIBE (edge hydration) is served from the PRIMARY shard core
+            // only (handleSubscribe drives cores.get(primaryGid)); at N>1 that is a SILENT PARTIAL
+            // keyspace view. Refuse fail-closed, per connection, unless the operator explicitly accepts
+            // the primary-only edge view. Zero data frames flow. The multi-shard WATCH path is complete
+            // and is NOT gated here (a WatchCreate-first connection routes below). At N=1 (one shard)
+            // this never trips - byte-identical to a non-sharded build.
+            if (allGids.length > 1 && !config.allowPartialShardView()) {
+                teardownHook.accept(ErrorCode.BAD_SUBSCRIBE,
+                        "legacy whole-store SUBSCRIBE serves the primary shard only at N>1 (partial "
+                              + "keyspace); use a WATCH (multi-shard-complete) or set "
+                              + "-Dconfigd.edge.allowPartialShardView=true to accept the primary-only view");
+                return;
+            }
             connType = ConnType.LEGACY;
             admitLegacySubscribe(sub);
         } else if (frame instanceof EdgeFrame.WatchCreate create) {

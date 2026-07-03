@@ -32,8 +32,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * The multi-shard fan-out/fan-in coordinator proofs. Drives {@link FanOutConnectionDriver}
  * over N in-memory {@link FanOutBuffer}s + a frame-capturing {@link RecordingTransportSink}, sweeping
  * ticks (the same deterministic, thread-free harness as {@code FanOutSessionCoreGapClassificationTest}
- * generalized to N shards). The boot guard stays in place; these tests exercise the coordinator
- * directly, never booting an N&gt;1 edge server.
+ * generalized to N shards). These tests exercise the coordinator directly, never booting an edge server.
  *
  * <p>Coverage rule for the test {@link ShardResolver}: a KEY target {@code /sX/...} covers shard X;
  * a PREFIX / FULL target scatters across every shard (the target sets coverage, never the cursor).

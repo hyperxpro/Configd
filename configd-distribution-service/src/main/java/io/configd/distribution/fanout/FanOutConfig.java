@@ -36,6 +36,13 @@ import java.util.Set;
  *                              any such key is never filtered, regardless of the subscribed
  *                              prefixes, so the edge holds them for suppression-detectability.
  *                              Empty when {@code serverSidePrefixFilter} is off (unused).
+ * @param allowPartialShardView whether a legacy whole-store SUBSCRIBE connection is admitted at
+ *                              N>1. The legacy SUBSCRIBE plane serves the PRIMARY shard only, so at
+ *                              N>1 it is a partial keyspace view; the driver refuses it per-connection
+ *                              ({@code BAD_SUBSCRIBE}) unless this is set. Gates the legacy SUBSCRIBE
+ *                              plane ONLY - multi-shard WATCH is served at N>1 regardless. Default
+ *                              {@code false} (fail-closed); never consulted at N=1 (one shard is the
+ *                              whole keyspace).
  */
 public record FanOutConfig(
         int queueFrames,
@@ -47,7 +54,8 @@ public record FanOutConfig(
         long idlePollMs,
         int snapshotChunkBytes,
         boolean serverSidePrefixFilter,
-        Set<String> strongReadPrefixes
+        Set<String> strongReadPrefixes,
+        boolean allowPartialShardView
 ) {
 
     public FanOutConfig {
@@ -92,15 +100,15 @@ public record FanOutConfig(
     }
 
     /**
-     * A config with the pre-filtering field set (the eight-arg canonical policy), server-side
-     * prefix filtering OFF and no strong-read prefixes. Existing callers use this arity
-     * unchanged and stay byte-identical.
+     * The eight-arg convenience policy: server-side prefix filtering OFF, no strong-read prefixes,
+     * and the legacy-SUBSCRIBE partial-view fail-closed ({@code allowPartialShardView=false}).
+     * Existing callers use this arity unchanged and stay byte-identical.
      */
     public FanOutConfig(int queueFrames, int queueWarnPct, int batchMaxNotifications,
                         int batchMaxBytes, long ackLagDemoteSeqs, long heartbeatMs,
                         long idlePollMs, int snapshotChunkBytes) {
         this(queueFrames, queueWarnPct, batchMaxNotifications, batchMaxBytes, ackLagDemoteSeqs,
-                heartbeatMs, idlePollMs, snapshotChunkBytes, false, Set.of());
+                heartbeatMs, idlePollMs, snapshotChunkBytes, false, Set.of(), false);
     }
 
     /** Defaults: 256 / 80% / 64 / 256 KiB / 8192 / 250 ms / 5 ms / 1 MiB; filtering OFF. */
@@ -124,7 +132,21 @@ public record FanOutConfig(
      */
     public FanOutConfig withServerSidePrefixFilter(boolean on, Set<String> strongReadPrefixes) {
         return new FanOutConfig(queueFrames, queueWarnPct, batchMaxNotifications, batchMaxBytes,
-                ackLagDemoteSeqs, heartbeatMs, idlePollMs, snapshotChunkBytes, on, strongReadPrefixes);
+                ackLagDemoteSeqs, heartbeatMs, idlePollMs, snapshotChunkBytes, on, strongReadPrefixes,
+                allowPartialShardView);
+    }
+
+    /**
+     * Returns a copy of this config with the legacy-SUBSCRIBE partial-view posture set. The
+     * deployment boundary ({@code ConfigdServer}) flips this ON from
+     * {@code -Dconfigd.edge.allowPartialShardView} so a legacy whole-store SUBSCRIBE is admitted at
+     * N>1 (accepting the primary-shard-only view); left {@code false} it is refused per-connection.
+     * Gates the legacy SUBSCRIBE plane only - multi-shard WATCH is served at N>1 regardless.
+     */
+    public FanOutConfig withAllowPartialShardView(boolean on) {
+        return new FanOutConfig(queueFrames, queueWarnPct, batchMaxNotifications, batchMaxBytes,
+                ackLagDemoteSeqs, heartbeatMs, idlePollMs, snapshotChunkBytes, serverSidePrefixFilter,
+                strongReadPrefixes, on);
     }
 
     /** The queue depth (in frames) at which a slow-consumer warning fires. */
