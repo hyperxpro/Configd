@@ -46,6 +46,7 @@ import io.configd.raft.RaftRole;
 import io.configd.raft.RaftTransport;
 import io.configd.raft.RaftMessage;
 import io.configd.raft.ProposeOutcome;
+import io.configd.raft.NodeAnchorFile;
 import io.configd.raft.TopologyDescriptor;
 import io.configd.replication.CrossShardBatchException;
 import io.configd.replication.CrossShardWriteGuard;
@@ -165,9 +166,15 @@ public final class ConfigdServer {
     //                          from owner-loop bursts (double-hop).
     //   tlsReloadExecutor    - slow I/O (cert reload every 60s); its latency must NEVER delay an
     //                          owner tick or reads.
+    //   nodeAnchorExecutor   - off-ack-path periodic refresh of the node-level `node-anchor` (audit
+    //                          head + shard-liveness digest, K-records-or-T-ms cadence); a slow/failed
+    //                          refresh must never delay an owner tick or a read.
     private final OwnerExecutorPool ownerPool;
     private final ScheduledExecutorService readDispatchExecutor;
     private final ScheduledExecutorService tlsReloadExecutor;
+    private final ScheduledExecutorService nodeAnchorExecutor;
+    /** The node-level durability anchor (topology + audit head + shard-liveness digest); closed on shutdown. */
+    private final NodeAnchorFile nodeAnchor;
     private final MultiRaftDriver driver;
     private final ConfigStateMachine stateMachine;
     private final NettyHttpApiServer httpApiServer; // admin API on Netty
@@ -198,6 +205,8 @@ public final class ConfigdServer {
                           OwnerExecutorPool ownerPool,
                           ScheduledExecutorService readDispatchExecutor,
                           ScheduledExecutorService tlsReloadExecutor,
+                          ScheduledExecutorService nodeAnchorExecutor,
+                          NodeAnchorFile nodeAnchor,
                           NettyHttpApiServer httpApiServer,
                           RaftTransportEndpoint tcpTransport,
                           io.configd.server.fanout.FanOutEndpoint fanOutServer,
@@ -216,6 +225,8 @@ public final class ConfigdServer {
         this.ownerPool = ownerPool;
         this.readDispatchExecutor = readDispatchExecutor;
         this.tlsReloadExecutor = tlsReloadExecutor;
+        this.nodeAnchorExecutor = nodeAnchorExecutor;
+        this.nodeAnchor = nodeAnchor;
         this.httpApiServer = httpApiServer;
         this.tcpTransport = tcpTransport;
         this.aclPolicyLoader = aclPolicyLoader;
@@ -481,6 +492,13 @@ public final class ConfigdServer {
             t.setDaemon(true);
             return t;
         });
+        // Off-ack-path node-anchor refresh (audit head + shard-liveness digest, §2.5 / A1.6). Its own
+        // single thread so a slow/failed refresh never delays an owner tick or a read.
+        ScheduledExecutorService nodeAnchorExecutor = Executors.newSingleThreadScheduledExecutor(r -> {
+            Thread t = new Thread(r, "configd-node-anchor");
+            t.setDaemon(true);
+            return t;
+        });
 
         // ---------------------------------------------------------------
         // Group commit (per group). Each group's coalescing durability flush dispatches onto THAT group's
@@ -525,6 +543,13 @@ public final class ConfigdServer {
             System.err.println("WARNING: ************************************************************");
         }
         List<RaftGroupRuntime> runtimes = new ArrayList<>(gids.length);
+        // Node-anchor inputs, captured on THIS (boot) thread as each group is built - after the RaftLog's
+        // per-shard anchor recovery, before the owner thread is bound. Reading lastDurableIndex here is
+        // race-free (single-threaded, pre-bind); doing it later would race the owner. bootDurableIndex is
+        // the shard-liveness digest input; freshShards are the gids whose raft-anchor was ABSENT (booted
+        // FRESH) - the R-f wipe signature the node-anchor cross-check keys on (§2.5 / A1.6).
+        Map<Integer, Long> bootDurableIndex = new java.util.HashMap<>(gids.length * 2);
+        Set<Integer> freshShards = new java.util.HashSet<>();
         // Partial-bring-up cleanup: if a group's bring-up throws for gid=k>0, groups 0..k-1 are already
         // registered + owner-bound. Release them on failure (remove from the driver + shut the owner
         // pool) so a failed boot does not leak driver registrations / owner-bound nodes, then rethrow
@@ -541,6 +566,12 @@ public final class ConfigdServer {
                 // Track the runtime the instant it is registered on the driver - BEFORE the binds below - so
                 // a throw from bindCoalescer/execute (register-but-fail-to-bind) is still cleaned up.
                 runtimes.add(rt);
+                // Capture the node-anchor inputs now (pre-bind, race-free): this shard's recovered durable
+                // head and whether its raft-anchor was absent (FRESH). Used by enforceNodeAnchor below.
+                bootDurableIndex.put(gid, rt.raftLog().lastDurableIndex());
+                if (!rt.raftLog().anchorExistedAtOpen()) {
+                    freshShards.add(gid);
+                }
                 // Bind this group's CoalescingRaftTransport to its CURRENT owner's coalescer
                 // (rehoming-aware; resolved per record). DORMANT for outbound at N=1 (owner 0). Only when
                 // a real TCP transport exists (peer mode) does the group carry a coalescing decorator.
@@ -922,6 +953,17 @@ public final class ConfigdServer {
             System.out.println("  Audit log    : security-audit (KEYED HMAC-SHA256 chain, append-only, cap "
                     + AuditLog.DEFAULT_MAX_RECORDS + ")");
         }
+
+        // ---------------------------------------------------------------
+        // Node anchor (Gate 3b): open (first boot mints, later boots cross-check) the node-level
+        // node-anchor that binds the topology (epoch/N), the security-audit chain head, and the
+        // per-shard shard-liveness digest. A topology rollback, an audit chain truncated below the
+        // anchored head, or a wiped shard reset to index 0 (R-f) each REFUSES to start, fail-closed.
+        // Off the ack path; cross-check runs before serving traffic (below). All per-shard durable
+        // heads + FRESH signals were captured pre-bind in the bring-up loop.
+        // ---------------------------------------------------------------
+        NodeAnchorFile nodeAnchor = NodeAnchorService.enforceNodeAnchor(
+                dataDir, raftIntegrity, topologyEpoch, shardCount, bootDurableIndex, freshShards, auditLog);
         // Replay protection. OPT-IN (default OFF for back-compat); enabled via
         // -Dconfigd.replay.enabled=true so no new CLI/ServerConfig surface is added. Defends only
         // against PASSIVE capture-and-replay; a token holder can still mint fresh requests.
@@ -1063,10 +1105,29 @@ public final class ConfigdServer {
         // ---------------------------------------------------------------
         ConfigdServer server = new ConfigdServer(
                 config, driver, stateMachine,
-                ownerPool, readDispatchExecutor, tlsReloadExecutor,
+                ownerPool, readDispatchExecutor, tlsReloadExecutor, nodeAnchorExecutor, nodeAnchor,
                 httpApiServer, tcpTransport, fanOutServer, aclPolicyLoader,
                 watchService, fanOutBuffer, compactor, plumtreeNode, hyParViewOverlay,
                 subscriptionManager, rolloutController, prometheusExporter);
+
+        // ---------------------------------------------------------------
+        // Schedule the off-ack-path node-anchor refresh (audit head + shard-liveness digest). The write
+        // decision is the K-records-or-T-ms cadence (both -D tunable); the digest is captured on those
+        // writes by dispatching each shard's lastDurableIndex read onto its owner thread. Polled at a
+        // sub-T period so the K bound can fire before T. A refresh failure is logged and retried - it is
+        // OFF the ack path, not the fail-closed halt the per-shard anchor fsync is.
+        // ---------------------------------------------------------------
+        long nodeAnchorIntervalMs = Long.getLong("configd.nodeAnchor.intervalMs", 1000L);
+        int nodeAnchorKRecords = Integer.getInteger("configd.nodeAnchor.auditRecords", 64);
+        long nodeAnchorPollMs = Math.max(50L, Math.min(nodeAnchorIntervalMs, 250L));
+        Runnable nodeAnchorRefresh = NodeAnchorService.newRefresher(
+                nodeAnchor, auditLog,
+                () -> NodeAnchorService.readDurableIndexOnOwners(driver, gids),
+                nodeAnchorIntervalMs, nodeAnchorKRecords);
+        nodeAnchorExecutor.scheduleAtFixedRate(
+                nodeAnchorRefresh, nodeAnchorPollMs, nodeAnchorPollMs, TimeUnit.MILLISECONDS);
+        System.out.println("  Node anchor  : periodic refresh every " + nodeAnchorIntervalMs + "ms or "
+                + nodeAnchorKRecords + " audit records (off the ack path) [frozen-format §A1.6; R-e window]");
 
         final int[] tickCount = {0};
         // Tracks the highest term observed locally so the elections counter advances by the positive
@@ -1206,6 +1267,11 @@ public final class ConfigdServer {
         }
         // Slow I/O executor can be shut down last - it is independent.
         shutdownExecutor(tlsReloadExecutor, "tls-reload", 2);
+        // Node-anchor refresh: stop the periodic writer, then release the file handle. Skipping a final
+        // refresh is safe - a graceful shutdown's un-refreshed tail is handled by the next boot's
+        // accept-forward re-anchor (a forward digest advance, never a REFUSE). Off the ack path.
+        shutdownExecutor(nodeAnchorExecutor, "node-anchor", 2);
+        nodeAnchor.close();
         if (tcpTransport != null) {
             try {
                 tcpTransport.close();

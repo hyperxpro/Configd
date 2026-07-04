@@ -292,6 +292,27 @@ public final class AuditLog {
         return verifyRecords(persisted, verifyKey);
     }
 
+    /**
+     * Re-reads and decodes the persisted audit records (in append order), independent of this
+     * instance's in-memory chain. Used by the node-anchor boot cross-check (§A1.6) to confirm the
+     * replayed chain still reaches the anchored head {@code (auditRecordCount, auditHeadHash)}: if the
+     * anchored head's {@code recordHash} is absent from the persisted records, the on-disk log was
+     * truncated below the last anchored head - a detected tamper the caller REFUSEs.
+     *
+     * <p>Decode-only (structural); {@link #verifyPersisted()} is the separate chain-linkage check. A
+     * frame whose CRC was broken surfaces as a {@link Storage} read failure before this runs.
+     *
+     * @return the decoded persisted records in append order (empty if the log is empty)
+     */
+    public synchronized List<Record> persistedRecords() {
+        List<byte[]> frames = storage.readLog(LOG_NAME);
+        List<Record> persisted = new ArrayList<>(frames.size());
+        for (byte[] frame : frames) {
+            persisted.add(decode(frame));
+        }
+        return persisted;
+    }
+
     private static VerifyResult verifyRecords(List<Record> records, SecretKey verifyKey) {
         // An empty chain verifies vacuously true.
         byte[] expectedPrev = null;

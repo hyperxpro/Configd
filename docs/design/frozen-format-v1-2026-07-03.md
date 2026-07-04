@@ -128,6 +128,9 @@ in-place fdatasync of a preallocated slot, amortized per batch); term/vote write
   binds shard *count* but not per-shard liveness, so it cannot detect it — and its 60-byte payload
   freezes forever. **This is a ratification decision (§10.2 item 12): add a per-shard liveness
   binding to the node-anchor NOW (the only freeze window) or accept R-f documented.**
+  **CLOSED (AS-BUILT Gate 3b):** item 12 was ratified ADD — the 92-byte node-anchor now binds a
+  `shardAnchorDigest` over per-shard `(gid, lastDurableIndex)`; a wiped shard boots FRESH and the boot
+  cross-check REFUSEs. R-f is now DETECTED (matrix 15b), reduced to R-a (node-anchor rollback → `X`).
 
 ---
 
@@ -289,17 +292,56 @@ slots (envelope verify + `scopeId==gid`); take highest valid `anchorSeq`. Presen
 Same container-header + slot mechanics (NODE_ANCHOR_MAGIC, `scopeId=NODE_SCOPE`), file size 1032 B.
 
 ```
-NODE_ANCHOR_PAYLOAD (60 B):
+NODE_ANCHOR_PAYLOAD (92 B):   # AS-BUILT Gate 3b (was 60 B; +shardAnchorDigest per ratification item 12)
     [nodeAnchorSeq:8]      monotonic
     [topologyEpoch:8]      bound copy of the TopologyDescriptor epoch (rollback guard)
     [shardCount:4]         bound copy of N (deploy-guard tamper/rollback)
     [auditRecordCount:8]   audit-log high-water (periodic cadence, §6 §1)
     [auditHeadHash:32]     last anchored audit record's recordHash (chain head)
+    [shardAnchorDigest:32] SHA-256 over the sorted (gid, lastDurableIndex) pairs (R-f closer)
 ```
 
 Recovery cross-checks `TopologyDescriptor.{epoch,N} == nodeAnchor.{topologyEpoch,shardCount}` ⇒
 mismatch REFUSE; audit replay must reach `{auditRecordCount, auditHeadHash}` ⇒ a shorter chain
-REFUSEs (truncation confined to the un-anchored tail ≤64 records/≤1 s is residual R-e).
+REFUSEs (truncation confined to the un-anchored tail ≤K records/≤T is residual R-e; K/T are
+`-Dconfigd.nodeAnchor.auditRecords`/`.intervalMs`, default 64 / 1000 ms).
+
+**shardAnchorDigest boot semantics (AS-BUILT, the sound reading of ratification item 12).** Recovery
+recomputes the digest over the recovered per-shard `raft-anchor.lastDurableIndex` values and compares
+to the anchored digest. A strict "any change ⇒ REFUSE" is unsound: `lastDurableIndex` advances
+legitimately between the periodic ticks, so a normal crash restart differs (a FORWARD move) — and §1
+forbids bricking on a legal crash. The ratified trigger is narrower ("a shard **reset to index 0** ⇒
+REFUSE"), so the check mirrors the per-shard `W<A`/`W>A` asymmetry at the node level:
+- digest matches ⇒ PROCEED;
+- digest differs AND a shard booted **FRESH** (its `raft-anchor` was ABSENT — the R-f wipe signature; a
+  legal node never deletes a per-shard anchor) ⇒ **REFUSE**;
+- digest differs AND no shard is FRESH (per-shard recovery already refused any `W<A` on a present
+  anchor) ⇒ a legitimate forward advance ⇒ **accept-forward: re-anchor + PROCEED**.
+
+This closes R-f (the delete→FRESH variant, matrix 15b); the anchor-rolled-to-an-older-valid-slot
+variant stays matrix-14 residual-(a) → the external `AnchorWitness`. The digest is the frozen,
+MAC-authenticated binding that makes "R-f = R-a": to hide a wipe an attacker must roll the node-anchor
+back to a matching-digest version that never existed, i.e. forge/roll it (needs the key or the witness).
+The refresh (audit head + digest) runs on the K/T cadence off the ack path (each shard's
+`lastDurableIndex` read on its owner thread); a failed refresh is logged + retried, NOT the fail-closed
+halt the per-shard anchor fsync is.
+
+**Freshness bound (symmetry with R-e).** The digest detects a wipe *relative to the last-refreshed
+value*, so there is a bounded freshness window — mint→first tick, and between ticks — in which a wipe
+to a value the anchor already binds is invisible (this is the same R-a freshness residual as the
+audit-tail R-e, on the shard-liveness field). At the mint over all-zero heads a single-shard wipe of a
+*multi-shard* node is still caught (the surviving shards' non-zero heads keep the recomputed digest
+different from the all-zero bind); the digest-matches-a-prior-bind case is the full-node wipe →
+rollback-to-first-mint variant, which is R-a (external `AnchorWitness`), not an R-f hole. Steady state
+(refreshed to non-zero heads) reliably detects a single-shard wipe→0.
+
+**Auth-off accept-forward preserves the audit head (as-built).** On the accept-forward branch when
+auth is OFF (`auditLog == null`), the re-anchor writes the node-anchor's *existing* `auditRecordCount`
+/ `auditHeadHash` verbatim rather than the genesis value the un-observable auth-off boot would compute.
+Regressing the head to genesis would let a later auth-ON boot skip the audit-truncation cross-check for
+a truncation that predated the auth-off boot; preserving it keeps that guard live. Auth ON advances the
+head normally. This is a strict tightening within the documented auth-off residual (§1: auth-off carries
+no adversarial guarantees), surfaced by the Gate-3b red-team.
 
 ### 2.6 Keyring `raft-keyring` (dual-slot, node-level; the A2 + A5 format)
 
@@ -876,12 +918,13 @@ mechanics as §A1.3 (8-byte `[NODE_ANCHOR_MAGIC:4][fileVersion:u8=1][flags:u8=0]
 header, then two 512-byte slots):
 
 ```
-NODE_ANCHOR_PAYLOAD (60 B):
+NODE_ANCHOR_PAYLOAD (92 B):   # AS-BUILT Gate 3b (+shardAnchorDigest per ratification item 12)
     [nodeAnchorSeq:8]      # monotonic
     [topologyEpoch:8]      # A4 epoch — binds the §SEC-2 standalone TopologyDescriptor (rollback guard)
     [shardCount:4]         # binds N (deploy-guard tamper/rollback)
     [auditRecordCount:8]   # audit-log high-water
     [auditHeadHash:32]     # the last audit record's recordHash — binds the chain head
+    [shardAnchorDigest:32] # SHA-256 over the sorted (gid, lastDurableIndex) pairs — the R-f closer
 ```
 
 - Topology (SEC-2): the standalone versioned `TopologyDescriptor` `{formatVersion, N,
@@ -903,6 +946,18 @@ NODE_ANCHOR_PAYLOAD (60 B):
   strict improvement over today's fully-undetected chain, honestly bounded rather than claimed
   closed. `VerifyKeyExporter` output stays an export (not server state), unanchored — documented
   residual.
+- **Shard liveness (R-f closer — AS-BUILT Gate 3b, ratification item 12):** the node-anchor binds a
+  `shardAnchorDigest` = SHA-256 over the sorted `(gid, lastDurableIndex)` pairs of every per-shard
+  `raft-anchor`, refreshed on the SAME K/T cadence (off the ack path; each shard's `lastDurableIndex`
+  is read on its owner thread). On recovery the digest is recomputed over the recovered per-shard
+  heads. **Boot semantics (sound reading of item 12, mirroring the per-shard `W<A`/`W>A` asymmetry so a
+  legal crash never bricks — §1):** digest matches ⇒ PROCEED; digest differs AND a shard booted FRESH
+  (its `raft-anchor` was ABSENT — the R-f wipe signature) ⇒ **REFUSE**; digest differs AND no shard is
+  FRESH (per-shard recovery already refused any `W<A`) ⇒ a legitimate forward advance ⇒ accept-forward
+  (re-anchor + PROCEED). A strict "any change ⇒ REFUSE" was rejected: `lastDurableIndex` advances
+  between ticks, so it would refuse every crash restart under load (esp. N=1). This raises R-f from
+  silent-loss to a detected node-anchor rollback (= R-a): to hide a wipe an attacker must roll/forge the
+  node-anchor to a matching-digest version that never existed.
 
 ### A1.7 External-witness hook (residual (a) mitigation) — interface only
 
@@ -1088,7 +1143,7 @@ Step 3); `S`=monotonic `anchorSeq`/`keyringSeq` dual-slot; `X`=external witness 
 | 13 | anchor-file-only tamper (forge a slot) | **DETECTED** — slot MAC/tag fails ⇒ other slot / REFUSE | E + S |
 | 14 | **anchor rollback to a prior valid slot pair** | **PARTIAL** — DETECTED if it lowers a WAL-witnessed term (`lastWALTerm > anchor.currentTerm`, Step-2.5 gate); otherwise **RESIDUAL (a)** unless `X` | Step-2.5 gate / X |
 | 15 | whole-datadir clone rollback (WAL+anchor+state moved together to an older consistent point) | **RESIDUAL (a)** unless `X` — term & head stay mutually consistent so the gates don't fire | X only |
-| 15b | single-shard wipe→FRESH (delete anchor + truncate WAL to 0 + delete snapshot blob for one shard) | **RESIDUAL (R-f, NEW — red-team §11)** — laundered into "absent+empty ⇒ FRESH"; node-anchor binds shard count, not per-shard liveness. Multi-replica re-syncs; N=1/degraded = silent loss. Closer = the §10.2-item-12 per-shard-liveness binding (freeze-window-only) | per-shard digest / X |
+| 15b | single-shard wipe→FRESH (delete anchor + truncate WAL to 0 + delete snapshot blob for one shard) | **DETECTED (AS-BUILT Gate 3b)** — the node-anchor's `shardAnchorDigest` binds per-shard `lastDurableIndex`; a wiped shard boots FRESH (its `raft-anchor` absent) with head reset to 0 ⇒ digest differs AND a shard is FRESH ⇒ node-anchor cross-check REFUSE. Raised from silent-loss to a detected node-anchor rollback (= R-a). The anchor-rolled-to-an-older-valid-slot variant (file NOT deleted) stays matrix-14 residual-(a) → `X` | node-anchor `shardAnchorDigest` (§2.5) / X |
 | 16 | keyring entry strip/swap/add/truncate | **DETECTED** — outer keyring MAC over the whole body | E (§A2.2) |
 | 17 | keyring rollback to a prior valid slot | **RESIDUAL (a)** unless `X`; but `activeTerm` can only be *dropped*, and old-term data still reads (no data loss, only a stale active term for new writes) | S + X |
 | 17b | topology-descriptor tamper (edit N or epoch) | **DETECTED** — the standalone descriptor is envelope-MAC'd (protocol §2.7) | E |
