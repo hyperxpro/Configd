@@ -98,4 +98,52 @@ final class RaftTransportAdapterLoopbackTest {
         assertEquals(sent.lastLogTerm(), decoded.lastLogTerm(), "lastLogTerm must survive the round-trip");
         assertEquals(sent.preVote(), decoded.preVote(), "preVote flag must survive the round-trip");
     }
+
+    /**
+     * A Gate-3c witness frame traverses the SAME encode -&gt; TCP -&gt; decode -&gt; handler path, and the
+     * decoded {@code sender} is the transport-authenticated {@code from} (node A), NOT the id the sender
+     * put in the record (here a forged 999). This is the on-wire proof of the W5 spoof-resistance the
+     * codec test asserts in isolation: witness identity comes from the authenticated 4-byte prefix.
+     */
+    @Test
+    void witnessFrameInjectsAuthenticatedFromOverTheWire() throws Exception {
+        final int GROUP = 3;
+        NodeId nodeA = NodeId.of(11);
+        NodeId nodeB = NodeId.of(22);
+
+        CountDownLatch received = new CountDownLatch(1);
+        AtomicReference<NodeId> fromRef = new AtomicReference<>();
+        AtomicReference<RaftMessage> msgRef = new AtomicReference<>();
+
+        transportB = new TcpRaftTransport(nodeB, new InetSocketAddress("127.0.0.1", 0),
+                Map.of(), null, m -> {});
+        RaftTransportAdapter adapterB = new RaftTransportAdapter(transportB, GROUP);
+        adapterB.registerInboundHandler((from, groupId, message) -> {
+            fromRef.set(from);
+            msgRef.set(message);
+            received.countDown();
+        });
+        transportB.start();
+        int portB = transportB.localPort();
+
+        transportA = new TcpRaftTransport(nodeA, new InetSocketAddress("127.0.0.1", 0),
+                Map.of(nodeB, new InetSocketAddress("127.0.0.1", portB)), null, m -> {});
+        RaftTransportAdapter adapterA = new RaftTransportAdapter(transportA, GROUP);
+        transportA.start();
+
+        // The record claims sender=999 (a spoof); the wire body carries no sender, so B must attribute it
+        // to the authenticated origin nodeA.
+        adapterA.send(nodeB, new io.configd.raft.WitnessMessage(
+                NodeId.of(999), /* selfAnchorSeq */ 77L, /* selfTerm */ 4L,
+                /* selfVotedFor */ 11, /* seenOfYouSeq */ 12L, /* query */ true));
+
+        assertTrue(received.await(10, TimeUnit.SECONDS), "witness frame must traverse the adapter path");
+        assertEquals(nodeA, fromRef.get(), "sender is the transport-authenticated `from`, never the body 999");
+        io.configd.raft.WitnessMessage decoded = assertInstanceOf(io.configd.raft.WitnessMessage.class,
+                msgRef.get());
+        assertEquals(nodeA, decoded.sender());
+        assertEquals(77L, decoded.selfAnchorSeq());
+        assertEquals(12L, decoded.seenOfYouSeq());
+        assertTrue(decoded.query());
+    }
 }

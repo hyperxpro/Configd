@@ -27,7 +27,24 @@ public enum MessageType {
      * (a single-group drain sends a plain {@link #APPEND_ENTRIES}); emitted at N&gt;1.
      * Payload codec and demux: {@code RaftMessageCodec.{encode,decode}CoalescedHeartbeat}.
      */
-    RAFT_COALESCED_HEARTBEAT(0x11);
+    RAFT_COALESCED_HEARTBEAT(0x11),
+    /**
+     * Peer-quorum anchor-witness gossip (Gate 3c, R-a&#39; closer): a node announces its per-group
+     * anchorSeq to its peers so a within-term vote rollback (which lowers anchorSeq) is witnessed
+     * across the cluster. Symmetric; per group ({@code frame.groupId() = gid}). A {@code RAFT_WITNESS}
+     * with the QUERY flag set (the boot path) is answered by a {@link #RAFT_WITNESS_REPLY}. The
+     * sender is the authenticated transport prefix, not a payload field. Additive: it does not touch
+     * any existing frame/payload layout or the dormant {@code epoch} field. Payload codec:
+     * {@code RaftMessageCodec.{encodeWitness,decodeWitness}}. Emitted only when the witness is armed
+     * (peer mode); dormant at N=1 and in un-armed tests.
+     */
+    RAFT_WITNESS(0x12),
+    /**
+     * Reply to a {@link #RAFT_WITNESS} carrying the QUERY flag: identical body, carrying the replier&#39;s
+     * {@code witnessOfPeer[querier]} in {@code seenOfYouSeq} so the querier learns the highest anchorSeq
+     * a peer has witnessed of it. See {@link #RAFT_WITNESS}.
+     */
+    RAFT_WITNESS_REPLY(0x13);
 
     private final int code;
 
@@ -39,7 +56,7 @@ public enum MessageType {
         return code;
     }
 
-    private static final MessageType[] BY_CODE = new MessageType[0x12];
+    private static final MessageType[] BY_CODE = new MessageType[0x14];
     static {
         for (MessageType type : values()) {
             BY_CODE[type.code] = type;

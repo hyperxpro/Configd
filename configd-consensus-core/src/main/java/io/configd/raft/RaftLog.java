@@ -484,6 +484,20 @@ public final class RaftLog {
     }
 
     /**
+     * The strictly-monotone anti-rollback index this shard's {@code raft-anchor} currently records
+     * ({@code 0} for the in-memory mode, which has no durable anchor). Every anchor write - term/vote,
+     * durable-head advance, snapshot - bumps it (see {@link AnchorFile}), so a within-term
+     * {@code votedFor} rollback lowers it. This is the quantity the peer-quorum {@link AnchorWitness}
+     * gossips and the value {@code RaftNode} snapshots at boot as {@code bootAnchorSeq}.
+     *
+     * <p>Read at boot (single-threaded, after recovery, before the owner thread is bound) or on this
+     * group's owner thread. A plain read of the owner-thread-confined anchor's in-memory record.
+     */
+    public long anchorSeq() {
+        return anchor == null ? 0L : anchor.current().anchorSeq();
+    }
+
+    /**
      * Whether this shard's {@code raft-anchor} file existed at open (false ⇒ the shard booted FRESH -
      * no anchor file - which, once the node-anchor proves the node was already initialized, is the R-f
      * wipe signature the node-anchor cross-check REFUSEs). {@code false} in the in-memory mode.

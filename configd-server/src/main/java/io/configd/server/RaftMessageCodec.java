@@ -10,10 +10,13 @@ import io.configd.raft.RaftMessage;
 import io.configd.raft.RequestVoteRequest;
 import io.configd.raft.RequestVoteResponse;
 import io.configd.raft.TimeoutNowRequest;
+import io.configd.raft.WitnessMessage;
+import io.configd.raft.WitnessReply;
 import io.configd.transport.FrameCodec;
 import io.configd.transport.MessageType;
 
 import java.nio.ByteBuffer;
+import java.util.Objects;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -103,6 +106,18 @@ public final class RaftMessageCodec {
     private static final int INSTALL_SNAPSHOT_FIXED_HEADER =
             4 + 8 + 8 + 4 + 1 + 4 + 4; // leaderId+lastIdx+lastTerm+offset+done+dataLen+configLen
 
+    /**
+     * Fixed anchor-witness body (bytes): {@code selfAnchorSeq(8) + selfTerm(8) + selfVotedFor(4)
+     * + seenOfYouSeq(8) + flags(1)} = 29. The sender id is NOT in the body - it is the transport's
+     * authenticated 4-byte prefix, injected from {@code InboundMessage.from} at decode (see
+     * {@link #decodeWitness}). Shared by {@link MessageType#RAFT_WITNESS} and
+     * {@link MessageType#RAFT_WITNESS_REPLY}.
+     */
+    private static final int WITNESS_BODY_LEN = 8 + 8 + 4 + 8 + 1;
+
+    /** {@code flags} bit0: this witness carries the boot QUERY (recipient should reply). */
+    private static final int WITNESS_FLAG_QUERY = 0x01;
+
     private RaftMessageCodec() {}
 
     private static void checkRemaining(ByteBuffer buf, int needed, String field) {
@@ -182,6 +197,8 @@ public final class RaftMessageCodec {
             case InstallSnapshotRequest req -> encodeInstallSnapshot(req, groupId);
             case InstallSnapshotResponse resp -> encodeInstallSnapshotResponse(resp, groupId);
             case TimeoutNowRequest req -> encodeTimeoutNow(req, groupId);
+            case WitnessMessage m -> encodeWitness(m, groupId);
+            case WitnessReply m -> encodeWitnessReply(m, groupId);
         };
     }
 
@@ -208,6 +225,11 @@ public final class RaftMessageCodec {
             // error rather than the generic default so a misroute is loud, not silent.
             case RAFT_COALESCED_HEARTBEAT -> throw new IllegalArgumentException(
                     "CoalescedHeartbeat must be decoded via decodeCoalescedHeartbeat(), not decode()");
+            // A witness frame's sender is the transport prefix ({@code InboundMessage.from}), which
+            // decode(frame) does not carry - it must be decoded via decodeWitness(frame, from). Surface a
+            // directional error rather than the generic default so a misroute is loud, not silent.
+            case RAFT_WITNESS, RAFT_WITNESS_REPLY -> throw new IllegalArgumentException(
+                    "Witness frames must be decoded via decodeWitness(frame, from), not decode()");
             default -> throw new IllegalArgumentException(
                     "Not a Raft message type: " + frame.messageType());
         };
@@ -565,5 +587,64 @@ public final class RaftMessageCodec {
         checkRemaining(buf, 4, "TimeoutNow payload");
         NodeId leaderId = NodeId.of(buf.getInt());
         return new TimeoutNowRequest(frame.term(), leaderId);
+    }
+
+    // ---- Witness (Gate 3c) ----
+
+    private static FrameCodec.Frame encodeWitness(WitnessMessage m, int groupId) {
+        return witnessFrame(MessageType.RAFT_WITNESS, groupId,
+                m.selfAnchorSeq(), m.selfTerm(), m.selfVotedFor(), m.seenOfYouSeq(), m.query());
+    }
+
+    private static FrameCodec.Frame encodeWitnessReply(WitnessReply m, int groupId) {
+        // A reply never carries the QUERY flag (it IS the answer to one).
+        return witnessFrame(MessageType.RAFT_WITNESS_REPLY, groupId,
+                m.selfAnchorSeq(), m.selfTerm(), m.selfVotedFor(), m.seenOfYouSeq(), false);
+    }
+
+    private static FrameCodec.Frame witnessFrame(MessageType type, int groupId,
+            long selfAnchorSeq, long selfTerm, int selfVotedFor, long seenOfYouSeq, boolean query) {
+        ByteBuffer buf = ByteBuffer.allocate(WITNESS_BODY_LEN);
+        buf.putLong(selfAnchorSeq);
+        buf.putLong(selfTerm);
+        buf.putInt(selfVotedFor);
+        buf.putLong(seenOfYouSeq);
+        buf.put((byte) (query ? WITNESS_FLAG_QUERY : 0));
+        // The frame-header term mirrors the sender's currentTerm, as every other raft frame does; the
+        // body ALSO carries selfTerm (the authoritative field the decoder reads) per the frozen 29-byte
+        // body. The sender id is NOT written - the transport prefix carries it.
+        return new FrameCodec.Frame(type, groupId, selfTerm, buf.array());
+    }
+
+    /**
+     * Decodes a {@link MessageType#RAFT_WITNESS} / {@link MessageType#RAFT_WITNESS_REPLY} frame,
+     * injecting the transport-authenticated {@code from} as the message {@code sender} (the body does
+     * not carry it - the receiver keys its witness tables on the authenticated origin, not a spoofable
+     * body field). Fail-closed: rejects a wrong type or a truncated body.
+     *
+     * @param frame a witness frame (its {@code messageType()} must be one of the two witness types)
+     * @param from  the transport-authenticated sender ({@code InboundMessage.from})
+     * @return the decoded {@link WitnessMessage} or {@link WitnessReply}
+     * @throws IllegalArgumentException on a wrong type or a malformed/truncated body
+     */
+    public static RaftMessage decodeWitness(FrameCodec.Frame frame, NodeId from) {
+        MessageType type = frame.messageType();
+        if (type != MessageType.RAFT_WITNESS && type != MessageType.RAFT_WITNESS_REPLY) {
+            throw new IllegalArgumentException(
+                    "decodeWitness called on a " + type + " frame; expected a RAFT_WITNESS[_REPLY]");
+        }
+        Objects.requireNonNull(from, "from (authenticated witness sender) must not be null");
+        ByteBuffer buf = ByteBuffer.wrap(frame.payload());
+        checkRemaining(buf, WITNESS_BODY_LEN, "Witness payload");
+        long selfAnchorSeq = buf.getLong();
+        long selfTerm = buf.getLong();
+        int selfVotedFor = buf.getInt();
+        long seenOfYouSeq = buf.getLong();
+        int flags = buf.get() & 0xFF;
+        boolean query = (flags & WITNESS_FLAG_QUERY) != 0;
+        if (type == MessageType.RAFT_WITNESS) {
+            return new WitnessMessage(from, selfAnchorSeq, selfTerm, selfVotedFor, seenOfYouSeq, query);
+        }
+        return new WitnessReply(from, selfAnchorSeq, selfTerm, selfVotedFor, seenOfYouSeq);
     }
 }
