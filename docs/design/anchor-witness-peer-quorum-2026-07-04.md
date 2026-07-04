@@ -23,16 +23,21 @@ layout**: the witnessed quantity is the anchor's already-frozen strictly-monoton
 the existing raft channel, and the boot/vote gates are logic in `RaftNode`. The frozen §A1.7 SPI
 signature is realized **unmodified** (see §5 for why the vote dimension needs no new SPI field).
 
-**One honest boundary the operator must see (not an escalation, a mode choice).** An *absolute*
-worst-case close of the narrow "grant → witnessed" race requires witnessing each vote at a
-**majority of peers** before the vote is usable, which reduces election fault-tolerance below Raft's
-(§3, strict mode). The recommended **default mode** preserves Raft's fault-tolerance and closes R-a′
-*with respect to the adversary*; its only residual is a **non-adversarial** coincidence (every peer
-that witnessed the vote independently crash-forgets during the victim's reboot window) — the same
-non-adversarial-fault class the frozen threat model already carves out for crash-consistency
-(`frozen-format-v1-2026-07-03.md:139-142`). This is strictly better than today (R-a′ wholly
-un-witnessed) and closes the adversary's path to split-brain. The trade is surfaced, not buried; the
-operator may opt into strict mode per deployment.
+**One honest boundary the operator must see (the strict dimension is SPLIT: boot vs vote).** The witness
+has two strict dimensions, decoupled by operator ruling (2026-07-04) after a single "full strict" default
+broke leader failover (the CI smoke test caught a 3-node cluster failing to re-elect after the leader was
+killed). **(1) The strict BOOT gate is the default and always on:** the boot gate requires a
+**peer-majority** of QUERY replies, so a witnessing peer is always in the boot-reply set and the R-a′
+boot-reply race is REFUSED out of the box at N=3
+(`AnchorWitnessRedteamTest.defaultBoot_singleNonWitnessReplyRace_refusedByPeerMajorityBootGate`). Its only
+cost is a node **rebooting into a partition** (it stays latched until it can reach a peer-majority —
+correct), never a running survivor, so single-fault failover is preserved. The old self-counting boot
+quorum (self + one peer) — which had the packet-loss-reachable false-pass an earlier draft wrongly called
+"non-adversarial / vanishing" — is **removed**. **(2) Strict VOTE (deferring `voteGranted` until a
+peer-majority acks) is an explicit opt-in** (`-Dconfigd.raft.witnessStrict=true`): it is the N≥5 absolute
+close of the *grant → witnessed* window, but it DEFERS votes, which breaks single-fault failover — so the
+default is **fast vote** (grant immediately; failover preserved). This is strictly better than today
+(R-a′ wholly un-witnessed) and closes R-a′ at N=3 by default.
 
 I did **not** find a frozen-format change to be required. No operator escalation on freeze grounds.
 
@@ -274,19 +279,51 @@ frozen false-positive discipline (rows 18–22, `frozen-format-v1-2026-07-03.md:
 | W7 | **Legit conflict truncation / compaction** | **PASS** — these lower `lastDurableIndex`/advance `snapshotIndex` but only ever *raise* `anchorSeq` (every anchor write bumps it) | `anchorSeq` is monotone across all writes (`frozen-format-v1-2026-07-03.md:274-275`); witnessing is on `anchorSeq`, never on the index/term fields, so a legal Raft rewrite never trips the witness. Independent of frozen rows 19–20. |
 | W8 | **Slow first election after boot** | Election delayed until `votingCleared` (one boot QUERY round-trip) | Bounded extra latency on the first post-boot election only; steady state unaffected. Acceptable — elections are rare. |
 
-### 3.1 Mode trade (the operator's one decision)
+### 3.1 Mode trade (the operator's one decision — SPLIT into boot vs vote)
 
-- **Default mode (recommended).** Announce-before-grant fired (no wait) + heartbeat-cadence
-  re-announce + boot gate consults a **cluster quorum**. **Preserves Raft's fault-tolerance
-  exactly.** Closes R-a′ against the adversary (§2.3). Residual = coincidental crash-forget of the
-  whole witnessing set during the victim's reboot window (non-adversarial, vanishing).
-- **Strict mode (opt-in, safety-maximal).** `voteGranted` is deferred until a **majority of peers**
-  ack the announce (`peerAckOfSelf` reaches a peer-majority), and the boot gate requires a
-  **peer-majority** of replies. Then `Wit` is always a peer-quorum, so §2.3's intersection is
-  absolute — no coincidental-crash residual. **Cost:** casting a usable vote needs a majority of
-  *peers* reachable, which reduces election fault-tolerance by ~one unit (N=5 tolerates 1 election
-  failure instead of 2; N=3 needs both peers up to elect). Enable where split-brain outweighs one unit
-  of election availability.
+**Operator ruling (2026-07-04).** The witness has two strict dimensions, and they are decoupled because a
+single "full strict" default broke leader failover (the CI smoke test caught a 3-node cluster failing to
+re-elect after the leader was killed: in full strict a survivor cannot grant a usable vote until a
+peer-majority acks its announce, and the dead node can never ack). The ruling: **the strict BOOT gate is
+the default; strict VOTE (deferral) is an explicit opt-in.**
+
+- **Strict BOOT gate — ALWAYS ON (the default, not a toggle).** The boot gate requires a **peer-majority**
+  of QUERY replies to clear. Two witness quorums then always intersect, so a witnessing peer is always in
+  the boot-reply set and a real rollback is always REFUSED — this is what closes the R-a′ boot-reply race
+  at N=3, out of the box, in **every** mode. **Cost:** only a node **rebooting into a partition** — it
+  cannot reach a peer-majority, so it stays latched (refuse-to-vote) until the cluster heals. This is
+  *correct*: a node that cannot reach a peer-majority should not vote yet. It does **not** cost a running
+  survivor (already cleared at a healthy boot), so single-fault leader failover is unaffected. The old
+  self-counting quorum (self + a single peer) is **removed** — it was the one with the boot-reply race
+  (`AnchorWitnessRedteamTest.defaultBoot_singleNonWitnessReplyRace_refusedByPeerMajorityBootGate`).
+- **Fast vote — the DEFAULT vote path.** `voteGranted` is sent immediately after the announce
+  (announce-before-grant preserved), so a running survivor grants a vote at once even with a peer down and
+  **single-fault leader failover is preserved**
+  (`AnchorWitnessPeerQuorumTest.defaultFastVote_survivorGrantsImmediatelyWithPeerDown_failoverWorks`).
+  At N=3 the strict boot gate already closes R-a′, so fast vote is the correct default.
+- **Strict vote — opt-in (`-Dconfigd.raft.witnessStrict=true`).** `voteGranted` is DEFERRED until a
+  **peer-majority** acks the announce. Then `Wit` is always a peer-quorum for the *grant → witnessed*
+  window too — the **N≥5 absolute close** of the residual below. **Cost:** deferral reduces election
+  availability (at N=3 a survivor cannot elect a new leader while one peer is down — the failover break),
+  which is exactly why it is opt-in, not the default. Enable only where N≥5 absolute closure outweighs
+  the failover cost (`…strictMode_singleNonWitnessReplyRace_closed`,
+  `…strictMode_voteDeferredUntilPeerMajorityAcks`).
+
+**N≥5 default residual (fast vote).** With fast vote, the *grant → witnessed* window is not force-closed:
+a granted vote is announced (not deferred), so if that single announce is lost to a peer-majority AND the
+voter is then rolled back before its re-announce cadence re-spreads `s1`, the boot gate could miss it.
+This needs **sustained multi-peer announce packet loss** (the heartbeat-cadence re-announce re-spreads
+`s1` every interval, so a single drop does not suffice) and is closed by strict vote. At N=3 it is moot:
+the strict boot gate alone closes R-a′ (a peer-majority is both peers, so a rollback is always witnessed).
+
+**Boot-window advertisement (no-false-refuse hardening).** While a node's boot gate is latched it
+advertises its **frozen `bootAnchorSeq`**, not its live one. Ordinary post-boot catch-up (a follower
+append or a term adoption before the gate clears — both ungated, both raising the live `anchorSeq`)
+would otherwise make peers witness the node *above* its booted-from seq and reflect it back as
+`W > bootAnchorSeq`, false-refusing a **healthy** node on a rolling restart (a peer commonly replicates
+to a rebooting node before its gate clears). The frozen value cannot weaken detection — it can only
+*raise* a peer's witness via `max`, never lower a genuinely rolled-back node's peers' (higher) pre-crash
+memory. Regression: `AnchorWitnessPeerQuorumTest.catchUpDuringBoot_healthyNode_notFalseRefused`.
 
 ### 3.2 N = 1 and N = 2
 

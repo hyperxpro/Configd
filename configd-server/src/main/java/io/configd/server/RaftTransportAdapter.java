@@ -87,7 +87,15 @@ public final class RaftTransportAdapter implements RaftTransport {
         transport.registerHandler((from, rawMessage) -> {
             if (rawMessage instanceof FrameCodec.Frame frame) {
                 try {
-                    if (frame.messageType() == MessageType.RAFT_COALESCED_HEARTBEAT) {
+                    if (frame.messageType() == MessageType.RAFT_WITNESS
+                            || frame.messageType() == MessageType.RAFT_WITNESS_REPLY) {
+                        // A witness frame's sender is NOT in its body - it is the transport's
+                        // authenticated 4-byte prefix (from). Inject it here (the coalesced-heartbeat
+                        // precedent), then route through the SAME per-group owner path as any RaftMessage
+                        // so it lands in handleMessage on the group's owner thread.
+                        RaftMessage witness = RaftMessageCodec.decodeWitness(frame, from);
+                        handler.accept(from, frame.groupId(), witness);
+                    } else if (frame.messageType() == MessageType.RAFT_COALESCED_HEARTBEAT) {
                         // A coalesced heartbeat bundles many groups' empty AppendEntries into one
                         // frame (dormant at N=1 - never sent there). DEMUX it and dispatch EACH
                         // group through the SAME per-group inbound path, so every group's

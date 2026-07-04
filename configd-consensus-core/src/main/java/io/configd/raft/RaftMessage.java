@@ -13,5 +13,6 @@ public sealed interface RaftMessage
         permits AppendEntriesRequest, AppendEntriesResponse,
                 RequestVoteRequest, RequestVoteResponse,
                 TimeoutNowRequest,
-                InstallSnapshotRequest, InstallSnapshotResponse {
+                InstallSnapshotRequest, InstallSnapshotResponse,
+                WitnessMessage, WitnessReply {
 }

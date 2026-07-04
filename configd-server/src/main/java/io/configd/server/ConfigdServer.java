@@ -36,8 +36,10 @@ import io.configd.observability.ProductionSloDefinitions;
 import io.configd.observability.PropagationLivenessMonitor;
 import io.configd.observability.SafeLog;
 import io.configd.observability.SloTracker;
+import io.configd.raft.AnchorWitness;
 import io.configd.raft.AppendEntriesRequest;
 import io.configd.raft.CoalescingRaftTransport;
+import io.configd.raft.PeerQuorumAnchorWitness;
 import io.configd.raft.RaftConfig;
 import io.configd.raft.RaftLog;
 import io.configd.raft.RaftMetrics;
@@ -175,6 +177,9 @@ public final class ConfigdServer {
     private final ScheduledExecutorService nodeAnchorExecutor;
     /** The node-level durability anchor (topology + audit head + shard-liveness digest); closed on shutdown. */
     private final NodeAnchorFile nodeAnchor;
+    /** Frozen AnchorWitness SPI realization (Gate 3c peer-quorum provider); the R-a' closure is driven
+     *  per-node, this is the SPI seam for the external-store composition (§5). */
+    private final AnchorWitness anchorWitness;
     private final MultiRaftDriver driver;
     private final ConfigStateMachine stateMachine;
     private final NettyHttpApiServer httpApiServer; // admin API on Netty
@@ -207,6 +212,7 @@ public final class ConfigdServer {
                           ScheduledExecutorService tlsReloadExecutor,
                           ScheduledExecutorService nodeAnchorExecutor,
                           NodeAnchorFile nodeAnchor,
+                          AnchorWitness anchorWitness,
                           NettyHttpApiServer httpApiServer,
                           RaftTransportEndpoint tcpTransport,
                           io.configd.server.fanout.FanOutEndpoint fanOutServer,
@@ -227,6 +233,7 @@ public final class ConfigdServer {
         this.tlsReloadExecutor = tlsReloadExecutor;
         this.nodeAnchorExecutor = nodeAnchorExecutor;
         this.nodeAnchor = nodeAnchor;
+        this.anchorWitness = anchorWitness;
         this.httpApiServer = httpApiServer;
         this.tcpTransport = tcpTransport;
         this.aclPolicyLoader = aclPolicyLoader;
@@ -954,6 +961,41 @@ public final class ConfigdServer {
                     + AuditLog.DEFAULT_MAX_RECORDS + ")");
         }
 
+        // Gate 3c: realize the frozen AnchorWitness SPI over the per-group RaftNodes (peer-quorum
+        // provider). Held for the frozen-SPI seam + future external-store composition (§5); the per-node
+        // tick/vote machinery drives the actual R-a' closure. Node scope has no vote (freshness-only).
+        AnchorWitness anchorWitness = new PeerQuorumAnchorWitness(driver::getGroup);
+        if (tcpTransport != null) {
+            System.out.println("  Anchor witness: peer-quorum armed (strict-boot + "
+                    + (witnessStrictEnabled() ? "strict-vote [-Dconfigd.raft.witnessStrict=true]" : "fast-vote [default]")
+                    + ") — Gate 3c R-a' closer");
+        }
+        // Upgrade each armed node's rollback handler to ALSO write an audit record before halting (the
+        // in-buildRaftGroup handler only logs + halts, since the audit log did not exist yet). Runs before
+        // the tick loop starts, so no gate can fire on the old handler. Only armed (peer-mode) nodes have a
+        // gate that can fire; when auth is off there is no audit log, so the log+halt handler stays.
+        if (tcpTransport != null && auditLog != null) {
+            AuditLog auditLogRef = auditLog;
+            for (RaftGroupRuntime rt : runtimes) {
+                rt.raftNode().setAnchorRollbackHandler((g, bootSeq, witnessedSeq, reportingPeer) -> {
+                    try {
+                        auditLogRef.record("-", "anchor.rollback.detected", "raft-group-" + g,
+                                "bootAnchorSeq=" + bootSeq + " witnessedSeq=" + witnessedSeq
+                                        + " reportingPeer=" + reportingPeer);
+                    } catch (Throwable auditFailed) {
+                        LOG.log(Level.SEVERE, "failed to write anchor.rollback.detected audit record for"
+                                + " raft group " + g + " (halting regardless)", auditFailed);
+                    }
+                    LOG.log(Level.SEVERE, "anchor rollback detected for raft group " + g
+                            + ": booted from anchorSeq=" + bootSeq + " but peer " + reportingPeer
+                            + " witnessed anchorSeq=" + witnessedSeq + " (> booted) - refusing to start this"
+                            + " shard (R-a' fail-closed: a within-term vote rollback could double-vote and"
+                            + " split-brain)");
+                    Runtime.getRuntime().halt(71);
+                });
+            }
+        }
+
         // ---------------------------------------------------------------
         // Node anchor (Gate 3b): open (first boot mints, later boots cross-check) the node-level
         // node-anchor that binds the topology (epoch/N), the security-audit chain head, and the
@@ -1106,6 +1148,7 @@ public final class ConfigdServer {
         ConfigdServer server = new ConfigdServer(
                 config, driver, stateMachine,
                 ownerPool, readDispatchExecutor, tlsReloadExecutor, nodeAnchorExecutor, nodeAnchor,
+                anchorWitness,
                 httpApiServer, tcpTransport, fanOutServer, aclPolicyLoader,
                 watchService, fanOutBuffer, compactor, plumtreeNode, hyParViewOverlay,
                 subscriptionManager, rolloutController, prometheusExporter);
@@ -1679,6 +1722,21 @@ public final class ConfigdServer {
      *
      * @return the fully-wired (but not-yet-registered, not-yet-owner-bound) group runtime
      */
+    /**
+     * The anchor-witness VOTE mode. The BOOT gate is ALWAYS strict (peer-majority) and closes R-a' at
+     * N=3 out of the box, so it is not a toggle. This controls ONLY vote deferral:
+     * {@code -Dconfigd.raft.witnessStrict=true} opts into strict-VOTE (defer voteGranted until a
+     * peer-majority acks - the N&gt;=5 absolute close of the grant→witnessed race). It is opt-in, NOT
+     * the default, because deferring voteGranted breaks single-fault leader failover (operator ruling
+     * after the CI smoke test caught full-strict-default deadlocking a 3-node failover). Unset / any
+     * non-{@code true} value = the default fast-vote mode (voteGranted immediately after the announce;
+     * failover preserved). Only an explicit {@code true} enables deferral, so a typo cannot silently
+     * break failover. Package-private static so the production default is directly testable.
+     */
+    static boolean witnessStrictEnabled() {
+        return "true".equalsIgnoreCase(System.getProperty("configd.raft.witnessStrict", "false"));
+    }
+
     static RaftGroupRuntime buildRaftGroup(
             int groupId, int shardCount, Path dataDir, Storage nodeStorage,
             IntegrityEnvelope raftIntegrity, Clock clock, ConfigSigner configSigner,
@@ -1744,6 +1802,28 @@ public final class ConfigdServer {
                     + " lost state (fsyncgate)", cause);
             Runtime.getRuntime().halt(70);
         });
+
+        // Peer-quorum anchor witness (Gate 3c, R-a' closer). Armed only in real peer mode: a configured
+        // multi-node cluster over the shared TCP transport (tcpTransport != null). Single-node and
+        // sharding-on-one-node have no peers, so the witness stays INERT and the vote path is
+        // byte-identical to pre-Gate-3c. The BOOT gate is ALWAYS strict (peer-majority) - it closes the
+        // R-a' boot-reply race at N=3 and only costs a node rebooting into a partition, NOT a running
+        // survivor, so single-fault leader failover is preserved. VOTE deferral is the opt-in
+        // (witnessStrictEnabled(), -Dconfigd.raft.witnessStrict=true) - the N>=5 absolute close, kept
+        // opt-in because deferring voteGranted breaks 3-node failover. The fail-closed rollback handler
+        // here logs + halts; it is upgraded after the audit log is built (see the arming loop in start())
+        // to ALSO write an {action=anchor.rollback.detected} audit record before halting.
+        if (tcpTransport != null) {
+            raftNode.armAnchorWitness(witnessStrictEnabled(),
+                    (g, bootSeq, witnessedSeq, reportingPeer) -> {
+                        LOG.log(Level.SEVERE, "anchor rollback detected for raft group " + g
+                                + ": booted from anchorSeq=" + bootSeq + " but peer " + reportingPeer
+                                + " witnessed anchorSeq=" + witnessedSeq + " (> booted) - refusing to start"
+                                + " this shard (R-a' fail-closed: a within-term vote rollback could"
+                                + " double-vote and split-brain)");
+                        Runtime.getRuntime().halt(71);
+                    });
+        }
 
         // Group commit (per group): dispatch the flush onto the group's CURRENT owner via the driver
         // (rehoming-aware; DORMANT in prod -> always the static floorMod owner). Identical to the prior
