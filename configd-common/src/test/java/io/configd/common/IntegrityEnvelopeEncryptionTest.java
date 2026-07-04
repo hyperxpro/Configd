@@ -56,7 +56,7 @@ class IntegrityEnvelopeEncryptionTest {
 
     @Test
     void encryptDecryptRoundTrip() {
-        IntegrityEnvelope env = IntegrityEnvelope.encrypting(keys(), null);
+        IntegrityEnvelope env = IntegrityEnvelope.encrypting(keys());
         assertTrue(env.isEncrypting());
         byte[] wrapped = env.wrap(MAGIC, SCOPE, payload());
         assertEquals(IntegrityEnvelope.ALG_AES256_GCM, wrapped[6]); // algId byte
@@ -65,7 +65,7 @@ class IntegrityEnvelopeEncryptionTest {
 
     @Test
     void emptyPayloadRoundTrips() {
-        IntegrityEnvelope env = IntegrityEnvelope.encrypting(keys(), null);
+        IntegrityEnvelope env = IntegrityEnvelope.encrypting(keys());
         byte[] wrapped = env.wrap(MAGIC, SCOPE, new byte[0]);
         assertArrayEquals(new byte[0], env.unwrap(MAGIC, SCOPE, wrapped));
     }
@@ -74,7 +74,7 @@ class IntegrityEnvelopeEncryptionTest {
 
     @Test
     void ciphertextContainsNoPlaintext() {
-        IntegrityEnvelope env = IntegrityEnvelope.encrypting(keys(), null);
+        IntegrityEnvelope env = IntegrityEnvelope.encrypting(keys());
         byte[] wrapped = env.wrap(MAGIC, SCOPE, payload());
         String asLatin1 = new String(wrapped, StandardCharsets.ISO_8859_1);
         assertFalse(asLatin1.contains(SECRET_VALUE), "the secret value must not appear in the ciphertext");
@@ -87,7 +87,7 @@ class IntegrityEnvelopeEncryptionTest {
 
     @Test
     void twoEncryptionsOfTheSamePayloadDifferAndUseDistinctNonces() {
-        IntegrityEnvelope env = IntegrityEnvelope.encrypting(keys(), null);
+        IntegrityEnvelope env = IntegrityEnvelope.encrypting(keys());
         byte[] a = env.wrap(MAGIC, SCOPE, payload());
         byte[] b = env.wrap(MAGIC, SCOPE, payload());
         assertFalse(Arrays.equals(a, b), "distinct nonces -> distinct ciphertext for identical plaintext");
@@ -101,7 +101,7 @@ class IntegrityEnvelopeEncryptionTest {
 
     @Test
     void tamperingCiphertextFailsClosed() {
-        IntegrityEnvelope env = IntegrityEnvelope.encrypting(keys(), null);
+        IntegrityEnvelope env = IntegrityEnvelope.encrypting(keys());
         byte[] wrapped = env.wrap(MAGIC, SCOPE, payload());
         // flip a byte inside the ciphertext (after the 44-byte prefix, before the 4-byte CRC)
         int ctPos = 49;
@@ -113,7 +113,7 @@ class IntegrityEnvelopeEncryptionTest {
 
     @Test
     void tamperingAadFieldsFailsClosed() {
-        IntegrityEnvelope env = IntegrityEnvelope.encrypting(keys(), null);
+        IntegrityEnvelope env = IntegrityEnvelope.encrypting(keys());
         // flip one byte in each AAD-covered field, fixing CRC each time so the GCM tag is the control.
         // scopeId@8 is caught earlier by the scope assert (a re-stamp to a DIFFERENT scope), so it is
         // covered by inPlaceScopeForgeFailsGcmTag; here we hit keyTerm/segmentId/nonce/reserved.
@@ -128,7 +128,7 @@ class IntegrityEnvelopeEncryptionTest {
 
     @Test
     void crcMismatchFailsClosed() {
-        IntegrityEnvelope env = IntegrityEnvelope.encrypting(keys(), null);
+        IntegrityEnvelope env = IntegrityEnvelope.encrypting(keys());
         byte[] wrapped = env.wrap(MAGIC, SCOPE, payload());
         wrapped[wrapped.length - 1] ^= 0x01; // corrupt the CRC trailer
         assertThrows(IntegrityException.class, () -> env.unwrap(MAGIC, SCOPE, wrapped));
@@ -136,7 +136,7 @@ class IntegrityEnvelopeEncryptionTest {
 
     @Test
     void wrongMagicFailsClosed() {
-        IntegrityEnvelope env = IntegrityEnvelope.encrypting(keys(), null);
+        IntegrityEnvelope env = IntegrityEnvelope.encrypting(keys());
         byte[] wrapped = env.wrap(MAGIC, SCOPE, payload());
         // reading with a different expected magic: the AAD binds MAGIC, so the tag fails
         assertThrows(IntegrityException.class, () -> env.unwrap(OTHER_MAGIC, SCOPE, wrapped));
@@ -148,7 +148,7 @@ class IntegrityEnvelopeEncryptionTest {
     void scopeMismatchRefusedEncrypting() {
         // A GCM record wrapped under scope 3, read by a reader expecting scope 7, is refused
         // by the scope assert (before decryption even runs).
-        IntegrityEnvelope env = IntegrityEnvelope.encrypting(keys(), null);
+        IntegrityEnvelope env = IntegrityEnvelope.encrypting(keys());
         byte[] wrapped = env.wrap(MAGIC, SCOPE, payload());
         IntegrityException ex = assertThrows(IntegrityException.class,
                 () -> env.unwrap(MAGIC, OTHER_SCOPE, wrapped));
@@ -160,7 +160,7 @@ class IntegrityEnvelopeEncryptionTest {
         // Re-stamp the scopeId to the reader's expected value and repair the CRC so the scope
         // assert PASSES - but the tag was computed with scopeId=3 in the AAD, so the GCM tag
         // fails. scopeId is AAD-bound, hence unforgeable in place.
-        IntegrityEnvelope env = IntegrityEnvelope.encrypting(keys(), null);
+        IntegrityEnvelope env = IntegrityEnvelope.encrypting(keys());
         byte[] wrapped = env.wrap(MAGIC, SCOPE, payload());
         ByteBuffer.wrap(wrapped).putInt(IntegrityEnvelope.HEADER_SIZE, OTHER_SCOPE);
         recomputeCrc(wrapped);
@@ -169,7 +169,7 @@ class IntegrityEnvelopeEncryptionTest {
 
     @Test
     void truncatedEncryptedEnvelopeFailsClosed() {
-        IntegrityEnvelope env = IntegrityEnvelope.encrypting(keys(), null);
+        IntegrityEnvelope env = IntegrityEnvelope.encrypting(keys());
         byte[] wrapped = env.wrap(MAGIC, SCOPE, payload());
         byte[] truncated = Arrays.copyOf(wrapped, wrapped.length - 10);
         assertThrows(IntegrityException.class, () -> env.unwrap(MAGIC, SCOPE, truncated));
@@ -179,12 +179,12 @@ class IntegrityEnvelopeEncryptionTest {
 
     @Test
     void differentRootKeyCannotDecrypt() {
-        byte[] wrapped = IntegrityEnvelope.encrypting(keys(), null).wrap(MAGIC, SCOPE, payload());
+        byte[] wrapped = IntegrityEnvelope.encrypting(keys()).wrap(MAGIC, SCOPE, payload());
         byte[] otherMaterial = new byte[32];
         Arrays.fill(otherMaterial, (byte) 0x01);
         SegmentKeyManager otherKeys =
                 new SegmentKeyManager(new RootKey(otherMaterial, new KeyId("local", "kid", 1)));
-        IntegrityEnvelope wrongReader = IntegrityEnvelope.encrypting(otherKeys, null);
+        IntegrityEnvelope wrongReader = IntegrityEnvelope.encrypting(otherKeys);
         assertThrows(IntegrityException.class, () -> wrongReader.unwrap(MAGIC, SCOPE, wrapped));
     }
 
@@ -194,45 +194,49 @@ class IntegrityEnvelopeEncryptionTest {
     void encryptingReaderRefusesAlgNoneDowngrade() {
         // a NONE (keyless) artifact must be refused by an encrypting reader (fail-closed)
         byte[] none = IntegrityEnvelope.keyless().wrap(MAGIC, SCOPE, payload());
-        IntegrityEnvelope enc = IntegrityEnvelope.encrypting(keys(), null);
+        IntegrityEnvelope enc = IntegrityEnvelope.encrypting(keys());
         assertThrows(IntegrityException.class, () -> enc.unwrap(MAGIC, SCOPE, none));
     }
 
     @Test
     void nonEncryptingReaderRefusesEncryptedRecord() {
-        byte[] wrapped = IntegrityEnvelope.encrypting(keys(), null).wrap(MAGIC, SCOPE, payload());
+        byte[] wrapped = IntegrityEnvelope.encrypting(keys()).wrap(MAGIC, SCOPE, payload());
         // keyed-but-not-encrypting reader cannot decrypt algId=2 -> refuse loudly
         assertThrows(IntegrityException.class, () -> new IntegrityEnvelope(hmacKey()).unwrap(MAGIC, SCOPE, wrapped));
         // keyless reader likewise
         assertThrows(IntegrityException.class, () -> IntegrityEnvelope.keyless().unwrap(MAGIC, SCOPE, wrapped));
     }
 
-    // ---- migration: an encrypting reader still verifies legacy HMAC records ----
+    // ---- migration: an encrypting reader still verifies term-versioned HMAC records ----
 
     @Test
-    void encryptingReaderReadsLegacyHmacRecords() {
-        // records written under the old integrity-only posture (algId=1)
-        byte[] legacy = new IntegrityEnvelope(hmacKey()).wrap(MAGIC, SCOPE, payload());
-        assertEquals(IntegrityEnvelope.ALG_HMAC_SHA256, legacy[6]);
-        // an encrypting envelope that ALSO carries the HMAC key reads them (the upgrade path)
-        IntegrityEnvelope enc = IntegrityEnvelope.encrypting(keys(), hmacKey());
-        assertArrayEquals(payload(), enc.unwrap(MAGIC, SCOPE, legacy));
+    void encryptingReaderReadsPreEncryptionHmacRecords() {
+        // A record written under the term-versioned HMAC posture (algId=1) before encryption was
+        // enabled - keyed by K_integrity[term] from the SAME keyring the encrypting reader uses.
+        SegmentKeyManager km = keys();
+        byte[] preEncryption = IntegrityEnvelope.hmac(km).wrap(MAGIC, SCOPE, payload());
+        assertEquals(IntegrityEnvelope.ALG_HMAC_SHA256, preEncryption[6]);
+        // The encrypting envelope over the same keyring reads them via macKey(keyTerm) (the upgrade path).
+        IntegrityEnvelope enc = IntegrityEnvelope.encrypting(km);
+        assertArrayEquals(payload(), enc.unwrap(MAGIC, SCOPE, preEncryption));
         // but new writes are encrypted (algId=2)
         assertEquals(IntegrityEnvelope.ALG_AES256_GCM, enc.wrap(MAGIC, SCOPE, payload())[6]);
     }
 
     @Test
-    void encryptingReaderWithoutHmacKeyRefusesLegacyHmacRecord() {
-        byte[] legacy = new IntegrityEnvelope(hmacKey()).wrap(MAGIC, SCOPE, payload());
-        IntegrityEnvelope enc = IntegrityEnvelope.encrypting(keys(), null); // no HMAC read key
-        assertThrows(IntegrityException.class, () -> enc.unwrap(MAGIC, SCOPE, legacy));
+    void requireEncryptedRefusesPreEncryptionHmacRecord() {
+        SegmentKeyManager km = keys();
+        byte[] preEncryption = IntegrityEnvelope.hmac(km).wrap(MAGIC, SCOPE, payload());
+        // requireEncrypted: the post-migration lockdown refuses a legacy algId=1 record.
+        IntegrityEnvelope strict = IntegrityEnvelope.encrypting(km, true);
+        assertThrows(IntegrityException.class, () -> strict.unwrap(MAGIC, SCOPE, preEncryption));
     }
 
     // ---- per-artifact isolation ----
 
     @Test
     void differentMagicsProduceDifferentSegments() {
-        IntegrityEnvelope env = IntegrityEnvelope.encrypting(keys(), null);
+        IntegrityEnvelope env = IntegrityEnvelope.encrypting(keys());
         byte[] wal = env.wrap(MAGIC, SCOPE, payload());
         byte[] snap = env.wrap(OTHER_MAGIC, SCOPE, payload());
         byte[] walSeg = Arrays.copyOfRange(wal, 16, 32);

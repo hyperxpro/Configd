@@ -70,6 +70,15 @@ public final class SegmentKeyManager implements AtRestKeys {
             "configd/raft-at-rest-encryption/dek/v1".getBytes(StandardCharsets.UTF_8);
 
     /**
+     * HKDF info string for the term-versioned HMAC integrity key {@code K_integrity[term]}. Bumped to
+     * {@code v3} (from the pre-keyring {@code v2}) because its derivation SOURCE changed: it is now
+     * HKDF of the keyring's per-term random root, not of the signing key (frozen-format §A2.3). The
+     * {@code v3} tag domain-separates the two constructions.
+     */
+    static final byte[] INTEGRITY_INFO =
+            "configd/raft-at-rest-integrity/v3".getBytes(StandardCharsets.UTF_8);
+
+    /**
      * The number of records a single DEK encrypts before rolling to a fresh segmentId. A segment issues
      * counter values {@code 0 .. REKEY_LIMIT-1} inclusive - exactly 2^32 records - then rolls, so it sits
      * AT NIST SP 800-38D's 2^32 invocation ceiling for a single GCM key (the ceiling is a "shall not
@@ -79,12 +88,16 @@ public final class SegmentKeyManager implements AtRestKeys {
 
     private static final String DEK_ALG = "AES";
     private static final int DEK_LEN = 32; // AES-256
+    private static final String MAC_ALG = "HmacSHA256";
+    private static final int MAC_LEN = 32; // HMAC-SHA-256
 
     /** term -> root key. Old terms retained so old-term data still decrypts after rotation. */
     private final Map<Integer, RootKey> roots = new ConcurrentHashMap<>();
     private volatile int currentTerm;
 
     private final SecureRandom rng;
+    /** HKDF salt for the term-versioned integrity MAC key (the non-secret node/signing-key id). */
+    private final byte[] nodeKeyId;
 
     /** Per-magic current write segment (the artifact's active DEK + nonce counter). */
     private final ConcurrentHashMap<Integer, AtomicReference<WriteSegment>> writeSegments =
@@ -92,6 +105,8 @@ public final class SegmentKeyManager implements AtRestKeys {
 
     /** Read-side DEK cache: (keyTerm, hex(segmentId)) -> DEK. Recovery derives each once. */
     private final ConcurrentHashMap<String, SecretKey> readDekCache = new ConcurrentHashMap<>();
+    /** Read-side HMAC integrity-key cache: keyTerm -> K_integrity[term]. */
+    private final ConcurrentHashMap<Integer, SecretKey> macKeyCache = new ConcurrentHashMap<>();
 
     /**
      * @param initialRoot the root key for the initial (current) keyring term
@@ -101,11 +116,60 @@ public final class SegmentKeyManager implements AtRestKeys {
     }
 
     SegmentKeyManager(RootKey initialRoot, SecureRandom rng) {
+        this(initialRoot, rng, new byte[0]);
+    }
+
+    SegmentKeyManager(RootKey initialRoot, SecureRandom rng, byte[] nodeKeyId) {
         Objects.requireNonNull(initialRoot, "initialRoot");
         this.rng = Objects.requireNonNull(rng, "rng");
+        this.nodeKeyId = Objects.requireNonNull(nodeKeyId, "nodeKeyId").clone();
         int term = initialRoot.keyId().version();
         this.roots.put(term, initialRoot);
         this.currentTerm = term;
+    }
+
+    /**
+     * Builds a manager over ALL retained keyring terms at once (the boot path when the persisted
+     * {@code raft-keyring} carries more than the mint term): each root is keyed by its
+     * {@code keyId().version()} (its term), and {@code activeTerm} selects the term new writes stamp.
+     * Old terms stay in the map so old-term data still decrypts - the non-destructive-rotation
+     * precondition. Replaces the single-implicit-term-1 {@code new SegmentKeyManager(root)} boot.
+     *
+     * @param roots      every retained root (each carrying its own term in {@code keyId().version()})
+     * @param activeTerm the term new writes stamp; MUST be present among {@code roots}
+     */
+    public static SegmentKeyManager overTerms(java.util.Collection<RootKey> roots, int activeTerm) {
+        return overTerms(roots, activeTerm, new byte[0]);
+    }
+
+    /**
+     * Builds a manager over all retained terms with an explicit {@code nodeKeyId} (the HKDF salt for
+     * the term-versioned HMAC integrity keys). Production passes the signing keyId bytes so
+     * {@code K_integrity[term]} is node-bound; tests may pass an empty id.
+     */
+    public static SegmentKeyManager overTerms(java.util.Collection<RootKey> roots, int activeTerm,
+                                              byte[] nodeKeyId) {
+        return new SegmentKeyManager(roots, activeTerm, new SecureRandom(), nodeKeyId);
+    }
+
+    SegmentKeyManager(java.util.Collection<RootKey> initialRoots, int activeTerm, SecureRandom rng,
+                      byte[] nodeKeyId) {
+        Objects.requireNonNull(initialRoots, "initialRoots");
+        this.rng = Objects.requireNonNull(rng, "rng");
+        this.nodeKeyId = Objects.requireNonNull(nodeKeyId, "nodeKeyId").clone();
+        if (initialRoots.isEmpty()) {
+            throw new IllegalArgumentException("keyring must carry at least one root");
+        }
+        for (RootKey root : initialRoots) {
+            RootKey prev = this.roots.putIfAbsent(root.keyId().version(), root);
+            if (prev != null) {
+                throw new IllegalArgumentException("duplicate keyring term " + root.keyId().version());
+            }
+        }
+        if (!this.roots.containsKey(activeTerm)) {
+            throw new IllegalArgumentException("activeTerm " + activeTerm + " has no root in the keyring");
+        }
+        this.currentTerm = activeTerm;
     }
 
     /**
@@ -176,6 +240,35 @@ public final class SegmentKeyManager implements AtRestKeys {
                     }
                     return deriveDek(root, segmentId);
                 });
+    }
+
+    @Override
+    public int activeTerm() {
+        return currentTerm;
+    }
+
+    @Override
+    public SecretKey macKey(int keyTerm) {
+        return macKeyCache.computeIfAbsent(keyTerm, kt -> {
+            RootKey root = roots.get(kt);
+            if (root == null) {
+                // Fail-closed: an unknown/forged term has no retained root, so it cannot be verified.
+                throw new IntegrityException(
+                        "unknown at-rest integrity key term " + kt
+                                + " (not in keyring; refusing to verify)");
+            }
+            return deriveMacKey(root);
+        });
+    }
+
+    /** K_integrity[term] = HKDF(IKM = root material, salt = nodeKeyId, info = INTEGRITY_INFO, 32). */
+    private SecretKey deriveMacKey(RootKey root) {
+        byte[] macBytes = root.withMaterial(m -> Hkdf.deriveKey(m, nodeKeyId, INTEGRITY_INFO, MAC_LEN));
+        try {
+            return new SecretKeySpec(macBytes, MAC_ALG);
+        } finally {
+            Arrays.fill(macBytes, (byte) 0);
+        }
     }
 
     private WriteSegment newSegment() {

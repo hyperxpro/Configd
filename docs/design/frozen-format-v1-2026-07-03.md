@@ -1087,6 +1087,18 @@ local signing-key rotation. Interaction with `requireEncrypted` (`ConfigdServer:
 unchanged — once the legacy HMAC prefix is compacted away the operator drops the legacy read key;
 the keyring path is orthogonal (it governs GCM/`K_integrity` terms, not the legacy HMAC read key).
 
+**Audit-log residual across a signing-key rotation (AS-BUILT Gate 4, documented — NOT term-versioned
+in v1).** The security-audit chain is keyed by `K_audit = HKDF(signing-key,
+info="configd/audit-log-integrity/v1")` (`ConfigdServer.deriveAuditLogKey`), a *raw* keyed HMAC
+OUTSIDE the term-versioned `IntegrityEnvelope` — so it is NOT rooted in the keyring and does NOT
+rotate by term. Consequently a **signing-key** rotation (now a supported operation via the
+rewrap-before-swap handover, §A2.5) changes `K_audit`, and audit records written **before** the
+rotation become **un-verifiable** under the new key: their canonical bytes remain fully READABLE, but
+their keyed-HMAC tamper-evidence is lost across the rotation boundary (an operator who retains the
+prior signing key can still verify them offline). This is a documented v1 residual, not a data-loss
+bug; extending keyring term-versioning to the audit chain is deferred (it would require an
+`AUDIT_MAGIC` term stamp and a keyring-rooted `K_audit[term]`, out of scope for this gate).
+
 ### A2.6 Rotation × anchor interaction (the cross-item invalidation this session exists to catch)
 
 The anchor is authenticated by the **same** IntegrityEnvelope in the **same** posture, carrying its

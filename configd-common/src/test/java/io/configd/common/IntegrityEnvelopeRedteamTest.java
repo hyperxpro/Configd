@@ -54,7 +54,7 @@ class IntegrityEnvelopeRedteamTest {
         Arrays.fill(rootBytes, (byte) 0x6B);
         RootKey root = new RootKey(rootBytes, new KeyId("local", "test", 1));
         // legacyReadKey=null: a pure AES-256-GCM writer/reader (algId=2).
-        return IntegrityEnvelope.encrypting(new SegmentKeyManager(root), null);
+        return IntegrityEnvelope.encrypting(new SegmentKeyManager(root));
     }
 
     private static byte[] payload() {

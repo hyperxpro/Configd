@@ -105,11 +105,17 @@ fi
 # --- (a) PA-2021: at-rest integrity negatives + S4 durability re-run ----------
 echo "GATE-7 pa2021: snapshot/WAL/raft-state tamper+forge+downgrade refused; S4 cells still green..."
 PA="$LOGDIR/pa2021.txt"
-run_tests pa2021 "HkdfTest,IntegrityEnvelopeTest,IntegrityEnvelopeEncryptionTest,SegmentKeyManagerTest,LocalKmsEncryptionIntegrationTest,SnapshotIntegrityTest,WalRecordIntegrityTest,RaftLogEncryptionTest,AnchorFileTest,RaftAnchorRecoveryTest,AnchorRollbackRedteamTest,SnapshotCrashRecoveryTest,WalSyncCrashTest,VotePersistenceCrashTest,RaftLogUnitTest" "$PA"
+run_tests pa2021 "HkdfTest,IntegrityEnvelopeTest,IntegrityEnvelopeEncryptionTest,SegmentKeyManagerTest,LocalKmsEncryptionIntegrationTest,NodeKeyringTest,KeyringCodecTest,KeyringFileTest,KeyringKeyTermSelectionTest,EncryptionAtRestWiringTest,SnapshotIntegrityTest,WalRecordIntegrityTest,RaftLogEncryptionTest,AnchorFileTest,RaftAnchorRecoveryTest,AnchorRollbackRedteamTest,SnapshotCrashRecoveryTest,WalSyncCrashTest,VotePersistenceCrashTest,RaftLogUnitTest" "$PA"
 assert_class_green "$PA" "IntegrityEnvelopeTest"        # codec: tamper/downgrade/version/truncation
 assert_class_green "$PA" "IntegrityEnvelopeEncryptionTest" # AES-256-GCM codec: no-plaintext/tamper/downgrade refused
 assert_class_green "$PA" "SegmentKeyManagerTest"        # no-(key,nonce)-reuse invariant + fail-closed unknown term
 assert_class_green "$PA" "LocalKmsEncryptionIntegrationTest" # KMS-SPI end-to-end: restart round-trip + rotation
+# Gate 4 (crash-atomic key rotation, §2.6/§A2): the keyring real-attack proofs.
+assert_class_green "$PA" "NodeKeyringTest"             # rotate-then-crash recovers; old data decrypts post-rotate; prior-KEK/tamper REFUSE
+assert_class_green "$PA" "KeyringCodecTest"            # wrap-AAD replay / unknown wrapAlgId / term0 / outer-MAC strip / slot overflow REFUSED
+assert_class_green "$PA" "KeyringFileTest"            # dual-slot: highest-seq wins, torn stale slot -> intact slot, both-invalid REFUSE
+assert_class_green "$PA" "KeyringKeyTermSelectionTest" # forged/rolled keyTerm on a real segment -> tag fails; absent-term fail-closed
+assert_class_green "$PA" "EncryptionAtRestWiringTest" # boot: OFF byte-identical (no keyring), ON mints keyring, tampered keyring REFUSED
 assert_class_green "$PA" "HkdfTest"                     # HKDF RFC-5869 vectors
 assert_class_green "$PA" "SnapshotIntegrityTest"        # tampered/forged/downgrade/install-snapshot refused
 assert_class_green "$PA" "WalRecordIntegrityTest"       # tamper refused; torn tail tolerated

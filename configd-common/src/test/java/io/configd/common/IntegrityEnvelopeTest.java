@@ -58,10 +58,12 @@ class IntegrityEnvelopeTest {
     }
 
     @Test
-    void keyedWrapIsLongerByMacThanKeyless() {
+    void keyedWrapIsLongerByKeyTermAndMacThanKeyless() {
         byte[] keyed = new IntegrityEnvelope(key()).wrap(MAGIC, SCOPE, payload());
         byte[] keyless = IntegrityEnvelope.keyless().wrap(MAGIC, SCOPE, payload());
-        assertEquals(keyless.length + IntegrityEnvelope.MAC_SIZE, keyed.length);
+        // v3 keyed HMAC adds the 4-byte keyTerm (after scopeId) plus the 32-byte MAC over keyless.
+        assertEquals(keyless.length + IntegrityEnvelope.KEY_TERM_SIZE + IntegrityEnvelope.MAC_SIZE,
+                keyed.length);
     }
 
     @Test

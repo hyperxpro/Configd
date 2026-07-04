@@ -380,7 +380,7 @@ class RaftLogHashChainRedteamTest {
         byte[] rootBytes = new byte[32];
         Arrays.fill(rootBytes, (byte) 0x6b);
         RootKey root = new RootKey(rootBytes, new KeyId("local", "test", 1));
-        return IntegrityEnvelope.encrypting(new SegmentKeyManager(root), null);
+        return IntegrityEnvelope.encrypting(new SegmentKeyManager(root));
     }
 
     private static Path walPath(Path tempDir) {
