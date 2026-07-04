@@ -27,6 +27,7 @@ class EncryptionAtRestWiringTest {
     private static final String PROVIDER = "configd.raft.encryption.kms.provider";
     private static final String REQUIRE = "configd.raft.encryption.requireEncrypted";
     private static final int WAL_MAGIC = 0x5257_414C; // "RWAL"
+    private static final int SCOPE = 0;               // gid 0 (N=1); same on wrap+read here
     private static final String SECRET = "wiring-secret-value-42";
 
     /** A signing key OUTSIDE the data dir, so the D-1 co-location guard passes. */
@@ -49,7 +50,7 @@ class EncryptionAtRestWiringTest {
                 keyStore(root), keyFile(root), dataDir(root));
         assertFalse(env.isEncrypting(), "default must NOT encrypt");
         assertTrue(env.isKeyed(), "default is the keyed HMAC envelope");
-        byte[] wrapped = env.wrap(WAL_MAGIC, SECRET.getBytes(StandardCharsets.UTF_8));
+        byte[] wrapped = env.wrap(WAL_MAGIC, SCOPE,SECRET.getBytes(StandardCharsets.UTF_8));
         assertEquals(IntegrityEnvelope.ALG_HMAC_SHA256, wrapped[6], "OFF writes algId=HMAC (unchanged)");
     }
 
@@ -62,7 +63,7 @@ class EncryptionAtRestWiringTest {
             IntegrityEnvelope env = ConfigdServer.deriveRaftIntegrityEnvelope(
                     ks, keyFile(root), dataDir(root));
             assertTrue(env.isEncrypting(), "flag ON must encrypt");
-            byte[] wrapped = env.wrap(WAL_MAGIC, SECRET.getBytes(StandardCharsets.UTF_8));
+            byte[] wrapped = env.wrap(WAL_MAGIC, SCOPE,SECRET.getBytes(StandardCharsets.UTF_8));
             assertEquals(IntegrityEnvelope.ALG_AES256_GCM, wrapped[6], "ON writes algId=AES256_GCM");
             assertFalse(new String(wrapped, StandardCharsets.ISO_8859_1).contains(SECRET),
                     "no plaintext in the encrypted envelope");
@@ -71,7 +72,7 @@ class EncryptionAtRestWiringTest {
             // (the restart path).
             IntegrityEnvelope env2 = ConfigdServer.deriveRaftIntegrityEnvelope(
                     keyStore(root), keyFile(root), dataDir(root));
-            assertArrayEquals(SECRET.getBytes(StandardCharsets.UTF_8), env2.unwrap(WAL_MAGIC, wrapped),
+            assertArrayEquals(SECRET.getBytes(StandardCharsets.UTF_8), env2.unwrap(WAL_MAGIC, SCOPE,wrapped),
                     "a fresh boot from the same signing key decrypts the record");
         } finally {
             System.clearProperty(ENABLE);
@@ -83,7 +84,7 @@ class EncryptionAtRestWiringTest {
         // A legacy algId=1 record written under the OFF (keyed HMAC) posture, same signing key.
         System.clearProperty(ENABLE);
         byte[] legacy = ConfigdServer.deriveRaftIntegrityEnvelope(keyStore(root), keyFile(root), dataDir(root))
-                .wrap(WAL_MAGIC, SECRET.getBytes(StandardCharsets.UTF_8));
+                .wrap(WAL_MAGIC, SCOPE,SECRET.getBytes(StandardCharsets.UTF_8));
         assertEquals(IntegrityEnvelope.ALG_HMAC_SHA256, legacy[6]);
 
         System.setProperty(ENABLE, "true");
@@ -91,18 +92,18 @@ class EncryptionAtRestWiringTest {
             // requireEncrypted OFF (default): the encrypting reader still reads the legacy record (migration).
             assertArrayEquals(SECRET.getBytes(StandardCharsets.UTF_8),
                     ConfigdServer.deriveRaftIntegrityEnvelope(keyStore(root), keyFile(root), dataDir(root))
-                            .unwrap(WAL_MAGIC, legacy),
+                            .unwrap(WAL_MAGIC, SCOPE,legacy),
                     "default (migration) accepts legacy algId=1 records");
 
             // requireEncrypted ON: the reader REFUSES the legacy algId=1 record (post-migration lock-down).
             System.setProperty(REQUIRE, "true");
             IntegrityEnvelope strict = ConfigdServer.deriveRaftIntegrityEnvelope(
                     keyStore(root), keyFile(root), dataDir(root));
-            assertThrows(IntegrityException.class, () -> strict.unwrap(WAL_MAGIC, legacy),
+            assertThrows(IntegrityException.class, () -> strict.unwrap(WAL_MAGIC, SCOPE,legacy),
                     "requireEncrypted must refuse a legacy algId=1 record");
             // and it still round-trips its own encrypted writes
             assertArrayEquals(SECRET.getBytes(StandardCharsets.UTF_8),
-                    strict.unwrap(WAL_MAGIC, strict.wrap(WAL_MAGIC, SECRET.getBytes(StandardCharsets.UTF_8))));
+                    strict.unwrap(WAL_MAGIC, SCOPE,strict.wrap(WAL_MAGIC, SCOPE,SECRET.getBytes(StandardCharsets.UTF_8))));
         } finally {
             System.clearProperty(ENABLE);
             System.clearProperty(REQUIRE);

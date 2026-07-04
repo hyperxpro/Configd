@@ -45,7 +45,8 @@ class DurableRaftStateIntegrityTest {
         // HMAC, which they cannot forge, catches it.
         Path file = tempDir.resolve(STATE_FILE);
         byte[] raw = Files.readAllBytes(file);
-        int payloadStart = IntegrityEnvelope.HEADER_SIZE;
+        // v3 payload begins after header(8) + scopeId(4).
+        int payloadStart = IntegrityEnvelope.HEADER_SIZE + IntegrityEnvelope.SCOPE_ID_SIZE;
         // payload layout: [term:8][votedFor:4]; votedFor int at payload offset 8.
         ByteBuffer.wrap(raw).putInt(payloadStart + 8, 3);
         recomputeEnvelopeCrc(raw);
@@ -67,7 +68,8 @@ class DurableRaftStateIntegrityTest {
 
         Path file = tempDir.resolve(STATE_FILE);
         byte[] raw = Files.readAllBytes(file);
-        ByteBuffer.wrap(raw).putLong(IntegrityEnvelope.HEADER_SIZE, 99L); // term 5 -> 99
+        // v3 payload begins after header(8) + scopeId(4); term is the first payload long.
+        ByteBuffer.wrap(raw).putLong(IntegrityEnvelope.HEADER_SIZE + IntegrityEnvelope.SCOPE_ID_SIZE, 99L); // term 5 -> 99
         recomputeEnvelopeCrc(raw);
         Files.write(file, raw, StandardOpenOption.TRUNCATE_EXISTING);
 

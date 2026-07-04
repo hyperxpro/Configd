@@ -39,6 +39,12 @@ public final class DurableRaftState {
      * {@code votedFor} (recomputed CRC, no valid MAC) is refused on load.
      */
     private final IntegrityEnvelope integrity;
+    /**
+     * The Raft group id, stamped as the envelope {@code scopeId} on the persistent-state
+     * artifact and asserted on load. Per-shard at N&gt;1 (each group has its own term/vote);
+     * {@code 0} at N=1. Frozen to {@code [0, NODE_SCOPE)}.
+     */
+    private final int gid;
     private long currentTerm;
     private NodeId votedFor;
 
@@ -52,21 +58,37 @@ public final class DurableRaftState {
     }
 
     /**
-     * Creates a new DurableRaftState with an explicit at-rest integrity codec,
-     * loading any previously persisted state.
-     * <p>
-     * {@code raft.persistent_state} is an atomic-rename artifact (never torn), so a
-     * structurally-complete-but-MAC-invalid file under a keyed codec is
-     * unambiguously tamper and {@link #load()} fails loud - a forged {@code votedFor}
-     * must never load (it would violate Election Safety). A keyless codec accepts
-     * legacy raw (pre-envelope) state for back-compat.
+     * Creates a new DurableRaftState with an explicit at-rest integrity codec scoped to
+     * {@code gid=0} (the N=1 single group).
      *
      * @param storage   the durable storage backend
      * @param integrity the at-rest integrity codec (non-null)
      */
     public DurableRaftState(Storage storage, IntegrityEnvelope integrity) {
+        this(storage, integrity, 0);
+    }
+
+    /**
+     * Creates a new DurableRaftState with an explicit at-rest integrity codec and Raft
+     * group id, loading any previously persisted state.
+     * <p>
+     * {@code raft.persistent_state} is an atomic-rename artifact (never torn), so a
+     * structurally-complete-but-MAC-invalid / scope-wrong file under a keyed codec is
+     * unambiguously tamper and {@link #load()} fails loud - a forged {@code votedFor}
+     * must never load (it would violate Election Safety).
+     *
+     * @param storage   the durable storage backend
+     * @param integrity the at-rest integrity codec (non-null)
+     * @param gid       the Raft group id, stamped as {@code scopeId}; in {@code [0, NODE_SCOPE)}
+     */
+    public DurableRaftState(Storage storage, IntegrityEnvelope integrity, int gid) {
+        if (gid == IntegrityEnvelope.NODE_SCOPE) {
+            throw new IllegalArgumentException("gid " + Integer.toHexString(gid)
+                    + " collides with the reserved NODE_SCOPE sentinel");
+        }
         this.storage = Objects.requireNonNull(storage, "storage");
         this.integrity = Objects.requireNonNull(integrity, "integrity");
+        this.gid = gid;
         load();
     }
 
@@ -158,22 +180,22 @@ public final class DurableRaftState {
         ByteBuffer buf = ByteBuffer.allocate(12);
         buf.putLong(term);
         buf.putInt(voted != null ? voted.id() : VOTED_FOR_NULL);
-        // wrap the 12-byte payload in the at-rest integrity
-        // envelope before persisting.
-        storage.put(STORAGE_KEY, integrity.wrap(STATE_MAGIC, buf.array()));
+        // wrap the 12-byte payload in the at-rest integrity envelope, scoped to gid,
+        // before persisting.
+        storage.put(STORAGE_KEY, integrity.wrap(STATE_MAGIC, gid, buf.array()));
         storage.sync();
     }
 
     private void load() {
         byte[] data = storage.get(STORAGE_KEY);
-        // unwrapOrNull returns null ONLY for structurally-absent
-        // or too-short bytes (fresh node / first boot)  -  fresh init at term 0, as
-        // today. A structurally-complete-but-tampered envelope (keyed-MAC mismatch,
-        // CRC32C mismatch, rolled version, or algId=NONE downgrade under a key)
-        // THROWS IntegrityException, which propagates: a forged votedFor must not
-        // load (fail loud). A keyless codec also accepts legacy raw (pre-envelope)
-        // state via the null path.
-        byte[] payload = integrity.unwrapOrNull(STATE_MAGIC, data);
+        // unwrapOrNull returns null ONLY for structurally-absent or too-short bytes (fresh
+        // node / first boot), or, under a keyless codec, legacy raw (pre-envelope) bytes. A
+        // structurally-complete-but-tampered envelope (keyed-MAC mismatch, CRC32C mismatch,
+        // rolled version, scope mismatch, or algId=NONE downgrade under a key) THROWS
+        // IntegrityException, which propagates: a forged votedFor must not load (fail loud).
+        // (DurableRaftState is removed in a later gate when the vote merges into the anchor;
+        // its keyless legacy-raw back-compat path is retained here until then.)
+        byte[] payload = integrity.unwrapOrNull(STATE_MAGIC, gid, data);
         if (payload == null) {
             payload = data; // keyless legacy raw bytes, or absent (handled below)
         }

@@ -362,9 +362,11 @@ public final class RaftNode {
         this.electionTimeoutMaxTicks = config.electionTimeoutMaxTicks();
         this.heartbeatTimeoutTicks = config.heartbeatIntervalTicks();
 
-        // Load persisted state (currentTerm, votedFor) from durable storage
+        // Load persisted state (currentTerm, votedFor) from durable storage. The persistent-state
+        // artifact is per-group, so it carries the SAME scopeId as the log's WAL/snapshot - taken
+        // from the log's gid, the single source of this group's scope.
         this.durableState = new DurableRaftState(Objects.requireNonNull(storage, "storage"),
-                Objects.requireNonNull(integrity, "integrity"));
+                Objects.requireNonNull(integrity, "integrity"), log.gid());
         this.currentTerm = durableState.currentTerm();
         this.votedFor = durableState.votedFor();
         this.role = RaftRole.FOLLOWER;
