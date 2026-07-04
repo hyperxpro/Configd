@@ -60,7 +60,7 @@ public final class RaftNode {
     // and the N=1 path - the node grants/starts votes exactly as before Gate 3c (byte-identical). See
     // docs/design/anchor-witness-peer-quorum-2026-07-04.md. Owner-thread-confined (plain maps).
     private boolean witnessArmed;
-    private boolean witnessStrict;
+    private boolean witnessStrictVote;
     /** The vote latch: while false (armed, boot gate not yet cleared) the node grants no vote and starts
      *  no election. Set true by armAnchorWitness at N=1 (no peers) or by the boot gate at a quorum. */
     private boolean votingCleared;
@@ -450,14 +450,22 @@ public final class RaftNode {
      * and {@link #setDurabilityFailureHandler}); the executor bind then publishes this state to the
      * owner thread. Not idempotent-guarded - the production wiring arms each node exactly once.
      *
-     * @param strict  strict mode: defer a granted vote until a peer-majority has acked the announce, and
-     *                require a peer-majority (not merely a cluster quorum incl. self) to clear the boot
-     *                gate. Absolute close of the grant→witnessed race, at the cost of ~one unit of
-     *                election fault-tolerance. {@code false} = the recommended default mode.
-     * @param handler the fail-closed rollback handler; {@code null} keeps the current one
+     * <p>The BOOT gate is always strict: it requires a peer-MAJORITY of QUERY replies to clear (this is
+     * what closes the R-a' boot-reply race at N=3, and it only costs a node rebooting into a partition).
+     * Only the VOTE dimension is a mode choice:
+     *
+     * @param strictVote when {@code true} (full strict), a granted vote is DEFERRED until a peer-majority
+     *                   has acked the announce - the absolute close of the grant→witnessed race for
+     *                   N&gt;=5, but it DEFERS voteGranted, which reduces election availability (at N=3 a
+     *                   survivor cannot elect a new leader while one peer is down). When {@code false}
+     *                   (the recommended default), voteGranted is sent immediately after the announce, so
+     *                   single-fault leader failover is preserved; the strict boot gate still closes R-a'
+     *                   at N=3. Enable strict vote only where N&gt;=5 absolute closure outweighs the
+     *                   failover cost.
+     * @param handler    the fail-closed rollback handler; {@code null} keeps the current one
      */
-    public void armAnchorWitness(boolean strict, AnchorRollbackHandler handler) {
-        this.witnessStrict = strict;
+    public void armAnchorWitness(boolean strictVote, AnchorRollbackHandler handler) {
+        this.witnessStrictVote = strictVote;
         if (handler != null) {
             this.anchorRollbackHandler = handler;
         }
@@ -582,9 +590,14 @@ public final class RaftNode {
             }
             return;
         }
-        boolean quorumResponded = witnessStrict
-                ? witnessResponders.size() >= peerMajority(peers.size())
-                : clusterConfig.isQuorum(withSelf(witnessResponders));
+        // The boot gate is ALWAYS strict: it clears only on a peer-MAJORITY of responders. The old
+        // self-counting quorum (self + a single peer) had an adversary-reachable boot-reply race (a
+        // non-witness peer answering first cleared it before a slower witness replied); requiring a
+        // peer-majority makes two witness quorums always intersect, so a real rollback is always caught.
+        // This costs a node rebooting into a partition (it cannot reach a peer-majority, so it stays
+        // latched - correct: it should not vote yet), but NOT a running survivor (already cleared), so
+        // single-fault leader failover is unaffected.
+        boolean quorumResponded = witnessResponders.size() >= peerMajority(peers.size());
         if (quorumResponded) {
             votingCleared = true;
         }
@@ -638,9 +651,10 @@ public final class RaftNode {
 
     /**
      * Sends the granted vote under the witness contract. Un-armed: byte-identical immediate
-     * {@code voteGranted}. Armed default: announce-before-grant (§1.5) - the persisted vote already
-     * raised anchorSeq, so broadcast it to all peers BEFORE the candidate can use the vote. Armed
-     * strict: broadcast then DEFER {@code voteGranted} until a peer-majority acks the announce.
+     * {@code voteGranted}. Armed (default, fast vote): announce-before-grant (§1.5) - the persisted vote
+     * already raised anchorSeq, so broadcast it to all peers BEFORE sending voteGranted, but send
+     * voteGranted immediately after (so single-fault failover is preserved). Armed strict-VOTE (opt-in):
+     * broadcast then DEFER {@code voteGranted} until a peer-majority acks the announce.
      */
     private void grantVoteWitnessed(NodeId candidate) {
         if (!witnessArmed) {
@@ -649,7 +663,7 @@ public final class RaftNode {
         }
         Set<NodeId> peers = clusterConfig.peersOf(config.nodeId());
         broadcastWitness(peers, false); // announce s1 to all peers before the grant is usable
-        if (witnessStrict && !peers.isEmpty()) {
+        if (witnessStrictVote && !peers.isEmpty()) {
             pendingWitnessGrant = new PendingWitnessGrant(currentTerm, candidate, log.anchorSeq());
         } else {
             transport.send(candidate, new RequestVoteResponse(currentTerm, true, config.nodeId(), false));
@@ -658,12 +672,6 @@ public final class RaftNode {
 
     private int peerMajority(int peerCount) {
         return peerCount / 2 + 1;
-    }
-
-    private Set<NodeId> withSelf(Set<NodeId> peers) {
-        Set<NodeId> s = new HashSet<>(peers);
-        s.add(config.nodeId());
-        return s;
     }
 
     /** Count of WAL/anchor fsync failures that tripped the fail-closed policy (metric source). */

@@ -42,13 +42,16 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  *   <li>NO-FALSE-REFUSE: a legal reboot / partition / Raft rewrite is NOT bricked.</li>
  * </ul>
  *
- * <p>One residual is characterized as a first-class FINDING, not buried: in DEFAULT mode the boot gate
- * clears on a cluster quorum that counts SELF (isQuorum(withSelf(responders))), i.e. on self + a single
- * peer. A peer that missed the vote announce (ordinary packet loss - NOT a peer crash, which the frozen
- * threat model excludes) and answers the boot QUERY first will clear the gate before a healthy-but-slower
- * witnessing peer replies -> the rolled-back node false-passes and double-votes
- * ({@link #finding_defaultMode_singleNonWitnessReplyRace_falsePass}). Strict mode closes it
- * ({@link #strictMode_singleNonWitnessReplyRace_closed}).
+ * <p>The boot gate is ALWAYS strict (peer-MAJORITY of QUERY replies). An earlier design cleared it on a
+ * self-counting cluster quorum (self + a single peer), which had an adversary-reachable boot-reply race:
+ * a peer that missed the vote announce (ordinary packet loss - NOT a peer crash) answering first cleared
+ * the gate before a healthy-but-slower witness replied -> a rolled-back node false-passed. The operator
+ * ruled the peer-majority boot gate the DEFAULT (two witness quorums then always intersect, so a witness
+ * is always in the boot-reply set), so that race is now REFUSED by default
+ * ({@link #defaultBoot_singleNonWitnessReplyRace_refusedByPeerMajorityBootGate}). Vote DEFERRAL (full
+ * strict) is a separate opt-in ({@link #strictMode_singleNonWitnessReplyRace_closed} /
+ * {@link #strictMode_voteDeferredUntilPeerMajorityAcks}); it is NOT the default because deferring
+ * voteGranted breaks single-fault leader failover.
  *
  * <p>See {@code docs/design/anchor-witness-peer-quorum-2026-07-04.md} (design) and the red-team report.
  */
@@ -371,16 +374,17 @@ class AnchorWitnessRedteamTest {
     }
 
     // =============================================================================================
-    // 3. FINDING (MEDIUM) - default-mode boot-reply race: a single NON-witness peer answering first
-    //    clears the self-counting quorum before a healthy-but-slower witness replies -> FALSE PASS
-    //    -> R-a' double-vote. Needs only ordinary announce packet-loss to one peer (NO peer crash).
+    // 3. The boot-reply race is CLOSED BY DEFAULT. An earlier self-counting boot quorum (self + one
+    //    peer) let a single NON-witness peer answering first false-pass a rolled-back node. The DEFAULT
+    //    is now a peer-MAJORITY boot gate, so the same scenario (ordinary announce packet-loss + a
+    //    boot-reply race, NO peer crash) is REFUSED - even in the default fast-vote mode.
     // =============================================================================================
 
     @Test
-    void finding_defaultMode_singleNonWitnessReplyRace_falsePass(@TempDir Path base) {
+    void defaultBoot_singleNonWitnessReplyRace_refusedByPeerMajorityBootGate(@TempDir Path base) {
         Cluster c = new Cluster(base);
-        Node v = c.add(V, Set.of(X, P), false);
-        Node x = c.add(X, Set.of(V, P), false);
+        Node v = c.add(V, Set.of(X, P), false);   // DEFAULT: fast-vote (strictVote=false); boot is always strict
+        c.add(X, Set.of(V, P), false);
         c.add(P, Set.of(V, X), false);
         c.settle(6);
 
@@ -392,14 +396,12 @@ class AnchorWitnessRedteamTest {
         v.raft.handleMessage(voteReq(T, X));   // grant X: announce(s1) enqueued to BOTH peers, then voteGranted
         long s1 = v.anchorSeq();
 
-        // ORDINARY PACKET LOSS (not a peer crash): the announce to P is dropped; X gets it and counts the vote.
-        c.dropFrom(V);                          // drop V's queued announces...
-        // ...re-emit ONLY to X by delivering a fresh announce: simplest faithful model is a targeted redeliver.
+        // ORDINARY PACKET LOSS (not a peer crash): the announce to P is dropped; only X witnesses s1.
+        c.dropFrom(V);
         v.raft.witnessAnnounce();               // V re-announces s1 (heartbeat cadence) to all peers
         c.deliver(e -> e.to().equals(X));       // deliver ONLY to X; P still never witnesses s1
-        assertTrue(x.raft.isWitnessArmed());
 
-        // Adversary crashes V (V is the victim - allowed), rolls back to {T,null,s0}, reboots.
+        // Adversary crashes V (the victim - allowed), rolls back to {T,null,s0}, reboots.
         c.kill(v);
         c.rollbackDisk(v, prior);
         c.reboot(v);
@@ -410,20 +412,23 @@ class AnchorWitnessRedteamTest {
         c.tick(v);                              // V broadcasts QUERY to X and P
         c.deliver(e -> e.from().equals(V) && e.to().equals(P)); // only P is queried (X's QUERY withheld = slower)
         c.deliverFrom(P);                       // P's reply (seenOfYou = s0) reaches V
-        c.tick(v);                              // evaluateBootGate: responders={P}, w=s0, self+P is a quorum -> CLEAR
+        c.tick(v);                              // evaluateBootGate: responders={P}, self+P is NOT a peer-majority
 
-        assertNull(v.rollback, "FINDING: default gate cleared on a single non-witness peer - no rollback flagged");
-        assertTrue(v.raft.votingClearedForTest(), "FINDING: V FALSE-PASSED the boot gate");
+        assertFalse(v.raft.votingClearedForTest(),
+                "DEFAULT: self + one non-witness peer is NOT a peer-majority - the gate does NOT clear (race closed)");
+        assertNull(v.rollback, "not yet refused - the witnessing peer (X) has not replied yet");
 
-        // X now replies (too late) reporting s1; the gate never re-evaluates, so the false pass is permanent.
-        c.deliverAll();
-        assertTrue(v.raft.votingClearedForTest(), "the gate does not re-arm once cleared - X's late s1 is ignored");
+        // X's reply (s1) now lands and completes the peer-majority; the gate trips REFUSE.
+        c.settle(6);
+        assertNotNull(v.rollback, "once the witnessing peer's reply lands, the rollback is REFUSED (absolute close)");
+        assertEquals(s1, v.rollback.witnessedSeq());
+        assertFalse(v.raft.votingClearedForTest());
 
-        // The R-a' double vote is now ACCEPTED at term T (V already granted X; now it grants P too).
+        // No R-a' double-vote at term T: V stays latched and denies a second candidate.
         v.sent.clear();
         v.raft.handleMessage(voteReq(T, P));
-        assertTrue(v.grantedVoteTo(P),
-                "FINDING: default mode ACCEPTS the R-a' double-vote at term " + T + " via the boot-reply race");
+        assertFalse(v.grantedVoteTo(P),
+                "DEFAULT closes the boot-reply race: no double-vote at term " + T + " even in fast-vote mode");
     }
 
     @Test
@@ -616,7 +621,8 @@ class AnchorWitnessRedteamTest {
         // The gate only re-evaluates while LATCHED, so inject the boundary report before it clears (do NOT
         // settle the healthy cluster first - that would clear the gate and freeze it).
 
-        // w == bootAnchorSeq -> PASS (equal is legal - a peer always witnesses at least our booted-from seq).
+        // w == bootAnchorSeq -> PASS (equal is legal - a peer always witnesses at least our booted-from
+        // seq). The boot gate clears on a peer-MAJORITY, so BOTH peers must report == boot.
         Cluster c1 = new Cluster(base.resolve("eq"));
         Node v1 = c1.add(V, Set.of(X, P), false);
         c1.add(X, Set.of(V, P), false);
@@ -624,11 +630,13 @@ class AnchorWitnessRedteamTest {
         long boot1 = v1.anchorSeq();
         assertFalse(v1.raft.votingClearedForTest(), "V is latched at boot (not yet cleared)");
         v1.raft.handleMessage(new WitnessReply(X, boot1, 0L, -1, boot1)); // seenOfYou == boot
-        c1.tick(v1);                                                      // evaluateBootGate: w==boot, self+X quorum
+        v1.raft.handleMessage(new WitnessReply(P, boot1, 0L, -1, boot1)); // peer-majority: both peers report == boot
+        c1.tick(v1);                                                      // evaluateBootGate: w==boot, peer-majority
         assertNull(v1.rollback, "seenOfYou == bootAnchorSeq is NOT a rollback");
         assertTrue(v1.raft.votingClearedForTest(), "the boundary w==boot PASSES (would false-refuse if it were >=)");
 
-        // w == bootAnchorSeq + 1 -> REFUSE.
+        // w == bootAnchorSeq + 1 -> REFUSE. The refuse fires on W > boot regardless of the responder count
+        // (quorum-independent), so ONE peer reporting boot+1 is enough.
         Cluster c2 = new Cluster(base.resolve("gt"));
         Node v2 = c2.add(V, Set.of(X, P), false);
         c2.add(X, Set.of(V, P), false);
@@ -763,6 +771,31 @@ class AnchorWitnessRedteamTest {
         assertNull(v.rollback,
                 "BRICK FIX: a healthy caught-up node must NOT be false-refused (strict=" + strict + ")");
         assertTrue(v.raft.votingClearedForTest(), "the caught-up healthy node clears normally");
+    }
+
+    @Test
+    void bootGate_peerMajorityRequired_onePeerUpStaysLatched_thenClearsWhenBothReachable(@TempDir Path base) {
+        // The unconditional peer-majority boot gate's ONLY cost (N=3): a node rebooting while ONE peer is
+        // down cannot reach a peer-majority (peerMajority(2)=2), so it stays LATCHED (refuse-to-vote, the
+        // SAFE direction) - it does NOT brick, and clears the instant BOTH peers are reachable. Making the
+        // gate stricter can only WITHHOLD a clear, never manufacture a false-pass, so it introduces no new
+        // security hole; this pins the fail-closed availability trade.
+        Cluster c = new Cluster(base);
+        Node v = c.add(V, Set.of(X, P), false);
+        Node p = c.add(P, Set.of(V, X), false);
+        c.add(X, Set.of(V, P), false);
+
+        p.down = true;                        // only ONE peer (X) reachable
+        c.settle(6);
+        assertNull(v.rollback, "no rollback - just an unreachable peer");
+        assertFalse(v.raft.votingClearedForTest(),
+                "self + one peer is NOT a peer-majority -> V stays latched (availability cost, safe direction)");
+        assertEquals(RaftRole.FOLLOWER, v.raft.role(), "a latched node never self-promotes");
+
+        p.down = false;                       // the peer-majority becomes reachable
+        c.settle(6);
+        assertTrue(v.raft.votingClearedForTest(),
+                "clears once BOTH peers (the peer-majority at N=3) are reachable - no brick, no operator action");
     }
 
     @Test

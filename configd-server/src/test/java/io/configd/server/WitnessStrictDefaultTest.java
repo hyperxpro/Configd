@@ -7,10 +7,12 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * The production anchor-witness mode defaults to STRICT (Gate 3c, operator ruling). The available mode
- * (self-counting boot quorum) carries an adversary-reachable R-a' residual, so the out-of-box posture
- * must be strict; {@code -Dconfigd.raft.witnessStrict=false} is the explicit opt-in to the higher-
- * availability mode. This pins the default that {@code ConfigdServer.buildRaftGroup} arms nodes with.
+ * The anchor-witness VOTE mode default (Gate 3c). The BOOT gate is always strict (peer-majority) and is
+ * not a toggle - it closes R-a' at N=3 out of the box. {@code witnessStrictEnabled()} controls only
+ * strict-VOTE (deferring voteGranted until a peer-majority acks - the N&gt;=5 absolute close). It is
+ * OPT-IN (default fast-vote), because deferral breaks single-fault leader failover (the CI smoke test
+ * caught full-strict-default deadlocking a 3-node failover). Only an explicit {@code true} enables it,
+ * so a typo cannot silently break failover.
  */
 final class WitnessStrictDefaultTest {
 
@@ -22,31 +24,32 @@ final class WitnessStrictDefaultTest {
     }
 
     @Test
-    void unsetDefaultsToStrict() {
+    void unsetDefaultsToFastVote() {
         System.clearProperty(PROP);
-        assertTrue(ConfigdServer.witnessStrictEnabled(),
-                "out-of-box (unset) must arm STRICT - the recommended posture must close R-a'");
-    }
-
-    @Test
-    void explicitFalseSelectsAvailableMode() {
-        System.setProperty(PROP, "false");
         assertFalse(ConfigdServer.witnessStrictEnabled(),
-                "-Dconfigd.raft.witnessStrict=false is the explicit opt-in to the available (residual) mode");
+                "out-of-box (unset) = fast-vote (strict-boot still closes R-a'); vote-deferral is opt-in");
     }
 
     @Test
-    void explicitTrueIsStrict() {
+    void explicitTrueEnablesStrictVote() {
         System.setProperty(PROP, "true");
-        assertTrue(ConfigdServer.witnessStrictEnabled());
+        assertTrue(ConfigdServer.witnessStrictEnabled(),
+                "-Dconfigd.raft.witnessStrict=true opts into vote-deferral (N>=5 absolute close)");
     }
 
     @Test
-    void anyOtherValueIsStrict_failClosedToTheSafeMode() {
-        // A typo or garbage value must not silently drop to the residual-carrying available mode.
-        System.setProperty(PROP, "no");
-        assertTrue(ConfigdServer.witnessStrictEnabled(), "only an explicit 'false' opts out; anything else is strict");
+    void explicitFalseIsFastVote() {
+        System.setProperty(PROP, "false");
+        assertFalse(ConfigdServer.witnessStrictEnabled());
+    }
+
+    @Test
+    void anyNonTrueValueIsFastVote_typoCannotBreakFailover() {
+        // Only an explicit 'true' enables deferral, so a typo/garbage value stays on the failover-safe
+        // default rather than silently deferring votes and deadlocking a small-cluster failover.
+        System.setProperty(PROP, "yes");
+        assertFalse(ConfigdServer.witnessStrictEnabled(), "only an explicit 'true' opts in; anything else is fast-vote");
         System.setProperty(PROP, "");
-        assertTrue(ConfigdServer.witnessStrictEnabled(), "empty string is not 'false' - stays strict");
+        assertFalse(ConfigdServer.witnessStrictEnabled(), "empty string is not 'true' - stays fast-vote");
     }
 }

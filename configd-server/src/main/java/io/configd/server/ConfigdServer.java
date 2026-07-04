@@ -966,9 +966,9 @@ public final class ConfigdServer {
         // tick/vote machinery drives the actual R-a' closure. Node scope has no vote (freshness-only).
         AnchorWitness anchorWitness = new PeerQuorumAnchorWitness(driver::getGroup);
         if (tcpTransport != null) {
-            System.out.println("  Anchor witness: peer-quorum armed ("
-                    + (witnessStrictEnabled() ? "strict [default]" : "available [-Dconfigd.raft.witnessStrict=false]")
-                    + " mode) — Gate 3c R-a' closer");
+            System.out.println("  Anchor witness: peer-quorum armed (strict-boot + "
+                    + (witnessStrictEnabled() ? "strict-vote [-Dconfigd.raft.witnessStrict=true]" : "fast-vote [default]")
+                    + ") — Gate 3c R-a' closer");
         }
         // Upgrade each armed node's rollback handler to ALSO write an audit record before halting (the
         // in-buildRaftGroup handler only logs + halts, since the audit log did not exist yet). Runs before
@@ -1723,15 +1723,18 @@ public final class ConfigdServer {
      * @return the fully-wired (but not-yet-registered, not-yet-owner-bound) group runtime
      */
     /**
-     * The out-of-box anchor-witness mode: STRICT unless explicitly opted out. The recommended posture
-     * must genuinely close R-a' (operator ruling after the red-team found the available mode's
-     * self-counting boot quorum is defeated by announce packet-loss + a boot-reply race). Only
-     * {@code -Dconfigd.raft.witnessStrict=false} (case-insensitive) selects the higher-availability
-     * "available" mode, which carries the documented adversary-reachable R-a' residual. Any other value
-     * (including unset) is strict. Package-private static so the production default is directly testable.
+     * The anchor-witness VOTE mode. The BOOT gate is ALWAYS strict (peer-majority) and closes R-a' at
+     * N=3 out of the box, so it is not a toggle. This controls ONLY vote deferral:
+     * {@code -Dconfigd.raft.witnessStrict=true} opts into strict-VOTE (defer voteGranted until a
+     * peer-majority acks - the N&gt;=5 absolute close of the grant→witnessed race). It is opt-in, NOT
+     * the default, because deferring voteGranted breaks single-fault leader failover (operator ruling
+     * after the CI smoke test caught full-strict-default deadlocking a 3-node failover). Unset / any
+     * non-{@code true} value = the default fast-vote mode (voteGranted immediately after the announce;
+     * failover preserved). Only an explicit {@code true} enables deferral, so a typo cannot silently
+     * break failover. Package-private static so the production default is directly testable.
      */
     static boolean witnessStrictEnabled() {
-        return !"false".equalsIgnoreCase(System.getProperty("configd.raft.witnessStrict", "true"));
+        return "true".equalsIgnoreCase(System.getProperty("configd.raft.witnessStrict", "false"));
     }
 
     static RaftGroupRuntime buildRaftGroup(
@@ -1803,15 +1806,13 @@ public final class ConfigdServer {
         // Peer-quorum anchor witness (Gate 3c, R-a' closer). Armed only in real peer mode: a configured
         // multi-node cluster over the shared TCP transport (tcpTransport != null). Single-node and
         // sharding-on-one-node have no peers, so the witness stays INERT and the vote path is
-        // byte-identical to pre-Gate-3c. STRICT mode is the out-of-box DEFAULT (operator ruling: the
-        // recommended posture must actually close R-a' - the available mode's self-counting boot quorum
-        // has an adversary-reachable false-pass under announce packet-loss + a boot-reply race). Strict
-        // requires a peer-majority boot quorum + defers voteGranted until a peer-majority acks, which
-        // makes two witness quorums always intersect (absolute close), at the cost of ~one unit of
-        // election availability. -Dconfigd.raft.witnessStrict=false is an EXPLICIT opt-in to the
-        // higher-availability mode that carries the documented R-a' residual. The fail-closed rollback
-        // handler here logs + halts; it is upgraded after the audit log is built (see the arming loop in
-        // start()) to ALSO write an {action=anchor.rollback.detected} audit record before halting.
+        // byte-identical to pre-Gate-3c. The BOOT gate is ALWAYS strict (peer-majority) - it closes the
+        // R-a' boot-reply race at N=3 and only costs a node rebooting into a partition, NOT a running
+        // survivor, so single-fault leader failover is preserved. VOTE deferral is the opt-in
+        // (witnessStrictEnabled(), -Dconfigd.raft.witnessStrict=true) - the N>=5 absolute close, kept
+        // opt-in because deferring voteGranted breaks 3-node failover. The fail-closed rollback handler
+        // here logs + halts; it is upgraded after the audit log is built (see the arming loop in start())
+        // to ALSO write an {action=anchor.rollback.detected} audit record before halting.
         if (tcpTransport != null) {
             raftNode.armAnchorWitness(witnessStrictEnabled(),
                     (g, bootSeq, witnessedSeq, reportingPeer) -> {

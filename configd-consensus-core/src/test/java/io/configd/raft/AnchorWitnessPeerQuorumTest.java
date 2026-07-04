@@ -506,26 +506,52 @@ class AnchorWitnessPeerQuorumTest {
     @Test
     void catchUpDuringBoot_healthyNode_notFalseRefused(@TempDir Path base) {
         Cluster c = new Cluster(base, false);
-        Node x = c.add(X, Set.of(V, P));
-        Node p = c.add(P, Set.of(V, X));
-        c.settle(6); // X and P clear (quorum among themselves) - a running cluster
-        assertTrue(x.raft.votingClearedForTest());
-        assertTrue(p.raft.votingClearedForTest());
-
-        // V (re)boots into the running cluster and is latched. BEFORE its gate clears, the leader
-        // replicates to it: a higher-term AppendEntries with an entry advances V's durable head, raising
-        // anchorSeq above bootAnchorSeq. This is ordinary catch-up, NOT a rollback.
         Node v = c.add(V, Set.of(X, P));
+        c.add(X, Set.of(V, P));
+        c.add(P, Set.of(V, X));
+
+        // All three are latched at boot. BEFORE the gate clears, the leader replicates to V: a higher-term
+        // AppendEntries with an entry advances V's durable head, raising anchorSeq above bootAnchorSeq.
+        // This is ordinary catch-up, NOT a rollback.
         long boot = v.anchorSeq();
         v.raft.handleMessage(new AppendEntriesRequest(2, X, 0, 0,
                 List.of(new LogEntry(1, 2, "x".getBytes(StandardCharsets.UTF_8))), 1));
         long caughtUp = v.anchorSeq();
         assertTrue(caughtUp > boot, "catch-up advanced anchorSeq " + boot + " -> " + caughtUp);
 
+        // While latched, V advertises its FROZEN bootAnchorSeq (not the caught-up value), so peers do not
+        // witness it above bootAnchorSeq and reflect a phantom rollback. The peer-majority boot gate then
+        // clears cleanly.
         c.settle(6);
         assertNull(v.rollback, "a healthy node catching up during boot must NOT be flagged as a rollback");
         assertTrue(v.raft.votingClearedForTest(),
                 "the caught-up healthy node clears its boot gate (no brick on rolling restart)");
+    }
+
+    // ---------------------------------------------------------------------------------------------
+    // 9c. DEFAULT (fast-vote) FAILOVER: a running survivor grants a vote IMMEDIATELY with a peer down,
+    //     so a leader can be re-elected on a single fault. This is the failover the CI smoke test caught
+    //     full-strict-default deadlocking (strict-VOTE would defer voteGranted until a peer-majority ack).
+    // ---------------------------------------------------------------------------------------------
+
+    @Test
+    void defaultFastVote_survivorGrantsImmediatelyWithPeerDown_failoverWorks(@TempDir Path base) {
+        Cluster c = new Cluster(base, false); // fast-vote default (strictVote=false)
+        Node v = c.add(V, Set.of(X, P));
+        c.add(X, Set.of(V, P));
+        Node p = c.add(P, Set.of(V, X));
+        c.settle(6);
+        assertTrue(v.raft.votingClearedForTest(), "the running survivor cleared its boot gate while healthy");
+
+        // The leader P is killed. A survivor (X) campaigns at a new term; V must grant IMMEDIATELY even
+        // though P is down - fast-vote does NOT defer voteGranted, so failover is not blocked on the dead
+        // peer. (A running survivor's boot gate already cleared, so it is unaffected by the peer-majority
+        // BOOT rule.)
+        p.down = true;
+        v.sent.clear();
+        v.raft.handleMessage(voteReq(5, X));
+        assertTrue(v.grantedVoteTo(X),
+                "fast-vote default: a survivor grants immediately with a peer down (single-fault failover works)");
     }
 
     // ---------------------------------------------------------------------------------------------
