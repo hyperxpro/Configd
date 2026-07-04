@@ -1626,9 +1626,10 @@ public final class ConfigdServer {
         Storage groupStorage = (shardCount == 1)
                 ? nodeStorage
                 : Storage.file(dataDir.resolve("shard-" + groupId));
-        // The node-level keyed integrity envelope authenticates this group's WAL + snapshot; the
-        // groupId is stamped as the envelope scopeId (cross-shard-splice defense) and asserted on
-        // recovery. At N=1 groupId=0. RaftNode threads this same gid to its DurableRaftState.
+        // The node-level keyed integrity envelope authenticates this group's WAL + snapshot + merged
+        // anchor; the groupId is stamped as the envelope scopeId (cross-shard-splice defense) and
+        // asserted on recovery. At N=1 groupId=0. The RaftLog builds its dual-slot raft-anchor in this
+        // storage's directory (subsuming raft.persistent_state + snapshot-meta).
         RaftLog raftLog = new RaftLog(groupStorage, raftIntegrity, groupId);
 
         ConfigSnapshot initialSnapshot = new ConfigSnapshot(
@@ -1666,6 +1667,17 @@ public final class ConfigdServer {
         RaftNode raftNode = new RaftNode(
                 raftConfig, raftLog, transport, stateMachine,
                 groupRandom, groupStorage, raftInvariantChecker, raftIntegrity);
+
+        // Fail-closed durability (fsyncgate): a WAL- or anchor-fsync that throws means the durable
+        // advance did not happen, so the node must not commit/ack and must stop. Halt (not exit) so no
+        // shutdown hook runs another fsync that could falsely "succeed" after Linux marked the failed
+        // page clean. Restart rebuilds from the durable WAL/anchor.
+        raftNode.setDurabilityFailureHandler((seam, cause) -> {
+            LOG.log(Level.SEVERE, "durability fsync failed at seam '" + seam + "' for raft group "
+                    + groupId + " - the durable advance did not happen; halting to avoid re-acking"
+                    + " lost state (fsyncgate)", cause);
+            Runtime.getRuntime().halt(70);
+        });
 
         // Group commit (per group): dispatch the flush onto the group's CURRENT owner via the driver
         // (rehoming-aware; DORMANT in prod -> always the static floorMod owner). Identical to the prior

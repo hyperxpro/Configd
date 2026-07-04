@@ -43,17 +43,32 @@ final class ChainedWal {
     /**
      * A stateful writer that appends properly-chained committed records to a {@link Storage}'s
      * {@code raft-log} WAL under a fixed scope, tracking the running chain head exactly as RaftLog does.
+     * <p>
+     * It also lays down a matching {@code raft-anchor} beside the WAL, maintaining the anchor invariants
+     * exactly as {@link RaftLog} does on append - {@code currentTerm} rises to the appended term (a
+     * standalone term write) and {@code lastDurableIndex/Term} tracks the head. So a WELL-FORMED crafted
+     * WAL recovers cleanly (the anchor is consistent), while a crafted ATTACK (a tail rolled back to an
+     * older term, a front truncation) trips an anchor gate - which is exactly what Gate 3 exists to
+     * catch. Tests that simulate a compaction call {@link #setSnapshot} (replacing the removed bare
+     * {@code raft-log.snapshot-meta}).
      */
     static final class Writer {
         private final Storage storage;
         private final IntegrityEnvelope env;
         private final int gid;
         private byte[] chainHead = GENESIS.clone();
+        private final AnchorFile anchor;
 
         Writer(Storage storage, IntegrityEnvelope env, int gid) {
             this.storage = storage;
             this.env = env;
             this.gid = gid;
+            this.anchor = storage.storageDirectory().isPresent()
+                    ? AnchorFile.openInDirectory(storage.storageDirectory().get(), gid, env)
+                    : AnchorFile.openOverStorage(storage, gid, env);
+            if (!anchor.existedAtOpen()) {
+                anchor.bootstrapFresh();
+            }
         }
 
         /** Appends a chained record and returns its hash (the new chain head). */
@@ -61,7 +76,21 @@ final class ChainedWal {
             byte[] payload = inner(index, term, chainHead, command.getBytes(StandardCharsets.UTF_8));
             storage.appendToLog("raft-log", env.wrap(RaftArtifactMagic.WALE_MAGIC, gid, payload));
             chainHead = sha256(payload);
+            // Maintain the anchor exactly as RaftLog's durable append does: a standalone term write when
+            // the term rises, then the durable-head raise. This keeps the anchor consistent with the
+            // well-formed prefix so a later crafted attack (tail rollback / front truncation) is the
+            // thing an anchor gate refuses.
+            if (term > anchor.current().currentTerm()) {
+                anchor.writeTermVote(term, AnchorRecord.VOTED_FOR_NULL);
+            }
+            anchor.writeDurableHead(index, term);
             return chainHead;
+        }
+
+        /** Sets the anchor's authenticated snapshot boundary (replaces the removed bare snapshot-meta). */
+        void setSnapshot(long snapshotIndex, long snapshotTerm) {
+            anchor.writeSnapshot(snapshotIndex, snapshotTerm,
+                    anchor.current().lastDurableIndex(), anchor.current().lastDurableTerm());
         }
 
         byte[] chainHead() {

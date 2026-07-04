@@ -11,7 +11,7 @@ import static org.junit.jupiter.api.Assertions.*;
 
 /**
  * Discriminating boundary/guard tests for the small safety-kernel classes
- * ({@link ClusterConfig}, {@link ReadIndexState}, {@link DurableRaftState}).
+ * ({@link ClusterConfig}, {@link ReadIndexState}).
  * <p>
  * These classes already had behavioral tests, but a
  * handful of boundaries went untested because the existing tests exercised the
@@ -158,84 +158,4 @@ class KernelBoundaryUnitTest {
         }
     }
 
-    // DurableRaftState term-monotonicity boundary
-
-    @Nested
-    class DurableTermBoundary {
-
-        @Test
-        void equalTermIsNoOpButLowerThrows() {
-            // Kills setTerm L71 ConditionalsBoundary (`newTerm < currentTerm`):
-            // strictly-lower throws; EQUAL term must NOT throw (it is a no-op).
-            DurableRaftState state = new DurableRaftState(Storage.inMemory());
-            state.setTerm(5);
-            assertThrows(IllegalArgumentException.class, () -> state.setTerm(4));
-            assertDoesNotThrow(() -> state.setTerm(5)); // equal -> no-op
-            assertEquals(5, state.currentTerm());
-        }
-
-        @Test
-        void advancingTermClearsVoteOnlyOnStrictIncrease() {
-            // Kills setTerm L75 ConditionalsBoundary (`newTerm > currentTerm`):
-            // a strict increase clears the vote and bumps the term; setting the SAME
-            // term must NOT clear the existing vote.
-            DurableRaftState state = new DurableRaftState(Storage.inMemory());
-            state.setTerm(2);
-            state.vote(N1);
-            assertEquals(N1, state.votedFor());
-
-            state.setTerm(2); // same term -> vote preserved
-            assertEquals(N1, state.votedFor(), "same-term setTerm must not clear the vote");
-
-            state.setTerm(3); // strict increase -> vote cleared
-            assertNull(state.votedFor(), "term advance must clear the per-term vote");
-            assertEquals(3, state.currentTerm());
-        }
-
-        @Test
-        void termAndVoteSurviveReload() {
-            // Kills load L146 (votedForId == NULL sentinel): a persisted (term, vote)
-            // must reload with a NON-null votedFor.
-            Storage storage = Storage.inMemory();
-            DurableRaftState s1 = new DurableRaftState(storage);
-            s1.setTerm(7);
-            s1.vote(N2);
-
-            DurableRaftState s2 = new DurableRaftState(storage);
-            assertEquals(7, s2.currentTerm());
-            assertEquals(N2, s2.votedFor());
-
-            DurableRaftState fresh = new DurableRaftState(Storage.inMemory());
-            assertEquals(0, fresh.currentTerm());
-            assertNull(fresh.votedFor());
-        }
-
-        @Test
-        void reloadDistinguishesNullVoteFromRealVote() {
-            // Kills load L146 EQUAL_ELSE (`votedForId == VOTED_FOR_NULL`): a state
-            // with a term but NO vote must reload votedFor == null, while a state with
-            // a vote must reload it non-null. If the equality were removed, the null
-            // sentinel (-1) would be turned into NodeId.of(-1) instead of null.
-            Storage storage = Storage.inMemory();
-            DurableRaftState s1 = new DurableRaftState(storage);
-            s1.setTerm(4); // advancing term clears any vote -> votedFor null, term 4 persisted
-            assertNull(s1.votedFor());
-
-            DurableRaftState reloaded = new DurableRaftState(storage);
-            assertEquals(4, reloaded.currentTerm());
-            assertNull(reloaded.votedFor(), "a persisted null vote must reload as null");
-        }
-
-        @Test
-        void shortPersistedBlobLoadsAsFreshState() {
-            // Kills load L138 ORDER_ELSE (`data.length < 12`): a present-but-too-short
-            // blob must be treated as fresh (term 0, null vote), not parsed as a valid
-            // 12-byte record.
-            Storage storage = Storage.inMemory();
-            storage.put("raft.persistent_state", new byte[]{1, 2, 3}); // 3 bytes < 12
-            DurableRaftState state = new DurableRaftState(storage);
-            assertEquals(0, state.currentTerm());
-            assertNull(state.votedFor());
-        }
-    }
 }

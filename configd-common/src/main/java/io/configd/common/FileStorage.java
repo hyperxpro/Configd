@@ -387,4 +387,11 @@ public final class FileStorage implements Storage {
             throw new UncheckedIOException("Failed to sync directory: " + directory, e);
         }
     }
+
+    @Override
+    public java.util.Optional<java.nio.file.Path> storageDirectory() {
+        // The real directory the WAL lives in, so the per-shard raft-anchor can be a dedicated
+        // dual-slot file next to it on the same device.
+        return java.util.Optional.of(directory);
+    }
 }

@@ -45,9 +45,12 @@ public final class RaftNode {
     private final StateMachine stateMachine;
     private final RandomGenerator random;
 
-    // Persistent state, on all servers. Backed by DurableRaftState for crash safety (Raft section 5.2).
-    // The in-memory fields mirror the durable state for fast access.
-    private final DurableRaftState durableState; // null when using legacy in-memory mode
+    // Persistent state, on all servers (Raft section 5.2). currentTerm/votedFor are now MERGED into
+    // the per-shard anchor that the log owns (raft.persistent_state is removed): the in-memory fields
+    // below are seeded from log.recoveredCurrentTerm()/recoveredVotedForId() at construction and every
+    // mutation persists through log.persistTermVote(...) BEFORE the in-memory update (persist-before-
+    // memory, a standalone anchor fsync). On the in-memory log ({@code log.anchor()==null}) they live
+    // only in memory, with no cross-restart durability.
     private long currentTerm;
     private NodeId votedFor;     // null if not voted in current term
 
@@ -250,6 +253,38 @@ public final class RaftNode {
         this.groupCommitLingerMicros = lingerMicros;
     }
 
+    /**
+     * Installs the fail-closed durability handler (the production server wires an exiting one; the
+     * default fails loud by throwing). Set once at wiring, before the node runs.
+     */
+    public void setDurabilityFailureHandler(DurabilityFailureHandler handler) {
+        this.durabilityFailureHandler = Objects.requireNonNull(handler, "handler");
+    }
+
+    /** Count of WAL/anchor fsync failures that tripped the fail-closed policy (metric source). */
+    public long durabilityFsyncFailures() {
+        return durabilityFsyncFailures;
+    }
+
+    /**
+     * Runs a durable barrier op (WAL fsync / anchor write) under the fsyncgate fail-closed policy. An
+     * op that throws {@link UncheckedIOException} means the fsync failed, so no durable advance
+     * happened - this counts the fault and hands off to the {@link DurabilityFailureHandler}, which
+     * panics (default) or exits (production). Because the throw happens inside the barrier, BEFORE the
+     * caller advances durableIndex / commit / matchIndex, no-durable-advance and no-ack are structural.
+     */
+    private void durablyOrPanic(String seam, Runnable barrier) {
+        try {
+            barrier.run();
+        } catch (java.io.UncheckedIOException e) {
+            durabilityFsyncFailures++;
+            durabilityFailureHandler.onDurabilityFailure(seam, e);
+            // A well-behaved handler does not return (it panics/exits); if one does, still abort the
+            // cycle rather than proceed on state that is not durable.
+            throw e;
+        }
+    }
+
     /** A pending commit-outcome callback bound to a proposed {@code (index, term)}. */
     private record PendingCommit(long term, java.util.function.Consumer<CommitOutcome> callback) {}
 
@@ -287,6 +322,38 @@ public final class RaftNode {
     }
 
     private final InvariantChecker invariantChecker;
+
+    /**
+     * The fsyncgate fail-closed policy handler. A WAL-fsync or anchor-fsync that throws (or is
+     * detected to have lied) means the durable advance did not happen; the node MUST NOT advance
+     * {@code durableIndex}, commit, or ack, and MUST stop - a step-down-but-alive node could re-ack
+     * lost state (on Linux a failed fsync can mark dirty pages clean, so a later fsync falsely
+     * "succeeds"). The only sound response is to panic and rebuild from the durable WAL/anchor on
+     * restart. The {@linkplain #DEFAULT default} fails loud by throwing {@link DurabilityPanicException}
+     * (safe for tests and embeddings); the production wiring installs a handler that logs SEVERE and
+     * exits the process.
+     */
+    @FunctionalInterface
+    public interface DurabilityFailureHandler {
+        void onDurabilityFailure(String seam, Throwable cause);
+
+        DurabilityFailureHandler DEFAULT = (seam, cause) -> {
+            throw new DurabilityPanicException(seam, cause);
+        };
+    }
+
+    /** Thrown by the default {@link DurabilityFailureHandler} to abort a cycle whose fsync failed. */
+    public static final class DurabilityPanicException extends RuntimeException {
+        DurabilityPanicException(String seam, Throwable cause) {
+            super("durability fsync failed at seam '" + seam + "' - panicking (no durable advance)", cause);
+        }
+    }
+
+    /** Pluggable fail-closed handler; the production server installs an exiting one. */
+    private DurabilityFailureHandler durabilityFailureHandler = DurabilityFailureHandler.DEFAULT;
+
+    /** Count of WAL/anchor fsync failures that tripped the fail-closed policy (metric source). */
+    private long durabilityFsyncFailures;
 
     // Owner-thread tripwire. Inert until an owner is explicitly bound via bindOwnerThread();
     // existing single-threaded tests never bind, so this is a zero-behaviour-change addition.
@@ -333,17 +400,18 @@ public final class RaftNode {
     }
 
     /**
-     * Creates a new RaftNode with an explicit at-rest integrity codec for the
-     * durable Raft state. The server passes a keyed
-     * {@link io.configd.common.IntegrityEnvelope} so a forged {@code votedFor} is
-     * refused on load; the other constructors default to keyless (unchanged
-     * behavior for tests and in-memory mode).
+     * Creates a new RaftNode with an explicit at-rest integrity codec.
      * <p>
-     * Note: the snapshot/WAL integrity codec is carried by {@code log} (it was
-     * constructed with the same envelope by the caller); this parameter only wires
-     * the {@link DurableRaftState} envelope, which RaftNode owns.
+     * Since the frozen-format merge, {@code currentTerm}/{@code votedFor} live in the per-shard
+     * anchor that the {@code log} owns (the standalone {@code raft.persistent_state} is removed), so
+     * RaftNode seeds them from {@link RaftLog#recoveredCurrentTerm()}/{@link RaftLog#recoveredVotedForId()}
+     * and persists every change through {@link RaftLog#persistTermVote(long, int)}. The {@code storage}
+     * and {@code integrity} parameters are retained for wiring compatibility (the log was already
+     * constructed with the same storage + envelope, which back the anchor) but are no longer read for
+     * Raft state here.
      *
-     * @param integrity the at-rest integrity codec for {@code raft.persistent_state}
+     * @param integrity the at-rest integrity codec (retained for compatibility; the anchor uses the
+     *                  same envelope the log was built with)
      */
     public RaftNode(RaftConfig config, RaftLog log, RaftTransport transport,
                     StateMachine stateMachine, RandomGenerator random,
@@ -362,13 +430,11 @@ public final class RaftNode {
         this.electionTimeoutMaxTicks = config.electionTimeoutMaxTicks();
         this.heartbeatTimeoutTicks = config.heartbeatIntervalTicks();
 
-        // Load persisted state (currentTerm, votedFor) from durable storage. The persistent-state
-        // artifact is per-group, so it carries the SAME scopeId as the log's WAL/snapshot - taken
-        // from the log's gid, the single source of this group's scope.
-        this.durableState = new DurableRaftState(Objects.requireNonNull(storage, "storage"),
-                Objects.requireNonNull(integrity, "integrity"), log.gid());
-        this.currentTerm = durableState.currentTerm();
-        this.votedFor = durableState.votedFor();
+        // Seed currentTerm/votedFor from the log's merged anchor (the recovery gates already ran in
+        // the RaftLog constructor). On the in-memory log these are 0 / null.
+        int recoveredVote = log.recoveredVotedForId();
+        this.currentTerm = log.recoveredCurrentTerm();
+        this.votedFor = (recoveredVote == AnchorRecord.VOTED_FOR_NULL) ? null : NodeId.of(recoveredVote);
         this.role = RaftRole.FOLLOWER;
         this.leaderId = null;
 
@@ -736,6 +802,11 @@ public final class RaftNode {
         // sequence would silently lose all committed state at/below appliedIndex. The
         // persist-then-compact ordering guarantees a complete prefix (persisted snapshot
         // OR intact WAL) is on durable storage at every instant.
+        // Compaction is OFF the ack path and is recoverable: persist-before-truncate keeps the WAL
+        // prefix intact if the blob write throws (ENOSPC), so the failure SURFACES (UncheckedIOException)
+        // and the snapshot simply aborts - it must NOT panic. A crash/failure after the WAL rewrite but
+        // before the anchor's snapshot advance is reconciled at recovery (the WAL-ahead snapshot
+        // accept-forward), so a lagging snapshot anchor is safe.
         log.persistSnapshot(snapshot);
         latestSnapshot = snapshot;
         log.compact(appliedIndex, appliedTerm);
@@ -1242,8 +1313,11 @@ public final class RaftNode {
         byte[] configEntry = serializeConfigChange(jointConfig);
         long newIndex = log.lastIndex() + 1;
         LogEntry entry = new LogEntry(newIndex, currentTerm, configEntry);
-        log.append(entry);                 // durable control entry (appendNoSync + syncWal)
-        durableIndex = log.lastIndex();    // synced - the leader may count it toward the quorum (gating)
+        // Durable control entry: appendNoSync + WAL syncWal + the anchor head raise, all under the
+        // fail-closed policy, BEFORE durableIndex advances (INV-ANCHOR-ACK: the leader counts this
+        // toward the quorum only once the covering anchor is fsync'd).
+        durablyOrPanic("leader-append", () -> log.append(entry));
+        durableIndex = log.lastIndex();    // synced + anchored - the leader may count it (gating)
 
         // Initialize tracking for any new peers added by this config change
         for (NodeId peer : clusterConfig.peersOf(config.nodeId())) {
@@ -1603,8 +1677,15 @@ public final class RaftNode {
         electionTicksElapsed = 0;
         leaderId = req.leaderId();
 
-        // Attempt to append entries
-        boolean success = log.appendEntries(req.prevLogIndex(), req.prevLogTerm(), req.entries());
+        // Attempt to append entries. appendEntries does the W-fsync + the anchor head raise (and, on a
+        // conflict, the anchor lower-before-rewrite) internally, so the matchIndex this follower is
+        // about to ACK is already anchor-covered (INV-ANCHOR-ACK follower). A fsync fault here panics
+        // under the fail-closed policy BEFORE any ACK is sent. A plain false is a consistency-check
+        // mismatch (not a durability failure) and returns a negative ACK as before.
+        boolean[] appended = {false};
+        durablyOrPanic("follower-append", () ->
+                appended[0] = log.appendEntries(req.prevLogIndex(), req.prevLogTerm(), req.entries()));
+        boolean success = appended[0];
         if (!success) {
             transport.send(req.leaderId(),
                     new AppendEntriesResponse(currentTerm, false, 0, config.nodeId()));
@@ -1724,7 +1805,9 @@ public final class RaftNode {
         boolean logOk = log.isAtLeastAsUpToDate(req.lastLogTerm(), req.lastLogIndex());
 
         if (canVote && logOk) {
-            durableState.vote(req.candidateId()); // Persist BEFORE in-memory update (Raft section 5.2)
+            // Persist the vote to the anchor BEFORE the in-memory update (Raft section 5.2), a
+            // standalone fsync under the fail-closed policy.
+            durablyOrPanic("vote", () -> log.persistTermVote(currentTerm, req.candidateId().id()));
             votedFor = req.candidateId();
             electionTicksElapsed = 0; // reset timer on granting vote
             transport.send(req.candidateId(),
@@ -1828,7 +1911,9 @@ public final class RaftNode {
      */
     private void becomeFollower(long newTerm) {
         if (newTerm > currentTerm) {
-            durableState.setTerm(newTerm); // Persist BEFORE in-memory update (crash safety)
+            // Advancing the term clears the vote; persist term + cleared vote to the anchor BEFORE
+            // the in-memory update (crash safety), a standalone fsync under the fail-closed policy.
+            durablyOrPanic("term", () -> log.persistTermVote(newTerm, AnchorRecord.VOTED_FOR_NULL));
             currentTerm = newTerm;
             votedFor = null;
         }
@@ -1875,7 +1960,9 @@ public final class RaftNode {
         // Single-node cluster: become leader immediately
         Set<NodeId> peers = clusterConfig.peersOf(config.nodeId());
         if (peers.isEmpty()) {
-            durableState.setTermAndVote(currentTerm + 1, config.nodeId()); // Persist BEFORE in-memory
+            long nextTerm = currentTerm + 1;
+            // Persist the new term + self-vote to the anchor BEFORE the in-memory update.
+            durablyOrPanic("term-vote", () -> log.persistTermVote(nextTerm, config.nodeId().id()));
             currentTerm++;
             votedFor = config.nodeId();
             votesReceived = new HashSet<>();
@@ -1914,7 +2001,9 @@ public final class RaftNode {
             return;
         }
 
-        durableState.setTermAndVote(currentTerm + 1, config.nodeId()); // Persist BEFORE in-memory update
+        long nextTerm = currentTerm + 1;
+        // Persist the new term + self-vote to the anchor BEFORE the in-memory update.
+        durablyOrPanic("term-vote", () -> log.persistTermVote(nextTerm, config.nodeId().id()));
         currentTerm++;
         votedFor = config.nodeId();
         role = RaftRole.CANDIDATE;
@@ -1989,11 +2078,12 @@ public final class RaftNode {
         // Append a no-op entry to commit entries from prior terms (Raft section 5.4.2).
         // This no-op must commit before any config changes can be proposed.
         long noopIndex = log.lastIndex() + 1;
-        log.append(LogEntry.noop(noopIndex, currentTerm)); // durable (appendNoSync + syncWal)
-        // log.append() force-syncs the whole WAL, so the no-op AND every inherited entry
-        // (loaded from WAL / synced as a follower / any tail buffered in a prior leadership
-        // stint) is now durable. Seed durableIndex accordingly before the leader counts
-        // itself in any commit quorum.
+        // Durable (appendNoSync + WAL syncWal + anchor head raise) under the fail-closed policy.
+        durablyOrPanic("leader-append", () -> log.append(LogEntry.noop(noopIndex, currentTerm)));
+        // log.append() force-syncs the whole WAL and raises the anchor, so the no-op AND every
+        // inherited entry (loaded from WAL / synced as a follower / any tail buffered in a prior
+        // leadership stint) is now durable AND anchored. Seed durableIndex accordingly before the
+        // leader counts itself in any commit quorum.
         durableIndex = log.lastIndex();
 
         broadcastAppendEntries();
@@ -2235,7 +2325,10 @@ public final class RaftNode {
         if (target <= durableIndex) {
             return; // already durable - nothing to sync
         }
-        log.syncWal();           // single fsync covers every appendNoSync since the last sync
+        // W-fsync (covering every appendNoSync since the last sync) then the anchor head raise, both
+        // inside syncWal, under the fail-closed policy. durableIndex advances only AFTER both barriers
+        // succeed (INV-ANCHOR-ACK: the leader's self-vote counts only once the anchor covers target).
+        durablyOrPanic("leader-flush", log::syncWal);
         durableIndex = target;   // the leader may now count itself up to here
         maybeAdvanceCommitIndex();
     }
@@ -2387,8 +2480,10 @@ public final class RaftNode {
 
                 byte[] configEntry = serializeConfigChange(newConfig);
                 long newIndex = log.lastIndex() + 1;
-                log.append(new LogEntry(newIndex, currentTerm, configEntry)); // durable control entry
-                durableIndex = log.lastIndex(); // synced - the leader may count it (gating)
+                // Durable control entry (append + WAL syncWal + anchor head raise), fail-closed.
+                durablyOrPanic("leader-append",
+                        () -> log.append(new LogEntry(newIndex, currentTerm, configEntry)));
+                durableIndex = log.lastIndex(); // synced + anchored - the leader may count it (gating)
                 broadcastAppendEntries();
                 maybeAdvanceCommitIndex();
 
@@ -2558,9 +2653,11 @@ public final class RaftNode {
         SnapshotState installed = new SnapshotState(
                 full, req.lastIncludedIndex(), req.lastIncludedTerm(),
                 req.clusterConfigData());
+        // Compaction is OFF the ack path and recoverable (persist-before-truncate); a blob-write ENOSPC
+        // surfaces and aborts the install, and a failure after the WAL rewrite is reconciled at recovery
+        // (WAL-ahead snapshot accept-forward). It must NOT panic.
         log.persistSnapshot(installed);
         latestSnapshot = installed;
-
         // Compact the log up to the snapshot point
         log.compact(req.lastIncludedIndex(), req.lastIncludedTerm());
 

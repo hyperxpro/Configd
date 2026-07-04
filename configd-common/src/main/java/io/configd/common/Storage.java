@@ -76,6 +76,21 @@ public interface Storage {
     void sync();
 
     /**
+     * The real filesystem directory this storage writes into, if it has one. A file-backed
+     * implementation returns it; abstract / in-memory / crash-model implementations return
+     * {@link java.util.Optional#empty()}.
+     * <p>
+     * The per-shard {@code raft-anchor} is a dedicated dual-slot, fixed-offset {@code pwrite}
+     * file (NOT a {@link #put} artifact), so it needs the real directory to sit next to the WAL
+     * on the same device. When this is present the anchor is that real file; when absent (in-memory
+     * or a crash model) the anchor is carried as a single self-durable value through this storage,
+     * so a durability crash model still captures it. The default is empty.
+     */
+    default java.util.Optional<java.nio.file.Path> storageDirectory() {
+        return java.util.Optional.empty();
+    }
+
+    /**
      * Appends data to a named log <b>without</b> fsyncing - the batched (group-commit)
      * counterpart of {@link #appendToLog}. The bytes are buffered/written but are NOT
      * guaranteed durable until a subsequent {@link #syncLog(String)} (or {@link #sync()})
