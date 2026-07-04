@@ -366,10 +366,22 @@ jobs:
             echo "GoldenFixtures.java changed in $DIFF_RANGE:"
             git diff --stat "$DIFF_RANGE" -- "$FIXTURE_PATH"
 
-            if git diff "$DIFF_RANGE" -- "$CODEC_PATH" | grep -qE '^[-+]\s*public\s+static\s+final\s+byte\s+WIRE_VERSION'; then
+            # Distinguish a purely-ADDITIVE change (a golden entry for a NEW MessageType added,
+            # with no existing golden bytes touched) from a MODIFICATION of existing golden bytes.
+            # Adding a new message type within the SAME frame layout is additive by construction -
+            # the frame WIRE_VERSION is unchanged and every existing fixture is byte-identical, so it
+            # is not a wire-format change and needs no WIRE_VERSION bump (ADR-0029 §8.10; the raft
+            # witness types 0x12/0x13 are exactly this case). Only a change/removal of an EXISTING
+            # golden line (a silent wire-byte change) must be paired with a WIRE_VERSION bump. A
+            # deleted content line (^- but not the ^--- file header) means an existing fixture was
+            # touched; zero of them = a pure addition.
+            REMOVED_LINES="$(git diff "$DIFF_RANGE" -- "$FIXTURE_PATH" | grep -E '^-' | grep -vcE '^---' || true)"
+            if [[ "$REMOVED_LINES" -eq 0 ]]; then
+              echo "OK: GoldenFixtures.java change is purely additive (new fixture entries only, no existing golden bytes modified) — an additive MessageType within the frozen frame; no WIRE_VERSION bump required."
+            elif git diff "$DIFF_RANGE" -- "$CODEC_PATH" | grep -qE '^[-+]\s*public\s+static\s+final\s+byte\s+WIRE_VERSION'; then
               echo "OK: FrameCodec.WIRE_VERSION also changed — fixture rebaseline is intentional."
             else
-              echo "::error::GoldenFixtures.java changed but FrameCodec.WIRE_VERSION did not." >&2
+              echo "::error::GoldenFixtures.java MODIFIED existing golden bytes but FrameCodec.WIRE_VERSION did not." >&2
               echo "::error::Either revert the fixture change or bump WIRE_VERSION and update GoldenFixtures (see ADR-0029 §8.10)." >&2
               exit 1
             fi
