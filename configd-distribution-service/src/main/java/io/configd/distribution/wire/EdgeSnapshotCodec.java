@@ -29,6 +29,16 @@ import java.util.List;
  * Per-entry key and value are each capped at {@link #MAX_ENTRY_FIELD_BYTES} (1 MiB,
  * matching {@code CommandCodec.MAX_VALUE_SIZE} and the state machine's snapshot caps),
  * so a pathological snapshot cannot produce an entry the receiver would reject.
+ *
+ * <h2>Carrier-versioned</h2>
+ * The snapshot body carries no format version of its own; it is versioned by the
+ * enclosing edge frame version (the {@code SNAPSHOT_BEGIN / SNAPSHOT_CHUNK* /
+ * SNAPSHOT_END} frames are self-versioned). The body's leading {@code u64} is the
+ * snapshot's DATA sequence ({@code ConfigSnapshot.version()}), NOT a format version -
+ * it identifies which snapshot this is, not how to parse it. The body is intentionally
+ * trailer-less: the edge decodes it via {@link #deserialize} (which needs no trailer),
+ * distinct from the durable state-machine snapshot, which appends a mandatory
+ * magic-TLV trailer that {@code ConfigStateMachine.restoreSnapshot} requires.
  */
 public final class EdgeSnapshotCodec {
 
@@ -78,7 +88,7 @@ public final class EdgeSnapshotCodec {
         }
 
         ByteBuffer buf = ByteBuffer.allocate((int) size);
-        buf.putLong(snapshot.version());
+        buf.putLong(snapshot.version()); // lead u64 = DATA sequence (which snapshot), not a format version
         buf.putInt(keys.size());
         for (int i = 0; i < keys.size(); i++) {
             byte[] k = keys.get(i);

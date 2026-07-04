@@ -8,17 +8,19 @@ import java.util.zip.CRC32C;
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * Wire-format invariants for the 8-byte reserved epoch field in {@link FrameCodec}.
  *
- * <p>Three properties pin the dormant-but-correct reservation:
+ * <p>Three properties pin the frozen reservation:
  * <ol>
  *   <li><b>MBZ on send</b> - the encoder writes 8 zero bytes for the epoch (offset 18..25), for both
  *       the array and the {@link ByteBuffer} overload.</li>
- *   <li><b>Ignored on receive</b> - a frame whose epoch bytes are NON-zero (a hypothetical future
- *       v2.x sender that populates the field) still decodes cleanly to the same logical {@link
- *       FrameCodec.Frame}, so activating epoch later needs no further wire bump (forward-compatible).</li>
+ *   <li><b>Rejected on receive</b> - the reserved field is MBZ, so a frame whose epoch bytes are
+ *       NON-zero is refused (fail closed). Under the freeze no legitimate peer sets the field, so a
+ *       non-zero value that survived the CRC is a newer peer this reader cannot safely interpret.</li>
  *   <li><b>Byte-identity except the sanctioned diff</b> - a v2 frame, with its version byte reset to
  *       0x01 and the 8 reserved epoch bytes spliced out (length + CRC fixed), is byte-for-byte the
  *       canonical v1 frame. i.e. v2 == v1 + version-bump + reserved-epoch, and <em>nothing else</em>.</li>
@@ -68,9 +70,10 @@ class FrameCodecEpochReservationTest {
     }
 
     @Test
-    void decodeIgnoresNonZeroEpoch_forwardCompatible() {
-        // Forge a frame whose reserved epoch bytes are NON-zero (a future v2.x sender), with a valid
-        // CRC, and assert it still decodes to the same logical frame - the decode-but-ignore contract.
+    void decodeRejectsNonZeroEpoch() {
+        // Frozen ruling: the reserved epoch is MBZ and the decoder REJECTS a non-zero value (fail
+        // closed) rather than ignoring it. Forge a frame whose epoch bytes are non-zero, with a
+        // valid CRC (so the MBZ check, not the checksum, is what fires), and assert decode refuses it.
         byte[] frame = FrameCodec.encode(MessageType.REQUEST_VOTE, GROUP_ID, TERM, PAYLOAD);
         for (int i = EPOCH_OFFSET; i < EPOCH_OFFSET + EPOCH_SIZE; i++) {
             frame[i] = (byte) 0xFF; // populate the reserved field
@@ -84,12 +87,11 @@ class FrameCodecEpochReservationTest {
         // Sanity: the epoch really is non-zero now.
         assertNotEquals(0L, ByteBuffer.wrap(frame, EPOCH_OFFSET, EPOCH_SIZE).getLong());
 
-        FrameCodec.Frame decoded = FrameCodec.decode(frame);
-        assertEquals(MessageType.REQUEST_VOTE, decoded.messageType());
-        assertEquals(GROUP_ID, decoded.groupId());
-        assertEquals(TERM, decoded.term());
-        assertArrayEquals(PAYLOAD, decoded.payload(),
-                "a non-zero reserved epoch must be ignored, not corrupt the payload boundary");
+        IllegalArgumentException ex = assertThrows(IllegalArgumentException.class,
+                () -> FrameCodec.decode(frame),
+                "a non-zero reserved epoch must be refused (MBZ, fail closed)");
+        assertTrue(ex.getMessage().contains("epoch"),
+                "the rejection must name the reserved epoch, got: " + ex.getMessage());
     }
 
     @Test

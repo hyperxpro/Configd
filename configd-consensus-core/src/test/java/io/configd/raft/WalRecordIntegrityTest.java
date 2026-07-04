@@ -4,6 +4,7 @@ import io.configd.common.IntegrityEnvelope;
 import io.configd.common.IntegrityException;
 import io.configd.common.NodeId;
 import io.configd.common.Storage;
+import io.configd.common.WalContainer;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -14,7 +15,7 @@ import java.nio.file.StandardOpenOption;
 import java.util.Map;
 import java.util.Set;
 import java.util.random.RandomGenerator;
-import java.util.zip.CRC32;
+import java.util.zip.CRC32C;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -24,9 +25,9 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * Verifies at-rest integrity of the WAL records, and the
  * critical TORN-vs-TAMPER disambiguation (D-1 condition 3).
  * <ul>
- *   <li><b>Tamper:</b> a COMPLETE, FileStorage-CRC32-valid WAL frame whose inner
+ *   <li><b>Tamper:</b> a COMPLETE, FileStorage-CRC32C-valid WAL frame whose inner
  *       integrity envelope HMAC fails - replay REFUSES (throws). A write-access
- *       attacker recomputes the per-frame CRC32 trivially (CRC32 is corruption-only,
+ *       attacker recomputes the per-frame CRC32C trivially (the frame CRC is corruption-only,
  *       not authentication), so the HMAC is the control that catches them.</li>
  *   <li><b>Torn:</b> a genuinely truncated trailing record (a partial frame from a
  *       crash mid-append) is dropped by FileStorage's torn-tail rule BEFORE the
@@ -118,14 +119,15 @@ class WalRecordIntegrityTest {
     // helpers
 
     /**
-     * Walks the {@code [len][data][crc32]} FileStorage frames, flips the first
-     * {@code from} byte inside a frame's integrity-envelope PAYLOAD (skipping the
-     * envelope header so we tamper the protected bytes, not the magic), and rewrites
-     * that frame's trailing CRC32 so FileStorage.readLog accepts it - leaving only
-     * the inner envelope HMAC able to detect the tamper.
+     * Walks the {@code [len][data][crc32c]} FileStorage frames (after the 8-byte container header),
+     * flips the first {@code from} byte inside a frame's integrity-envelope PAYLOAD (skipping the
+     * envelope header so we tamper the protected bytes, not the magic), and rewrites that frame's
+     * trailing CRC32C so FileStorage.readLog accepts it - leaving only the inner envelope HMAC able
+     * to detect the tamper.
      */
     private static void tamperWalRecomputingFrameCrc(byte[] wal, byte from, byte to) {
         ByteBuffer buf = ByteBuffer.wrap(wal);
+        buf.position(WalContainer.HEADER_SIZE); // frames begin after the container header
         while (buf.remaining() >= 8) {
             int len = buf.getInt();
             if (len < 0 || buf.remaining() < len + 4) {
@@ -148,7 +150,7 @@ class WalRecordIntegrityTest {
             int crcPos = buf.position();
             buf.getInt(); // skip stored crc
             if (flipped) {
-                CRC32 crc = new CRC32();
+                CRC32C crc = new CRC32C();
                 crc.update(wal, dataStart, len);
                 ByteBuffer.wrap(wal).putInt(crcPos, (int) crc.getValue());
                 return;

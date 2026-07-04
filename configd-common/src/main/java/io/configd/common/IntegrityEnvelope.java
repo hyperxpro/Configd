@@ -296,6 +296,16 @@ public final class IntegrityEnvelope {
             return null;
         }
 
+        // Verify CRC32C FIRST, before any version-dependent read. The CRC is a fixed
+        // trailer over a fixed range, so it needs no version to locate or compute; running
+        // it first means a bit-flip anywhere in the header (magic already matched, but the
+        // version/algId/reserved bytes, payload, or MAC) surfaces as a clear corruption
+        // error rather than a misleading "unsupported version". The version is then read
+        // from CRC-validated bytes. This is the FrameCodec discipline (CRC at :285-296,
+        // then version at :300-303) applied uniformly to every posture, GCM included.
+        int crcOffset = enveloped.length - CRC_SIZE;
+        verifyCrc32c(expectedMagic, enveloped, crcOffset);
+
         short formatVersion = buf.getShort();
         if (formatVersion != FORMAT_VERSION) {
             throw new IntegrityException(
@@ -306,9 +316,19 @@ public final class IntegrityEnvelope {
         byte algId = buf.get();
         byte reserved = buf.get(); // folded into the MAC input below
 
+        // The reserved byte is MUST-be-zero: it is the pre-agreed forward-compat escape
+        // slot. Rejecting a non-zero value fails closed in EVERY posture (keyless too,
+        // where the MAC does not cover it), so a future writer that assigns it meaning can
+        // never be silently mis-parsed by a v1 reader.
+        if (reserved != 0) {
+            throw new IntegrityException("integrity envelope reserved byte must be zero (found "
+                    + (reserved & 0xFF) + ") for magic 0x" + Integer.toHexString(expectedMagic));
+        }
+
         // Layer C: an AES-256-GCM record has a different body layout (keyTerm/segmentId/
         // nonce/ciphertext instead of payload/MAC), so it is handled by its own reader,
-        // which fails closed on a bad tag, an unknown key term, or truncation.
+        // which fails closed on a bad tag, an unknown key term, or truncation. The CRC is
+        // already verified above, so that reader trusts the bytes preceding the tag.
         if (algId == ALG_AES256_GCM) {
             return unwrapEncrypted(expectedMagic, enveloped);
         }
@@ -338,20 +358,6 @@ public final class IntegrityEnvelope {
                     + Integer.toHexString(expectedMagic) + " (length " + enveloped.length + ")");
         }
 
-        // Verify CRC32C FIRST (over everything preceding the trailer). A bit-flip in
-        // any header field, payload, or MAC surfaces as a clear corruption error.
-        int crcOffset = enveloped.length - CRC_SIZE;
-        CRC32C crc = new CRC32C();
-        crc.update(enveloped, 0, crcOffset);
-        int computedCrc = (int) crc.getValue();
-        int storedCrc = ByteBuffer.wrap(enveloped, crcOffset, CRC_SIZE).getInt();
-        if (computedCrc != storedCrc) {
-            throw new IntegrityException("integrity CRC32C mismatch for magic 0x"
-                    + Integer.toHexString(expectedMagic)
-                    + " (computed=0x" + Integer.toHexString(computedCrc)
-                    + ", stored=0x" + Integer.toHexString(storedCrc) + ")");
-        }
-
         byte[] payload = Arrays.copyOfRange(enveloped, HEADER_SIZE, HEADER_SIZE + payloadLen);
 
         if (macLen > 0) {
@@ -373,6 +379,23 @@ public final class IntegrityEnvelope {
         }
 
         return payload;
+    }
+
+    /**
+     * Verifies the CRC32C trailer over {@code [0, crcOffset)} before any version-dependent
+     * read. Throws {@link IntegrityException} on mismatch (corruption / bit-flip).
+     */
+    private static void verifyCrc32c(int expectedMagic, byte[] enveloped, int crcOffset) {
+        CRC32C crc = new CRC32C();
+        crc.update(enveloped, 0, crcOffset);
+        int computedCrc = (int) crc.getValue();
+        int storedCrc = ByteBuffer.wrap(enveloped, crcOffset, CRC_SIZE).getInt();
+        if (computedCrc != storedCrc) {
+            throw new IntegrityException("integrity CRC32C mismatch for magic 0x"
+                    + Integer.toHexString(expectedMagic)
+                    + " (computed=0x" + Integer.toHexString(computedCrc)
+                    + ", stored=0x" + Integer.toHexString(storedCrc) + ")");
+        }
     }
 
     /** HMAC-SHA-256 over: magic, formatVersion, algId, reserved, payload (in that order). */
@@ -450,19 +473,9 @@ public final class IntegrityEnvelope {
                     + ", min " + ENC_MIN_SIZE + ") for magic 0x" + Integer.toHexString(expectedMagic));
         }
 
-        // Layer A: CRC32C over everything preceding the trailer (corruption / bit-flip surfaces here).
+        // CRC32C (corruption / bit-flip) has already been verified by unwrapOrNull before it
+        // dispatched here, so the prefix fields below are read from CRC-validated bytes.
         int crcOffset = enveloped.length - CRC_SIZE;
-        CRC32C crc = new CRC32C();
-        crc.update(enveloped, 0, crcOffset);
-        int computedCrc = (int) crc.getValue();
-        int storedCrc = ByteBuffer.wrap(enveloped, crcOffset, CRC_SIZE).getInt();
-        if (computedCrc != storedCrc) {
-            throw new IntegrityException("AES-256-GCM envelope CRC32C mismatch for magic 0x"
-                    + Integer.toHexString(expectedMagic)
-                    + " (computed=0x" + Integer.toHexString(computedCrc)
-                    + ", stored=0x" + Integer.toHexString(storedCrc) + ")");
-        }
-
         ByteBuffer buf = ByteBuffer.wrap(enveloped);
         buf.position(HEADER_SIZE); // skip magic/formatVersion/algId/reserved (already validated)
         int keyTerm = buf.getInt();

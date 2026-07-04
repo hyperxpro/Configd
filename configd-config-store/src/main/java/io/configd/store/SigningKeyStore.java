@@ -2,10 +2,11 @@ package io.configd.store;
 
 import java.io.IOException;
 import java.nio.ByteBuffer;
+import java.nio.channels.FileChannel;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
 import java.nio.file.StandardOpenOption;
-import java.nio.file.attribute.PosixFilePermission;
 import java.nio.file.attribute.PosixFilePermissions;
 import java.security.GeneralSecurityException;
 import java.security.KeyFactory;
@@ -13,7 +14,6 @@ import java.security.KeyPair;
 import java.security.KeyPairGenerator;
 import java.security.spec.PKCS8EncodedKeySpec;
 import java.security.spec.X509EncodedKeySpec;
-import java.util.EnumSet;
 import java.util.UUID;
 
 /**
@@ -26,7 +26,7 @@ import java.util.UUID;
  * <p>
  * <b>File format</b> (v1):
  * <pre>
- *   [4 bytes: magic 0xC0DF51G5]
+ *   [4 bytes: magic 0xC0DF_51C5]
  *   [2 bytes: version = 1]
  *   [16 bytes: key-id (random UUID big-endian most / least)]
  *   [4 bytes: private key DER length] [private key DER (PKCS#8)]
@@ -112,44 +112,39 @@ public final class SigningKeyStore {
         KeyPair keyPair = gen.generateKeyPair();
         UUID keyId = UUID.randomUUID();
 
-        byte[] privBytes = keyPair.getPrivate().getEncoded();
-        byte[] pubBytes = keyPair.getPublic().getEncoded();
-
-        int size = 4 + 2 + 16 + 4 + privBytes.length + 4 + pubBytes.length;
-        ByteBuffer buf = ByteBuffer.allocate(size);
-        buf.putInt(MAGIC);
-        buf.putShort(VERSION);
-        buf.putLong(keyId.getMostSignificantBits());
-        buf.putLong(keyId.getLeastSignificantBits());
-        buf.putInt(privBytes.length);
-        buf.put(privBytes);
-        buf.putInt(pubBytes.length);
-        buf.put(pubBytes);
+        byte[] encoded = encode(keyPair, keyId);
 
         Path parent = path.toAbsolutePath().getParent();
         if (parent != null) {
             Files.createDirectories(parent);
         }
 
-        Files.write(path, buf.array(),
-                StandardOpenOption.CREATE_NEW,
-                StandardOpenOption.WRITE);
-
-        // Best-effort POSIX 0600. On non-POSIX platforms this will throw
-        // UnsupportedOperationException, which we silently ignore - caller
-        // can audit permissions out-of-band.
-        try {
-            Files.setPosixFilePermissions(path,
-                    EnumSet.of(PosixFilePermission.OWNER_READ, PosixFilePermission.OWNER_WRITE));
-        } catch (UnsupportedOperationException ignored) {
-            // non-POSIX filesystem
+        // Durable, crash-safe write: fill a temp file, fsync it, restrict it to 0600 while it
+        // is still private, then atomically rename it into place and fsync the directory. A
+        // bare Files.write is not fsynced and not atomic - a crash mid-write leaves a torn key
+        // file that then "exists", so the next boot's load() reads a truncated key and fails.
+        // No REPLACE_EXISTING on the rename: an existing signing key must NEVER be silently
+        // overwritten (loadOrCreate only reaches here when the file is absent).
+        Path tmp = path.resolveSibling(path.getFileName().toString() + ".tmp");
+        try (FileChannel channel = FileChannel.open(tmp,
+                StandardOpenOption.CREATE,
+                StandardOpenOption.WRITE,
+                StandardOpenOption.TRUNCATE_EXISTING)) {
+            ByteBuffer buf = ByteBuffer.wrap(encoded);
+            while (buf.hasRemaining()) {
+                channel.write(buf);
+            }
+            channel.force(true); // fsync data + metadata
         }
+        restrictToOwner(tmp);
+        Files.move(tmp, path, StandardCopyOption.ATOMIC_MOVE);
+        fsyncDirectory(parent);
 
         return new SigningKeyStore(keyPair, keyId);
     }
 
-    /** Writes an arbitrary keypair and id - test-only helper. */
-    static void writeForTest(Path path, KeyPair keyPair, UUID keyId) throws IOException {
+    /** Serializes a keypair + id into the v1 on-disk layout (magic, version, keyId, DER pair). */
+    private static byte[] encode(KeyPair keyPair, UUID keyId) {
         byte[] privBytes = keyPair.getPrivate().getEncoded();
         byte[] pubBytes = keyPair.getPublic().getEncoded();
         int size = 4 + 2 + 16 + 4 + privBytes.length + 4 + pubBytes.length;
@@ -162,11 +157,42 @@ public final class SigningKeyStore {
         buf.put(privBytes);
         buf.putInt(pubBytes.length);
         buf.put(pubBytes);
-        Files.write(path, buf.array(),
+        return buf.array();
+    }
+
+    /**
+     * Best-effort POSIX 0600 (owner read/write only). On a non-POSIX filesystem this throws
+     * {@link UnsupportedOperationException}, which we ignore - the operator audits permissions
+     * out-of-band there.
+     */
+    private static void restrictToOwner(Path path) throws IOException {
+        try {
+            Files.setPosixFilePermissions(path, PosixFilePermissions.fromString("rw-------"));
+        } catch (UnsupportedOperationException ignored) {
+            // non-POSIX filesystem
+        }
+    }
+
+    /** Fsyncs {@code dir} so a freshly renamed file's directory entry is itself durable. */
+    private static void fsyncDirectory(Path dir) throws IOException {
+        if (dir == null) {
+            return; // no parent to fsync (e.g. a bare relative filename); best-effort
+        }
+        try (FileChannel dirChannel = FileChannel.open(dir, StandardOpenOption.READ)) {
+            dirChannel.force(true);
+        }
+    }
+
+    /**
+     * Writes an arbitrary keypair and id - test-only helper. Applies the same 0600 restriction
+     * as {@link #generateAndWrite} so a test fixture matches the production file's permissions.
+     */
+    static void writeForTest(Path path, KeyPair keyPair, UUID keyId) throws IOException {
+        Files.write(path, encode(keyPair, keyId),
                 StandardOpenOption.CREATE,
                 StandardOpenOption.TRUNCATE_EXISTING,
                 StandardOpenOption.WRITE);
-        PosixFilePermissions.fromString("rw-------");
+        restrictToOwner(path);
     }
 
     /** Utility: format a UUID without dashes - unused currently but handy. */

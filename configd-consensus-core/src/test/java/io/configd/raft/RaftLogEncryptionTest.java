@@ -5,6 +5,7 @@ import io.configd.common.IntegrityException;
 import io.configd.common.NodeId;
 import io.configd.common.SegmentKeyManager;
 import io.configd.common.Storage;
+import io.configd.common.WalContainer;
 import io.configd.common.kms.KeyId;
 import io.configd.common.kms.RootKey;
 import org.junit.jupiter.api.Test;
@@ -22,7 +23,7 @@ import java.util.HashSet;
 import java.util.Map;
 import java.util.Set;
 import java.util.random.RandomGenerator;
-import java.util.zip.CRC32;
+import java.util.zip.CRC32C;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -197,10 +198,11 @@ class RaftLogEncryptionTest {
                 "the mixed algId=1/algId=2 WAL must recover fully");
     }
 
-    /** The distinct envelope algId bytes across all {@code [len][data][crc32]} frames of a WAL file. */
+    /** The distinct envelope algId bytes across all {@code [len][data][crc32c]} frames of a WAL file. */
     private static Set<Byte> algIdsInWal(byte[] wal) {
         Set<Byte> algIds = new HashSet<>();
         ByteBuffer buf = ByteBuffer.wrap(wal);
+        buf.position(WalContainer.HEADER_SIZE); // frames begin after the container header
         while (buf.remaining() >= 8) {
             int len = buf.getInt();
             if (len < IntegrityEnvelope.HEADER_SIZE || buf.remaining() < len + 4) {
@@ -209,22 +211,25 @@ class RaftLogEncryptionTest {
             int dataStart = buf.position();
             algIds.add(wal[dataStart + 6]); // algId is the 7th header byte: [magic:4][version:2][algId:1]
             buf.position(dataStart + len);
-            buf.getInt(); // skip the frame CRC32
+            buf.getInt(); // skip the frame CRC32C
         }
         return algIds;
     }
 
     /**
-     * Walks the {@code [len][data][crc32]} FileStorage frames, flips a byte inside the first frame's
-     * ciphertext (well past the 40-byte encrypted prefix), and recomputes that frame's trailing CRC32.
+     * Walks the {@code [len][data][crc32c]} FileStorage frames (after the 8-byte container header),
+     * flips a byte inside the first frame's ciphertext (well past the 40-byte encrypted prefix), and
+     * recomputes that frame's trailing CRC32C.
      */
     private static void flipCipherByteRepairingFrameCrc(byte[] wal) {
-        int len = ((wal[0] & 0xFF) << 24) | ((wal[1] & 0xFF) << 16) | ((wal[2] & 0xFF) << 8) | (wal[3] & 0xFF);
-        int dataStart = 4;
+        int frameStart = WalContainer.HEADER_SIZE; // first frame begins after the container header
+        int len = ((wal[frameStart] & 0xFF) << 24) | ((wal[frameStart + 1] & 0xFF) << 16)
+                | ((wal[frameStart + 2] & 0xFF) << 8) | (wal[frameStart + 3] & 0xFF);
+        int dataStart = frameStart + 4;
         // 40 = header(8)+keyTerm(4)+segmentId(16)+nonce(12); flip a byte a few into the ciphertext.
         int flipAt = dataStart + 44;
         wal[flipAt] ^= 0x01;
-        CRC32 crc = new CRC32();
+        CRC32C crc = new CRC32C();
         crc.update(wal, dataStart, len);
         int v = (int) crc.getValue();
         int crcPos = dataStart + len;

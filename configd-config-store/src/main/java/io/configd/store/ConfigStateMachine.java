@@ -475,15 +475,17 @@ public final class ConfigStateMachine implements StateMachine {
     }
 
     /**
-     * Dispatches across snapshot trailer forms. Order matters: empty first (legacy snapshots with
-     * no trailer), then magic-prefixed TLV (canonical), then raw 8-byte epoch (transitional form).
-     * Anything else is malformed and rejected.
+     * Reads the snapshot trailer. The frozen format accepts ONLY the canonical magic-TLV
+     * trailer that {@link #snapshot()} always writes:
+     * {@code [SNAPSHOT_TRAILER_MAGIC][trailerLen][signingEpoch][unknown tail]}. The two legacy
+     * forms - a trailer-less snapshot and a bare 8-byte epoch - are pre-freeze artifacts that
+     * no current writer produces, and are refused (clean break): a snapshot must self-identify
+     * its trailer, never be parsed by structural guesswork. Unknown fields beyond the known
+     * 8-byte epoch inside the TLV payload are still tolerated (forward-compat: an older reader
+     * loads a newer snapshot that appended a field).
      */
     private void decodeTrailer(ByteBuffer buf) {
         int remaining = buf.remaining();
-        if (remaining == 0) {
-            return; // legacy snapshot - no trailer
-        }
         if (remaining >= 8 && buf.getInt(buf.position()) == SNAPSHOT_TRAILER_MAGIC) {
             buf.getInt(); // consume magic
             int trailerLen = buf.getInt();
@@ -513,17 +515,11 @@ public final class ConfigStateMachine implements StateMachine {
             }
             return;
         }
-        if (remaining == Long.BYTES) {
-            // raw 8-byte epoch trailer (backward-compatible form)
-            long restoredEpoch = buf.getLong();
-            if (restoredEpoch > this.signingEpoch) {
-                this.signingEpoch = restoredEpoch;
-            }
-            return;
-        }
         throw new IllegalArgumentException(
-                "Snapshot trailer malformed: " + remaining + " bytes after entries, "
-                        + "expected 0 (legacy), TLV (magic 0xC0FD7A11), or 8 (raw epoch)");
+                "Snapshot trailer malformed: " + remaining + " bytes after entries; the frozen "
+                        + "format requires the canonical TLV trailer (magic 0x"
+                        + Integer.toHexString(SNAPSHOT_TRAILER_MAGIC)
+                        + ") - trailer-less and bare-8-byte-epoch forms are no longer accepted");
     }
 
     /**
@@ -546,15 +542,13 @@ public final class ConfigStateMachine implements StateMachine {
     private static final int MAX_SNAPSHOT_VALUE_LEN = 1_048_576;
 
     /**
-     * Magic value identifying a TLV-formatted snapshot trailer. The decoder dispatches across
-     * three forms in order:
-     * <ol>
-     *   <li>Empty trailer - legacy snapshots with no trailer.</li>
-     *   <li>Magic-prefixed TLV: [4B magic][4B length][payload bytes] - canonical.</li>
-     *   <li>Raw 8-byte signingEpoch - transitional form for older snapshots.</li>
-     * </ol>
-     * Chosen to be statistically distinct from any plausible {@code signingEpoch} upper int
-     * (HLC physical-millis epochs stay <= 0x000001FF for the next 70 years).
+     * Magic value identifying the canonical TLV snapshot trailer
+     * {@code [4B magic][4B length][payload bytes]} - the ONLY trailer form the frozen format
+     * accepts (the legacy trailer-less and bare-8-byte-epoch forms are refused; see
+     * {@link #decodeTrailer}). Chosen to be statistically distinct from any plausible
+     * {@code signingEpoch} upper int (HLC physical-millis epochs stay <= 0x000001FF for the
+     * next 70 years), which is why the bare-epoch form could once be disambiguated by value -
+     * a fragility the clean break removes.
      */
     private static final int SNAPSHOT_TRAILER_MAGIC = 0xC0FD7A11;
 

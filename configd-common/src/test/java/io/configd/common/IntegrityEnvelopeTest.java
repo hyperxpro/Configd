@@ -183,17 +183,46 @@ class IntegrityEnvelopeTest {
 
     @Test
     void reservedByteTamperUnderKeyedThrows() {
-        // The reserved byte (offset 7) is folded into the MAC input, so mutating it -
-        // even with the CRC32C recomputed - is caught by the HMAC. A keyless attacker
-        // cannot forge the MAC.
+        // The reserved byte (offset 7) is MUST-be-zero: the dedicated MBZ check refuses a
+        // non-zero value before the MAC is even consulted. It fires in every posture, so a
+        // reserved-byte tamper is a fail-closed refusal, not an incidental MAC mismatch.
         IntegrityEnvelope env = new IntegrityEnvelope(key());
         byte[] wrapped = env.wrap(MAGIC, payload());
         wrapped[7] ^= 0x01;          // flip a bit in the reserved byte
-        recomputeCrc(wrapped);       // repair CRC so only the MAC can catch it
+        recomputeCrc(wrapped);       // repair CRC so the version-independent CRC does not fire
         IntegrityException ex = assertThrows(IntegrityException.class,
                 () -> env.unwrap(MAGIC, wrapped));
-        assertTrue(ex.getMessage().contains("MAC"),
-                "reserved-byte tamper must be caught by the MAC, got: " + ex.getMessage());
+        assertTrue(ex.getMessage().contains("reserved"),
+                "reserved-byte tamper must be caught by the MBZ check, got: " + ex.getMessage());
+    }
+
+    @Test
+    void reservedNonZeroThrowsKeyless() {
+        // The MBZ check is what makes the reserved byte a genuine forward-compat escape:
+        // it fails closed even in the KEYLESS posture, where no MAC covers it. A v1 reader
+        // can never silently mis-parse bytes a future writer stamped into this slot.
+        IntegrityEnvelope env = IntegrityEnvelope.keyless();
+        byte[] wrapped = env.wrap(MAGIC, payload());
+        wrapped[7] = 0x01;           // set the reserved byte non-zero
+        recomputeCrc(wrapped);       // repair CRC so only the MBZ check can fire
+        IntegrityException ex = assertThrows(IntegrityException.class,
+                () -> env.unwrap(MAGIC, wrapped));
+        assertTrue(ex.getMessage().contains("reserved"),
+                "keyless reserved-byte MBZ must fail closed, got: " + ex.getMessage());
+    }
+
+    @Test
+    void corruptHeaderReportsCrcNotVersion() {
+        // CRC-before-version: a bit-flip in the version field (with the CRC left stale)
+        // must surface as CORRUPTION, not as a misleading "unsupported version". The
+        // version is only read from CRC-validated bytes.
+        IntegrityEnvelope env = new IntegrityEnvelope(key());
+        byte[] wrapped = env.wrap(MAGIC, payload());
+        wrapped[4] ^= 0x01;          // flip a bit in the 2-byte formatVersion field, CRC NOT repaired
+        IntegrityException ex = assertThrows(IntegrityException.class,
+                () -> env.unwrap(MAGIC, wrapped));
+        assertTrue(ex.getMessage().contains("CRC"),
+                "a corrupt header must report corruption before version, got: " + ex.getMessage());
     }
 
     @Test

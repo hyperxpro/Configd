@@ -27,9 +27,12 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
 /**
- * Proves {@link EdgeSnapshotCodec} reuses the same snapshot byte format as the Raft
- * state machine: the bytes a {@link ConfigSnapshot} serializes to are accepted by
- * {@code ConfigStateMachine.restoreSnapshot}, and the chunk/reassemble path is lossless.
+ * Proves {@link EdgeSnapshotCodec} reuses the same snapshot ENTRY layout as the Raft state
+ * machine, and that the chunk/reassemble path is lossless. The edge body is trailer-less by
+ * design (the edge decodes it via {@link EdgeSnapshotCodec#deserialize}); the frozen
+ * state-machine snapshot additionally requires the canonical magic-TLV trailer, so the tests
+ * that round-trip through {@code ConfigStateMachine.restoreSnapshot} append that trailer to
+ * exercise the shared entry layout via the state machine.
  */
 class EdgeSnapshotCodecTest {
 
@@ -46,10 +49,12 @@ class EdgeSnapshotCodecTest {
 
         byte[] body = EdgeSnapshotCodec.serialize(snap);
 
-        // The state-machine consumer must accept our body as a (trailer-less / legacy) snapshot.
+        // The edge body shares the state machine's entry layout; the frozen state-machine snapshot
+        // additionally requires the canonical magic-TLV trailer (the trailer-less form is refused),
+        // so we append it to drive the shared layout through restoreSnapshot.
         VersionedConfigStore store = new VersionedConfigStore(CLOCK);
         ConfigStateMachine sm = new ConfigStateMachine(store, CLOCK);
-        sm.restoreSnapshot(body);
+        sm.restoreSnapshot(withStateMachineTrailer(body));
 
         assertEquals(7L, store.currentVersion(), "restored version must equal the snapshot seq");
         assertArrayEquals(new byte[]{1, 2, 3}, store.snapshot().get("svc/a"));
@@ -108,12 +113,44 @@ class EdgeSnapshotCodecTest {
 
         VersionedConfigStore store = new VersionedConfigStore(CLOCK);
         ConfigStateMachine sm = new ConfigStateMachine(store, CLOCK);
-        sm.restoreSnapshot(reassembled);
+        sm.restoreSnapshot(withStateMachineTrailer(reassembled));
         assertEquals(snap.version(), store.currentVersion());
         assertEquals(sorted(snap), sorted(store.snapshot()));
     }
 
+    @Test
+    void edgeSnapshotBodyIsCarrierVersioned() {
+        // The body carries no format version of its own: its leading u64 is the snapshot's DATA
+        // sequence (which snapshot), NOT a format version. It is versioned by the enclosing edge
+        // frame and decoded by the edge via deserialize (no trailer).
+        ConfigSnapshot snap = snapshot(123L, Map.of("k", new byte[]{1}));
+        byte[] body = EdgeSnapshotCodec.serialize(snap);
+        long leadU64 = java.nio.ByteBuffer.wrap(body).getLong();
+        assertEquals(123L, leadU64,
+                "the lead u64 is the DATA sequence (snapshot.version()), not a format version");
+        assertEquals(123L, EdgeSnapshotCodec.deserialize(body).version(),
+                "the trailer-less body decodes via the edge consumer, preserving the data sequence");
+    }
+
     // ---- helpers ------------------------------------------------------------
+
+    private static final int SNAPSHOT_TRAILER_MAGIC = 0xC0FD7A11;
+
+    /**
+     * Appends the canonical magic-TLV trailer the frozen state-machine snapshot format requires
+     * ({@code [magic][len=8][signingEpoch=0]}). The EdgeSnapshotCodec body is trailer-less by design
+     * (the edge decodes it via {@link EdgeSnapshotCodec#deserialize}); the state machine's restore
+     * path demands the TLV trailer, so we add it to drive the shared entry layout through the
+     * state machine.
+     */
+    private static byte[] withStateMachineTrailer(byte[] body) {
+        java.nio.ByteBuffer b = java.nio.ByteBuffer.allocate(body.length + 4 + 4 + 8);
+        b.put(body);
+        b.putInt(SNAPSHOT_TRAILER_MAGIC);
+        b.putInt(8);
+        b.putLong(0L);
+        return b.array();
+    }
 
     private static ConfigSnapshot snapshot(long version, Map<String, byte[]> entries) {
         HamtMap<String, VersionedValue> data = HamtMap.empty();

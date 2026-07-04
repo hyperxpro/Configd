@@ -23,6 +23,16 @@ import java.util.Objects;
  * An empty (zero-length) command represents a no-op, committed for leader
  * election. The codec treats this as a special case - see {@link #decode}.
  * <p>
+ * <b>Carrier-versioned.</b> These bytes carry no format version of their own and
+ * never exist standalone: they are always nested inside a self-versioned carrier,
+ * so the carrier's version pins this grammar. The three carriers are (1) WAL
+ * entries - inside the {@code WALE_MAGIC} {@link io.configd.common.IntegrityEnvelope};
+ * (2) NOTIFY deltas - inside the versioned edge frame; (3) snapshot values - inside
+ * the {@code SNAP_MAGIC} envelope / the edge snapshot body (itself carried by an edge
+ * frame). A redundant inner version byte would bloat every command in every log entry
+ * for no decode benefit. The type byte is a <em>discriminant</em>, not a version: the
+ * unknown-type-byte throw in {@link #decode} is the assert that keeps decoding safe.
+ * <p>
  * This is a stateless utility class. All methods are static. Instances cannot
  * be created.
  */
