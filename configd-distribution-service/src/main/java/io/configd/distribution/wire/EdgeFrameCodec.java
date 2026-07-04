@@ -295,9 +295,10 @@ public final class EdgeFrameCodec {
     }
 
     private static void encodeSubscribeInto(EdgeFrame.Subscribe f, FrameSink sink, byte version) {
-        // [1B fullStore][4B prefixCount][prefixes][8B resume][8B failoverResume][4B edgeIdLen][edgeId]
-        // and, ONLY under 0x03, a trailing [1B acceptsFiltered] (ADR-0045) - so a 0x01/0x02
-        // SUBSCRIBE is byte-identical (the extra byte is an appended field, not a reshape).
+        // [1B fullStore][4B prefixCount][prefixes][8B topologyEpoch][8B resume][8B failoverResume]
+        // [4B edgeIdLen][edgeId] and, ONLY under 0x03, a trailing [1B acceptsFiltered] (ADR-0045).
+        // The topologyEpoch (A4) binds this scalar resume token to its topology generation, uniform
+        // with the watch cursor.
         sink.writeByte(f.fullStore() ? 1 : 0);
         sink.writeInt(f.prefixes().size());
         for (String p : f.prefixes()) {
@@ -305,6 +306,7 @@ public final class EdgeFrameCodec {
             sink.writeInt(b.length);
             sink.writeBytes(b);
         }
+        sink.writeLong(f.topologyEpoch()); // A4 epoch prefix, before the resume fields
         sink.writeLong(f.resumeCursor());
         sink.writeLong(f.failoverResumeCursor());
         byte[] edgeId = f.edgeId().getBytes(StandardCharsets.UTF_8);
@@ -404,6 +406,9 @@ public final class EdgeFrameCodec {
     /** Bytes per encoded cursor component on the wire: gid(u32) + S(u64). */
     private static final int CURSOR_COMPONENT_BYTES = 12;
 
+    /** RT-5 cursor floor: the fixed prefix [topologyEpoch:u64][count:u32] = 12 bytes (count may be 0). */
+    private static final int CURSOR_MIN_BYTES = 12;
+
     /** Bytes per encoded {@link EdgeFrame.ShardMode}: gid(u32) + latestSeq(u64) + mode(u8). */
     private static final int SHARD_MODE_BYTES = 13;
 
@@ -420,11 +425,13 @@ public final class EdgeFrameCodec {
     }
 
     /**
-     * Encodes a {@link WatchCursor} as {@code [count u32]( gid u32  S u64 )*count} (W3-5).
-     * The cursor's construction-time invariant guarantees the components are already strictly
-     * ascending by unsigned {@code gid}, so they are written in list order with no re-sort.
+     * Encodes a {@link WatchCursor} as {@code [topologyEpoch u64][count u32]( gid u32  S u64 )*count}
+     * (W3-5, A4). The epoch prefix binds the whole resume token to its topology generation. The
+     * cursor's construction-time invariant guarantees the components are already strictly ascending
+     * by unsigned {@code gid}, so they are written in list order with no re-sort.
      */
     private static void encodeCursorInto(WatchCursor cursor, FrameSink sink) {
+        sink.writeLong(cursor.topologyEpoch()); // A4 epoch prefix (binds the token's topology generation)
         List<WatchCursor.Component> cs = cursor.components();
         sink.writeInt(cs.size());
         for (WatchCursor.Component c : cs) {
@@ -696,6 +703,12 @@ public final class EdgeFrameCodec {
         for (int i = 0; i < prefixCount; i++) {
             prefixes.add(readString(p, "prefix"));
         }
+        // A4 topology epoch prefix (before the resume fields). 0 is reserved-illegal -> FRAME_CORRUPT.
+        long topologyEpoch = p.getLong();
+        if (topologyEpoch == WatchCursor.EPOCH_UNSET) {
+            throw new CodecException(ErrorCode.FRAME_CORRUPT,
+                    "SUBSCRIBE topologyEpoch 0 is reserved-illegal");
+        }
         long resume = p.getLong();
         long failover = p.getLong();
         String edgeId = readString(p, "edgeId");
@@ -710,7 +723,8 @@ public final class EdgeFrameCodec {
             acceptsFiltered = p.get() != 0;
         }
         try {
-            return new EdgeFrame.Subscribe(fullStore, prefixes, resume, failover, edgeId, acceptsFiltered);
+            return new EdgeFrame.Subscribe(
+                    fullStore, prefixes, topologyEpoch, resume, failover, edgeId, acceptsFiltered);
         } catch (IllegalArgumentException e) {
             throw new CodecException(ErrorCode.FRAME_CORRUPT, "invalid SUBSCRIBE: " + e.getMessage());
         }
@@ -845,14 +859,22 @@ public final class EdgeFrameCodec {
     // -----------------------------------------------------------------------
 
     /**
-     * Decodes a {@link WatchCursor} from {@code [count u32]( gid u32  S u64 )*count} (W3-5).
-     * Bounds {@code count} against the remaining bytes BEFORE allocating, and maps an
-     * unsorted/duplicate {@code gid} (or a negative {@code S}) to {@link ErrorCode#FRAME_CORRUPT}
-     * via the {@link WatchCursor} constructor's invariant.
+     * Decodes a {@link WatchCursor} from {@code [topologyEpoch u64][count u32]( gid u32  S u64 )*count}
+     * (W3-5, A4). Enforces the RT-5 minimum-length floor (a cursor payload below the fixed
+     * {@code topologyEpoch:u64 + count:u32} = 12 bytes is truncated {@code ->} FRAME_CORRUPT, never an
+     * uncaught underflow), rejects the reserved-illegal epoch {@code 0}, bounds {@code count} against
+     * the remaining bytes BEFORE allocating, and maps an unsorted/duplicate {@code gid} (or a negative
+     * {@code S}) to {@link ErrorCode#FRAME_CORRUPT} via the {@link WatchCursor} constructor's invariant.
      */
     private static WatchCursor decodeCursor(ByteBuffer p) {
-        if (p.remaining() < 4) {
-            throw new CodecException(ErrorCode.FRAME_CORRUPT, "truncated reading cursor count");
+        // RT-5 floor: the frozen cursor's fixed prefix is [topologyEpoch:u64][count:u32] = 12 bytes.
+        if (p.remaining() < CURSOR_MIN_BYTES) {
+            throw new CodecException(ErrorCode.FRAME_CORRUPT, "truncated reading cursor epoch+count");
+        }
+        long topologyEpoch = p.getLong();
+        if (topologyEpoch == WatchCursor.EPOCH_UNSET) {
+            throw new CodecException(ErrorCode.FRAME_CORRUPT,
+                    "cursor topologyEpoch 0 is reserved-illegal");
         }
         int count = p.getInt();
         if (count < 0 || (long) count * CURSOR_COMPONENT_BYTES > p.remaining()) {
@@ -863,7 +885,7 @@ public final class EdgeFrameCodec {
             for (int i = 0; i < count; i++) {
                 cs.add(new WatchCursor.Component(p.getInt(), p.getLong()));
             }
-            return new WatchCursor(cs);
+            return new WatchCursor(topologyEpoch, cs);
         } catch (IllegalArgumentException e) {
             throw new CodecException(ErrorCode.FRAME_CORRUPT, "invalid cursor: " + e.getMessage());
         }

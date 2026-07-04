@@ -84,7 +84,8 @@ class LegacySubscribePartialShardViewTest {
         SlowConsumerGovernor gov =
                 new SlowConsumerGovernor(SlowConsumerPolicyConfig.defaults(), FanOutSessionMetrics.NOOP);
         FanOutConfig config = FanOutConfig.defaults().withAllowPartialShardView(allowPartialShardView);
-        this.driver = new FanOutConnectionDriver(sources, replays, gids, resolver, out, config,
+        this.driver = new FanOutConnectionDriver(sources, replays, gids, resolver,
+                WatchCursor.INITIAL_TOPOLOGY_EPOCH, out, config,
                 FanOutSessionMetrics.NOOP, clock, gov, "edge-1", (c, m) -> teardowns.add(c), auth);
     }
 
@@ -108,6 +109,23 @@ class LegacySubscribePartialShardViewTest {
                         + "refusal, not the authz gate)");
         assertTrue(out.sent().isEmpty(),
                 "zero data frames precede the refusal - not even SUBSCRIBE_OK or a snapshot");
+    }
+
+    // ---- (a2) a SUBSCRIBE from a superseded topology epoch is refused STALE_TOPOLOGY -----
+
+    @Test
+    void staleEpochLegacySubscribeIsRefusedStaleTopologyBeforePartialViewGuard() {
+        // The coordinator is at the v1 initial epoch (1). A SUBSCRIBE whose resume token binds a
+        // superseded epoch (2) is refused STALE_TOPOLOGY (the etcd ErrCompacted model - the client drops
+        // its cursor and re-hydrates). Checked BEFORE the N>1 partial-view guard, so STALE_TOPOLOGY wins
+        // over BAD_SUBSCRIBE (the whole cursor generation is invalid regardless of the partial-view
+        // posture). The authorizer WOULD grant it, proving the epoch gate - not authz - is what refuses.
+        setup(3, false, grantSubscribe("edge-1"));
+        feed(new EdgeFrame.Subscribe(true, List.of(), 2L, 0L, -1L, "edge-1", false));
+        assertEquals(List.of(ErrorCode.STALE_TOPOLOGY), teardowns,
+                "a SUBSCRIBE bound to a superseded epoch is refused STALE_TOPOLOGY, not the partial-view "
+                        + "BAD_SUBSCRIBE");
+        assertTrue(out.sent().isEmpty(), "zero data frames precede the refusal");
     }
 
     // ---- (b) N>1 legacy SUBSCRIBE WITH the opt-in is admitted (escape hatch) -

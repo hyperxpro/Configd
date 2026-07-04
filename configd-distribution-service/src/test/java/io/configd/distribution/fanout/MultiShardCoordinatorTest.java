@@ -83,7 +83,8 @@ class MultiShardCoordinatorTest {
                         : allGids.clone());
         SlowConsumerGovernor gov =
                 new SlowConsumerGovernor(SlowConsumerPolicyConfig.defaults(), FanOutSessionMetrics.NOOP);
-        this.driver = new FanOutConnectionDriver(sources, replays, gids, resolver, out,
+        this.driver = new FanOutConnectionDriver(sources, replays, gids, resolver,
+                WatchCursor.INITIAL_TOPOLOGY_EPOCH, out,
                 FanOutConfig.defaults(), FanOutSessionMetrics.NOOP, clock, gov, identity,
                 (c, m) -> teardowns.add(c), auth);
     }
@@ -382,6 +383,46 @@ class MultiShardCoordinatorTest {
     }
 
     // =====================================================================
+    // A4 topology-epoch gate: a superseded cursor epoch => STALE_TOPOLOGY (re-hydrate)
+    // =====================================================================
+
+    @Test
+    void staleEpochCursorRejectedWithReHydrate() {
+        setup(2, ALLOW);
+        // The coordinator is at the v1 initial epoch (1). A WATCH_CREATE whose cursor binds a superseded
+        // epoch (2) is refused STALE_TOPOLOGY (WATCH_CANCELED) - the etcd ErrCompacted model - so the
+        // client drops the cursor and re-hydrates. No shard leg is created; zero data frames.
+        feed(fullCreate(1, WatchCursor.fromNow(2L)));
+        assertEquals(1, out.sent().size());
+        EdgeFrame.WatchCanceled cancel = (EdgeFrame.WatchCanceled) out.sent().get(0);
+        assertEquals(ErrorCode.STALE_TOPOLOGY, cancel.code());
+        assertTrue(out.sentOfType(EdgeFrame.WatchCreated.class).isEmpty(), "no leg was created");
+        assertTrue(out.sentOfType(EdgeFrame.WatchEvent.class).isEmpty(), "zero data frames");
+    }
+
+    @Test
+    void matchingEpochCursorResumesNormally() {
+        setup(2, ALLOW);
+        // The v1 initial epoch (1) matches the coordinator's epoch, so a resume cursor is admitted and
+        // the watch is created (the STALE_TOPOLOGY gate never fires at a single static epoch).
+        feed(fullCreate(1, WatchCursor.of(WatchCursor.INITIAL_TOPOLOGY_EPOCH, 0, 1)));
+        assertEquals(2, created(1L).shards().size(), "a matching-epoch cursor resumes across both shards");
+        assertTrue(out.sentOfType(EdgeFrame.WatchCanceled.class).isEmpty(), "no STALE_TOPOLOGY reject");
+    }
+
+    @Test
+    void staleEpochWinsOverGidSpoofReject() {
+        setup(2, ALLOW);
+        // The resharding negative (2.9-9): a cursor from the OLD topology (epoch 2) whose components also
+        // name a gid outside the NEW shard set (gid 5 on a 2-shard cluster). The epoch gate is checked
+        // BEFORE the gid-spoof guard, so this is STALE_TOPOLOGY (re-hydrate), NOT the BAD_SUBSCRIBE
+        // gid-spoof reject - the client must re-resolve the whole topology, not patch one component.
+        WatchCursor stale = new WatchCursor(2L, List.of(new WatchCursor.Component(5, 1)));
+        feed(fullCreate(1, stale));
+        assertEquals(ErrorCode.STALE_TOPOLOGY, ((EdgeFrame.WatchCanceled) out.sent().get(0)).code());
+    }
+
+    // =====================================================================
     // resume is a create for authz; revoke-then-resume => NOT_AUTHORIZED, zero frames
     // =====================================================================
 
@@ -476,8 +517,8 @@ class MultiShardCoordinatorTest {
         SlowConsumerGovernor gov =
                 new SlowConsumerGovernor(SlowConsumerPolicyConfig.defaults(), FanOutSessionMetrics.NOOP);
         this.driver = new FanOutConnectionDriver(sources, replays, new int[]{0},
-                t -> new int[]{0}, out, FanOutConfig.defaults(), FanOutSessionMetrics.NOOP, clock, gov,
-                "edge-1", (c, m) -> teardowns.add(c), ALLOW);
+                t -> new int[]{0}, WatchCursor.INITIAL_TOPOLOGY_EPOCH, out, FanOutConfig.defaults(),
+                FanOutSessionMetrics.NOOP, clock, gov, "edge-1", (c, m) -> teardowns.add(c), ALLOW);
         feed(fullCreate(1, WatchCursor.of(0, 1))); // resume at 1 => TAIL
         sweepAt(2_000L);                            // drains 2..5 => cursor 5 (latestSeq stays 10)
         sweepAt(2_000L + hb());                     // idle => heartbeat => coalesced WATCH_PROGRESS

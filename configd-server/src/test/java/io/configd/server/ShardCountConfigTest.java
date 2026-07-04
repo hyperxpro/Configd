@@ -5,9 +5,13 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-import java.nio.charset.StandardCharsets;
+import io.configd.common.IntegrityEnvelope;
+import io.configd.raft.TopologyDescriptor;
+
 import java.nio.file.Files;
 import java.nio.file.Path;
+
+import javax.crypto.spec.SecretKeySpec;
 
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -15,18 +19,30 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 /**
- * Tests for the deploy-time shard-count selection + the fixed-at-deploy
- * reshard guard ({@link ConfigdServer#resolveShardCount} / {@link ConfigdServer#enforceFixedShardCount}).
+ * Tests for the deploy-time shard-count selection ({@link ConfigdServer#resolveShardCount}) and the
+ * Gate 2b fixed-at-deploy reshard guard + topology-epoch source
+ * ({@link ConfigdServer#enforceTopologyDescriptor}).
  *
  * <p>These drive the REAL helpers the production boot path calls, so they discriminate: the default is
- * {@code N=1} (byte-identical to today), {@code N} is range-checked, {@code N>1} now BOOTS (the temporary
- * boot guard was removed once the N-group wiring was proven end-to-end), and {@code N} is FIXED
- * AT DEPLOY (a later boot with a different {@code N} is rejected rather than silently mis-routing keys).
+ * {@code N=1} (byte-identical to today), {@code N} is range-checked, {@code N>1} BOOTS, and {@code N} is
+ * FIXED AT DEPLOY (a later boot with a different {@code N} is rejected rather than silently mis-routing
+ * keys). The old plaintext {@code raft-shard-count.meta} is replaced by the authenticated, versioned
+ * {@code topology-descriptor.dat}: the reshard guard and the topology epoch are now tamper-evident under
+ * a key.
  */
 class ShardCountConfigTest {
 
     private static final String PROP = "configd.raft.shardCount";
-    private static final String MARKER = "raft-shard-count.meta";
+    private static final String DESCRIPTOR = "topology-descriptor.dat";
+
+    /** A deterministic keyed integrity envelope so the tamper test exercises the MAC (tamper-evident). */
+    private static IntegrityEnvelope keyedEnvelope() {
+        byte[] k = new byte[32];
+        for (int i = 0; i < k.length; i++) {
+            k[i] = (byte) (i + 1);
+        }
+        return new IntegrityEnvelope(new SecretKeySpec(k, "HmacSHA256"));
+    }
 
     @TempDir
     Path dataDir;
@@ -48,112 +64,123 @@ class ShardCountConfigTest {
         }
     }
 
-    // ---- resolveShardCount: default + range -------------------------------------------------
+    // ---- resolveShardCount: default + range (config only; no descriptor I/O) -----------------
 
     @Test
-    void defaultIsOneAndWritesMarker() {
-        int n = ConfigdServer.resolveShardCount(dataDir);
-        assertEquals(1, n, "default shard count must be 1 (single group, byte-identical to today)");
-        assertTrue(Files.exists(dataDir.resolve(MARKER)), "first boot records the deploy-time N");
+    void defaultIsOne() {
+        assertEquals(1, ConfigdServer.resolveShardCount(),
+                "default shard count must be 1 (single group, byte-identical to today)");
     }
 
     @Test
     void explicitOneIsAccepted() {
         System.setProperty(PROP, "1");
-        assertEquals(1, ConfigdServer.resolveShardCount(dataDir));
+        assertEquals(1, ConfigdServer.resolveShardCount());
     }
 
     @Test
     void zeroIsRejectedAsOutOfRange() {
         System.setProperty(PROP, "0");
         IllegalArgumentException e =
-                assertThrows(IllegalArgumentException.class, () -> ConfigdServer.resolveShardCount(dataDir));
-        assertTrue(e.getMessage().contains("[1, 16]"), () -> "range error should name the bounds: " + e.getMessage());
-        assertFalse(Files.exists(dataDir.resolve(MARKER)), "a rejected boot must not persist a marker");
+                assertThrows(IllegalArgumentException.class, ConfigdServer::resolveShardCount);
+        assertTrue(e.getMessage().contains("[1, 16]"),
+                () -> "range error should name the bounds: " + e.getMessage());
     }
 
     @Test
     void aboveCeilingIsRejectedAsOutOfRange() {
         System.setProperty(PROP, "17");
-        assertThrows(IllegalArgumentException.class, () -> ConfigdServer.resolveShardCount(dataDir));
-        assertFalse(Files.exists(dataDir.resolve(MARKER)), "a rejected boot must not persist a marker");
+        assertThrows(IllegalArgumentException.class, ConfigdServer::resolveShardCount);
     }
 
-    // ---- resolveShardCount: N>1 now BOOTS (the boot guard was removed) ------------
+    // ---- enforceTopologyDescriptor: first-boot write + epoch --------------------------------
 
     @Test
-    void nGreaterThanOneNowBootsAndIsFixedAtDeploy(@TempDir Path freshDir) {
-        // The temporary N>1 boot refusal is GONE (the N-group wiring is proven
-        // end-to-end + the integrated sweep is green). N>1 now resolves to N AND persists the fixed-at-
-        // deploy marker (so a later reshard is rejected). Cover the BOUNDARY N=2 and the ceiling N=16, each
-        // on its OWN fresh data dir (so a persisted N from one iteration doesn't reshard-reject the next).
+    void firstBootWritesDescriptorAtInitialEpoch() {
+        long epoch = ConfigdServer.enforceTopologyDescriptor(1, dataDir, keyedEnvelope());
+        assertEquals(TopologyDescriptor.INITIAL_EPOCH, epoch,
+                "first boot yields the v1 initial topology epoch");
+        assertTrue(Files.exists(dataDir.resolve(DESCRIPTOR)), "first boot persists the topology descriptor");
+    }
+
+    @Test
+    void firstBootPersistsThenIsIdempotent() {
+        IntegrityEnvelope env = keyedEnvelope();
+        assertEquals(1L, ConfigdServer.enforceTopologyDescriptor(3, dataDir, env));
+        assertTrue(Files.exists(dataDir.resolve(DESCRIPTOR)));
+        // Same N again is a read-only no-op (idempotent across restarts) and returns the same epoch.
+        assertEquals(1L, ConfigdServer.enforceTopologyDescriptor(3, dataDir, env));
+    }
+
+    // ---- enforceTopologyDescriptor: fixed-at-deploy reshard guard ---------------------------
+
+    @Test
+    void nGreaterThanOneBootsAndReshardNChangeStillRefused() {
+        // N>1 boots and persists the descriptor; a later boot with a DIFFERENT in-range N on the same
+        // dir is a loud reshard rejection (not silent mis-routing). Cover the boundary N=2 and the
+        // ceiling N=16, each on its own fresh dir. This is the ratified `reshardNChangeStillRefused`.
+        IntegrityEnvelope env = keyedEnvelope();
         for (int n : new int[] {2, 4, 16}) {
-            Path dir = freshDir.resolve("n" + n);
+            Path dir = dataDir.resolve("n" + n);
             try {
                 Files.createDirectories(dir);
             } catch (java.io.IOException io) {
                 throw new RuntimeException(io);
             }
-            System.setProperty(PROP, Integer.toString(n));
-            assertEquals(n, ConfigdServer.resolveShardCount(dir), () -> "N=" + n + " must now boot");
-            // fixed-at-deploy is now ACTIVE for N>1: the marker records N.
-            assertTrue(Files.exists(dir.resolve(MARKER)), "N=" + n + " boot persists the fixed-at-deploy marker");
-            // A reshard attempt (a DIFFERENT in-range N on the same dir) is rejected - not silent
-            // mis-routing. Use n-1 (in [1,16], distinct from n) so the reshard guard fires, not the range
-            // check (n+1 would hit MAX_SHARD_COUNT for n=16 and throw IllegalArgumentException instead).
-            System.setProperty(PROP, Integer.toString(n - 1));
+            assertEquals(1L, ConfigdServer.enforceTopologyDescriptor(n, dir, env),
+                    () -> "N must boot and yield the initial epoch");
+            assertTrue(Files.exists(dir.resolve(DESCRIPTOR)),
+                    "N=" + n + " boot persists the fixed-at-deploy descriptor");
+            // Use n-1 (in [1,16], distinct from n) so the reshard guard fires (not the range check).
             IllegalStateException reshard = assertThrows(IllegalStateException.class,
-                    () -> ConfigdServer.resolveShardCount(dir), () -> "reshard from N=" + n + " must reject");
+                    () -> ConfigdServer.enforceTopologyDescriptor(n - 1, dir, env),
+                    () -> "reshard from N=" + n + " must reject");
             assertTrue(reshard.getMessage().contains("FIXED AT DEPLOY"),
                     () -> "reshard rejection should explain fixed-at-deploy: " + reshard.getMessage());
         }
     }
 
     @Test
-    void n1StillBootsByteIdenticalAfterGuardRemoval() {
-        // The guard removal must NOT touch the N=1 path: default (no property) resolves to 1 and persists
-        // the N=1 marker, exactly as before the guard removal.
-        System.clearProperty(PROP);
-        assertEquals(1, ConfigdServer.resolveShardCount(dataDir));
-        try {
-            assertEquals("1", Files.readString(dataDir.resolve(MARKER), StandardCharsets.UTF_8).trim());
-        } catch (java.io.IOException io) {
-            throw new RuntimeException(io);
-        }
-        // An out-of-range N is still a fail-fast IllegalArgumentException (the range check is unchanged).
-        System.setProperty(PROP, Integer.toString(17));
-        assertThrows(IllegalArgumentException.class, () -> ConfigdServer.resolveShardCount(dataDir));
-    }
-
-    // ---- enforceFixedShardCount: fixed-at-deploy reshard guard ------------------------------
-
-    @Test
-    void firstBootPersistsThenIsIdempotent() throws Exception {
-        ConfigdServer.enforceFixedShardCount(3, dataDir);
-        assertEquals("3", Files.readString(dataDir.resolve(MARKER), StandardCharsets.UTF_8).trim());
-        // Same N again is a no-op (idempotent across restarts).
-        ConfigdServer.enforceFixedShardCount(3, dataDir);
-        assertEquals("3", Files.readString(dataDir.resolve(MARKER), StandardCharsets.UTF_8).trim());
-    }
-
-    @Test
-    void changedShardCountIsRejectedAsReshard() throws Exception {
-        ConfigdServer.enforceFixedShardCount(4, dataDir);
+    void changedShardCountIsRejectedAsReshard() {
+        IntegrityEnvelope env = keyedEnvelope();
+        ConfigdServer.enforceTopologyDescriptor(4, dataDir, env);
         IllegalStateException e = assertThrows(IllegalStateException.class,
-                () -> ConfigdServer.enforceFixedShardCount(8, dataDir));
+                () -> ConfigdServer.enforceTopologyDescriptor(8, dataDir, env));
         assertTrue(e.getMessage().contains("FIXED AT DEPLOY"),
                 () -> "reshard rejection should explain fixed-at-deploy: " + e.getMessage());
         assertTrue(e.getMessage().contains("N=4"), () -> "should name the persisted N: " + e.getMessage());
-        // The marker is unchanged (the rejection does not overwrite it).
-        assertEquals("4", Files.readString(dataDir.resolve(MARKER), StandardCharsets.UTF_8).trim());
+        // The descriptor is unchanged (the rejection does not overwrite it): re-reading with the same N
+        // still succeeds at the original epoch.
+        assertEquals(1L, ConfigdServer.enforceTopologyDescriptor(4, dataDir, env));
+    }
+
+    // ---- enforceTopologyDescriptor: tamper-evident (the whole point of the envelope) ---------
+
+    @Test
+    void topologyDescriptorTamperedRefusesStart() throws Exception {
+        IntegrityEnvelope env = keyedEnvelope();
+        ConfigdServer.enforceTopologyDescriptor(3, dataDir, env);
+        Path file = dataDir.resolve(DESCRIPTOR);
+        // Flip a byte in the middle of the persisted descriptor (an attacker editing N/epoch). Under a
+        // key the envelope MAC/CRC catches it - the deploy guard is tamper-evident, not a plaintext int
+        // an attacker can rewrite to bypass the reshard refusal.
+        byte[] bytes = Files.readAllBytes(file);
+        bytes[bytes.length / 2] ^= 0x01;
+        Files.write(file, bytes);
+        IllegalStateException e = assertThrows(IllegalStateException.class,
+                () -> ConfigdServer.enforceTopologyDescriptor(3, dataDir, env));
+        assertTrue(e.getMessage().toLowerCase().contains("corrupt")
+                        || e.getMessage().toLowerCase().contains("tamper"),
+                () -> "should flag a corrupt/tampered descriptor: " + e.getMessage());
     }
 
     @Test
-    void corruptMarkerIsRejected() throws Exception {
-        Files.writeString(dataDir.resolve(MARKER), "not-a-number", StandardCharsets.UTF_8);
-        IllegalStateException e = assertThrows(IllegalStateException.class,
-                () -> ConfigdServer.enforceFixedShardCount(1, dataDir));
-        assertTrue(e.getMessage().toLowerCase().contains("corrupt"),
-                () -> "should flag a corrupt marker: " + e.getMessage());
+    void descriptorPersistsWithNoOtherFiles() throws Exception {
+        // A rejected range check never touches the disk (resolveShardCount does no I/O), so a
+        // range-rejected boot cannot leave a half-written descriptor.
+        System.setProperty(PROP, "0");
+        assertThrows(IllegalArgumentException.class, ConfigdServer::resolveShardCount);
+        assertFalse(Files.exists(dataDir.resolve(DESCRIPTOR)),
+                "a range-rejected boot must not persist a descriptor");
     }
 }

@@ -29,15 +29,18 @@ import java.util.stream.IntStream;
  *   <li><b>An {@link #epoch()} on the routing envelope.</b> Carry it so a stale router that
  *       targets a shard that has since split is told "wrong epoch, re-resolve" rather than
  *       mis-committing (the TiKV RegionEpoch pattern). The v1 {@link StaticShardMap} never bumps
- *       it (returns {@code 0} forever); a future dynamic map depends on it existing. The epoch is
- *       in-memory only; static-N never bumps it, so nothing requires the wire field in v1.</li>
+ *       it (it returns the deploy-time topology epoch {@code 1} for the life of the deployment); a
+ *       future dynamic map bumps it on every split/merge. The value is the authenticated
+ *       {@code topology-descriptor.dat} epoch, and the edge watch/SUBSCRIBE resume tokens bind it
+ *       (A4) so a cursor from a superseded topology is rejected {@code STALE_TOPOLOGY} rather than
+ *       mis-routed.</li>
  * </ol>
  *
  * <h2>v1 / v2</h2>
  * <ul>
  *   <li><b>v1</b> - {@link StaticShardMap}: {@code shardFor = hash(scope, key) mod N};
- *       {@code shardIds = [0..N)}; {@code epoch = 0} forever. N is a deploy-time constant,
- *       identical on all nodes; online resharding is out.</li>
+ *       {@code shardIds = [0..N)}; {@code epoch = 1} (the deploy-time constant) for the life of the
+ *       deployment. N is a deploy-time constant, identical on all nodes; online resharding is out.</li>
  *   <li><b>v2 (future)</b> - the same interface but {@code shardFor} consults a versioned table
  *       that a placement driver mutates on split/merge, and {@code epoch} bumps on every change.
  *       Swapping the implementation is the entire v2 routing delta - no caller changes.</li>
@@ -74,9 +77,10 @@ public interface ShardMap {
 
     /**
      * The membership version. Monotonically non-decreasing; bumps on any split/merge/rebalance. The v1
-     * {@link StaticShardMap} returns {@code 0} for its whole life (membership never changes).
+     * {@link StaticShardMap} returns the deploy-time topology epoch ({@code 1}) for its whole life
+     * (membership never changes).
      *
-     * @return the current epoch; {@code 0} under static-N
+     * @return the current epoch; {@code 1} under static-N (never {@code 0}, which is reserved-illegal)
      */
     long epoch();
 }

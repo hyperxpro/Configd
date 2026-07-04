@@ -3,6 +3,7 @@ package io.configd.edge.node;
 import io.configd.common.Clock;
 import io.configd.distribution.wire.EdgeFrame;
 import io.configd.distribution.wire.EdgeFrameCodec;
+import io.configd.distribution.wire.WatchCursor;
 import io.configd.edge.EdgeClientCore;
 import io.configd.transport.TlsConfig;
 import io.configd.transport.TlsManager;
@@ -453,8 +454,11 @@ public final class EdgeStreamClient implements AutoCloseable {
             // snapshot re-bootstrap) — derived from core state, not from a one-shot
             // directive memory, so a failed connect attempt cannot lose it.
             long cursor = core.poisonPolicy().quarantinedSeq() >= 0 ? 0L : core.cursor();
+            // A4: bind the topology epoch to the resume token. This v1 edge is static-N, so it stamps
+            // the single deploy-time epoch (INITIAL_TOPOLOGY_EPOCH); a superseded epoch would be
+            // refused STALE_TOPOLOGY, driving a full re-hydrate. A v2 edge would track the live epoch.
             EdgeFrame.Subscribe subscribe = new EdgeFrame.Subscribe(
-                    prefixes.isEmpty(), prefixes, cursor,
+                    prefixes.isEmpty(), prefixes, WatchCursor.INITIAL_TOPOLOGY_EPOCH, cursor,
                     failedOver ? cursor : -1L, edgeId, acceptFiltered);
             OutputStream out = socket.getOutputStream();
             out.write(EdgeFrameCodec.encode(subscribe, wireVersion));

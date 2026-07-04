@@ -89,6 +89,7 @@ public sealed interface EdgeFrame
     record Subscribe(
             boolean fullStore,
             List<String> prefixes,
+            long topologyEpoch,
             long resumeCursor,
             long failoverResumeCursor,
             String edgeId,
@@ -106,6 +107,11 @@ public sealed interface EdgeFrame
                 throw new IllegalArgumentException(
                         "full-store subscription must not accept server-side filtering");
             }
+            // The resume token binds the topology epoch (A4): 0 is reserved-illegal (pre-epoch).
+            if (topologyEpoch <= WatchCursor.EPOCH_UNSET) {
+                throw new IllegalArgumentException(
+                        "topologyEpoch must be in [1, 2^63) (0 is reserved-illegal): " + topologyEpoch);
+            }
             if (resumeCursor < 0) {
                 throw new IllegalArgumentException("resumeCursor must be non-negative: " + resumeCursor);
             }
@@ -117,12 +123,25 @@ public sealed interface EdgeFrame
         }
 
         /**
-         * A subscription that does not opt into server-side filtering ({@code acceptsFiltered}
-         * false) - the byte-identical legacy shape. Existing callers use this arity unchanged.
+         * A subscription at the v1 static topology epoch ({@link WatchCursor#INITIAL_TOPOLOGY_EPOCH})
+         * that does not opt into server-side filtering - the legacy shape. A v2 multi-epoch caller
+         * MUST use the canonical constructor and pass the live epoch.
          */
         public Subscribe(boolean fullStore, List<String> prefixes, long resumeCursor,
                          long failoverResumeCursor, String edgeId) {
-            this(fullStore, prefixes, resumeCursor, failoverResumeCursor, edgeId, false);
+            this(fullStore, prefixes, WatchCursor.INITIAL_TOPOLOGY_EPOCH, resumeCursor,
+                    failoverResumeCursor, edgeId, false);
+        }
+
+        /**
+         * A subscription at the v1 static topology epoch ({@link WatchCursor#INITIAL_TOPOLOGY_EPOCH})
+         * with an explicit {@code acceptsFiltered} opt-in. A v2 multi-epoch caller MUST use the
+         * canonical constructor and pass the live epoch.
+         */
+        public Subscribe(boolean fullStore, List<String> prefixes, long resumeCursor,
+                         long failoverResumeCursor, String edgeId, boolean acceptsFiltered) {
+            this(fullStore, prefixes, WatchCursor.INITIAL_TOPOLOGY_EPOCH, resumeCursor,
+                    failoverResumeCursor, edgeId, acceptsFiltered);
         }
 
         /**

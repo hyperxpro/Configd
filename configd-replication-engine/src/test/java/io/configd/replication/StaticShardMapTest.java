@@ -58,9 +58,14 @@ class StaticShardMapTest {
     }
 
     @Test
-    void epochIsZeroForever() {
-        assertEquals(0L, new StaticShardMap(16).epoch());
-        assertEquals(0L, new StaticShardMap(1).epoch());
+    void epochIsInitialTopologyEpochUnderStaticN() {
+        // Gate 2b: epoch() now returns the deploy-time topology-descriptor epoch (v1 = 1), not the
+        // old hardcoded 0. Static-N never bumps it; 0 is reserved-illegal.
+        assertEquals(1L, new StaticShardMap(16).epoch());
+        assertEquals(1L, new StaticShardMap(1).epoch());
+        // The explicit-epoch constructor threads the descriptor's epoch through unchanged.
+        assertEquals(1L, new StaticShardMap(4, 1L).epoch());
+        assertThrows(IllegalArgumentException.class, () -> new StaticShardMap(4, 0L));
     }
 
     @Test

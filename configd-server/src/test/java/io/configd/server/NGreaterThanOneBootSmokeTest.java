@@ -131,10 +131,11 @@ class NGreaterThanOneBootSmokeTest {
         } finally {
             server.shutdown();
         }
-        // A SUPPORTED N>1+edge boot now persists the fixed-at-deploy marker (it is a real deploy, not a
-        // refused boot) - the inverse of the pre-flip assertion.
-        assertTrue(java.nio.file.Files.exists(dataDir.resolve("raft-shard-count.meta")),
-                "a booted N>1+edge deploy must persist the fixed-at-deploy marker");
+        // A SUPPORTED N>1+edge boot now persists the fixed-at-deploy topology descriptor (it is a real
+        // deploy, not a refused boot) - the inverse of the pre-flip assertion. Gate 2b: the plaintext
+        // raft-shard-count.meta was replaced by the authenticated topology-descriptor.dat.
+        assertTrue(java.nio.file.Files.exists(dataDir.resolve("topology-descriptor.dat")),
+                "a booted N>1+edge deploy must persist the fixed-at-deploy topology descriptor");
     }
 
     /** Polls the group's owner-published monitor view until it is LEADER (single-node self-election). */

@@ -74,11 +74,11 @@ final class EdgeFrameFixtures {
         m.put("cursor_ack.bin", new EdgeFrame.CursorAck(4242L));
         m.put("heartbeat.bin", new EdgeFrame.Heartbeat(9000L, 1_700_000_000_500L));
 
-        // One ERROR_CLOSE per built taxonomy code. NOT_AUTHORIZED is a 0x02-era addition
-        // (W7-5a) and is covered as a 0x02 fixture in buildV2(), so the v1 golden image stays
-        // entirely frozen (no new v1 entry).
+        // One ERROR_CLOSE per built taxonomy code. NOT_AUTHORIZED (0x02-era, W7-5a) and STALE_TOPOLOGY
+        // (Gate 2b, A4) are newer additions covered as 0x02 fixtures in buildV2(), so the v1 ERROR_CLOSE
+        // golden set stays minimal (each code lives in exactly one golden map).
         for (ErrorCode ec : ErrorCode.values()) {
-            if (ec == ErrorCode.NOT_AUTHORIZED) {
+            if (ec == ErrorCode.NOT_AUTHORIZED || ec == ErrorCode.STALE_TOPOLOGY) {
                 continue;
             }
             m.put("error_" + ec.name().toLowerCase() + ".bin",
@@ -160,6 +160,11 @@ final class EdgeFrameFixtures {
         // ERROR_CLOSE carrying the 0x02-era NOT_AUTHORIZED code (W7-5a).
         m.put("error_not_authorized.bin",
                 new EdgeFrame.ErrorClose(ErrorCode.NOT_AUTHORIZED, ErrorCode.NOT_AUTHORIZED.name()));
+        // ERROR_CLOSE carrying the Gate 2b STALE_TOPOLOGY code (A4): the SUBSCRIBE-side delivery of a
+        // superseded resume epoch (a watch delivers it via WATCH_CANCELED). Also satisfies the
+        // coverage tripwire that pins every ErrorCode to a golden fixture.
+        m.put("error_stale_topology.bin",
+                new EdgeFrame.ErrorClose(ErrorCode.STALE_TOPOLOGY, ErrorCode.STALE_TOPOLOGY.name()));
 
         return m;
     }
