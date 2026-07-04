@@ -46,6 +46,7 @@ import io.configd.raft.RaftRole;
 import io.configd.raft.RaftTransport;
 import io.configd.raft.RaftMessage;
 import io.configd.raft.ProposeOutcome;
+import io.configd.raft.TopologyDescriptor;
 import io.configd.replication.CrossShardBatchException;
 import io.configd.replication.CrossShardWriteGuard;
 import io.configd.replication.MultiRaftDriver;
@@ -121,8 +122,13 @@ public final class ConfigdServer {
      * resharding. Default is {@code 1} (single group, byte-identical to the single-shard path).
      */
     private static final int MAX_SHARD_COUNT = 16;
-    /** Marker file under the data dir recording the deploy-time shard count N (fixed-at-deploy guard). */
-    private static final String SHARD_COUNT_MARKER = "raft-shard-count.meta";
+    /**
+     * The authenticated, versioned topology descriptor file under the data dir (Gate 2b). Holds the
+     * deploy-time shard count N (fixed-at-deploy guard) and the topology epoch (A4). Replaces the old
+     * plaintext {@code raft-shard-count.meta} marker: it is wrapped in the Raft integrity envelope, so
+     * the reshard guard and the epoch are tamper-evident under a key.
+     */
+    private static final String TOPOLOGY_DESCRIPTOR_FILE = "topology-descriptor.dat";
     /**
      * Per-group RNG seed stride (the SplitMix64 / golden-ratio increment). Each group's RaftNode RNG is
      * seeded {@code nodeId*31 + gid*GID_RNG_STRIDE + nanoTime()} so the groups' election timeouts stagger
@@ -252,10 +258,11 @@ public final class ConfigdServer {
         // -Dconfigd.edge.allowPartialShardView; a WATCH is never refused. See the
         // fanOutConfig.withAllowPartialShardView wiring below. At N=1 (one shard is the whole keyspace)
         // the refusal never fires - byte-identical.
-        int shardCount = resolveShardCount(dataDir);
-        StaticShardMap shardMap = new StaticShardMap(shardCount);
-        System.out.println("  Shard map    : " + shardMap + " [Multi-Raft Phase 1 C4a; N fixed at deploy,"
-                + " ceiling " + MAX_SHARD_COUNT + "]");
+        int shardCount = resolveShardCount();
+        // The StaticShardMap is constructed BELOW, after the Raft integrity envelope exists: its
+        // epoch() authority is the authenticated topology descriptor, which is read/verified with
+        // that same K_integrity envelope (Gate 2b). Building the map here would have to hardcode the
+        // epoch, defeating the tamper-evident descriptor.
 
         // Initialize storage
         Storage storage = Storage.file(dataDir);
@@ -290,6 +297,20 @@ public final class ConfigdServer {
         } catch (Exception e) {
             throw new RuntimeException("Failed to load or create Ed25519 signing key", e);
         }
+
+        // ---------------------------------------------------------------
+        // Topology descriptor (Gate 2b): the authenticated, versioned replacement for the plaintext
+        // raft-shard-count.meta. Now that the Raft integrity envelope exists, read (or, on first boot,
+        // write) topology-descriptor.dat under the SAME K_integrity. It enforces the fixed-at-deploy N
+        // (a changed N is a loud, tamper-evident reshard rejection) AND yields the topology epoch that
+        // StaticShardMap.epoch() returns and every edge resume token binds (A4). At N=1 the epoch is
+        // the deploy constant (TopologyDescriptor.INITIAL_EPOCH); the guard/epoch are byte-identical in
+        // behavior to the old marker.
+        // ---------------------------------------------------------------
+        long topologyEpoch = enforceTopologyDescriptor(shardCount, dataDir, raftIntegrity);
+        StaticShardMap shardMap = new StaticShardMap(shardCount, topologyEpoch);
+        System.out.println("  Shard map    : " + shardMap + " [Multi-Raft Phase 1 C4a; N fixed at deploy,"
+                + " ceiling " + MAX_SHARD_COUNT + "]");
 
         // The config store + state machine are now PER-GROUP, built inside buildRaftGroup (one per
         // shard). At N=1 the single group 0 reuses the node-level `storage` instance below, so its
@@ -1007,6 +1028,7 @@ public final class ConfigdServer {
                             .withAllowPartialShardView(allowPartialShardView);
             fanOutServer = new io.configd.server.fanout.NettyFanOutServer(
                     edgeShardSources, edgeShardReplaySources, edgeAllGids, edgeShardResolver,
+                    shardMap.epoch(),
                     new InetSocketAddress(config.bindAddress(), config.edgePort()),
                     tlsManager,
                     fanOutConfig,
@@ -1438,26 +1460,19 @@ public final class ConfigdServer {
     }
 
     /**
-     * Resolves and validates the deploy-time shard count {@code N}.
-     * <ol>
-     *   <li>reads {@code configd.raft.shardCount} (default {@code 1} - a single group, byte-identical;
-     *       system property, consistent with the other {@code configd.raft.*} tunables);</li>
-     *   <li>validates {@code 1 <= N <= }{@link #MAX_SHARD_COUNT} (a clear error otherwise);</li>
-     *   <li>enforces fixed-at-deploy via {@link #enforceFixedShardCount} (persist on first boot, reject a
-     *       later changed N - a loud reshard error rather than silent mis-routing).</li>
-     * </ol>
-     *
-     * <p>{@code N>1} boots when the N-group production wiring is fully wired and verified.
-     * {@code N=1} (the default) is unchanged.
+     * Reads and range-validates the deploy-time shard count {@code N} from
+     * {@code configd.raft.shardCount} (default {@code 1} - a single group, byte-identical; a system
+     * property, consistent with the other {@code configd.raft.*} tunables). Validates
+     * {@code 1 <= N <= }{@link #MAX_SHARD_COUNT}; a clear error otherwise. The fixed-at-deploy
+     * enforcement + topology-epoch derivation is done separately by {@link #enforceTopologyDescriptor}
+     * once the Raft integrity envelope exists (the descriptor is authenticated with that same key).
      *
      * <p>Package-private static so {@code ShardCountConfigTest} can drive it directly.
      *
-     * @param dataDir the data directory (holds the fixed-at-deploy marker)
      * @return the validated shard count {@code N}
      * @throws IllegalArgumentException if {@code N} is out of range
-     * @throws IllegalStateException    if a reshard is attempted (configured N differs from the persisted N)
      */
-    static int resolveShardCount(Path dataDir) {
+    static int resolveShardCount() {
         int shardCount = Integer.getInteger("configd.raft.shardCount", 1);
         if (shardCount < 1 || shardCount > MAX_SHARD_COUNT) {
             throw new IllegalArgumentException(
@@ -1465,61 +1480,69 @@ public final class ConfigdServer {
                             + " — static-N multi-Raft; N is a deploy-time constant fixed for the life of"
                             + " the deployment (changing it requires a manual reshard).");
         }
-        // N>1 is fully wired and verified. Fixed-at-deploy still applies: the first boot persists N; a
-        // later boot with a different N is a loud reshard rejection, never silent mis-routing of
-        // already-committed keys.
-        enforceFixedShardCount(shardCount, dataDir);
         return shardCount;
     }
 
     /**
-     * Fixed-at-deploy guard. Records the deploy-time shard count {@code N} under the data dir on first
-     * boot and REJECTS a later boot whose configured {@code N} differs: changing {@code N} on an
-     * existing deployment requires a manual reshard (static-N; v2 adds dynamic resharding). This turns a
-     * reshard attempt into a LOUD, fail-closed startup error instead of silently mis-routing
-     * already-committed keys to the wrong group. Idempotent: a matching marker is a no-op. The write is
-     * crash-durable (temp + fsync, atomic rename, dir fsync - mirroring {@code FileStorage.put}) so a
-     * crash can neither leave a torn marker nor lose it (a silent reset of the guard).
+     * Fixed-at-deploy guard + topology-epoch source (Gate 2b). On first boot mints an authenticated,
+     * versioned {@link TopologyDescriptor} at N + {@link TopologyDescriptor#INITIAL_EPOCH} and writes it
+     * to {@value #TOPOLOGY_DESCRIPTOR_FILE}; on a later boot it verifies the persisted descriptor and
+     * REJECTS a different configured {@code N} (changing N on an existing deployment requires a manual
+     * reshard - static-N; v2 adds dynamic resharding). Wrapping the descriptor in the Raft integrity
+     * envelope makes the guard TAMPER-EVIDENT under a key: a corrupt / MAC-failing / rolled-version /
+     * reserved-illegal-epoch descriptor is refused with the same fail-closed refuse-to-start class as
+     * the old corrupt-marker refusal. Idempotent: a matching descriptor is a read-only no-op. The
+     * first-boot write is crash-durable (temp + fsync, atomic rename, dir fsync - mirroring
+     * {@code FileStorage.put}) so a crash can neither leave a torn descriptor nor lose it.
      *
      * <p>Package-private static so {@code ShardCountConfigTest} can drive it directly without standing up
      * a server.
      *
-     * @param shardCount the configured, range-validated shard count (1..{@link #MAX_SHARD_COUNT})
-     * @param dataDir    the data directory (holds the {@value #SHARD_COUNT_MARKER} marker)
-     * @throws IllegalStateException if a marker exists and records a different {@code N} (a reshard
-     *                               attempt) or is corrupt
-     * @throws RuntimeException      if the marker cannot be read or written
+     * @param shardCount    the configured, range-validated shard count (1..{@link #MAX_SHARD_COUNT})
+     * @param dataDir       the data directory (holds {@value #TOPOLOGY_DESCRIPTOR_FILE})
+     * @param raftIntegrity the Raft integrity envelope (same {@code K_integrity}/posture as the WAL)
+     * @return the topology epoch to bind into {@code StaticShardMap.epoch()} and every edge resume token
+     * @throws IllegalStateException if the persisted descriptor records a different {@code N} (a reshard
+     *                               attempt), or is corrupt / tampered / malformed (refuse to start)
+     * @throws RuntimeException      if the descriptor cannot be read or written
      */
-    static void enforceFixedShardCount(int shardCount, Path dataDir) {
-        Path marker = dataDir.resolve(SHARD_COUNT_MARKER);
+    static long enforceTopologyDescriptor(int shardCount, Path dataDir,
+            io.configd.common.IntegrityEnvelope raftIntegrity) {
+        Path descriptorFile = dataDir.resolve(TOPOLOGY_DESCRIPTOR_FILE);
         try {
-            if (Files.exists(marker)) {
-                String recorded = Files.readString(marker, java.nio.charset.StandardCharsets.UTF_8).trim();
-                int persisted;
+            if (Files.exists(descriptorFile)) {
+                byte[] enveloped = Files.readAllBytes(descriptorFile);
+                TopologyDescriptor persisted;
                 try {
-                    persisted = Integer.parseInt(recorded);
-                } catch (NumberFormatException nfe) {
+                    persisted = TopologyDescriptor.fromEnvelope(raftIntegrity, enveloped);
+                } catch (io.configd.common.IntegrityException | IllegalStateException bad) {
+                    // Tamper / CRC-or-MAC failure / rolled version / reserved-illegal epoch: refuse to
+                    // start, fail-closed - now tamper-evident (an attacker cannot edit N/epoch to bypass
+                    // the reshard refusal without invalidating the envelope MAC under a key).
                     throw new IllegalStateException(
-                            "corrupt shard-count marker " + marker + " (content=\"" + recorded
-                                    + "\"); refusing to start. Restore the marker or redeploy on a clean"
-                                    + " data directory.", nfe);
+                            "corrupt or tampered topology descriptor " + descriptorFile
+                                    + "; refusing to start. Restore it from a trusted replica or redeploy"
+                                    + " on a clean data directory. Cause: " + bad.getMessage(), bad);
                 }
-                if (persisted != shardCount) {
+                if (persisted.shardCount() != shardCount) {
                     throw new IllegalStateException(
                             "configd.raft.shardCount=" + shardCount + " but this data directory was"
-                                    + " initialized with N=" + persisted + " (" + marker + "). The shard"
-                                    + " count is FIXED AT DEPLOY (static-N); changing it would mis-route"
-                                    + " already-committed keys to the wrong group. To change N, perform a"
-                                    + " manual reshard or redeploy on a fresh data directory.");
+                                    + " initialized with N=" + persisted.shardCount() + " (" + descriptorFile
+                                    + "). The shard count is FIXED AT DEPLOY (static-N); changing it would"
+                                    + " mis-route already-committed keys to the wrong group. To change N,"
+                                    + " perform a manual reshard or redeploy on a fresh data directory.");
                 }
-                return; // matches - fixed-at-deploy honoured
+                return persisted.topologyEpoch(); // matches - fixed-at-deploy honoured
             }
-            // First boot for this data dir: record N CRASH-DURABLY - write temp + fsync, atomic rename,
-            // fsync the directory - mirroring FileStorage.put so a crash in the OS writeback window cannot
-            // LOSE the marker (not just "cannot leave a torn write"). The marker is the durability backbone
-            // of the fixed-at-deploy safety guard, so it gets the same fsync discipline as Raft state.
-            Path tmp = dataDir.resolve(SHARD_COUNT_MARKER + ".tmp");
-            byte[] bytes = Integer.toString(shardCount).getBytes(java.nio.charset.StandardCharsets.UTF_8);
+            // First boot for this data dir: mint the descriptor at the v1 initial epoch and write it
+            // CRASH-DURABLY - temp + fsync, atomic rename, fsync the directory - mirroring FileStorage.put
+            // so a crash in the OS writeback window can neither LOSE the descriptor nor leave it torn. The
+            // descriptor is the durability backbone of the fixed-at-deploy guard AND the topology epoch,
+            // so it gets the same fsync discipline as Raft state.
+            TopologyDescriptor descriptor =
+                    new TopologyDescriptor(shardCount, TopologyDescriptor.INITIAL_EPOCH);
+            byte[] bytes = descriptor.toEnvelope(raftIntegrity);
+            Path tmp = dataDir.resolve(TOPOLOGY_DESCRIPTOR_FILE + ".tmp");
             try (java.nio.channels.FileChannel ch = java.nio.channels.FileChannel.open(tmp,
                     java.nio.file.StandardOpenOption.CREATE,
                     java.nio.file.StandardOpenOption.WRITE,
@@ -1531,17 +1554,18 @@ public final class ConfigdServer {
                 ch.force(true); // fsync data + metadata before the rename
             }
             try {
-                Files.move(tmp, marker, java.nio.file.StandardCopyOption.ATOMIC_MOVE);
+                Files.move(tmp, descriptorFile, java.nio.file.StandardCopyOption.ATOMIC_MOVE);
             } catch (java.nio.file.AtomicMoveNotSupportedException amns) {
-                Files.move(tmp, marker, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+                Files.move(tmp, descriptorFile, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
             }
             // fsync the directory so the rename itself is durable (mirrors FileStorage.sync()).
             try (java.nio.channels.FileChannel dir = java.nio.channels.FileChannel.open(
                     dataDir, java.nio.file.StandardOpenOption.READ)) {
                 dir.force(true);
             }
+            return descriptor.topologyEpoch();
         } catch (java.io.IOException e) {
-            throw new RuntimeException("Failed to read/write shard-count marker " + marker, e);
+            throw new RuntimeException("Failed to read/write topology descriptor " + descriptorFile, e);
         }
     }
 

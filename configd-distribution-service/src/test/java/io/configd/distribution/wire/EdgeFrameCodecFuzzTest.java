@@ -262,8 +262,8 @@ class EdgeFrameCodecFuzzTest {
         for (int hc : hostile) {
             byte[] wire = EdgeFrameCodec.encode(
                     new EdgeFrame.WatchProgress(7L, WatchCursor.fromNow(), 123L), V2);
-            // cursor count is at offset HEADER(6) + watchId(8) = 14.
-            ByteBuffer.wrap(wire).putInt(14, hc);
+            // cursor count is at offset HEADER(6) + watchId(8) + topologyEpoch(8) = 22 (A4 prefix).
+            ByteBuffer.wrap(wire).putInt(22, hc);
             repairCrc(wire);
             assertTimeoutPreemptively(DECODE_BUDGET, () -> {
                 EdgeFrameCodec.CodecException ex = assertThrows(EdgeFrameCodec.CodecException.class,
@@ -278,16 +278,17 @@ class EdgeFrameCodecFuzzTest {
     void unsortedOrDuplicateGidCursorRejected() {
         WatchCursor twoComp = new WatchCursor(List.of(
                 new WatchCursor.Component(0, 1L), new WatchCursor.Component(1, 2L)));
-        // comp0.gid @ 18, comp1.gid @ 30 (see WATCH_PROGRESS layout).
+        // Layout after the A4 epoch prefix: watchId@6, topologyEpoch@14, count@22, comp0.gid@26,
+        // comp0.S@30, comp1.gid@38.
         byte[] dup = EdgeFrameCodec.encode(new EdgeFrame.WatchProgress(7L, twoComp, 9L), V2);
-        ByteBuffer.wrap(dup).putInt(30, 0); // comp1.gid := comp0.gid (duplicate)
+        ByteBuffer.wrap(dup).putInt(38, 0); // comp1.gid := comp0.gid (duplicate)
         repairCrc(dup);
         EdgeFrameCodec.CodecException ex = assertThrows(EdgeFrameCodec.CodecException.class,
                 () -> EdgeFrameCodec.decode(dup));
         assertEquals(ErrorCode.FRAME_CORRUPT, ex.code());
 
         byte[] desc = EdgeFrameCodec.encode(new EdgeFrame.WatchProgress(7L, twoComp, 9L), V2);
-        ByteBuffer.wrap(desc).putInt(18, 5); // comp0.gid := 5, so 5 then 1 is descending (unsigned)
+        ByteBuffer.wrap(desc).putInt(26, 5); // comp0.gid := 5, so 5 then 1 is descending (unsigned)
         repairCrc(desc);
         ex = assertThrows(EdgeFrameCodec.CodecException.class, () -> EdgeFrameCodec.decode(desc));
         assertEquals(ErrorCode.FRAME_CORRUPT, ex.code());

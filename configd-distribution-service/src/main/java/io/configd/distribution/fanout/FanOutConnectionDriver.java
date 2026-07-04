@@ -115,6 +115,16 @@ public final class FanOutConnectionDriver implements WatchMultiplexSink.Coordina
     /** Resolves a watch target to its covered shard set (KEY -> one shard; PREFIX/FULL -> all). */
     private final ShardResolver shardResolver;
 
+    /**
+     * The server's current topology epoch ({@code ShardMap.epoch()}, from the authenticated
+     * {@code topology-descriptor.dat}; v1 = {@link WatchCursor#INITIAL_TOPOLOGY_EPOCH}). Every
+     * inbound resume token (WATCH_CREATE cursor / legacy SUBSCRIBE) is checked against it (A4): a
+     * mismatch is {@link ErrorCode#STALE_TOPOLOGY} (the client must re-hydrate), and every outbound
+     * cursor (WATCH_PROGRESS / a WATCH_CANCELED oldest) is stamped with it. Static-N never changes it,
+     * so at v1 the check is always satisfied - byte-identical behavior.
+     */
+    private final long topologyEpoch;
+
     /** The connection's real outbound - shared by every per-shard decorator; router frames go here. */
     private final TransportSink transportSink;
 
@@ -239,8 +249,8 @@ public final class FanOutConnectionDriver implements WatchMultiplexSink.Coordina
                                   BiConsumer<ErrorCode, String> teardownHook, WatchAuthorizer authorizer) {
         this(Map.of(0, Objects.requireNonNull(source, "source")),
                 Map.of(0, Objects.requireNonNull(replaySource, "replaySource")),
-                new int[]{0}, SINGLE_SHARD, sink, config, metrics, clock, governor, edgeIdentity,
-                teardownHook, authorizer);
+                new int[]{0}, SINGLE_SHARD, WatchCursor.INITIAL_TOPOLOGY_EPOCH, sink, config, metrics,
+                clock, governor, edgeIdentity, teardownHook, authorizer);
     }
 
     /**
@@ -254,11 +264,13 @@ public final class FanOutConnectionDriver implements WatchMultiplexSink.Coordina
      *                      {@code allGids}
      * @param allGids       the connection's shard set, ascending (StaticShardMap: {@code [0, N)})
      * @param shardResolver resolves a watch target to its covered shard set (target-driven coverage)
+     * @param topologyEpoch the server's current topology epoch ({@code ShardMap.epoch()}); every resume
+     *                      token is checked/stamped against it (A4). Must be non-zero (0 reserved-illegal)
      * @param authorizer    the authorization gate (W7), or {@code null} when no principal model is wired
      */
     public FanOutConnectionDriver(Map<Integer, CommitNotificationSource> sources,
                                   Map<Integer, ReplaySource> replaySources,
-                                  int[] allGids, ShardResolver shardResolver,
+                                  int[] allGids, ShardResolver shardResolver, long topologyEpoch,
                                   TransportSink sink, FanOutConfig config, FanOutSessionMetrics metrics,
                                   Clock clock, SlowConsumerGovernor governor, String edgeIdentity,
                                   BiConsumer<ErrorCode, String> teardownHook, WatchAuthorizer authorizer) {
@@ -269,6 +281,11 @@ public final class FanOutConnectionDriver implements WatchMultiplexSink.Coordina
             throw new IllegalArgumentException("allGids must not be empty");
         }
         this.shardResolver = Objects.requireNonNull(shardResolver, "shardResolver");
+        if (topologyEpoch <= WatchCursor.EPOCH_UNSET) {
+            throw new IllegalArgumentException(
+                    "topologyEpoch must be in [1, 2^63) (0 is reserved-illegal): " + topologyEpoch);
+        }
+        this.topologyEpoch = topologyEpoch;
         this.transportSink = Objects.requireNonNull(sink, "sink");
         this.config = Objects.requireNonNull(config, "config");
         this.metrics = Objects.requireNonNull(metrics, "metrics");
@@ -342,6 +359,19 @@ public final class FanOutConnectionDriver implements WatchMultiplexSink.Coordina
 
     private void routeFirstFrame(EdgeFrame frame) {
         if (frame instanceof EdgeFrame.Subscribe sub) {
+            // A4 topology-epoch gate (etcd ErrCompacted model): a SUBSCRIBE resume token bound to a
+            // superseded topology generation is refused STALE_TOPOLOGY (ERROR_CLOSE) - the client's
+            // only correct recovery is to drop the cursor and fully re-hydrate. Checked FIRST so a
+            // stale token yields STALE_TOPOLOGY (re-hydrate) rather than the N>1 partial-view
+            // BAD_SUBSCRIBE below. Epoch 0 is already FRAME_CORRUPT at decode. At v1 static-N (one
+            // deploy-time epoch) this never fires - byte-identical.
+            if (sub.topologyEpoch() != topologyEpoch) {
+                teardownHook.accept(ErrorCode.STALE_TOPOLOGY,
+                        "SUBSCRIBE resume token is from a superseded topology epoch "
+                                + sub.topologyEpoch() + " (current " + topologyEpoch
+                                + "); drop the cursor and re-hydrate from a fresh SUBSCRIBE");
+                return;
+            }
             // The legacy whole-store SUBSCRIBE (edge hydration) is served from the PRIMARY shard core
             // only (handleSubscribe drives cores.get(primaryGid)); at N>1 that is a SILENT PARTIAL
             // keyspace view. Refuse fail-closed, per connection, unless the operator explicitly accepts
@@ -418,7 +448,7 @@ public final class FanOutConnectionDriver implements WatchMultiplexSink.Coordina
                 return;
             }
             case ALLOW_FORCE_SNAPSHOT -> bound = new EdgeFrame.Subscribe(
-                    bound.fullStore(), bound.prefixes(), 0L, -1L, bound.edgeId(),
+                    bound.fullStore(), bound.prefixes(), bound.topologyEpoch(), 0L, -1L, bound.edgeId(),
                     bound.acceptsFiltered());
             case ALLOW -> { /* admit as requested */ }
         }
@@ -495,10 +525,10 @@ public final class FanOutConnectionDriver implements WatchMultiplexSink.Coordina
         if ("plaintext".equals(edgeIdentity)) {
             return wire;
         }
-        // Carry acceptsFiltered through the identity rebind - dropping it here would silently
-        // disable server-side filtering on every mTLS connection (the production path).
-        return new EdgeFrame.Subscribe(wire.fullStore(), wire.prefixes(), wire.resumeCursor(),
-                wire.failoverResumeCursor(), edgeIdentity, wire.acceptsFiltered());
+        // Carry acceptsFiltered AND the topologyEpoch through the identity rebind - dropping either
+        // would silently disable server-side filtering / lose the resume token's topology binding.
+        return new EdgeFrame.Subscribe(wire.fullStore(), wire.prefixes(), wire.topologyEpoch(),
+                wire.resumeCursor(), wire.failoverResumeCursor(), edgeIdentity, wire.acceptsFiltered());
     }
 
     // -----------------------------------------------------------------------
@@ -575,6 +605,20 @@ public final class FanOutConnectionDriver implements WatchMultiplexSink.Coordina
             rejectWatch(watchId, ErrorCode.BAD_SUBSCRIBE,
                     "watch_id budget exhausted on this connection (max " + MAX_WATCH_IDS_PER_CONNECTION
                             + "); reconnect to reset");
+            return;
+        }
+
+        // (3b-topology) A4 topology-epoch gate (etcd ErrCompacted model): a cursor bound to a
+        // superseded topology generation is refused STALE_TOPOLOGY (WATCH_CANCELED) - the client must
+        // drop the cursor and re-hydrate. Checked BEFORE the gid-spoof guard so a resharding cursor (a
+        // cursor from the OLD topology, whose gids may also be out of the new shard set) yields
+        // STALE_TOPOLOGY, not the BAD_SUBSCRIBE gid-spoof reject. Epoch 0 is already FRAME_CORRUPT at
+        // decode. At v1 static-N (one deploy-time epoch) this never fires - byte-identical.
+        if (create.cursor().topologyEpoch() != topologyEpoch) {
+            rejectWatch(watchId, ErrorCode.STALE_TOPOLOGY,
+                    "watch cursor is from a superseded topology epoch "
+                            + create.cursor().topologyEpoch() + " (current " + topologyEpoch
+                            + "); drop the cursor and re-hydrate");
             return;
         }
 
@@ -905,7 +949,8 @@ public final class FanOutConnectionDriver implements WatchMultiplexSink.Coordina
             long drainedS = Math.max(0L, cores.get(g).cursor());
             comps.add(new WatchCursor.Component(g, drainedS));
         }
-        return new WatchCursor(comps);
+        // Stamp the server's current topology epoch (A4) so the client can detect a superseded cursor.
+        return new WatchCursor(topologyEpoch, comps);
     }
 
     /** Broadcasts one connection-level {@code CURSOR_ACK} to every shard core (W8-6 shared scalar). */

@@ -14,6 +14,7 @@ import io.configd.distribution.fanout.WatchAuthorizer;
 import io.configd.distribution.wire.EdgeFrame;
 import io.configd.distribution.wire.EdgeFrameCodec;
 import io.configd.distribution.wire.ErrorCode;
+import io.configd.distribution.wire.WatchCursor;
 import io.configd.netty.NettyTransport;
 import io.configd.transport.TlsConfig;
 import io.configd.transport.TlsManager;
@@ -96,6 +97,8 @@ public final class NettyFanOutServer implements FanOutEndpoint {
     private final int[] allGids;
     /** Resolves a watch target to its covered shard set; {@link #SINGLE_SHARD} for the single-shard ctors. */
     private final ShardResolver shardResolver;
+    /** The server's topology epoch ({@code ShardMap.epoch()}), threaded into every session driver (A4). */
+    private final long topologyEpoch;
     private final FanOutConfig config;
     private final int transportQueueFrames;
     private final int maxSessions;
@@ -183,8 +186,8 @@ public final class NettyFanOutServer implements FanOutEndpoint {
                              WatchAuthorizer authorizer) {
         this(Map.of(0, Objects.requireNonNull(source, "source")),
                 Map.of(0, Objects.requireNonNull(replaySource, "replaySource")),
-                new int[]{0}, SINGLE_SHARD, bindAddress, tlsManager, config, transportQueueFrames,
-                maxSessions, governor, metrics, clock, authorizer);
+                new int[]{0}, SINGLE_SHARD, WatchCursor.INITIAL_TOPOLOGY_EPOCH, bindAddress, tlsManager,
+                config, transportQueueFrames, maxSessions, governor, metrics, clock, authorizer);
     }
 
     /**
@@ -197,6 +200,7 @@ public final class NettyFanOutServer implements FanOutEndpoint {
                              Map<Integer, ReplaySource> shardReplaySources,
                              int[] allGids,
                              ShardResolver shardResolver,
+                             long topologyEpoch,
                              InetSocketAddress bindAddress,
                              TlsManager tlsManager,
                              FanOutConfig config,
@@ -210,6 +214,11 @@ public final class NettyFanOutServer implements FanOutEndpoint {
         this.shardReplaySources = Map.copyOf(Objects.requireNonNull(shardReplaySources, "shardReplaySources"));
         this.allGids = Objects.requireNonNull(allGids, "allGids").clone();
         this.shardResolver = Objects.requireNonNull(shardResolver, "shardResolver");
+        if (topologyEpoch <= WatchCursor.EPOCH_UNSET) {
+            throw new IllegalArgumentException(
+                    "topologyEpoch must be in [1, 2^63) (0 is reserved-illegal): " + topologyEpoch);
+        }
+        this.topologyEpoch = topologyEpoch;
         this.bindAddress = Objects.requireNonNull(bindAddress, "bindAddress");
         this.tlsManager = tlsManager; // null = plaintext (test/single-node)
         this.config = Objects.requireNonNull(config, "config");
@@ -420,8 +429,8 @@ public final class NettyFanOutServer implements FanOutEndpoint {
             }
             started = true;
             this.driver = new FanOutConnectionDriver(shardSources, shardReplaySources, allGids,
-                    shardResolver, this, config, metrics, clock, governor, identity, this::teardown,
-                    authorizer);
+                    shardResolver, topologyEpoch, this, config, metrics, clock, governor, identity,
+                    this::teardown, authorizer);
             metrics.onSubscriberConnected();
             connectedCounted = true;
             Thread.ofVirtual().name("edge-netty-session-" + identity)

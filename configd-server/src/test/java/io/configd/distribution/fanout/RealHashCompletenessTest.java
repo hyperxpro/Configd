@@ -68,8 +68,8 @@ class RealHashCompletenessTest {
         SlowConsumerGovernor gov =
                 new SlowConsumerGovernor(SlowConsumerPolicyConfig.defaults(), FanOutSessionMetrics.NOOP);
         this.driver = new FanOutConnectionDriver(sources, replays, gids, new ShardMapResolver(shardMap),
-                out, FanOutConfig.defaults(), FanOutSessionMetrics.NOOP, clock, gov, "edge-1",
-                (c, m) -> { }, (p, r, t) -> true);
+                shardMap.epoch(), out, FanOutConfig.defaults(), FanOutSessionMetrics.NOOP, clock, gov,
+                "edge-1", (c, m) -> { }, (p, r, t) -> true);
     }
 
     @Test

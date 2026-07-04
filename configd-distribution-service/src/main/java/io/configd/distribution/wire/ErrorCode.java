@@ -5,7 +5,7 @@ package io.configd.distribution.wire;
  * the numeric codes are pinned by the {@code EdgeFrameCodecGoldenFixtureTest} golden fixture;
  * no free-form error strings ride the wire as a structured cause.
  *
- * <p>The numeric {@link #code()} (1..11) is the byte that goes on the wire in an
+ * <p>The numeric {@link #code()} (1..12) is the byte that goes on the wire in an
  * {@link EdgeFrame.ErrorClose} payload (and a {@link EdgeFrame.WatchCanceled} per-watch
  * terminal); the human-readable {@code message} field of the frame is diagnostic only.
  * Changing any code value is a wire-format change and MUST bump
@@ -61,7 +61,19 @@ public enum ErrorCode {
      * capability). Surfaces as a {@link EdgeFrame.WatchCanceled} per-watch terminal with
      * <b>no data frame emitted first</b> (W7-5).
      */
-    NOT_AUTHORIZED(11);
+    NOT_AUTHORIZED(11),
+
+    /**
+     * The resume token's bound {@code topologyEpoch} does not match the server's current
+     * {@code ShardMap.epoch()} - the whole topology generation the cursor/SUBSCRIBE belongs to is
+     * superseded (a frozen-format A4 addition). Distinct from {@link #GAP_UNRECOVERABLE} ("data fell
+     * off retention" - resume from an earlier position): {@code STALE_TOPOLOGY} means "drop the cursor
+     * and fully re-hydrate from scratch" (the etcd {@code ErrCompacted} model). Delivered as a
+     * {@link EdgeFrame.WatchCanceled} per-watch terminal for a watch, or an {@link EdgeFrame.ErrorClose}
+     * for a legacy SUBSCRIBE. At v1 static-N (one deploy-time epoch) it never fires - byte-identical
+     * behavior.
+     */
+    STALE_TOPOLOGY(12);
 
     private final int code;
 
@@ -69,7 +81,7 @@ public enum ErrorCode {
         this.code = code;
     }
 
-    /** The on-wire numeric code (1..11). */
+    /** The on-wire numeric code (1..12). */
     public int code() {
         return code;
     }

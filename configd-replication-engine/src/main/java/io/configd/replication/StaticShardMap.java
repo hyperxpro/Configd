@@ -1,14 +1,16 @@
 package io.configd.replication;
 
 import io.configd.common.ConfigScope;
+import io.configd.raft.TopologyDescriptor;
 
 import java.util.stream.IntStream;
 
 /**
  * The v1 {@link ShardMap}: a fixed set of {@code N} shards with
  * {@code shardFor = hash(scope, key) mod N}. Immutable, thread-safe, identical on every node.
- * N is a deploy-time constant; online resharding is out. {@link #epoch()} is {@code 0} for the
- * life of the process.
+ * N is a deploy-time constant; online resharding is out. {@link #epoch()} returns the deploy-time
+ * {@link TopologyDescriptor} epoch (v1 = {@link TopologyDescriptor#INITIAL_EPOCH}); static-N never
+ * bumps it, a future v2 dynamic map does.
  *
  * <h2>Partitioning</h2>
  * All scopes share the single pool {@code [0, N)}. The {@link ConfigScope} is folded into the
@@ -38,18 +40,41 @@ public final class StaticShardMap implements ShardMap {
     private static final long FNV_PRIME = 1099511628211L;
 
     private final int shardCount;
+    private final long topologyEpoch;
 
     /**
-     * Creates a static shard map over {@code shardCount} groups (ids {@code [0, shardCount)}).
+     * Creates a static shard map over {@code shardCount} groups at the v1 initial topology epoch
+     * ({@link TopologyDescriptor#INITIAL_EPOCH}). The production boot path uses the
+     * {@link #StaticShardMap(int, long)} overload with the epoch read from the deploy-time
+     * {@code topology-descriptor.dat}; this convenience form is for the common single-epoch case
+     * (tests / static-N tooling).
      *
      * @param shardCount the number of shards (Raft groups); must be {@code >= 1}
      * @throws IllegalArgumentException if {@code shardCount < 1}
      */
     public StaticShardMap(int shardCount) {
+        this(shardCount, TopologyDescriptor.INITIAL_EPOCH);
+    }
+
+    /**
+     * Creates a static shard map over {@code shardCount} groups (ids {@code [0, shardCount)}) at the
+     * given topology epoch (the authoritative {@link TopologyDescriptor#topologyEpoch()} read at boot).
+     *
+     * @param shardCount    the number of shards (Raft groups); must be {@code >= 1}
+     * @param topologyEpoch the deploy-time topology epoch; {@code 0}
+     *                      ({@link TopologyDescriptor#EPOCH_UNSET}) is reserved-illegal
+     * @throws IllegalArgumentException if {@code shardCount < 1} or {@code topologyEpoch <= 0}
+     */
+    public StaticShardMap(int shardCount, long topologyEpoch) {
         if (shardCount < 1) {
             throw new IllegalArgumentException("shardCount must be >= 1, got " + shardCount);
         }
+        if (topologyEpoch <= TopologyDescriptor.EPOCH_UNSET) {
+            throw new IllegalArgumentException(
+                    "topologyEpoch must be in [1, 2^63) (0 is reserved-illegal), got " + topologyEpoch);
+        }
         this.shardCount = shardCount;
+        this.topologyEpoch = topologyEpoch;
     }
 
     @Override
@@ -84,7 +109,7 @@ public final class StaticShardMap implements ShardMap {
 
     @Override
     public long epoch() {
-        return 0L;
+        return topologyEpoch;
     }
 
     /** The shard count {@code N} (membership size). */
@@ -94,6 +119,6 @@ public final class StaticShardMap implements ShardMap {
 
     @Override
     public String toString() {
-        return "StaticShardMap[N=" + shardCount + ", epoch=0]";
+        return "StaticShardMap[N=" + shardCount + ", epoch=" + topologyEpoch + "]";
     }
 }
