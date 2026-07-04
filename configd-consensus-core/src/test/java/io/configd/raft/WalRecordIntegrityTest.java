@@ -134,10 +134,10 @@ class WalRecordIntegrityTest {
                 break;
             }
             int dataStart = buf.position();
-            // Skip the envelope header (magic+version+algId+reserved) so we flip a
-            // PAYLOAD byte, not a header byte (a header flip would surface as a
-            // wrong-magic/version refusal rather than the MAC-mismatch we are proving).
-            int searchStart = dataStart + IntegrityEnvelope.HEADER_SIZE;
+            // Skip the envelope header + scopeId (magic+version+algId+reserved+scopeId) so we flip
+            // a PAYLOAD byte, not a header/scope byte (a header/scope flip would surface as a
+            // wrong-magic/version/scope refusal rather than the MAC-mismatch we are proving).
+            int searchStart = dataStart + IntegrityEnvelope.HEADER_SIZE + IntegrityEnvelope.SCOPE_ID_SIZE;
             boolean flipped = false;
             for (int i = searchStart; i < dataStart + len; i++) {
                 if (wal[i] == from) {

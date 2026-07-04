@@ -26,6 +26,7 @@ class LocalKmsEncryptionIntegrationTest {
 
     private static final int WAL_MAGIC = 0x5257_414C;  // "RWAL"
     private static final int SNAP_MAGIC = 0x5253_4E50; // "RSNP"
+    private static final int SCOPE = 3;                // a per-shard scope (gid); same on wrap+read here
 
     /** The cluster signing-key encoding - held OUTSIDE the data dir in production (D-1). */
     private static byte[] signingKey(byte fill) {
@@ -58,7 +59,7 @@ class LocalKmsEncryptionIntegrationTest {
             SegmentKeyManager km = new SegmentKeyManager(prov.rootKey());
             IntegrityEnvelope env = IntegrityEnvelope.encrypting(km, null);
             for (byte[] pt : plaintexts) {
-                onDisk.add(env.wrap(WAL_MAGIC, pt));
+                onDisk.add(env.wrap(WAL_MAGIC, SCOPE,pt));
             }
         }
 
@@ -73,7 +74,7 @@ class LocalKmsEncryptionIntegrationTest {
             SegmentKeyManager km2 = SegmentKeyManager.unsealFrom(provider2, persistedWrapped);
             IntegrityEnvelope env2 = IntegrityEnvelope.encrypting(km2, null);
             for (int i = 0; i < onDisk.size(); i++) {
-                assertArrayEquals(plaintexts.get(i), env2.unwrap(WAL_MAGIC, onDisk.get(i)),
+                assertArrayEquals(plaintexts.get(i), env2.unwrap(WAL_MAGIC, SCOPE,onDisk.get(i)),
                         "record " + i + " must decrypt to identical bytes after restart");
             }
         }
@@ -85,15 +86,16 @@ class LocalKmsEncryptionIntegrationTest {
         try (KmsProvider provider = new LocalDerivedKmsProvider(sk, salt(), "kid", 1)) {
             SegmentKeyManager km = SegmentKeyManager.unsealFrom(provider, provider.generateRootKey().wrapped());
             IntegrityEnvelope env = IntegrityEnvelope.encrypting(km, null);
-            byte[] wal = env.wrap(WAL_MAGIC, "w".getBytes(StandardCharsets.UTF_8));
-            byte[] snap = env.wrap(SNAP_MAGIC, "s".getBytes(StandardCharsets.UTF_8));
-            byte[] walSeg = Arrays.copyOfRange(wal, 12, 28);
-            byte[] snapSeg = Arrays.copyOfRange(snap, 12, 28);
+            byte[] wal = env.wrap(WAL_MAGIC, SCOPE,"w".getBytes(StandardCharsets.UTF_8));
+            byte[] snap = env.wrap(SNAP_MAGIC, SCOPE,"s".getBytes(StandardCharsets.UTF_8));
+            // v3: segmentId is at [16, 32) (header 8 + scopeId 4 + keyTerm 4).
+            byte[] walSeg = Arrays.copyOfRange(wal, 16, 32);
+            byte[] snapSeg = Arrays.copyOfRange(snap, 16, 32);
             assertFalse(Arrays.equals(walSeg, snapSeg),
                     "WAL and snapshot are distinct segments -> distinct DEKs");
             // both still round-trip
-            assertArrayEquals("w".getBytes(StandardCharsets.UTF_8), env.unwrap(WAL_MAGIC, wal));
-            assertArrayEquals("s".getBytes(StandardCharsets.UTF_8), env.unwrap(SNAP_MAGIC, snap));
+            assertArrayEquals("w".getBytes(StandardCharsets.UTF_8), env.unwrap(WAL_MAGIC, SCOPE,wal));
+            assertArrayEquals("s".getBytes(StandardCharsets.UTF_8), env.unwrap(SNAP_MAGIC, SCOPE,snap));
         }
     }
 
@@ -111,7 +113,7 @@ class LocalKmsEncryptionIntegrationTest {
 
         // write under term 1
         byte[] oldPlain = "written-under-term-1".getBytes(StandardCharsets.UTF_8);
-        oldTermRecord = env.wrap(WAL_MAGIC, oldPlain);
+        oldTermRecord = env.wrap(WAL_MAGIC, SCOPE,oldPlain);
         assertEquals(1, keyTermOf(oldTermRecord));
 
         // rotate: install a new root at term 2, RETAIN term 1
@@ -121,13 +123,13 @@ class LocalKmsEncryptionIntegrationTest {
 
         // new writes use term 2
         byte[] newPlain = "written-under-term-2".getBytes(StandardCharsets.UTF_8);
-        byte[] newTermRecord = env.wrap(WAL_MAGIC, newPlain);
+        byte[] newTermRecord = env.wrap(WAL_MAGIC, SCOPE,newPlain);
         assertEquals(2, keyTermOf(newTermRecord));
 
         // BOTH decrypt: old term retained, new term current
-        assertArrayEquals(oldPlain, env.unwrap(WAL_MAGIC, oldTermRecord),
+        assertArrayEquals(oldPlain, env.unwrap(WAL_MAGIC, SCOPE,oldTermRecord),
                 "term-1 data must still decrypt after rotation to term 2");
-        assertArrayEquals(newPlain, env.unwrap(WAL_MAGIC, newTermRecord));
+        assertArrayEquals(newPlain, env.unwrap(WAL_MAGIC, SCOPE,newTermRecord));
     }
 
     @Test
@@ -141,13 +143,13 @@ class LocalKmsEncryptionIntegrationTest {
         } // provider closed here (R2): the cached root in `km` must remain usable
         IntegrityEnvelope env = IntegrityEnvelope.encrypting(km, null);
         byte[] pt = "post-close".getBytes(StandardCharsets.UTF_8);
-        assertArrayEquals(pt, env.unwrap(WAL_MAGIC, env.wrap(WAL_MAGIC, pt)),
+        assertArrayEquals(pt, env.unwrap(WAL_MAGIC, SCOPE,env.wrap(WAL_MAGIC, SCOPE,pt)),
                 "the node runs on the cached root after the provider is dropped");
     }
 
-    /** keyTerm is the 4 bytes immediately after the 8-byte header. */
+    /** keyTerm is the 4 bytes after the 8-byte header + 4-byte scopeId (v3 offset 12). */
     private static int keyTermOf(byte[] enveloped) {
-        return ((enveloped[8] & 0xFF) << 24) | ((enveloped[9] & 0xFF) << 16)
-                | ((enveloped[10] & 0xFF) << 8) | (enveloped[11] & 0xFF);
+        return ((enveloped[12] & 0xFF) << 24) | ((enveloped[13] & 0xFF) << 16)
+                | ((enveloped[14] & 0xFF) << 8) | (enveloped[15] & 0xFF);
     }
 }

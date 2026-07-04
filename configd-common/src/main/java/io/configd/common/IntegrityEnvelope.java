@@ -20,17 +20,21 @@ import java.util.zip.CRC32C;
  * encode/decode transform over each artifact's existing payload:
  *
  * <pre>
- *   [ MAGIC: 4 ][ formatVersion: 2 = 2 ][ algId: 1 ][ reserved: 1 ][ payload ][ MAC: 0|32 ][ CRC32C: 4 ]
+ *   header (8 B):   [ MAGIC: 4 ][ formatVersion: 2 = 3 ][ algId: 1 ][ reserved: 1 ]
+ *   algId=0 NONE:   header [ scopeId: 4 ][ payload ][ CRC32C: 4 ]
+ *   algId=1 HMAC:   header [ scopeId: 4 ][ payload ][ MAC: 32 ][ CRC32C: 4 ]
+ *   algId=2 GCM:    header [ scopeId: 4 ][ keyTerm: 4 ][ segmentId: 16 ][ nonce: 12 ][ ciphertext+tag ][ CRC32C: 4 ]
  * </pre>
  *
  * <ul>
  *   <li><b>Layer A (keyless):</b> versioned format + CRC32C - corruption,
  *       downgrade, and format-evolution hardening. Not the security control.</li>
  *   <li><b>Layer B (keyed):</b> HMAC-SHA-256 over
- *       {@code MAGIC || formatVersion || algId || reserved || payload} - the
- *       tamper/forgery control. Every header field is inside the MAC input so an
- *       attacker cannot downgrade {@code algId} to NONE, roll {@code formatVersion}
- *       back, or mutate {@code reserved} without invalidating the MAC.</li>
+ *       {@code MAGIC || formatVersion || algId || reserved || scopeId || payload} -
+ *       the tamper/forgery control. Every header field (including the {@code scopeId})
+ *       is inside the MAC input so an attacker cannot downgrade {@code algId} to NONE,
+ *       roll {@code formatVersion} back, mutate {@code reserved}, or re-stamp the
+ *       {@code scopeId} without invalidating the MAC.</li>
  *   <li><b>Layer C (encrypting):</b> AES-256-GCM ({@code algId=AES256_GCM}) -
  *       authenticated encryption that provides confidentiality AND authenticity in
  *       one pass, so the GCM tag <em>replaces</em> the HMAC (there is no separate
@@ -39,10 +43,26 @@ import java.util.zip.CRC32C;
  *       + {@code nonce} so any reader re-derives the key and decrypts with zero
  *       coordination, and rotation runs forward while old-term data stays readable.
  *       The header ({@code MAGIC || formatVersion || algId || reserved}) plus
- *       {@code keyTerm || segmentId || nonce} is bound into the GCM AAD, so those
- *       fields are authenticated exactly as the HMAC input authenticates them, and
- *       the per-artifact MAGIC still prevents cross-artifact confusion.</li>
+ *       {@code scopeId || keyTerm || segmentId || nonce} is bound into the GCM AAD, so
+ *       those fields are authenticated exactly as the HMAC input authenticates them,
+ *       and the per-artifact MAGIC still prevents cross-artifact confusion.</li>
  * </ul>
+ *
+ * <p><b>The {@code scopeId} (cross-shard/cross-scope splice control).</b> A 4-byte id,
+ * authenticated in every posture, that binds the record to the shard (or node-level
+ * scope) that wrote it. Per-shard artifacts (WAL entry, snapshot blob, per-shard Raft
+ * state) stamp {@code scopeId = gid}; node-level artifacts stamp {@link #NODE_SCOPE}.
+ * Every read path passes its <em>expected</em> scope and this codec asserts
+ * {@code scopeId == expected}, refusing a mismatch. That assert is the whole
+ * cross-shard-splice defense: a record copied verbatim from shard 1 into shard 0 still
+ * authenticates as bytes (the integrity/encryption keys are node-wide), so the byte
+ * check alone cannot catch it - the record's own authenticated {@code scopeId}
+ * announces its true shard, and the assert refuses it. The MAC/GCM tag makes the
+ * {@code scopeId} unforgeable <em>in place</em> (an attacker who re-stamps it to match
+ * the reader invalidates the tag). Reader-assert + unforgeable-scope together close the
+ * splice; neither alone suffices. (In the keyless posture the {@code scopeId} is only
+ * CRC-covered, so the assert catches an honest cross-shard artifact but a determined
+ * attacker can re-stamp it - keyless carries no adversarial guarantee by design.)
  *
  * <p><b>Posture.</b> An instance carries an optional HMAC {@link SecretKey} and an
  * optional {@link AtRestKeys} encryption source:
@@ -58,9 +78,9 @@ import java.util.zip.CRC32C;
  *       with {@code algId=NONE}/absent MAC (downgrade) as well as any CRC32C or MAC
  *       mismatch.</li>
  *   <li><b>keyless</b> (key == null, atRest == null): writes {@code algId=NONE}
- *       (Layer A only), verifies CRC32C, and additionally accepts legacy
- *       non-enveloped bytes via the {@link #unwrapOrNull} null-return path
- *       (back-compat migration / pre-production authentication-off mode).</li>
+ *       (Layer A only) and verifies CRC32C. Structurally-absent bytes (torn / first
+ *       boot / a foreign magic) still return {@code null} from {@link #unwrapOrNull};
+ *       callers that require every record to be enveloped treat that null as a refusal.</li>
  * </ul>
  *
  * <p>The MAC comparison is constant-time ({@link MessageDigest#isEqual}). The CRC
@@ -73,14 +93,27 @@ import java.util.zip.CRC32C;
 public final class IntegrityEnvelope {
 
     /** Fixed format version. Bumping this is a controlled, MAC-covered action. */
-    public static final short FORMAT_VERSION = 2;
+    public static final short FORMAT_VERSION = 3;
 
-    /** Header before the payload: magic(4) + formatVersion(2) + algId(1) + reserved(1). */
+    /** Header before the scopeId: magic(4) + formatVersion(2) + algId(1) + reserved(1). */
     public static final int HEADER_SIZE = 8;
+    /** The authenticated scope marker (shard/node id) that sits immediately after the header. */
+    public static final int SCOPE_ID_SIZE = 4;
     /** CRC32C trailer size. */
     public static final int CRC_SIZE = 4;
     /** HMAC-SHA-256 output size. */
     public static final int MAC_SIZE = 32;
+
+    /**
+     * The scope stamped on node-level (not per-shard) artifacts. Per-shard artifacts
+     * stamp {@code gid}, which is frozen to the range {@code [0, NODE_SCOPE)} - so a
+     * per-shard reader can never be fooled by a node-level artifact colliding on scope.
+     * {@code 0xFFFFFFFF} is deliberately reserved and illegal as a {@code gid}.
+     */
+    public static final int NODE_SCOPE = 0xFFFFFFFF;
+
+    /** Smallest structurally-valid envelope: header + scopeId + CRC (empty payload, NONE posture). */
+    private static final int MIN_ENVELOPE_SIZE = HEADER_SIZE + SCOPE_ID_SIZE + CRC_SIZE; // 16
 
     /** algId: no authentication - Layer A only (keyless). */
     public static final byte ALG_NONE = 0;
@@ -92,17 +125,17 @@ public final class IntegrityEnvelope {
     private static final String HMAC = "HmacSHA256";
 
     // AES-256-GCM (algId=2) layout constants. The encrypted envelope is
-    //   [ header:8 ][ keyTerm:4 ][ segmentId:16 ][ nonce:12 ][ ciphertext+tag ][ CRC32C:4 ]
-    // and the AAD is the whole ENC_PREFIX (header + keyTerm + segmentId + nonce), so every
+    //   [ header:8 ][ scopeId:4 ][ keyTerm:4 ][ segmentId:16 ][ nonce:12 ][ ciphertext+tag ][ CRC32C:4 ]
+    // and the AAD is the whole ENC_PREFIX (header + scopeId + keyTerm + segmentId + nonce), so every
     // header/routing field is authenticated by the GCM tag just as the HMAC input is.
     private static final String GCM_TRANSFORM = "AES/GCM/NoPadding";
     private static final int GCM_TAG_BITS = 128;
     private static final int GCM_TAG_SIZE = GCM_TAG_BITS / 8;   // 16
     private static final int KEY_TERM_SIZE = 4;
-    /** header(8) + keyTerm(4) + segmentId(16) + nonce(12) = the AAD-covered prefix. */
+    /** header(8) + scopeId(4) + keyTerm(4) + segmentId(16) + nonce(12) = the AAD-covered prefix. */
     private static final int ENC_PREFIX_SIZE =
-            HEADER_SIZE + KEY_TERM_SIZE + AtRestKeys.SEGMENT_ID_LEN + AtRestKeys.NONCE_LEN; // 40
-    private static final int ENC_MIN_SIZE = ENC_PREFIX_SIZE + GCM_TAG_SIZE + CRC_SIZE;      // 60
+            HEADER_SIZE + SCOPE_ID_SIZE + KEY_TERM_SIZE + AtRestKeys.SEGMENT_ID_LEN + AtRestKeys.NONCE_LEN; // 44
+    private static final int ENC_MIN_SIZE = ENC_PREFIX_SIZE + GCM_TAG_SIZE + CRC_SIZE;                      // 64
 
     /** One {@link Cipher} per thread - GCM is stateful per operation; each group's owner thread reuses its own. */
     private static final ThreadLocal<Cipher> GCM_CIPHER = ThreadLocal.withInitial(() -> {
@@ -173,41 +206,45 @@ public final class IntegrityEnvelope {
     }
 
     /**
-     * Wraps {@code payload} in an integrity envelope for {@code magic}.
+     * Wraps {@code payload} in an integrity envelope for {@code (magic, scopeId)}.
      * <p>
-     * Layout: {@code [magic][formatVersion][algId][reserved][payload][MAC?][CRC32C]}.
-     * The MAC (present iff keyed) covers {@code magic||formatVersion||algId||payload}.
-     * The CRC32C covers everything preceding it (header + payload + MAC).
+     * Layout: {@code [magic][formatVersion][algId][reserved][scopeId][payload][MAC?][CRC32C]}.
+     * The MAC (present iff keyed) covers {@code magic||formatVersion||algId||reserved||scopeId||payload}.
+     * The CRC32C covers everything preceding it (header + scopeId + payload + MAC).
      *
      * @param magic   the artifact-specific magic (distinct per artifact)
+     * @param scopeId the scope this record belongs to ({@code gid} for a per-shard artifact,
+     *                {@link #NODE_SCOPE} for a node-level one) - authenticated in every posture
      * @param payload the bytes to protect (non-null, may be empty)
      * @return the enveloped bytes
      */
-    public byte[] wrap(int magic, byte[] payload) {
+    public byte[] wrap(int magic, int scopeId, byte[] payload) {
         if (isEncrypting()) {
-            return wrapEncrypted(magic, payload);
+            return wrapEncrypted(magic, scopeId, payload);
         }
         byte algId = isKeyed() ? ALG_HMAC_SHA256 : ALG_NONE;
         int macLen = isKeyed() ? MAC_SIZE : 0;
-        int total = HEADER_SIZE + payload.length + macLen + CRC_SIZE;
+        int total = HEADER_SIZE + SCOPE_ID_SIZE + payload.length + macLen + CRC_SIZE;
         byte[] out = new byte[total];
         ByteBuffer buf = ByteBuffer.wrap(out);
         buf.putInt(magic);
         buf.putShort(FORMAT_VERSION);
         buf.put(algId);
         buf.put((byte) 0); // reserved
+        buf.putInt(scopeId);
         buf.put(payload);
 
         if (isKeyed()) {
-            // MAC over [magic][formatVersion][algId][reserved][payload] - every
-            // header field plus the payload. The reserved byte is authenticated
-            // (not merely CRC-covered) so it carries no malleability if a future
-            // version assigns it meaning.
-            byte[] mac = computeMac(magic, algId, (byte) 0, payload);
+            // MAC over [magic][formatVersion][algId][reserved][scopeId][payload] - every
+            // header field (including the scopeId) plus the payload. The reserved byte is
+            // authenticated (not merely CRC-covered) so it carries no malleability if a
+            // future version assigns it meaning; the scopeId is authenticated so an
+            // attacker cannot re-stamp a record's shard in place.
+            byte[] mac = computeMac(magic, algId, (byte) 0, scopeId, payload);
             buf.put(mac);
         }
 
-        // CRC32C over everything preceding the trailer (header + payload + MAC).
+        // CRC32C over everything preceding the trailer (header + scopeId + payload + MAC).
         CRC32C crc = new CRC32C();
         crc.update(out, 0, total - CRC_SIZE);
         buf.putInt((int) crc.getValue());
@@ -220,18 +257,18 @@ public final class IntegrityEnvelope {
      * <p>
      * Use this for call sites that always expect a verifiable envelope. For
      * absent-tolerant call sites (snapshot read, raft-state load, WAL replay) that
-     * must distinguish "legit absent / torn / legacy" from "tampered", use
-     * {@link #unwrapOrNull}.
+     * must distinguish "legit absent / torn" from "tampered", use {@link #unwrapOrNull}.
      *
-     * @param expectedMagic the artifact magic the caller expects
-     * @param enveloped     the bytes produced by {@link #wrap}
+     * @param expectedMagic   the artifact magic the caller expects
+     * @param expectedScopeId the scope the caller expects ({@code gid} / {@link #NODE_SCOPE})
+     * @param enveloped       the bytes produced by {@link #wrap}
      * @return the original payload
      * @throws IntegrityException on too-short input, wrong magic, unknown/rolled
-     *                            formatVersion, CRC32C mismatch, MAC mismatch, or
-     *                            (when keyed) algId=NONE/missing MAC (downgrade)
+     *                            formatVersion, scope mismatch, CRC32C mismatch, MAC
+     *                            mismatch, or (when keyed) algId=NONE/missing MAC (downgrade)
      */
-    public byte[] unwrap(int expectedMagic, byte[] enveloped) {
-        byte[] payload = unwrapOrNull(expectedMagic, enveloped);
+    public byte[] unwrap(int expectedMagic, int expectedScopeId, byte[] enveloped) {
+        byte[] payload = unwrapOrNull(expectedMagic, expectedScopeId, enveloped);
         if (payload == null) {
             throw new IntegrityException(
                     "not an integrity envelope (absent/too short) for magic 0x"
@@ -242,25 +279,27 @@ public final class IntegrityEnvelope {
 
     /**
      * Unwraps an envelope, returning the payload, or {@code null} ONLY when the
-     * bytes are structurally absent - too short to carry the header+trailer, or
-     * (in keyless mode) lacking the expected magic entirely (legacy non-enveloped
-     * bytes / first boot / a torn-short artifact).
+     * bytes are structurally absent - too short to carry the header+scopeId+trailer, or
+     * lacking the expected magic entirely (first boot / a torn-short artifact / foreign
+     * bytes a keyless reader tolerates).
      * <p>
      * Once the bytes ARE structurally an envelope for {@code expectedMagic} but
-     * fail verification (CRC32C mismatch, MAC mismatch, rolled formatVersion, or,
-     * when keyed, a downgrade to algId=NONE), this THROWS {@link IntegrityException}.
-     * It never silently returns {@code null} for a tampered-but-present envelope.
-     * A torn/absent artifact is tolerated; a tampered one fails loud.
+     * fail verification (CRC32C mismatch, scope mismatch, MAC mismatch, rolled
+     * formatVersion, or, when keyed, a downgrade to algId=NONE), this THROWS
+     * {@link IntegrityException}. It never silently returns {@code null} for a
+     * tampered-but-present envelope. A torn/absent artifact is tolerated; a tampered
+     * one fails loud.
      *
-     * @param expectedMagic the artifact magic the caller expects
-     * @param enveloped     the candidate bytes (may be null)
+     * @param expectedMagic   the artifact magic the caller expects
+     * @param expectedScopeId the scope the caller expects ({@code gid} / {@link #NODE_SCOPE})
+     * @param enveloped       the candidate bytes (may be null)
      * @return the payload, or {@code null} if structurally absent
      * @throws IntegrityException if structurally present but verification fails
      */
-    public byte[] unwrapOrNull(int expectedMagic, byte[] enveloped) {
+    public byte[] unwrapOrNull(int expectedMagic, int expectedScopeId, byte[] enveloped) {
         // Need at least the 4-byte magic to decide whether these bytes even claim to
         // be our envelope. Below that they are structurally absent (torn, first boot,
-        // or a short legacy artifact) for every posture.
+        // or a short foreign artifact) for every posture.
         if (enveloped == null || enveloped.length < Integer.BYTES) {
             return null;
         }
@@ -271,24 +310,25 @@ public final class IntegrityEnvelope {
             // A full-length buffer that does not carry our magic is unauthenticated
             // input - a keyed OR encrypting reader refuses it (fail-closed). A buffer
             // below the envelope floor is treated as structurally absent (torn, first
-            // boot, or a short legacy artifact) for every posture.
+            // boot, or a short foreign artifact) for every posture.
             if (isAuthenticated() && enveloped.length >= HEADER_SIZE + CRC_SIZE) {
                 throw new IntegrityException(
                         "expected integrity envelope magic 0x" + Integer.toHexString(expectedMagic)
                                 + " but found 0x" + Integer.toHexString(magic)
-                                + " (unauthenticated/legacy bytes refused under a configured key)");
+                                + " (unauthenticated/foreign bytes refused under a configured key)");
             }
-            // Keyless back-compat (legacy non-enveloped bytes, caller parses raw) or
-            // a sub-floor buffer of any posture (structurally absent).
+            // Keyless (foreign bytes tolerated as absent) or a sub-floor buffer of any
+            // posture (structurally absent).
             return null;
         }
 
         // The magic matches: these bytes ARE meant to be our envelope, so any further
-        // structural/verification failure FAILS LOUD (never null). A buffer that
-        // claims our magic but is too short to be a valid envelope is a truncation/
-        // tamper under a key - a deliberate refusal, not an incidental downstream
-        // underflow. Keyless keeps absent semantics.
-        if (enveloped.length < HEADER_SIZE + CRC_SIZE) {
+        // structural/verification failure FAILS LOUD (never null). Below the v3 floor
+        // (header + scopeId + CRC) we cannot even read the scopeId + CRC without
+        // underflowing, so a buffer that claims our magic but is that short is a
+        // truncation/tamper under a key - a deliberate refusal. Keyless keeps absent
+        // semantics.
+        if (enveloped.length < MIN_ENVELOPE_SIZE) {
             if (isAuthenticated()) {
                 throw new IntegrityException("integrity envelope truncated (magic present, length "
                         + enveloped.length + ") for magic 0x" + Integer.toHexString(expectedMagic));
@@ -299,10 +339,10 @@ public final class IntegrityEnvelope {
         // Verify CRC32C FIRST, before any version-dependent read. The CRC is a fixed
         // trailer over a fixed range, so it needs no version to locate or compute; running
         // it first means a bit-flip anywhere in the header (magic already matched, but the
-        // version/algId/reserved bytes, payload, or MAC) surfaces as a clear corruption
-        // error rather than a misleading "unsupported version". The version is then read
-        // from CRC-validated bytes. This is the FrameCodec discipline (CRC at :285-296,
-        // then version at :300-303) applied uniformly to every posture, GCM included.
+        // version/algId/reserved/scopeId bytes, payload, or MAC) surfaces as a clear
+        // corruption error rather than a misleading "unsupported version". The version and
+        // scopeId are then read from CRC-validated bytes. This is the FrameCodec discipline
+        // applied uniformly to every posture, GCM included.
         int crcOffset = enveloped.length - CRC_SIZE;
         verifyCrc32c(expectedMagic, enveloped, crcOffset);
 
@@ -319,16 +359,30 @@ public final class IntegrityEnvelope {
         // The reserved byte is MUST-be-zero: it is the pre-agreed forward-compat escape
         // slot. Rejecting a non-zero value fails closed in EVERY posture (keyless too,
         // where the MAC does not cover it), so a future writer that assigns it meaning can
-        // never be silently mis-parsed by a v1 reader.
+        // never be silently mis-parsed by a v3 reader.
         if (reserved != 0) {
             throw new IntegrityException("integrity envelope reserved byte must be zero (found "
                     + (reserved & 0xFF) + ") for magic 0x" + Integer.toHexString(expectedMagic));
         }
 
+        // scopeId: the sole cross-shard/cross-scope splice control. It is read from
+        // CRC-validated bytes and MUST match the reader's expected scope in EVERY posture.
+        // The assert catches an honest cross-shard artifact (the record's authenticated
+        // scopeId announces its true shard); the MAC (keyed) / GCM tag (encrypting) below
+        // then makes the scopeId unforgeable in place, so an attacker cannot re-stamp it to
+        // pass this assert without failing authentication. Both together close the splice.
+        int scopeId = buf.getInt();
+        if (scopeId != expectedScopeId) {
+            throw new IntegrityException("integrity envelope scope mismatch for magic 0x"
+                    + Integer.toHexString(expectedMagic) + ": record scopeId=0x"
+                    + Integer.toHexString(scopeId) + " but reader expected 0x"
+                    + Integer.toHexString(expectedScopeId) + " (cross-shard/scope artifact refused)");
+        }
+
         // Layer C: an AES-256-GCM record has a different body layout (keyTerm/segmentId/
         // nonce/ciphertext instead of payload/MAC), so it is handled by its own reader,
-        // which fails closed on a bad tag, an unknown key term, or truncation. The CRC is
-        // already verified above, so that reader trusts the bytes preceding the tag.
+        // which fails closed on a bad tag, an unknown key term, or truncation. The CRC and
+        // scopeId are already verified above, so that reader trusts the prefix bytes.
         if (algId == ALG_AES256_GCM) {
             return unwrapEncrypted(expectedMagic, enveloped);
         }
@@ -351,18 +405,19 @@ public final class IntegrityEnvelope {
                     + " for magic 0x" + Integer.toHexString(expectedMagic));
         }
 
-        // Length must exactly account for header + payload + MAC + CRC.
-        int payloadLen = enveloped.length - HEADER_SIZE - macLen - CRC_SIZE;
+        // Length must exactly account for header + scopeId + payload + MAC + CRC.
+        int payloadStart = HEADER_SIZE + SCOPE_ID_SIZE;
+        int payloadLen = enveloped.length - payloadStart - macLen - CRC_SIZE;
         if (payloadLen < 0) {
             throw new IntegrityException("integrity envelope truncated for magic 0x"
                     + Integer.toHexString(expectedMagic) + " (length " + enveloped.length + ")");
         }
 
-        byte[] payload = Arrays.copyOfRange(enveloped, HEADER_SIZE, HEADER_SIZE + payloadLen);
+        byte[] payload = Arrays.copyOfRange(enveloped, payloadStart, payloadStart + payloadLen);
 
         if (macLen > 0) {
             byte[] storedMac = Arrays.copyOfRange(
-                    enveloped, HEADER_SIZE + payloadLen, HEADER_SIZE + payloadLen + MAC_SIZE);
+                    enveloped, payloadStart + payloadLen, payloadStart + payloadLen + MAC_SIZE);
             if (!isKeyed()) {
                 // A keyless reader cannot verify a keyed artifact - refuse loudly
                 // rather than silently trusting an unverifiable MAC.
@@ -370,7 +425,7 @@ public final class IntegrityEnvelope {
                         "keyed integrity envelope encountered by a keyless reader for magic 0x"
                                 + Integer.toHexString(expectedMagic));
             }
-            byte[] computedMac = computeMac(magic, algId, reserved, payload);
+            byte[] computedMac = computeMac(magic, algId, reserved, scopeId, payload);
             // Constant-time compare (MessageDigest.isEqual).
             if (!MessageDigest.isEqual(computedMac, storedMac)) {
                 throw new IntegrityException("integrity MAC mismatch for magic 0x"
@@ -398,16 +453,18 @@ public final class IntegrityEnvelope {
         }
     }
 
-    /** HMAC-SHA-256 over: magic, formatVersion, algId, reserved, payload (in that order). */
-    private byte[] computeMac(int magic, byte algId, byte reserved, byte[] payload) {
+    /** HMAC-SHA-256 over: magic, formatVersion, algId, reserved, scopeId, payload (in that order). */
+    private byte[] computeMac(int magic, byte algId, byte reserved, int scopeId, byte[] payload) {
         try {
             Mac mac = Mac.getInstance(HMAC);
             mac.init(key);
-            ByteBuffer hdr = ByteBuffer.allocate(HEADER_SIZE); // magic(4) + version(2) + algId(1) + reserved(1)
+            // magic(4) + version(2) + algId(1) + reserved(1) + scopeId(4)
+            ByteBuffer hdr = ByteBuffer.allocate(HEADER_SIZE + SCOPE_ID_SIZE);
             hdr.putInt(magic);
             hdr.putShort(FORMAT_VERSION);
             hdr.put(algId);
             hdr.put(reserved);
+            hdr.putInt(scopeId);
             mac.update(hdr.array());
             mac.update(payload);
             return mac.doFinal();
@@ -422,12 +479,15 @@ public final class IntegrityEnvelope {
 
     /**
      * Wraps {@code payload} as an AES-256-GCM encrypted envelope. Layout:
-     * {@code [magic][formatVersion][algId=2][reserved][keyTerm][segmentId][nonce][ciphertext+tag][CRC32C]}.
-     * The AAD is the whole prefix {@code [header][keyTerm][segmentId][nonce]}, so all those fields are
-     * authenticated by the tag. A fresh, never-reused {@code (segmentId, nonce)} for this DEK is issued
-     * by {@link AtRestKeys#nextSeal(int)} - the sole guarantor of GCM's no-(key,nonce)-reuse invariant.
+     * {@code [magic][formatVersion][algId=2][reserved][scopeId][keyTerm][segmentId][nonce][ciphertext+tag][CRC32C]}.
+     * The AAD is the whole prefix {@code [header][scopeId][keyTerm][segmentId][nonce]}, so all those
+     * fields are authenticated by the tag. A fresh, never-reused {@code (segmentId, nonce)} for this DEK
+     * is issued by {@link AtRestKeys#nextSeal(int)} - the sole guarantor of GCM's no-(key,nonce)-reuse
+     * invariant. The {@code scopeId} is AAD-only and MUST NOT key the segment or split the nonce counter
+     * per shard (segments are keyed by MAGIC and node-global; a per-shard counter split would break GCM's
+     * (key,nonce) uniqueness).
      */
-    private byte[] wrapEncrypted(int magic, byte[] payload) {
+    private byte[] wrapEncrypted(int magic, int scopeId, byte[] payload) {
         AtRestKeys.Seal seal = atRest.nextSeal(magic);
         byte[] segmentId = seal.segmentId();
         byte[] nonce = seal.nonce();
@@ -439,12 +499,14 @@ public final class IntegrityEnvelope {
         buf.putShort(FORMAT_VERSION);
         buf.put(ALG_AES256_GCM);
         buf.put((byte) 0); // reserved
+        buf.putInt(scopeId);        // authenticated (AAD) between header and keyTerm
         buf.putInt(seal.keyTerm());
         buf.put(segmentId);
         buf.put(nonce);
 
-        // AAD = the ENC_PREFIX bytes just written (header + keyTerm + segmentId + nonce). Binding the
-        // per-artifact MAGIC here is what stops a snapshot ciphertext being replayed as a WAL record.
+        // AAD = the ENC_PREFIX bytes just written (header + scopeId + keyTerm + segmentId + nonce).
+        // Binding the per-artifact MAGIC here is what stops a snapshot ciphertext being replayed as a
+        // WAL record; binding the scopeId is what makes a cross-shard splice fail the tag if re-stamped.
         byte[] aad = Arrays.copyOfRange(out, 0, ENC_PREFIX_SIZE);
         byte[] cipherText = gcmEncrypt(seal.dek(), nonce, aad, payload);
         buf.put(cipherText); // ciphertext + 16-byte tag
@@ -459,7 +521,8 @@ public final class IntegrityEnvelope {
      * Reads an AES-256-GCM envelope, verifying CRC32C (corruption) then the GCM tag (tamper/auth).
      * FAILS CLOSED: a truncated body, a CRC mismatch, an unknown key term, or a bad GCM tag all throw
      * {@link IntegrityException} - a record that cannot be authentically decrypted is refused, never
-     * returned as {@code null} or silently skipped.
+     * returned as {@code null} or silently skipped. The CRC and scopeId are already validated by
+     * {@link #unwrapOrNull} before it dispatches here.
      */
     private byte[] unwrapEncrypted(int expectedMagic, byte[] enveloped) {
         if (!isEncrypting()) {
@@ -473,11 +536,11 @@ public final class IntegrityEnvelope {
                     + ", min " + ENC_MIN_SIZE + ") for magic 0x" + Integer.toHexString(expectedMagic));
         }
 
-        // CRC32C (corruption / bit-flip) has already been verified by unwrapOrNull before it
-        // dispatched here, so the prefix fields below are read from CRC-validated bytes.
+        // CRC32C (corruption / bit-flip) and the scopeId assert have already run in unwrapOrNull, so the
+        // prefix fields below are read from CRC-validated, scope-checked bytes.
         int crcOffset = enveloped.length - CRC_SIZE;
         ByteBuffer buf = ByteBuffer.wrap(enveloped);
-        buf.position(HEADER_SIZE); // skip magic/formatVersion/algId/reserved (already validated)
+        buf.position(HEADER_SIZE + SCOPE_ID_SIZE); // skip magic/formatVersion/algId/reserved/scopeId (validated)
         int keyTerm = buf.getInt();
         byte[] segmentId = new byte[AtRestKeys.SEGMENT_ID_LEN];
         buf.get(segmentId);
@@ -489,14 +552,14 @@ public final class IntegrityEnvelope {
 
         // Fail-closed: an unknown key term throws IntegrityException (no key -> no decrypt).
         SecretKey dek = atRest.resolveDek(keyTerm, segmentId);
-        // AAD = the same ENC_PREFIX bytes the writer bound; a flipped header/keyTerm/segmentId/nonce
-        // changes the AAD and makes the tag fail.
+        // AAD = the same ENC_PREFIX bytes the writer bound; a flipped header/scopeId/keyTerm/segmentId/
+        // nonce changes the AAD and makes the tag fail.
         byte[] aad = Arrays.copyOfRange(enveloped, 0, ENC_PREFIX_SIZE);
         try {
             return gcmDecrypt(dek, nonce, aad, cipherText);
         } catch (AEADBadTagException e) {
-            // The authenticity failure (tampered header/keyTerm/segmentId/nonce/ciphertext, or the
-            // wrong key) surfaces as a refusal - the encryption analogue of the HMAC-mismatch throw.
+            // The authenticity failure (tampered header/scopeId/keyTerm/segmentId/nonce/ciphertext, or
+            // the wrong key) surfaces as a refusal - the encryption analogue of the HMAC-mismatch throw.
             throw new IntegrityException("AES-256-GCM authentication failed (tamper detected) for magic 0x"
                     + Integer.toHexString(expectedMagic), e);
         } catch (GeneralSecurityException e) {

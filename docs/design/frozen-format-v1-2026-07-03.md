@@ -29,6 +29,13 @@ gap assessment (`docs/readiness/production-standard-gap-assessment-2026-07-03.md
 >   (`docs/design/anchor-witness-peer-quorum-2026-07-04.md`) BEFORE it is built; it lands as an added
 >   sub-gate alongside Gate 3 (the anchor/vote path). R-a (freshness, N=1) remains a documented
 >   residual, closable later by an external-store witness through the same SPI.
+>
+> - **WAL per-record hash chain (added during Gate 2, operator-mandated).** The Gate 2 red-team proved
+>   the originally-drafted §2.8 (contiguity + term-monotonicity only) does NOT catch an index-preserving,
+>   term-monotonic **interior content rollback**. The operator ruled to build the charter's per-record
+>   SHA-256 hash chain (each authenticated WAL record binds `prevHash = H(predecessor)`), which closes
+>   it. §2.8 and matrix row 8b are amended to the as-built, red-team-verified reality; keyless stays
+>   byte-identical (no chain).
 
 This document is the permanent design for every format Configd persists or speaks: it closes the
 two frozen-format kernel blockers (A1 no truncation/rollback anchor; A2 data-destroying key
@@ -349,11 +356,30 @@ epoch monotonically and updates both files.
   CRC32** (unification). Torn trailing frame discarded on read (crash tail, kept); complete-frame
   CRC mismatch ⇒ throw.
 - **Raft inner record** (the frame's `data`): `EnvelopeV3.wrap(WALE_MAGIC, scopeId=gid, …)` over
-  `[index:8][term:8][command:N]` — carrier-versioned; the legacy raw-record fallback is DELETED
-  (a non-enveloped record ⇒ fail closed).
+  the posture-dependent payload — **authenticated postures (HMAC / GCM):**
+  `[index:8][term:8][prevHash:32][command:N]`; **keyless:** `[index:8][term:8][command:N]`
+  (byte-identical, no chain — keyless carries no adversarial guarantee, §1). Carrier-versioned; the
+  legacy raw-record fallback is DELETED (a non-enveloped record ⇒ fail closed).
+- **Per-record hash chain (`prevHash`, authenticated postures — AMENDED 2026-07-04, operator-mandated,
+  red-team-verified).** The originally-drafted §2.8 relied on contiguity + term-monotonicity alone; a
+  red-team pass proved these do NOT catch an **index-preserving, term-monotonic content rollback** (an
+  old authentic frame — from a since-conflict-overwritten term — spliced back over an interior index:
+  contiguous indices, non-decreasing terms, a genuine MAC and correct scopeId, so every §2.8 position
+  check passes). The operator ruled to build the charter's per-record chain, which closes it:
+  `prevHash(k) = SHA-256(serialized_inner_payload(k−1))`, genesis `prevHash = 32×0x00` at index 1;
+  `prevHash` rides INSIDE the authenticated payload, so the envelope MAC (HMAC) / GCM tag makes it
+  unforgeable in place. Recovery verifies each successor's `prevHash` against its predecessor's record
+  hash ⇒ a break REFUSES (an interior splice is caught by the *successor's* binding, even when the
+  spliced frame has a valid incoming link; a re-stamp to repair the chain breaks the successor's own
+  authenticator). A compacted first record (`firstIndex > 1`) leaves its `prevHash` unverified for the
+  §2.4 snapshot anchor to bind. **Residual (unchanged):** a whole-suffix rollback to a *wholly prior
+  valid chain* (the overwritten suffix was necessarily uncommitted) is the head-anchor monotonic-floor
+  / `AnchorWitness` case (residual R-a, §4 §4), not a chain hole.
 - **Recovery-time checks (normative, NEW):** contiguity (`e[k].index == firstIndex+k`), term
-  monotonicity (`e[k].term` non-decreasing), snapshot-join (`firstIndex == anchor.snapshotIndex+1`;
-  blob boundary equals anchor's), reader scopeId assert. Any violation ⇒ REFUSE.
+  monotonicity (`e[k].term` non-decreasing), the per-record hash chain above (authenticated postures),
+  snapshot-join (`firstIndex == anchor.snapshotIndex+1`; blob boundary equals anchor's), reader scopeId
+  assert. Any violation ⇒ REFUSE. Position checks detect index permutations/gaps/dups; the hash chain
+  detects index-preserving content rollback; the scopeId assert detects cross-shard splice.
 
 ### 2.9 Snapshot blob + trailer
 
@@ -1052,8 +1078,9 @@ Step 3); `S`=monotonic `anchorSeq`/`keyringSeq` dual-slot; `X`=external witness 
 | 4b | state rollback WITHIN a term (`votedFor` reset by replaying an older same-term slot) | **RESIDUAL (R-a′ — SAFETY/Election-Safety, red-team §11)** — term unchanged so Step-2.5 is silent; votes aren't WAL-witnessed; worst case = double-vote → divergence, NOT staleness | X only (AnchorWitness) |
 | 5 | snapshot+meta rollback (older pair) | **DETECTED** — anchor binds `snapshotIndex/Term`; older pair mismatches the anchor / `W<A` | E + H |
 | 6 | snapshot-meta-only tamper | **DETECTED** — meta is removed; boundary now lives authenticated in the anchor | E (anchor) |
-| 7 | in-log reorder | **DETECTED** — embedded index ≠ slot position | C |
-| 8 | record splice / duplication (same shard) | **DETECTED** — contiguity + term-monotonicity | C |
+| 7 | in-log reorder (index permutation) | **DETECTED** — embedded index ≠ slot position | C |
+| 8 | record splice / duplication / gap (same shard, index-level) | **DETECTED** — contiguity + term-monotonicity | C |
+| 8b | interior stale-content rollback (index-preserving, term-monotonic: an old authentic frame spliced back over a since-overwritten index — the red-team finding) | **DETECTED (AMENDED 2026-07-04)** — the per-record hash chain: the successor's authenticated `prevHash` no longer matches; C+term-monotonicity alone MISS this (they were a documented overclaim) | Chain (§2.8) |
 | 9 | cross-artifact replay (WAL↔snapshot↔state) | **DETECTED** — distinct `magic` in AAD/MAC | E |
 | 10 | **cross-SHARD replay** (shard-1 record → shard-0) | **DETECTED (NEW)** — reader's mandatory `scopeId==gid` assert refuses (record's authenticated scopeId announces its true shard); in-place scopeId forge invalidates MAC/tag | E + reader assert (§A1.2) |
 | 11 | cross-NODE replay (another node's files) | **DETECTED** — node-local root (per-node signing key) ⇒ different DEK/`K_integrity` | E, fact 4 |

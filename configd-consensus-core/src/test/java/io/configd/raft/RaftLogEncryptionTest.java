@@ -218,7 +218,7 @@ class RaftLogEncryptionTest {
 
     /**
      * Walks the {@code [len][data][crc32c]} FileStorage frames (after the 8-byte container header),
-     * flips a byte inside the first frame's ciphertext (well past the 40-byte encrypted prefix), and
+     * flips a byte inside the first frame's ciphertext (well past the 44-byte encrypted prefix), and
      * recomputes that frame's trailing CRC32C.
      */
     private static void flipCipherByteRepairingFrameCrc(byte[] wal) {
@@ -226,8 +226,9 @@ class RaftLogEncryptionTest {
         int len = ((wal[frameStart] & 0xFF) << 24) | ((wal[frameStart + 1] & 0xFF) << 16)
                 | ((wal[frameStart + 2] & 0xFF) << 8) | (wal[frameStart + 3] & 0xFF);
         int dataStart = frameStart + 4;
-        // 40 = header(8)+keyTerm(4)+segmentId(16)+nonce(12); flip a byte a few into the ciphertext.
-        int flipAt = dataStart + 44;
+        // v3 prefix = header(8)+scopeId(4)+keyTerm(4)+segmentId(16)+nonce(12) = 44; flip a byte a
+        // few into the ciphertext that follows.
+        int flipAt = dataStart + 48;
         wal[flipAt] ^= 0x01;
         CRC32C crc = new CRC32C();
         crc.update(wal, dataStart, len);

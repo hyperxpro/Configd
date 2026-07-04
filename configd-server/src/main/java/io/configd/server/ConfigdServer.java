@@ -1602,8 +1602,10 @@ public final class ConfigdServer {
         Storage groupStorage = (shardCount == 1)
                 ? nodeStorage
                 : Storage.file(dataDir.resolve("shard-" + groupId));
-        // The node-level keyed integrity envelope authenticates this group's WAL + snapshot.
-        RaftLog raftLog = new RaftLog(groupStorage, raftIntegrity);
+        // The node-level keyed integrity envelope authenticates this group's WAL + snapshot; the
+        // groupId is stamped as the envelope scopeId (cross-shard-splice defense) and asserted on
+        // recovery. At N=1 groupId=0. RaftNode threads this same gid to its DurableRaftState.
+        RaftLog raftLog = new RaftLog(groupStorage, raftIntegrity, groupId);
 
         ConfigSnapshot initialSnapshot = new ConfigSnapshot(
                 HamtMap.empty(), 0L, clock.currentTimeMillis());

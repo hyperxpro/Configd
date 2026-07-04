@@ -15,19 +15,21 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * Independent red-team pass over {@link IntegrityEnvelope}'s frozen-v1 fail-closed contract.
+ * Independent red-team pass over {@link IntegrityEnvelope}'s frozen fail-closed contract.
  *
  * <p>Each test PERFORMS a byte-level attack on a real envelope and asserts the reader REFUSES
  * (throws {@link IntegrityException}) rather than best-effort-parsing. These go beyond the
  * builder's tests: they cover version 0 and the {@code 0xFFFF} reserved escape (the builder only
- * rolled the version DOWN to 1), unknown/dispatch-confused {@code algId}s, the reserved-byte MBZ
+ * rolled the version DOWN), unknown/dispatch-confused {@code algId}s, the reserved-byte MBZ
  * check under the ENCRYPTING posture (the builder covered keyless + keyed only), and — the sharpest
  * one — cross-artifact confusion under AES-256-GCM, where a repaired outer CRC is not enough because
  * the per-artifact magic is bound into the GCM AAD.
  *
  * <p>All crafted attacks repair the version-independent CRC32C so the reader is forced past the
  * corruption check and onto the version/algId/reserved/MAC control we are actually testing — a stale
- * CRC would mask the real behavior behind a "corruption" error.
+ * CRC would mask the real behavior behind a "corruption" error. The header offsets attacked here
+ * (version/algId/reserved) sit inside the 8-byte header and are unaffected by the v3 scopeId, which
+ * begins at offset 8.
  */
 class IntegrityEnvelopeRedteamTest {
 
@@ -35,6 +37,7 @@ class IntegrityEnvelopeRedteamTest {
     // under another to prove the magic is a genuine anti-confusion discriminator, not decoration.
     private static final int SNAP_MAGIC = 0x5253_4E50; // "RSNP"
     private static final int WALE_MAGIC = 0x5257_414C; // "RWAL"
+    private static final int SCOPE = 5;                // a per-shard scope; same on wrap+read here
 
     private static final int OFF_VERSION = 4;  // formatVersion: u16 at offset 4
     private static final int OFF_ALGID = 6;    // algId: u8 at offset 6
@@ -55,7 +58,7 @@ class IntegrityEnvelopeRedteamTest {
     }
 
     private static byte[] payload() {
-        return "frozen-v1-redteam-payload".getBytes();
+        return "frozen-redteam-payload".getBytes();
     }
 
     /** Repairs the CRC32C trailer over [0, len-4) so a crafted header change is judged on its merits. */
@@ -73,11 +76,11 @@ class IntegrityEnvelopeRedteamTest {
     void versionZeroRejected_keyed() {
         // Attack: roll formatVersion to the reserved-illegal 0 ("unset/torn"), repair CRC.
         IntegrityEnvelope env = new IntegrityEnvelope(hmacKey());
-        byte[] w = env.wrap(SNAP_MAGIC, payload());
+        byte[] w = env.wrap(SNAP_MAGIC, SCOPE, payload());
         w[OFF_VERSION] = 0;
         w[OFF_VERSION + 1] = 0;
         repairCrc(w);
-        IntegrityException ex = assertThrows(IntegrityException.class, () -> env.unwrap(SNAP_MAGIC, w));
+        IntegrityException ex = assertThrows(IntegrityException.class, () -> env.unwrap(SNAP_MAGIC, SCOPE, w));
         assertTrue(ex.getMessage().contains("formatVersion"),
                 "version 0 must be refused as unsupported, got: " + ex.getMessage());
     }
@@ -85,38 +88,38 @@ class IntegrityEnvelopeRedteamTest {
     @Test
     void versionZeroRejected_keyless() {
         IntegrityEnvelope env = IntegrityEnvelope.keyless();
-        byte[] w = env.wrap(SNAP_MAGIC, payload());
+        byte[] w = env.wrap(SNAP_MAGIC, SCOPE, payload());
         w[OFF_VERSION] = 0;
         w[OFF_VERSION + 1] = 0;
         repairCrc(w);
-        assertThrows(IntegrityException.class, () -> env.unwrap(SNAP_MAGIC, w),
+        assertThrows(IntegrityException.class, () -> env.unwrap(SNAP_MAGIC, SCOPE, w),
                 "version 0 must be refused even keyless (structural, not MAC-dependent)");
     }
 
     @Test
     void higherVersionRejected_keyed() {
-        // Attack: present a NEWER format (version 3) with a valid CRC. An old grammar must never
-        // parse a newer format. The builder only rolled DOWN to 1; this covers rolling UP.
+        // Attack: present a NEWER format (version 4, one past the frozen v3) with a valid CRC. An old
+        // grammar must never parse a newer format. The builder only rolled DOWN; this covers rolling UP.
         IntegrityEnvelope env = new IntegrityEnvelope(hmacKey());
-        byte[] w = env.wrap(SNAP_MAGIC, payload());
+        byte[] w = env.wrap(SNAP_MAGIC, SCOPE, payload());
         w[OFF_VERSION] = 0;
-        w[OFF_VERSION + 1] = 3;
+        w[OFF_VERSION + 1] = 4;
         repairCrc(w);
-        IntegrityException ex = assertThrows(IntegrityException.class, () -> env.unwrap(SNAP_MAGIC, w));
+        IntegrityException ex = assertThrows(IntegrityException.class, () -> env.unwrap(SNAP_MAGIC, SCOPE, w));
         assertTrue(ex.getMessage().contains("formatVersion"), ex.getMessage());
     }
 
     @Test
     void reservedEscapeVersionMaxRejected_keyed() {
-        // Attack: the u16 "extended version" escape 0xFFFF is reserved-unallocated in v1 and must be
-        // refused (a future reader knows the slot; a v1 reader fails closed).
+        // Attack: the u16 "extended version" escape 0xFFFF is reserved-unallocated and must be
+        // refused (a future reader knows the slot; a v3 reader fails closed).
         IntegrityEnvelope env = new IntegrityEnvelope(hmacKey());
-        byte[] w = env.wrap(SNAP_MAGIC, payload());
+        byte[] w = env.wrap(SNAP_MAGIC, SCOPE, payload());
         w[OFF_VERSION] = (byte) 0xFF;
         w[OFF_VERSION + 1] = (byte) 0xFF;
         repairCrc(w);
-        assertThrows(IntegrityException.class, () -> env.unwrap(SNAP_MAGIC, w),
-                "the 0xFFFF reserved-escape version must fail closed in v1");
+        assertThrows(IntegrityException.class, () -> env.unwrap(SNAP_MAGIC, SCOPE, w),
+                "the 0xFFFF reserved-escape version must fail closed");
     }
 
     // ---------------------------------------------------------------------------------------------
@@ -128,20 +131,20 @@ class IntegrityEnvelopeRedteamTest {
         // Attack: set algId to an unallocated code (3). Neither NONE/HMAC/GCM — must throw, never
         // fall through to a best-effort parse.
         IntegrityEnvelope env = IntegrityEnvelope.keyless();
-        byte[] w = env.wrap(SNAP_MAGIC, payload());
+        byte[] w = env.wrap(SNAP_MAGIC, SCOPE, payload());
         w[OFF_ALGID] = 3;
         repairCrc(w);
-        IntegrityException ex = assertThrows(IntegrityException.class, () -> env.unwrap(SNAP_MAGIC, w));
+        IntegrityException ex = assertThrows(IntegrityException.class, () -> env.unwrap(SNAP_MAGIC, SCOPE, w));
         assertTrue(ex.getMessage().contains("algId"), ex.getMessage());
     }
 
     @Test
     void unknownAlgIdRejected_keyed() {
         IntegrityEnvelope env = new IntegrityEnvelope(hmacKey());
-        byte[] w = env.wrap(SNAP_MAGIC, payload());
+        byte[] w = env.wrap(SNAP_MAGIC, SCOPE, payload());
         w[OFF_ALGID] = 3;
         repairCrc(w);
-        assertThrows(IntegrityException.class, () -> env.unwrap(SNAP_MAGIC, w),
+        assertThrows(IntegrityException.class, () -> env.unwrap(SNAP_MAGIC, SCOPE, w),
                 "an unknown algId must be refused under a key too");
     }
 
@@ -150,13 +153,13 @@ class IntegrityEnvelopeRedteamTest {
         // Attack: stamp algId=AES256_GCM(2) onto an otherwise-keyless envelope and hand it to a
         // reader that cannot decrypt. It must refuse loudly rather than mis-parse ciphertext.
         IntegrityEnvelope keyless = IntegrityEnvelope.keyless();
-        byte[] w = keyless.wrap(SNAP_MAGIC, payload());
+        byte[] w = keyless.wrap(SNAP_MAGIC, SCOPE, payload());
         w[OFF_ALGID] = IntegrityEnvelope.ALG_AES256_GCM;
         repairCrc(w);
         IntegrityException byKeyed = assertThrows(IntegrityException.class,
-                () -> new IntegrityEnvelope(hmacKey()).unwrap(SNAP_MAGIC, w));
+                () -> new IntegrityEnvelope(hmacKey()).unwrap(SNAP_MAGIC, SCOPE, w));
         assertTrue(byKeyed.getMessage().contains("non-encrypting"), byKeyed.getMessage());
-        assertThrows(IntegrityException.class, () -> keyless.unwrap(SNAP_MAGIC, w),
+        assertThrows(IntegrityException.class, () -> keyless.unwrap(SNAP_MAGIC, SCOPE, w),
                 "a keyless reader must also refuse a GCM-tagged record");
     }
 
@@ -164,9 +167,9 @@ class IntegrityEnvelopeRedteamTest {
     void algNoneUnderEncryptingReaderRejected_downgrade() {
         // Attack: strip authentication (algId=NONE) and present the plaintext to an ENCRYPTING
         // reader. Posture — not just bytes — must defeat the strip-to-plaintext downgrade.
-        byte[] plain = IntegrityEnvelope.keyless().wrap(SNAP_MAGIC, payload()); // algId=NONE
+        byte[] plain = IntegrityEnvelope.keyless().wrap(SNAP_MAGIC, SCOPE, payload()); // algId=NONE
         IntegrityException ex = assertThrows(IntegrityException.class,
-                () -> encryptingEnvelope().unwrap(SNAP_MAGIC, plain));
+                () -> encryptingEnvelope().unwrap(SNAP_MAGIC, SCOPE, plain));
         assertTrue(ex.getMessage().contains("downgrade"), ex.getMessage());
     }
 
@@ -180,10 +183,10 @@ class IntegrityEnvelopeRedteamTest {
         // CRC. The explicit reserved==0 check must fire BEFORE the GCM body is even reached — the
         // reserved slot stays a genuine forward-compat door under encryption, not GCM-AAD-only cover.
         IntegrityEnvelope env = encryptingEnvelope();
-        byte[] w = env.wrap(WALE_MAGIC, payload());
+        byte[] w = env.wrap(WALE_MAGIC, SCOPE, payload());
         w[OFF_RESERVED] = 1;
         repairCrc(w);
-        IntegrityException ex = assertThrows(IntegrityException.class, () -> env.unwrap(WALE_MAGIC, w));
+        IntegrityException ex = assertThrows(IntegrityException.class, () -> env.unwrap(WALE_MAGIC, SCOPE, w));
         assertTrue(ex.getMessage().contains("reserved"),
                 "a non-zero reserved byte on an encrypted record must fail closed, got: " + ex.getMessage());
     }
@@ -198,8 +201,8 @@ class IntegrityEnvelopeRedteamTest {
         // sees a magic that is not the one it asked for and, under a key, refuses the unauthenticated
         // bytes. (This is the confusion the per-artifact magic exists to stop.)
         IntegrityEnvelope env = new IntegrityEnvelope(hmacKey());
-        byte[] walRecord = env.wrap(WALE_MAGIC, payload());
-        assertThrows(IntegrityException.class, () -> env.unwrap(SNAP_MAGIC, walRecord),
+        byte[] walRecord = env.wrap(WALE_MAGIC, SCOPE, payload());
+        assertThrows(IntegrityException.class, () -> env.unwrap(SNAP_MAGIC, SCOPE, walRecord),
                 "a WAL-record envelope must not unwrap where a snapshot is expected");
     }
 
@@ -212,13 +215,13 @@ class IntegrityEnvelopeRedteamTest {
         // magic is bound into the GCM AAD: the tag was computed over WALE, the decrypt AAD now says
         // SNAP, so authentication fails. Prove the binding actually holds.
         IntegrityEnvelope env = encryptingEnvelope();
-        byte[] walRecord = env.wrap(WALE_MAGIC, payload());
+        byte[] walRecord = env.wrap(WALE_MAGIC, SCOPE, payload());
 
         ByteBuffer.wrap(walRecord).putInt(0, SNAP_MAGIC); // masquerade as a snapshot
         repairCrc(walRecord);                             // defeat the corruption check
 
         IntegrityException ex = assertThrows(IntegrityException.class,
-                () -> env.unwrap(SNAP_MAGIC, walRecord),
+                () -> env.unwrap(SNAP_MAGIC, SCOPE, walRecord),
                 "a magic-swapped encrypted record must fail the GCM AAD authentication, not decrypt");
         assertTrue(ex.getMessage().contains("authentication failed"),
                 "the magic-AAD binding must surface as an auth failure, got: " + ex.getMessage());
@@ -232,8 +235,8 @@ class IntegrityEnvelopeRedteamTest {
     @Test
     void encryptingRoundTripStillWorks() {
         IntegrityEnvelope env = encryptingEnvelope();
-        byte[] w = env.wrap(WALE_MAGIC, payload());
-        assertArrayEquals(payload(), env.unwrap(WALE_MAGIC, w),
+        byte[] w = env.wrap(WALE_MAGIC, SCOPE, payload());
+        assertArrayEquals(payload(), env.unwrap(WALE_MAGIC, SCOPE, w),
                 "a well-formed encrypted record must still round-trip");
     }
 }

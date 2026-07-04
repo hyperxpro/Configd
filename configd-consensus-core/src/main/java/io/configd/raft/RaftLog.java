@@ -1,10 +1,14 @@
 package io.configd.raft;
 
 import io.configd.common.IntegrityEnvelope;
+import io.configd.common.IntegrityException;
 import io.configd.common.Storage;
 
 import java.nio.ByteBuffer;
+import java.security.GeneralSecurityException;
+import java.security.MessageDigest;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
 
@@ -72,6 +76,50 @@ public final class RaftLog {
      */
     private final IntegrityEnvelope integrity;
 
+    /**
+     * The Raft group id this log belongs to, stamped as the {@code scopeId} on every WAL entry
+     * and snapshot blob and asserted on every recovery read. This is the cross-shard-splice
+     * defense: a record physically copied from another shard's WAL still authenticates as bytes
+     * (the at-rest key is node-wide), but its embedded {@code scopeId} announces its true shard,
+     * so the reader refuses it. At {@code N=1} the single group is {@code gid=0}. Frozen to the
+     * range {@code [0, NODE_SCOPE)} - the {@link IntegrityEnvelope#NODE_SCOPE} sentinel is reserved
+     * for node-level artifacts and illegal here, so a per-shard reader can never be fooled by one.
+     */
+    private final int gid;
+
+    /**
+     * SHA-256 output size and the genesis (all-zero) prev-hash the first record chains from.
+     */
+    private static final int HASH_SIZE = 32;
+    private static final byte[] GENESIS_PREV_HASH = new byte[HASH_SIZE]; // 32 zero bytes, read-only
+
+    /**
+     * Whether this log runs the per-record hash chain: on in the authenticated postures (keyed HMAC
+     * or encrypting GCM), off in the keyless posture. The chain is a security control - it binds each
+     * WAL record to the SHA-256 of its predecessor's serialized payload, and that {@code prevHash} is
+     * inside the record's authenticated payload (envelope MAC / GCM tag), so an interior record cannot
+     * be rolled back to an older authentic version without breaking either the successor's chain link
+     * or the record's own authenticator. Keyless stays byte-identical (no {@code prevHash}), which is
+     * sound because keyless carries no adversarial guarantees anyway.
+     */
+    private final boolean chained;
+
+    /**
+     * The running chain head: SHA-256 of the last in-memory record's serialized inner payload, or
+     * {@link #GENESIS_PREV_HASH} when the log is empty. The next appended record stamps this as its
+     * {@code prevHash}. Meaningful only when {@link #chained}.
+     */
+    private byte[] chainHead;
+
+    /**
+     * The {@code prevHash} each in-memory entry was serialized with, kept parallel to {@link #entries}
+     * (populated only when {@link #chained}). Needed so {@link #rewriteWal()} reproduces each record's
+     * exact bytes on a truncation/compaction rewrite, and so a truncation can recompute the head. A
+     * surviving entry keeps the {@code prevHash} it was written with even after its predecessor is
+     * compacted away (that boundary is bound by the Gate 3 snapshot anchor, not re-verified here).
+     */
+    private final ArrayList<byte[]> chainPrevHashes;
+
     private static final String WAL_NAME = "raft-log";
     private static final String WAL_TMP_NAME = "raft-log.tmp";
     private static final String SNAPSHOT_META_KEY = "raft-log.snapshot-meta";
@@ -99,6 +147,10 @@ public final class RaftLog {
         this.lastApplied = 0;
         this.storage = null;
         this.integrity = IntegrityEnvelope.keyless();
+        this.gid = 0;
+        this.chained = false; // keyless in-memory mode: no hash chain
+        this.chainHead = GENESIS_PREV_HASH.clone();
+        this.chainPrevHashes = new ArrayList<>();
         this.recoveredSnapshot = null;
     }
 
@@ -120,17 +172,46 @@ public final class RaftLog {
 
     /**
      * Creates a RaftLog backed by durable storage with an explicit at-rest integrity
-     * codec. A keyed {@link IntegrityEnvelope} authenticates the WAL entries and
-     * snapshot blob (fail-closed: a tampered artifact is refused on recovery); a
-     * keyless one applies version + CRC32C only and reads legacy raw bytes
-     * (back-compat). The recovery behavior is otherwise identical to
-     * {@link #RaftLog(Storage)}.
+     * codec, scoped to {@code gid=0} (the N=1 single group). Equivalent to
+     * {@link #RaftLog(Storage, IntegrityEnvelope, int)} with {@code gid=0}.
      *
      * @param storage   the durable storage implementation
      * @param integrity the at-rest integrity codec (non-null; use
      *                  {@link IntegrityEnvelope#keyless()} for no authentication)
      */
     public RaftLog(Storage storage, IntegrityEnvelope integrity) {
+        this(storage, integrity, 0);
+    }
+
+    /**
+     * Creates a RaftLog backed by durable storage with an explicit at-rest integrity
+     * codec and Raft group id. A keyed {@link IntegrityEnvelope} authenticates the WAL
+     * entries and snapshot blob (fail-closed: a tampered artifact is refused on recovery);
+     * a keyless one applies version + CRC32C only. The {@code gid} is stamped as the
+     * envelope {@code scopeId} on every write and asserted on every recovery read
+     * (cross-shard-splice defense); at {@code N=1} the single group is {@code gid=0}.
+     * <p>
+     * On construction the recovered WAL is checked for structural integrity beyond the
+     * per-record envelope: <b>contiguity</b> (embedded indices are exactly consecutive),
+     * <b>term monotonicity</b> (terms never regress), the <b>snapshot-join</b> (the persisted
+     * snapshot boundary sits below the WAL's first surviving index), and - in the authenticated
+     * posture - the <b>hash chain</b> (each record binds its predecessor's hash, catching an
+     * index-preserving content rollback the position checks miss). Any violation ⇒
+     * {@link IntegrityException} — a physically reordered, spliced, or interior-rolled-back record
+     * that still authenticates as bytes is refused here.
+     *
+     * @param storage   the durable storage implementation
+     * @param integrity the at-rest integrity codec (non-null)
+     * @param gid       the Raft group id, stamped as {@code scopeId}; must be in
+     *                  {@code [0, NODE_SCOPE)}
+     */
+    public RaftLog(Storage storage, IntegrityEnvelope integrity, int gid) {
+        if (gid == IntegrityEnvelope.NODE_SCOPE) {
+            // The NODE_SCOPE sentinel is reserved for node-level artifacts; a per-shard log
+            // must never stamp it, or a per-shard reader could be fooled by a node-level one.
+            throw new IllegalArgumentException("gid " + Integer.toHexString(gid)
+                    + " collides with the reserved NODE_SCOPE sentinel");
+        }
         this.entries = new ArrayList<>(1024);
         this.snapshotIndex = 0;
         this.snapshotTerm = 0;
@@ -138,6 +219,10 @@ public final class RaftLog {
         this.lastApplied = 0;
         this.storage = storage;
         this.integrity = java.util.Objects.requireNonNull(integrity, "integrity");
+        this.gid = gid;
+        this.chained = integrity.isKeyed() || integrity.isEncrypting();
+        this.chainHead = GENESIS_PREV_HASH.clone();
+        this.chainPrevHashes = new ArrayList<>();
 
         // Clean up any leftover temp WAL from an incomplete rewrite
         storage.truncateLog(WAL_TMP_NAME);
@@ -146,11 +231,28 @@ public final class RaftLog {
         // trailing frame (incomplete length/data/CRC32) BEFORE these bytes reach us,
         // so every `raw` here is a complete, CRC32-valid frame. deserializeEntry then
         // verifies the at-rest integrity envelope: a complete-but-tampered frame (MAC
-        // mismatch under a keyed codec) fails loudly (torn-vs-tamper rule), never
-        // silently dropped.
+        // mismatch / scope mismatch under a keyed codec) fails loudly (torn-vs-tamper
+        // rule), never silently dropped. A non-enveloped record is now refused too
+        // (the legacy raw-record fallback is deleted). In the authenticated posture
+        // deserializeEntry also records each entry's chain prevHash into chainPrevHashes.
         List<byte[]> walEntries = storage.readLog(WAL_NAME);
         for (byte[] raw : walEntries) {
             entries.add(deserializeEntry(raw));
+        }
+
+        // Recovery-time structural checks (beyond the per-record envelope). Two layers, in this
+        // order so the more specific error surfaces first:
+        //  1. Position checks (contiguity + term monotonicity): catch index permutations, gaps,
+        //     and duplicates - a physically reordered/spliced-by-index WAL. These do NOT catch an
+        //     index-preserving, term-monotonic content substitution (an interior rollback to an
+        //     older authentic record) - that is the job of the chain below.
+        //  2. Hash chain (authenticated posture only): each record binds SHA-256 of its
+        //     predecessor's serialized payload, so an interior stale-content splice breaks the
+        //     link and is REFUSED. Runs AFTER the position checks so a reorder still reports
+        //     "contiguity", not a chain break.
+        verifyRecoveredEntries(entries);
+        if (chained) {
+            verifyRecoveredChain();
         }
 
         // Recover snapshot boundary from persisted metadata (written by compact()).
@@ -161,8 +263,25 @@ public final class RaftLog {
         byte[] snapMeta = storage.get(SNAPSHOT_META_KEY);
         if (snapMeta != null && snapMeta.length >= 16) {
             ByteBuffer metaBuf = ByteBuffer.wrap(snapMeta);
-            this.snapshotIndex = metaBuf.getLong();
-            this.snapshotTerm = metaBuf.getLong();
+            long metaSnapshotIndex = metaBuf.getLong();
+            long metaSnapshotTerm = metaBuf.getLong();
+            // Snapshot-join (recovery check): the persisted snapshot boundary MUST sit strictly
+            // below the WAL's first surviving index. A boundary at or beyond firstIndex means the
+            // WAL still holds entries the snapshot claims to have compacted away - an overlapping
+            // / spliced join that never occurs in a legal execution (compact() persists the
+            // metadata AFTER rewriting the WAL, so metadata is never ahead of the WAL). This is
+            // distinct from the LEGAL stale-metadata-behind window (metaSnapshotIndex <
+            // firstIndex - 1), which the WAL-trust reconciliation below reconciles. REFUSE the
+            // overlap. (In Gate 2a the metadata is not yet authenticated; a determined attacker
+            // who also rewrites it is stopped by the authenticated anchor in a later gate.)
+            if (!entries.isEmpty() && metaSnapshotIndex >= entries.getFirst().index()) {
+                throw new IntegrityException("WAL recovery snapshot-join violation for gid " + gid
+                        + ": snapshot metadata boundary " + metaSnapshotIndex
+                        + " is not below the WAL's first surviving index " + entries.getFirst().index()
+                        + " (the WAL retains entries the snapshot compacted - splice refused)");
+            }
+            this.snapshotIndex = metaSnapshotIndex;
+            this.snapshotTerm = metaSnapshotTerm;
         } else if (!entries.isEmpty()) {
             // Legacy fallback: infer snapshotIndex from first entry's index.
             // This handles WALs written before the metadata format was extended
@@ -328,6 +447,16 @@ public final class RaftLog {
     }
 
     /**
+     * The Raft group id this log is scoped to (the envelope {@code scopeId} on its WAL
+     * entries and snapshot blob). {@code 0} at N=1. The owning {@link RaftNode} threads
+     * this to its {@link DurableRaftState} so the per-shard raft-state artifact carries
+     * the same scope.
+     */
+    public int gid() {
+        return gid;
+    }
+
+    /**
      * The number of entries currently stored (excludes snapshotted entries).
      */
     public int size() {
@@ -364,7 +493,16 @@ public final class RaftLog {
                     "Expected index " + expectedIndex + " but got " + entry.index());
         }
         if (storage != null) {
-            storage.appendToLogNoSync(WAL_NAME, serializeEntry(entry));
+            // In the authenticated posture the record chains from the current head: prevHash is the
+            // running chainHead, and after writing, chainHead advances to this record's hash. Keyless
+            // stays byte-identical (prevHash == null, no chain tracking).
+            byte[] prevHash = chained ? chainHead : null;
+            byte[] inner = serializeInner(entry, prevHash);
+            storage.appendToLogNoSync(WAL_NAME, integrity.wrap(WALE_MAGIC, gid, inner));
+            if (chained) {
+                chainPrevHashes.add(prevHash);
+                chainHead = sha256(inner);
+            }
         }
         entries.add(entry);
     }
@@ -468,6 +606,16 @@ public final class RaftLog {
         }
         int offset = toOffset(fromIndex);
         entries.subList(offset, entries.size()).clear();
+        if (chained) {
+            // Drop the truncated tail's prevHashes and recompute the head from the record now at the
+            // tail (index fromIndex-1). A legitimate conflict truncation must not trip the chain on
+            // recovery, so the surviving prefix keeps its original prevHashes and the head re-points to
+            // the new last record's hash; if truncated to empty the head resets to GENESIS (a re-append
+            // then starts a fresh link, whose first record is either true genesis (index 1, verified) or
+            // a post-compaction boundary (index > 1, bound by the Gate 3 anchor, not re-verified)).
+            chainPrevHashes.subList(Math.min(offset, chainPrevHashes.size()), chainPrevHashes.size()).clear();
+            chainHead = headHashOfTail();
+        }
         if (storage != null) {
             rewriteWal();
             // Fsync the directory after WAL rewrite to ensure the rename is durable.
@@ -555,10 +703,20 @@ public final class RaftLog {
         if (index > lastIndex()) {
             // Snapshot includes entries we don't have - clear everything
             entries.clear();
+            if (chained) {
+                chainPrevHashes.clear();
+            }
         } else {
             int offset = toOffset(index);
             // Remove entries [0..offset] inclusive
             entries.subList(0, offset + 1).clear();
+            if (chained) {
+                // Drop the compacted PREFIX's prevHashes, keeping the survivors' original prevHashes
+                // (a survivor still binds its now-compacted predecessor - that boundary is bound by
+                // the Gate 3 snapshot anchor, not re-verified). chainHead (the TAIL's hash) is
+                // unchanged: compaction removes a prefix, never the head, so appends keep chaining.
+                chainPrevHashes.subList(0, Math.min(offset + 1, chainPrevHashes.size())).clear();
+            }
         }
         this.snapshotIndex = index;
         this.snapshotTerm = term;
@@ -614,49 +772,168 @@ public final class RaftLog {
         return (int) (index - snapshotIndex - 1);
     }
 
+    /**
+     * Verifies the recovered WAL entries satisfy the two POSITION invariants that per-record
+     * authentication alone cannot: <b>contiguity</b> (each embedded index is exactly one more than
+     * its predecessor, so the run has no gap, duplicate, or reorder) and <b>term monotonicity</b>
+     * (terms never regress, which Raft guarantees because a node never writes a lower term at a
+     * later index). A physically reordered, duplicated, gapped, or different-index-substituted record
+     * still authenticates as bytes - its own envelope MAC/tag is intact - so these whole-log checks
+     * are what detect an index PERMUTATION. What they do NOT catch is an index-preserving,
+     * term-monotonic content substitution (an interior record rolled back to an older authentic
+     * version at the SAME index and a non-decreasing term): that passes both checks and is closed by
+     * the per-record hash chain ({@link #verifyRecoveredChain()}), not here. Any violation ⇒
+     * {@link IntegrityException} (recovery REFUSES). Legitimate compaction (a run that starts at
+     * {@code firstIndex > 1}) is fine: the run must merely be internally consecutive, not start at 1.
+     */
+    private void verifyRecoveredEntries(List<LogEntry> recovered) {
+        if (recovered.isEmpty()) {
+            return;
+        }
+        long firstIndex = recovered.getFirst().index();
+        long prevTerm = -1;
+        for (int k = 0; k < recovered.size(); k++) {
+            LogEntry e = recovered.get(k);
+            long expectedIndex = firstIndex + k;
+            if (e.index() != expectedIndex) {
+                throw new IntegrityException("WAL recovery contiguity violation for gid " + gid
+                        + " at position " + k + ": embedded index " + e.index()
+                        + " but expected " + expectedIndex + " (gap/duplicate/reorder refused)");
+            }
+            if (e.term() < prevTerm) {
+                throw new IntegrityException("WAL recovery term regression for gid " + gid
+                        + " at index " + e.index() + ": term " + e.term()
+                        + " follows higher term " + prevTerm + " (reorder/splice refused)");
+            }
+            prevTerm = e.term();
+        }
+    }
+
     // WAL persistence helpers
 
     /**
-     * Serializes a LogEntry for WAL storage, wrapped in the at-rest integrity envelope.
-     * The envelope IS the {@code data} that FileStorage frames as {@code [len][data][CRC32]},
-     * so per-record authentication lives inside the FileStorage frame - after FileStorage's
-     * torn-tail/length/CRC32 checks, which still run untouched.
-     * <p>
-     * Inner payload format: {@code [8-byte index][8-byte term][N-byte command]}.
+     * Builds the WAL record's inner payload (the bytes handed to the integrity envelope). Its shape is
+     * posture-dependent:
+     * <ul>
+     *   <li>authenticated (chained): {@code [index:8][term:8][prevHash:32][command:N]} - the
+     *       {@code prevHash} binds this record to its predecessor, and because it lives inside the
+     *       envelope's authenticated body (HMAC input / GCM AAD-and-ciphertext) it is unforgeable
+     *       in place;</li>
+     *   <li>keyless: {@code [index:8][term:8][command:N]} - byte-identical to the pre-chain format
+     *       (no {@code prevHash}); keyless carries no adversarial guarantees.</li>
+     * </ul>
+     * The {@code prevHash} argument is ignored in the keyless posture.
      */
-    private byte[] serializeEntry(LogEntry entry) {
+    private byte[] serializeInner(LogEntry entry, byte[] prevHash) {
         byte[] command = entry.command();
+        if (chained) {
+            ByteBuffer buf = ByteBuffer.allocate(8 + 8 + HASH_SIZE + command.length);
+            buf.putLong(entry.index());
+            buf.putLong(entry.term());
+            buf.put(prevHash);
+            buf.put(command);
+            return buf.array();
+        }
         ByteBuffer buf = ByteBuffer.allocate(8 + 8 + command.length);
         buf.putLong(entry.index());
         buf.putLong(entry.term());
         buf.put(command);
-        return integrity.wrap(WALE_MAGIC, buf.array());
+        return buf.array();
     }
 
     /**
-     * Deserializes a WAL record produced by {@link #serializeEntry}, verifying the
-     * at-rest integrity envelope first.
+     * Deserializes a WAL record, verifying the at-rest integrity envelope (including the
+     * {@code scopeId == gid} assert) first, then parsing the inner payload. In the authenticated
+     * posture the record's {@code prevHash} is extracted and appended to {@link #chainPrevHashes}
+     * (kept parallel to {@link #entries}) for the chain verification / later rewrites; the returned
+     * {@link LogEntry} carries only {@code (index, term, command)} - {@code prevHash} is WAL-internal
+     * chain metadata, not part of the logical entry.
      * <p>
-     * The frame reaching here is already complete and CRC32-valid (FileStorage
-     * dropped any torn trailing frame). A complete-but-tampered frame therefore
-     * fails the envelope's MAC/CRC32C/version check and throws
-     * {@link io.configd.common.IntegrityException} - recovery refuses rather than
-     * replaying forged committed state (torn-vs-tamper rule). A keyless codec
-     * transparently accepts legacy raw (pre-envelope) WAL records.
+     * The frame reaching here is already complete and CRC32-valid (FileStorage dropped any torn
+     * trailing frame). A complete-but-tampered frame fails the envelope's MAC/CRC32C/version/scope
+     * check and throws {@link IntegrityException} - recovery refuses rather than replaying forged
+     * committed state (torn-vs-tamper rule). Every WAL record MUST be enveloped: the legacy
+     * raw-record fallback is DELETED (design §0.5/§2.8); {@code unwrapOrNull} returns {@code null}
+     * only for a present-but-non-enveloped complete frame, which is refused fail-closed here.
      */
     private LogEntry deserializeEntry(byte[] raw) {
-        byte[] payload = integrity.unwrapOrNull(WALE_MAGIC, raw);
-        // Keyless back-compat: a legacy raw record (no envelope) returns null from
-        // unwrapOrNull - fall back to the bytes as-is. A keyed codec never returns
-        // null for non-enveloped bytes (it throws - fail-closed), so this branch is
-        // reached only in keyless mode reading a pre-envelope WAL.
-        byte[] body = (payload != null) ? payload : raw;
-        ByteBuffer buf = ByteBuffer.wrap(body);
+        byte[] payload = integrity.unwrapOrNull(WALE_MAGIC, gid, raw);
+        if (payload == null) {
+            throw new IntegrityException("WAL record for gid " + gid
+                    + " is not a valid WALE_MAGIC integrity envelope (non-enveloped record refused)");
+        }
+        ByteBuffer buf = ByteBuffer.wrap(payload);
+        if (buf.remaining() < 8 + 8 + (chained ? HASH_SIZE : 0)) {
+            throw new IntegrityException("WAL record for gid " + gid + " is too short ("
+                    + payload.length + " bytes) to carry the "
+                    + (chained ? "index/term/prevHash" : "index/term") + " header (refused)");
+        }
         long index = buf.getLong();
         long term = buf.getLong();
+        if (chained) {
+            byte[] prevHash = new byte[HASH_SIZE];
+            buf.get(prevHash);
+            chainPrevHashes.add(prevHash);
+        }
         byte[] command = new byte[buf.remaining()];
         buf.get(command);
         return new LogEntry(index, term, command);
+    }
+
+    /**
+     * Verifies the recovered hash chain (authenticated posture only), AFTER the position checks so a
+     * reorder still reports as a contiguity violation. For surviving records r_0..r_m:
+     * <ul>
+     *   <li>r_0 at index 1 (true genesis, no compaction): its {@code prevHash} MUST be GENESIS
+     *       (all-zero) - a fabricated head is refused;</li>
+     *   <li>r_0 at index &gt; 1 (a compacted prefix): its {@code prevHash} refers to a record we no
+     *       longer hold, so it is NOT verified here - the Gate 3 snapshot anchor binds that boundary;</li>
+     *   <li>each r_k (k &ge; 1): its {@code prevHash} MUST equal SHA-256 of r_{k-1}'s serialized
+     *       payload - a mismatch is an interior splice / content rollback and is REFUSED.</li>
+     * </ul>
+     * On success {@link #chainHead} is set to the last record's hash so subsequent appends chain on.
+     */
+    private void verifyRecoveredChain() {
+        if (entries.isEmpty()) {
+            chainHead = GENESIS_PREV_HASH.clone();
+            return;
+        }
+        byte[] runningHash = null;
+        for (int k = 0; k < entries.size(); k++) {
+            byte[] prevHash = chainPrevHashes.get(k);
+            byte[] inner = serializeInner(entries.get(k), prevHash);
+            if (k == 0) {
+                if (entries.get(0).index() == 1 && !Arrays.equals(prevHash, GENESIS_PREV_HASH)) {
+                    throw new IntegrityException("WAL chain: genesis record at index 1 for gid " + gid
+                            + " has a non-GENESIS prevHash (fabricated chain head refused)");
+                }
+                // index > 1: the predecessor is compacted; the Gate 3 anchor binds this boundary.
+            } else if (!Arrays.equals(prevHash, runningHash)) {
+                throw new IntegrityException("WAL chain break at index " + entries.get(k).index()
+                        + " for gid " + gid + ": prevHash does not match the predecessor's record hash "
+                        + "(interior splice / content rollback refused)");
+            }
+            runningHash = sha256(inner);
+        }
+        chainHead = runningHash;
+    }
+
+    /** The chain head implied by the current tail: the last record's hash, or GENESIS if empty. */
+    private byte[] headHashOfTail() {
+        if (!chained || entries.isEmpty()) {
+            return GENESIS_PREV_HASH.clone();
+        }
+        int last = entries.size() - 1;
+        return sha256(serializeInner(entries.get(last), chainPrevHashes.get(last)));
+    }
+
+    /** SHA-256 over the exact serialized inner-payload bytes - the chain's record hash. */
+    private static byte[] sha256(byte[] data) {
+        try {
+            return MessageDigest.getInstance("SHA-256").digest(data);
+        } catch (GeneralSecurityException e) {
+            throw new IllegalStateException("SHA-256 unavailable", e);
+        }
     }
 
     // Snapshot blob persistence.
@@ -683,10 +960,10 @@ public final class RaftLog {
         if (cfg != null) {
             buf.put(cfg);
         }
-        // Wrap the snapshot-envelope bytes in the at-rest integrity envelope. The snapshot
-        // blob is an atomic-rename artifact (never torn), so any keyed-MAC mismatch on
-        // recovery is unambiguously tamper and fails loud in readSnapshotBlob.
-        return integrity.wrap(SNAP_MAGIC, buf.array());
+        // Wrap the snapshot-envelope bytes in the at-rest integrity envelope, scoped to gid.
+        // The snapshot blob is an atomic-rename artifact (never torn), so any keyed-MAC / scope
+        // mismatch on recovery is unambiguously tamper/cross-shard and fails loud in readSnapshotBlob.
+        return integrity.wrap(SNAP_MAGIC, gid, buf.array());
     }
 
     /**
@@ -705,13 +982,17 @@ public final class RaftLog {
      */
     private SnapshotState readSnapshotBlob() {
         byte[] raw = storage.get(SNAPSHOT_BLOB_KEY);
-        // unwrapOrNull returns null ONLY for structurally-absent/too-short bytes (or,
-        // in keyless mode, legacy non-enveloped bytes); it THROWS IntegrityException
-        // on a present-but-tampered envelope. That throw deliberately propagates.
-        byte[] payload = integrity.unwrapOrNull(SNAP_MAGIC, raw);
+        // unwrapOrNull returns null ONLY for structurally-absent/too-short bytes (or, under a
+        // keyless codec, legacy non-enveloped bytes); it THROWS IntegrityException on a
+        // present-but-tampered / scope-wrong envelope. That throw deliberately propagates
+        // (a tampered blob must not be silently treated as absent, which would fall back to the
+        // WAL and re-enable a silent-downgrade). Under a keyed/encrypting codec the raw fallback
+        // below is never reached for a present blob (unwrapOrNull throws rather than returns null),
+        // so it only ever parses genuinely-absent bytes (-> null) or a keyless legacy blob.
+        byte[] payload = integrity.unwrapOrNull(SNAP_MAGIC, gid, raw);
         if (payload == null) {
             // Keyless back-compat: legacy raw (pre-envelope) blob - parse directly.
-            // (A keyed codec never returns null for non-enveloped bytes: it throws.)
+            // (A keyed codec never returns null for a present non-enveloped blob: it throws.)
             payload = raw;
         }
         if (payload == null || payload.length < 8 + 8 + 4) {
@@ -764,9 +1045,13 @@ public final class RaftLog {
         // 1. Remove any stale temp file from a previous incomplete rewrite
         storage.truncateLog(WAL_TMP_NAME);
 
-        // 2. Write all current entries to the temp WAL
-        for (LogEntry entry : entries) {
-            storage.appendToLog(WAL_TMP_NAME, serializeEntry(entry));
+        // 2. Write all current entries to the temp WAL. Each record is re-serialized with the
+        // SAME prevHash it was originally written with (kept in chainPrevHashes, parallel to
+        // entries), so the rewrite reproduces the record's exact bytes -> identical record hashes
+        // -> the chain still verifies on the next recovery. Keyless has no prevHash.
+        for (int k = 0; k < entries.size(); k++) {
+            byte[] prevHash = chained ? chainPrevHashes.get(k) : null;
+            storage.appendToLog(WAL_TMP_NAME, integrity.wrap(WALE_MAGIC, gid, serializeInner(entries.get(k), prevHash)));
         }
 
         // 3. Atomically replace the old WAL with the temp WAL.
