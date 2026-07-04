@@ -126,10 +126,11 @@ final class FileStorageTest {
 
         storage.appendToLog("corrupt-data", "some data here".getBytes());
 
-        // Corrupt the data portion (byte at offset 4, after the length header)
+        // Corrupt the data portion: byte at offset 12 = the first data byte
+        // (8-byte container header + 4-byte frame length precede it).
         Path walFile = storeDir.resolve("corrupt-data.wal");
         byte[] fileBytes = Files.readAllBytes(walFile);
-        fileBytes[4] ^= 0xFF;
+        fileBytes[12] ^= 0xFF;
         Files.write(walFile, fileBytes);
 
         assertThrows(UncheckedIOException.class, () -> storage.readLog("corrupt-data"));
@@ -247,7 +248,8 @@ final class FileStorageTest {
 
         // Simulate a crash mid-write by truncating the WAL file:
         // remove the last few bytes so the second entry's data+CRC is incomplete.
-        // WAL format: [4-byte length][data][4-byte CRC32] per entry.
+        // WAL layout: [8-byte container header][ [4-byte length][data][4-byte CRC32C] per entry ].
+        // Truncating the tail damages the last frame (after the header), which is discarded.
         Path walFile = storeDir.resolve("recovery-log.wal");
         long originalSize = Files.size(walFile);
 
@@ -290,5 +292,124 @@ final class FileStorageTest {
                 "the failure must name the log and the root cause: " + ex.getMessage());
         // Sanity: (int) 2GiB wraps negative - the exact silent-corruption cast the guard replaces.
         assertTrue((int) twoGiB < 0, "(int) 2GiB wraps negative");
+    }
+
+    // ------------------------------------------------------------------
+    // WAL container header (WalContainer): every .wal file self-identifies with an 8-byte
+    // header at offset 0, validated before any frame is read (fail closed on a foreign/corrupt/
+    // newer file). A file below the header floor is fresh (empty/first-boot/torn-header).
+    // ------------------------------------------------------------------
+
+    /** The valid 8-byte container header: [WAL_FILE_MAGIC:4][fileVersion:1][flags:1=0][reserved:2=0]. */
+    private static byte[] validHeader() {
+        ByteBuffer b = ByteBuffer.allocate(8);
+        b.putInt(WalContainer.WAL_FILE_MAGIC);
+        b.put(WalContainer.FILE_VERSION);
+        b.put((byte) 0);
+        b.putShort((short) 0);
+        return b.array();
+    }
+
+    @Test
+    void walContainerHeaderIsWrittenAndRoundTrips() throws Exception {
+        Path storeDir = tempDir.resolve("hdr");
+        Storage storage = Storage.file(storeDir);
+        storage.appendToLog("raft-log", "entry-1".getBytes());
+        storage.appendToLog("raft-log", "entry-2".getBytes());
+
+        // The file's leading 8 bytes are exactly the container header, then the frames.
+        byte[] fileBytes = Files.readAllBytes(storeDir.resolve("raft-log.wal"));
+        assertArrayEquals(validHeader(), java.util.Arrays.copyOf(fileBytes, 8),
+                "the .wal file must begin with the 8-byte container header");
+
+        List<byte[]> entries = storage.readLog("raft-log");
+        assertEquals(2, entries.size(), "frames must round-trip across the header");
+        assertArrayEquals("entry-1".getBytes(), entries.get(0));
+        assertArrayEquals("entry-2".getBytes(), entries.get(1));
+    }
+
+    @Test
+    void batchedAppendWritesHeaderAndRoundTrips() throws Exception {
+        Path storeDir = tempDir.resolve("batched");
+        Storage storage = Storage.file(storeDir);
+        storage.appendToLogNoSync("raft-log", "b1".getBytes());
+        storage.appendToLogNoSync("raft-log", "b2".getBytes());
+        storage.syncLog("raft-log");
+
+        byte[] fileBytes = Files.readAllBytes(storeDir.resolve("raft-log.wal"));
+        assertArrayEquals(validHeader(), java.util.Arrays.copyOf(fileBytes, 8),
+                "the batched path must also stamp the container header on a fresh file");
+
+        List<byte[]> entries = storage.readLog("raft-log");
+        assertEquals(2, entries.size());
+        assertArrayEquals("b1".getBytes(), entries.get(0));
+        assertArrayEquals("b2".getBytes(), entries.get(1));
+    }
+
+    @Test
+    void emptyWalFileIsFresh() throws Exception {
+        Path storeDir = tempDir.resolve("empty-wal");
+        Storage storage = Storage.file(storeDir);
+        Files.createDirectories(storeDir);
+        Files.write(storeDir.resolve("raft-log.wal"), new byte[0]); // 0-byte file
+
+        assertTrue(storage.readLog("raft-log").isEmpty(),
+                "a 0-byte .wal (first boot / torn) must read as fresh, not throw");
+    }
+
+    @Test
+    void headerOnlyFileIsFresh() throws Exception {
+        Path storeDir = tempDir.resolve("header-only");
+        Storage storage = Storage.file(storeDir);
+        Files.createDirectories(storeDir);
+        Files.write(storeDir.resolve("raft-log.wal"), validHeader()); // header, no frames
+
+        assertTrue(storage.readLog("raft-log").isEmpty(),
+                "a header-only .wal (crash after header, before first frame) must read as fresh");
+    }
+
+    @Test
+    void walFileHeaderBadMagicRejected() throws Exception {
+        Path storeDir = tempDir.resolve("bad-magic");
+        Storage storage = Storage.file(storeDir);
+        storage.appendToLog("raft-log", "entry".getBytes());
+
+        Path walFile = storeDir.resolve("raft-log.wal");
+        byte[] fileBytes = Files.readAllBytes(walFile);
+        fileBytes[0] ^= 0xFF; // corrupt the container magic
+        Files.write(walFile, fileBytes);
+
+        assertThrows(UncheckedIOException.class, () -> storage.readLog("raft-log"),
+                "a bad container magic must fail closed (foreign/corrupt file refused)");
+    }
+
+    @Test
+    void walFileHeaderHigherVersionRejected() throws Exception {
+        Path storeDir = tempDir.resolve("higher-version");
+        Storage storage = Storage.file(storeDir);
+        storage.appendToLog("raft-log", "entry".getBytes());
+
+        Path walFile = storeDir.resolve("raft-log.wal");
+        byte[] fileBytes = Files.readAllBytes(walFile);
+        fileBytes[4] = 2; // fileVersion byte -> an unknown, higher version
+        Files.write(walFile, fileBytes);
+
+        assertThrows(UncheckedIOException.class, () -> storage.readLog("raft-log"),
+                "an unknown/higher container fileVersion must be refused (never parse newer with older grammar)");
+    }
+
+    @Test
+    void nonZeroMbzHeaderByteRejected() throws Exception {
+        Path storeDir = tempDir.resolve("mbz");
+        Storage storage = Storage.file(storeDir);
+        storage.appendToLog("raft-log", "entry".getBytes());
+
+        Path walFile = storeDir.resolve("raft-log.wal");
+        byte[] fileBytes = Files.readAllBytes(walFile);
+        fileBytes[5] = 1; // flags byte is MBZ; a non-zero value must fail closed
+        Files.write(walFile, fileBytes);
+
+        assertThrows(UncheckedIOException.class, () -> storage.readLog("raft-log"),
+                "a non-zero MBZ header byte must fail closed");
     }
 }

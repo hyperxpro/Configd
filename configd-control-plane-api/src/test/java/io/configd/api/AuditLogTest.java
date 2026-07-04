@@ -2,14 +2,20 @@ package io.configd.api;
 
 import io.configd.common.Clock;
 import io.configd.common.Storage;
+import io.configd.common.WalContainer;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 
+import java.nio.ByteBuffer;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicLong;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
@@ -101,10 +107,10 @@ final class AuditLogTest {
 
         assertTrue(log.verifyPersisted().valid(), "precondition: untampered chain verifies");
 
-        // Attack: flip one byte inside the canonical block of the middle record
-        // (offset 20 lands inside the field region, past the 8-byte canonical
-        // length prefix + 8-byte timestamp).
-        storage.flipByte(1, 20);
+        // Attack: flip one byte inside the canonical block of the middle record. Offset 25 lands
+        // in the length-prefixed field region: 5-byte record header + 8-byte canonical length
+        // prefix + 8-byte timestamp = 21, so offset >= 21 is inside the fields.
+        storage.flipByte(1, 25);
 
         AuditLog.VerifyResult result = log.verifyPersisted();
         assertFalse(result.valid(), "a flipped byte in a persisted record must be detected");
@@ -147,6 +153,64 @@ final class AuditLogTest {
         storage.swapFrames(1, 2);
 
         assertFalse(log.verifyPersisted().valid(), "reordering records must be detected");
+    }
+
+    @Test
+    void auditRecordBadMagicRejected() {
+        AtomicLong now = new AtomicLong(1_000L);
+        TamperableStorage storage = new TamperableStorage();
+        AuditLog log = new AuditLog(storage, fixedClock(now));
+        log.record("writer", "PUT", "app/a", "committed seq=1");
+        now.addAndGet(1);
+        log.record("writer", "PUT", "app/b", "committed seq=2");
+        assertTrue(log.verifyPersisted().valid(), "precondition: untampered chain verifies");
+
+        // Corrupt the self-versioning record magic (offset 0) of the first frame. It no longer
+        // parses as an audit record, so decode refuses it (fail closed) rather than parsing on.
+        storage.flipByte(0, 0);
+        assertThrows(IllegalStateException.class, log::verifyPersisted,
+                "a frame with a bad AUDIT_MAGIC must be refused, not parsed as a record");
+    }
+
+    @Test
+    void auditChainVerifiesOverRealFileStorageWal(@TempDir Path tempDir) throws Exception {
+        // Composition: over a REAL FileStorage the security-audit.wal gets the WAL container header
+        // (piece 2) AND each record carries the self-versioned audit header (piece 6). The two nest
+        // cleanly: readLog strips the container header, decode validates the record header, and the
+        // chain verifies. This is the only path where both markers meet on disk.
+        AtomicLong now = new AtomicLong(1_000L);
+        Storage storage = Storage.file(tempDir);
+        AuditLog log = new AuditLog(storage, fixedClock(now), hmacKey("k-audit"));
+        log.record("writer", "PUT", "app/a", "committed seq=1");
+        now.addAndGet(1);
+        log.record("writer", "DELETE", "app/b", "committed seq=2");
+
+        assertTrue(log.verifyPersisted().valid(),
+                "the audit chain must verify through the real WAL container + record headers");
+
+        // The persisted audit .wal begins with the WAL container magic (RWLF).
+        byte[] fileBytes = Files.readAllBytes(tempDir.resolve(AuditLog.LOG_NAME + ".wal"));
+        assertEquals(WalContainer.WAL_FILE_MAGIC, ByteBuffer.wrap(fileBytes).getInt(),
+                "the audit WAL must carry the WAL container header");
+    }
+
+    @Test
+    void auditVersionIsChainBound() {
+        AtomicLong now = new AtomicLong(1_000L);
+        TamperableStorage storage = new TamperableStorage();
+        AuditLog log = new AuditLog(storage, fixedClock(now), hmacKey("k-audit"));
+        log.record("writer", "PUT", "app/a", "committed seq=1");
+        now.addAndGet(1);
+        log.record("writer", "DELETE", "app/secret", "committed seq=2");
+        assertTrue(log.verifyPersisted().valid(), "precondition: untampered chain verifies");
+
+        // Flip the recordVersion byte (offset 4) of the second frame. The magic still matches (so
+        // decode accepts the frame), but the version rides into the MAC input, so verification
+        // recomputes a different hash - a chain/MAC mismatch, NOT merely a payload edit.
+        storage.flipByte(1, 4);
+        AuditLog.VerifyResult r = log.verifyPersisted();
+        assertFalse(r.valid(), "a version edit must break the chain (the version is MAC-bound)");
+        assertEquals(1, r.brokenIndex(), "verify must pinpoint the version-tampered record");
     }
 
     // ------------------------------------------------------------------

@@ -14,7 +14,7 @@ import java.util.zip.CRC32C;
  *   [Type: 1 byte]
  *   [GroupId: 4 bytes]
  *   [Term: 8 bytes]
- *   [Epoch: 8 bytes]    (v2 - RESERVED; MBZ on send, ignored on receive)
+ *   [Epoch: 8 bytes]    (v2 - RESERVED; MBZ on send, rejected-if-nonzero on receive)
  *   [Payload: variable]
  *   [CRC32C: 4 bytes]
  * </pre>
@@ -29,10 +29,13 @@ import java.util.zip.CRC32C;
  *   <li><b>Type</b> - {@link MessageType} code.</li>
  *   <li><b>GroupId</b> - Raft group identifier, big-endian.</li>
  *   <li><b>Term</b> - Raft term, big-endian.</li>
- *   <li><b>Epoch</b> - v2 RESERVED field, big-endian. <em>Dormant</em>: the encoder
- *       writes zero (MBZ) and the decoder reads-but-ignores it, so a future v2.x
- *       sender that populates epoch is still decodable here - activating it needs
- *       no further wire bump. Not surfaced on {@link Frame} until it is used.</li>
+ *   <li><b>Epoch</b> - v2 RESERVED field, big-endian, MBZ. The encoder writes zero;
+ *       the decoder <em>rejects</em> a non-zero value (fail closed) - in v1 no
+ *       legitimate peer sets it, so a non-zero epoch that passed the CRC is a newer
+ *       peer this reader cannot safely interpret. Freezing it MBZ keeps the slot a
+ *       genuine forward-compat door: a future version that assigns epoch meaning
+ *       lands with its own handshake, and a v1 reader refuses it rather than
+ *       mis-parsing. Not surfaced on {@link Frame} until it is used.</li>
  *   <li><b>Payload</b> - message-specific bytes. May be empty.</li>
  *   <li><b>CRC32C</b> - Castagnoli polynomial checksum
  *       ({@link java.util.zip.CRC32C}) over <em>all preceding
@@ -248,6 +251,8 @@ public final class FrameCodec {
      *       {@link UnsupportedWireVersionException}.</li>
      *   <li>Type code unknown: {@link IllegalArgumentException}
      *       (delegated to {@link MessageType#fromCode(int)}).</li>
+     *   <li>Reserved {@code epoch} field non-zero:
+     *       {@link IllegalArgumentException} (MBZ, fail closed).</li>
      * </ol>
      *
      * @param data the raw frame bytes
@@ -306,7 +311,16 @@ public final class FrameCodec {
         MessageType type = MessageType.fromCode(typeCode);
         int groupId = buf.getInt();
         long term = buf.getLong();
-        buf.getLong(); // reserved epoch - decode-but-ignore (dormant; forward-compatible)
+        long epoch = buf.getLong();
+        if (epoch != RESERVED_EPOCH) {
+            // The 8-byte epoch (offset 18) is MBZ in v1: no legitimate peer populates it.
+            // A non-zero value survived the CRC above, so it is not a bit-flip - it is a
+            // newer peer that put meaning into the reserved slot, which this reader cannot
+            // safely honour. Fail closed rather than silently ignore a field that may change
+            // frame semantics.
+            throw new IllegalArgumentException(
+                    "Reserved epoch field must be zero (MBZ) but was 0x" + Long.toHexString(epoch));
+        }
 
         int payloadLen = data.length - HEADER_SIZE - TRAILER_SIZE;
         byte[] payload = new byte[payloadLen];

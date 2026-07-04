@@ -27,17 +27,19 @@ import java.util.Objects;
  * (e.g. {@code committed seq=N} / a deny reason / {@code failed}).
  *
  * <h2>Tamper-evidence (KEYED HMAC chain)</h2>
- * Each record is linked to its predecessor by a chain MAC over
- * {@code prevHash || canonicalBytes(record)}, with the genesis {@code prevHash}
- * being 32 zero bytes. {@link #verify()} re-walks the chain, recomputes each MAC,
- * and (with a constant-time {@link MessageDigest#isEqual compare}) detects any
- * insertion, deletion, reorder, or in-place mutation.
+ * Each record carries a self-versioning header {@code [AUDIT_MAGIC:4][recordVersion:1]} and is
+ * linked to its predecessor by a chain MAC over
+ * {@code AUDIT_MAGIC || recordVersion || prevHash || canonicalBytes(record)}, with the genesis
+ * {@code prevHash} being 32 zero bytes. Binding the header into the MAC means a version edit of a
+ * record breaks the chain, not just a payload edit. {@link #verify()} re-walks the chain, recomputes
+ * each MAC, and (with a constant-time {@link MessageDigest#isEqual compare}) detects any insertion,
+ * deletion, reorder, or in-place mutation.
  * <p>
  * There are two modes:
  * <ul>
  *   <li><b>Keyed</b> ({@link #AuditLog(Storage, Clock, SecretKey)}): the chain is an
  *       <em>HMAC-SHA256</em> under {@code K_audit}:
- *       <pre>recordHash = HMAC-SHA256(K_audit, prevHash || canonicalBytes(record))</pre>
+ *       <pre>recordHash = HMAC-SHA256(K_audit, AUDIT_MAGIC || recordVersion || prevHash || canonicalBytes(record))</pre>
  *       This is the production-grade, tamper-EVIDENT mode. An attacker
  *       who can rewrite the persisted file cannot forge a consistent
  *       chain without {@code K_audit}: editing a record and re-chaining the whole
@@ -51,7 +53,7 @@ import java.util.Objects;
  *       chain (SHA-256 needs no secret) and defeat it. Retained for unit tests and
  *       in-memory / back-compat deployments; NOT suitable for production security.</li>
  * </ul>
- * The on-disk frame additionally carries a CRC32 (via {@link Storage#appendToLog})
+ * The on-disk frame additionally carries a CRC32C (via {@link Storage#appendToLog})
  * so accidental corruption is caught at read time. The canonical form is
  * length-prefixed per field (see {@link #canonicalBytes}) so no field-boundary
  * ambiguity can be exploited to forge a colliding record.
@@ -87,14 +89,32 @@ public final class AuditLog {
     /** Storage log name for the persisted audit records. */
     public static final String LOG_NAME = "security-audit";
 
+    /**
+     * Self-versioning record-header magic (ASCII "RAUD"), prepended inside each FileStorage
+     * frame. Mirrors the {@code RaftArtifactMagic} registry entry (that registry cannot be
+     * referenced from this module - it is package-private in configd-consensus-core).
+     */
+    private static final int AUDIT_MAGIC = 0x5241_5544;
+
+    /**
+     * Audit record format version. It is bound into the chain MAC (see {@link #chainHash}), so a
+     * version edit of a persisted record breaks the chain rather than merely being a payload edit.
+     */
+    private static final int RECORD_VERSION = 1;
+
     private static final byte[] GENESIS_PREV_HASH = new byte[32];
 
-    /** A canonical, recorded security event. {@code prevHash}/{@code recordHash} are 32-byte chain MACs (HMAC-SHA256 keyed, SHA-256 keyless). */
+    /**
+     * A canonical, recorded security event. {@code recordVersion} is the self-versioning record
+     * format (bound into the chain MAC); {@code prevHash}/{@code recordHash} are 32-byte chain MACs
+     * (HMAC-SHA256 keyed, SHA-256 keyless).
+     */
     public record Record(long timestampMs,
                          String actor,
                          String action,
                          String target,
                          String outcome,
+                         int recordVersion,
                          byte[] prevHash,
                          byte[] recordHash) {
         public Record {
@@ -194,9 +214,9 @@ public final class AuditLog {
 
         long ts = clock.currentTimeMillis();
         byte[] canonical = canonicalBytes(ts, actor, action, target, outcome);
-        byte[] recordHash = chainHash(key, lastHash, canonical);
+        byte[] recordHash = chainHash(key, RECORD_VERSION, lastHash, canonical);
         Record rec = new Record(ts, actor, action, target, outcome,
-                lastHash.clone(), recordHash);
+                RECORD_VERSION, lastHash.clone(), recordHash);
 
         // Persist the FULL framed record (fields + prevHash + recordHash) so a
         // reader can reconstruct and re-verify the chain independently.
@@ -287,7 +307,10 @@ public final class AuditLog {
                         "prevHash linkage broken: record " + i + " does not chain to record " + (i - 1));
             }
             byte[] canonical = canonicalBytes(r.timestampMs(), r.actor(), r.action(), r.target(), r.outcome());
-            byte[] recomputed = chainHash(verifyKey, r.prevHash(), canonical);
+            // Recompute with the record's DECLARED version so a version edit (not just a payload
+            // edit) is caught here: the persisted version rides into the MAC input, so flipping it
+            // yields a hash that no longer matches the stored recordHash.
+            byte[] recomputed = chainHash(verifyKey, r.recordVersion(), r.prevHash(), canonical);
             // Constant-time compare: a keyed MAC verify must not leak via timing.
             if (!MessageDigest.isEqual(recomputed, r.recordHash())) {
                 return VerifyResult.broken(i,
@@ -339,16 +362,19 @@ public final class AuditLog {
     }
 
     /**
-     * The chain MAC over {@code prevHash || canonical}. Keyed mode
-     * ({@code key != null}) computes HMAC-SHA256 under {@code key}; keyless mode
-     * computes a plain SHA-256 digest. Both yield 32 bytes, so the record format
-     * and chain logic are identical across modes.
+     * The chain MAC over {@code AUDIT_MAGIC || recordVersion || prevHash || canonical}. Keyed mode
+     * ({@code key != null}) computes HMAC-SHA256 under {@code key}; keyless mode computes a plain
+     * SHA-256 digest. Both yield 32 bytes, so the record format and chain logic are identical across
+     * modes. Binding the magic+version into the input means a version downgrade (or any header edit)
+     * of a persisted record breaks the chain, not just a payload edit.
      */
-    private static byte[] chainHash(SecretKey key, byte[] prevHash, byte[] canonical) {
+    private static byte[] chainHash(SecretKey key, int recordVersion, byte[] prevHash, byte[] canonical) {
+        byte[] header = recordHeaderBytes(recordVersion); // [AUDIT_MAGIC:4][recordVersion:1]
         if (key != null) {
             try {
                 Mac mac = Mac.getInstance("HmacSHA256");
                 mac.init(key);
+                mac.update(header);
                 mac.update(prevHash);
                 mac.update(canonical);
                 return mac.doFinal();
@@ -358,9 +384,19 @@ public final class AuditLog {
             }
         }
         MessageDigest digest = sha256();
+        digest.update(header);
         digest.update(prevHash);
         digest.update(canonical);
         return digest.digest();
+    }
+
+    /** The self-versioning record header {@code [AUDIT_MAGIC:4][recordVersion:1]} (chain-MAC input + on-disk prefix). */
+    private static byte[] recordHeaderBytes(int recordVersion) {
+        return new byte[] {
+                (byte) (AUDIT_MAGIC >>> 24), (byte) (AUDIT_MAGIC >>> 16),
+                (byte) (AUDIT_MAGIC >>> 8), (byte) AUDIT_MAGIC,
+                (byte) recordVersion
+        };
     }
 
     private static MessageDigest sha256() {
@@ -373,14 +409,16 @@ public final class AuditLog {
     }
 
     /**
-     * On-disk frame: the canonical fields followed by the two 32-byte hashes,
-     * with the canonical block itself length-prefixed so the reader can split it
-     * from the trailing hashes. {@link Storage#appendToLog} wraps this in its own
-     * {@code [len][data][CRC32]} frame.
+     * On-disk frame: the self-versioning record header {@code [AUDIT_MAGIC:4][recordVersion:1]},
+     * then the canonical fields followed by the two 32-byte hashes, with the canonical block itself
+     * length-prefixed so the reader can split it from the trailing hashes. {@link Storage#appendToLog}
+     * wraps this in its own {@code [len][data][CRC32C]} frame.
      */
     private static byte[] encode(Record r) {
         byte[] canonical = canonicalBytes(r.timestampMs(), r.actor(), r.action(), r.target(), r.outcome());
-        ByteArrayOutputStream out = new ByteArrayOutputStream(canonical.length + 72);
+        ByteArrayOutputStream out = new ByteArrayOutputStream(canonical.length + 72 + 5);
+        writeInt(out, AUDIT_MAGIC);       // 4-byte record-header magic
+        out.write(r.recordVersion());     // 1-byte record version
         writeLong(out, canonical.length); // 8-byte length prefix for the canonical block
         out.writeBytes(canonical);
         out.writeBytes(r.prevHash());     // 32 bytes
@@ -390,6 +428,16 @@ public final class AuditLog {
 
     private static Record decode(byte[] frame) {
         int pos = 0;
+        int magic = readInt(frame, pos);
+        pos += 4;
+        if (magic != AUDIT_MAGIC) {
+            // Not an audit record (foreign frame or corrupt magic) - refuse rather than parse it as
+            // one. A deliberate magic edit is additionally caught by the chain, since the magic is a
+            // MAC-input constant; this structural check gives the clearer error for a non-record frame.
+            throw new IllegalStateException("corrupt audit frame: bad record magic 0x" + Integer.toHexString(magic));
+        }
+        int recordVersion = frame[pos] & 0xFF;
+        pos += 1;
         long canonicalLen = readLong(frame, pos);
         pos += 8;
         if (canonicalLen < 0 || canonicalLen > frame.length - pos - 64) {
@@ -414,7 +462,7 @@ public final class AuditLog {
         byte[] prevHash = Arrays.copyOfRange(frame, pos, pos + 32);
         pos += 32;
         byte[] recordHash = Arrays.copyOfRange(frame, pos, pos + 32);
-        return new Record(ts, actor, action, target, outcome, prevHash, recordHash);
+        return new Record(ts, actor, action, target, outcome, recordVersion, prevHash, recordHash);
     }
 
     private static void writeField(ByteArrayOutputStream out, String s) {

@@ -12,14 +12,19 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 import java.util.Map;
-import java.util.zip.CRC32;
+import java.util.zip.CRC32C;
 
 /**
  * File-backed implementation of {@link Storage} with fsync durability.
  * <p>
  * Key-value pairs are stored as individual {@code .dat} files.
- * Logs are stored as {@code .wal} files using a simple framed format:
- * {@code [4-byte length][data][4-byte CRC32]} per entry.
+ * Logs are stored as {@code .wal} files: an 8-byte self-identifying container
+ * header ({@link WalContainer}) at offset 0, followed by a simple framed format
+ * {@code [4-byte length][data][4-byte CRC32C]} per entry.
+ * <p>
+ * The frame CRC is CRC32C (Castagnoli), the one checksum family used system-wide;
+ * it is a corruption / torn-tail detector only - authentication is always the inner
+ * {@link IntegrityEnvelope} on each record.
  * <p>
  * All writes are fsynced before returning to guarantee durability.
  */
@@ -119,17 +124,17 @@ public final class FileStorage implements Storage {
                 StandardOpenOption.WRITE,
                 StandardOpenOption.APPEND)) {
 
-            CRC32 crc = new CRC32();
-            crc.update(data);
-            int crcValue = (int) crc.getValue();
+            if (channel.size() == 0) {
+                // Fresh file: stamp the container header as the leading bytes, before the
+                // first frame. The single force(true) below fsyncs the header together with
+                // the frame, so a durable frame can never exist without a durable header.
+                ByteBuffer header = WalContainer.header();
+                while (header.hasRemaining()) {
+                    channel.write(header);
+                }
+            }
 
-            // Frame: [4-byte length][data][4-byte CRC32]
-            ByteBuffer frame = ByteBuffer.allocate(4 + data.length + 4);
-            frame.putInt(data.length);
-            frame.put(data);
-            frame.putInt(crcValue);
-            frame.flip();
-
+            ByteBuffer frame = frame(data);
             while (frame.hasRemaining()) {
                 channel.write(frame);
             }
@@ -206,12 +211,21 @@ public final class FileStorage implements Storage {
         if (!existedBefore) {
             pendingDirSync.add(logName); // dir fsync on first syncLog (file-creation durability)
         }
+        if (channel.size() == 0) {
+            // Fresh file: stamp the container header as the leading bytes, ahead of any frame.
+            // Not forced here - durability is deferred to the batch's syncLog, which fsyncs the
+            // header together with the frames (a durable frame therefore implies a durable header).
+            ByteBuffer header = WalContainer.header();
+            while (header.hasRemaining()) {
+                channel.write(header);
+            }
+        }
         return channel;
     }
 
-    /** Builds the framed WAL record: {@code [4-byte length][data][4-byte CRC32]}. */
+    /** Builds the framed WAL record: {@code [4-byte length][data][4-byte CRC32C]}. */
     private static ByteBuffer frame(byte[] data) {
-        CRC32 crc = new CRC32();
+        CRC32C crc = new CRC32C();
         crc.update(data);
         int crcValue = (int) crc.getValue();
         ByteBuffer frame = ByteBuffer.allocate(4 + data.length + 4);
@@ -247,7 +261,11 @@ public final class FileStorage implements Storage {
         }
         try (FileChannel channel = FileChannel.open(file, StandardOpenOption.READ)) {
             long fileSize = channel.size();
-            if (fileSize == 0) {
+            if (fileSize < WalContainer.HEADER_SIZE) {
+                // Below the container-header floor: an empty/first-boot file, or a header
+                // write torn by a crash before any frame was durable. Fresh - nothing to
+                // replay. (A header-only file, size == HEADER_SIZE, validates below and
+                // yields no frames.)
                 return Collections.emptyList();
             }
 
@@ -259,6 +277,11 @@ public final class FileStorage implements Storage {
             }
             buffer.flip();
 
+            // Validate the container header BEFORE any frame read (fail closed on a foreign,
+            // corrupt, or newer-format file), then the existing frame scan + torn-tail discard
+            // runs unchanged over the post-header region.
+            WalContainer.validateHeader(logName, buffer);
+
             List<byte[]> entries = new ArrayList<>();
             while (buffer.remaining() >= 4) {
                 int length = buffer.getInt();
@@ -268,9 +291,19 @@ public final class FileStorage implements Storage {
                 // entries as uncommitted and discard them - the entry was never fsynced
                 // completely so it was never durable. A negative length also indicates
                 // corruption of the length field itself (partial write of the 4-byte int).
-                if (length < 0 || buffer.remaining() < length + 4) {
-                    // Truncated trailing entry - stop reading. All previously read entries
-                    // (which had valid CRCs) are intact. The partial entry is discarded.
+                //
+                // The bound is written as `length > remaining - 4`, NOT `remaining < length + 4`:
+                // `length` is attacker-controlled (a filesystem-write adversary can forge the
+                // length field), and `length + 4` overflows to a negative int for length near
+                // Integer.MAX_VALUE, which would BYPASS the guard and drive a multi-gigabyte
+                // `new byte[length]` on the recovery path (an out-of-memory boot crash from a
+                // tampered WAL). Subtracting on the trusted side (`remaining`, bounded by the
+                // file size, itself capped at MAX_READABLE_LOG_BYTES) cannot overflow, so an
+                // over-long length is always dropped as a torn tail rather than allocated.
+                if (length < 0 || length > buffer.remaining() - 4) {
+                    // Truncated (or forged-over-long) trailing entry - stop reading. All
+                    // previously read entries (which had valid CRCs) are intact; this one is
+                    // discarded.
                     break;
                 }
 
@@ -278,12 +311,12 @@ public final class FileStorage implements Storage {
                 buffer.get(data);
                 int storedCrc = buffer.getInt();
 
-                CRC32 crc = new CRC32();
+                CRC32C crc = new CRC32C();
                 crc.update(data);
                 int computedCrc = (int) crc.getValue();
 
                 if (storedCrc != computedCrc) {
-                    throw new IOException("CRC32 mismatch in log: " + logName
+                    throw new IOException("CRC32C mismatch in log: " + logName
                             + " (stored=" + Integer.toHexString(storedCrc)
                             + ", computed=" + Integer.toHexString(computedCrc) + ")");
                 }

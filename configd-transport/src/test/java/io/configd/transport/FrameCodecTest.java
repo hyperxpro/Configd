@@ -91,4 +91,27 @@ class FrameCodecTest {
             assertEquals(type, decoded.messageType());
         }
     }
+
+    @Test
+    void nonZeroReservedEpochRejected() {
+        // The 8-byte epoch at offset 18 is MBZ in v1. Set it non-zero, repair the CRC so the
+        // MBZ check (not the checksum) is what fires, and expect a fail-closed rejection: a
+        // non-zero reserved field is a newer peer this reader cannot safely interpret.
+        byte[] frame = FrameCodec.encode(MessageType.APPEND_ENTRIES, 42, 7L, "payload".getBytes());
+        ByteBuffer.wrap(frame).putLong(18, 1L); // stamp epoch = 1 (offset 18, after ver+type+groupId+term)
+        recomputeCrc(frame);
+
+        IllegalArgumentException ex = assertThrows(IllegalArgumentException.class,
+                () -> FrameCodec.decode(frame));
+        assertTrue(ex.getMessage().contains("epoch"),
+                "a non-zero reserved epoch must fail closed on the MBZ check, got: " + ex.getMessage());
+    }
+
+    /** Recomputes the CRC32C trailer over [0, len-4) so only the field-level check under test fails. */
+    private static void recomputeCrc(byte[] frame) {
+        int crcOffset = frame.length - FrameCodec.TRAILER_SIZE;
+        java.util.zip.CRC32C crc = new java.util.zip.CRC32C();
+        crc.update(frame, 0, crcOffset);
+        ByteBuffer.wrap(frame).putInt(crcOffset, (int) crc.getValue());
+    }
 }

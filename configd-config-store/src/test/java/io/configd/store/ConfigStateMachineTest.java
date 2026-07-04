@@ -893,17 +893,17 @@ class ConfigStateMachineTest {
         }
     }
 
-    // TLV snapshot trailer: extensible, backward-compatible. The snapshot trailer
-    // must accept three forms (legacy empty, raw 8-byte epoch, canonical TLV) and
-    // ignore unknown trailing fields inside a TLV payload so older readers can load
-    // newer snapshots that add a field.
+    // TLV snapshot trailer (frozen clean break). The snapshot writer always emits the canonical
+    // magic-TLV trailer, so it is the ONLY accepted form: the legacy trailer-less and bare-8-byte-
+    // epoch forms are now REFUSED. Unknown trailing fields inside a TLV payload are still ignored
+    // so an older reader can load a newer snapshot that appended a field.
     @Nested
     class SnapshotTrailerCompatibility {
 
         private static final int SNAPSHOT_TRAILER_MAGIC = 0xC0FD7A11;
 
         @Test
-        void rawEpochTrailerStillLoads() throws Exception {
+        void snapshotTrailerRaw8Rejected() throws Exception {
             KeyPairGenerator gen = KeyPairGenerator.getInstance("Ed25519");
             KeyPair kp = gen.generateKeyPair();
             ConfigSigner signer = new ConfigSigner(kp);
@@ -912,25 +912,24 @@ class ConfigStateMachineTest {
             ConfigStateMachine src = new ConfigStateMachine(srcStore, Clock.system(), signer);
             src.apply(1, 1, CommandCodec.encodePut("k", bytes("v")));
 
+            // Strip the canonical 16-byte TLV trailer and replace it with a bare 8-byte epoch -
+            // the deleted legacy form (c). The frozen reader must refuse it.
             byte[] full = src.snapshot();
             byte[] entriesOnly = java.util.Arrays.copyOf(full, full.length - 16);
             ByteBuffer raw = ByteBuffer.allocate(entriesOnly.length + Long.BYTES);
             raw.put(entriesOnly);
             raw.putLong(42L);
-            byte[] iter1Snapshot = raw.array();
+            byte[] rawEpochSnapshot = raw.array();
 
             VersionedConfigStore dstStore = new VersionedConfigStore();
             ConfigStateMachine dst = new ConfigStateMachine(dstStore, Clock.system(), signer);
-            dst.restoreSnapshot(iter1Snapshot);
-
-            assertTrue(dstStore.get("k").found(),
-                    "iter-1 raw-epoch trailer must still load entries");
-            assertEquals(42L, dst.signingEpoch(),
-                    "iter-1 raw-epoch trailer must still restore signingEpoch");
+            assertThrows(IllegalArgumentException.class,
+                    () -> dst.restoreSnapshot(rawEpochSnapshot),
+                    "a bare 8-byte epoch trailer (legacy form c) must be refused");
         }
 
         @Test
-        void tlvTrailerWithUnknownTrailingFieldStillLoads() throws Exception {
+        void snapshotTrailerUnknownTailTolerated() throws Exception {
             KeyPairGenerator gen = KeyPairGenerator.getInstance("Ed25519");
             KeyPair kp = gen.generateKeyPair();
             ConfigSigner signer = new ConfigSigner(kp);
@@ -984,19 +983,16 @@ class ConfigStateMachineTest {
                     "malformed trailer must throw rather than silently accept");
         }
 
-        // decodeTrailer BOUNDARY coverage. decodeTrailer dispatches on the
-        // bytes AFTER the entries:
-        //   remaining == 0                         -> legacy (accept, no epoch)
-        //   remaining >= 8 && first4 == MAGIC      -> TLV form
+        // decodeTrailer BOUNDARY coverage. Frozen dispatch on the bytes AFTER the entries:
+        //   remaining >= 8 && first4 == MAGIC      -> TLV form (the ONLY accepted form)
         //     trailerLen < 0 || trailerLen > MAX   -> reject
         //     remaining < trailerLen               -> reject (truncated)
         //     trailerLen >= Long.BYTES             -> read epoch (+ skip tail)
         //     else                                 -> skip trailerLen bytes
-        //   remaining == Long.BYTES (8)            -> raw-epoch form
-        //   else                                   -> malformed (reject)
-        // The off-by-one mutants on those comparisons accept a corrupt trailer
-        // or reject a valid one. These tests pin each boundary. The base is an
-        // EMPTY store so the trailer is the only region exercised.
+        //   anything else (0 = trailer-less, 8 = bare epoch, any other run) -> reject
+        // The off-by-one mutants on those comparisons accept a corrupt trailer or reject a
+        // valid one. These tests pin each boundary. The base is an EMPTY store so the trailer
+        // is the only region exercised.
         // -------------------------------------------------------------------
 
         private static final int MAX_SNAPSHOT_TRAILER_LEN = 65_536;
@@ -1023,11 +1019,13 @@ class ConfigStateMachineTest {
         }
 
         @Test
-        void emptyTrailerIsAcceptedAsLegacy() {
-            // remaining == 0 boundary: a snapshot with no trailer loads (legacy).
+        void snapshotTrailerLegacyEmptyRejected() {
+            // remaining == 0 boundary: a trailer-less snapshot (legacy form a) is now REFUSED -
+            // the frozen writer always emits the canonical TLV trailer.
             ConfigStateMachine dst = freshMachine();
-            assertDoesNotThrow(() -> dst.restoreSnapshot(emptyEntries()));
-            assertEquals(0L, dst.signingEpoch(), "legacy snapshot carries no epoch");
+            assertThrows(IllegalArgumentException.class,
+                    () -> dst.restoreSnapshot(emptyEntries()),
+                    "a trailer-less snapshot (legacy form a) must be refused");
         }
 
         @Test
@@ -1041,13 +1039,15 @@ class ConfigStateMachineTest {
         }
 
         @Test
-        void rawEightByteEpochAtBoundaryLoads() {
-            // remaining == Long.BYTES (8) with no magic -> raw-epoch form.
+        void rawEightByteEpochAtBoundaryRejected() {
+            // remaining == Long.BYTES (8) with no magic: the bare-epoch form (legacy form c) is
+            // now REFUSED - only a magic-TLV trailer is accepted at this boundary.
             ByteBuffer t = ByteBuffer.allocate(8);
             t.putLong(123L);
             ConfigStateMachine dst = freshMachine();
-            assertDoesNotThrow(() -> dst.restoreSnapshot(withTrailer(t.array())));
-            assertEquals(123L, dst.signingEpoch(), "raw 8-byte trailer must restore the epoch");
+            assertThrows(IllegalArgumentException.class,
+                    () -> dst.restoreSnapshot(withTrailer(t.array())),
+                    "a bare 8-byte epoch at the boundary (legacy form c) must be refused");
         }
 
         @Test
