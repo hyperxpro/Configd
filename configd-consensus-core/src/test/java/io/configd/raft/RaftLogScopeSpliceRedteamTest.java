@@ -76,22 +76,33 @@ class RaftLogScopeSpliceRedteamTest {
     }
 
     @Test
-    void crossShardSnapshotBlobRefused_hmac(@TempDir Path tempDir) {
+    void crossShardSnapshotBlobRefused_hmac(@TempDir Path tempDir) throws Exception {
         assertCrossShardSnapshotRefused(tempDir, hmacEnvelope());
     }
 
     @Test
-    void crossShardSnapshotBlobRefused_gcm(@TempDir Path tempDir) {
+    void crossShardSnapshotBlobRefused_gcm(@TempDir Path tempDir) throws Exception {
         assertCrossShardSnapshotRefused(tempDir, gcmEnvelope());
     }
 
-    private void assertCrossShardSnapshotRefused(Path tempDir, IntegrityEnvelope env) {
-        Storage storage = Storage.file(tempDir);
-        RaftLog foreign = new RaftLog(storage, env, FOREIGN_GID);
-        foreign.persistSnapshot(new SnapshotState("foreign-state".getBytes(StandardCharsets.UTF_8), 5, 2, null));
+    private void assertCrossShardSnapshotRefused(Path tempDir, IntegrityEnvelope env) throws Exception {
+        // Produce a foreign (gid=FOREIGN) snapshot blob in its OWN dir, so its anchor does not shadow
+        // the victim's - with the merge, a foreign anchor in the shared dir would itself refuse first.
+        Path foreignDir = tempDir.resolve("foreign");
+        Storage foreignStorage = Storage.file(foreignDir);
+        new RaftLog(foreignStorage, env, FOREIGN_GID)
+                .persistSnapshot(new SnapshotState("foreign-state".getBytes(StandardCharsets.UTF_8), 5, 2, null));
+        byte[] foreignBlob = Files.readAllBytes(foreignDir.resolve(SNAP_FILE));
+
+        // The victim shard has its OWN valid (gid=VICTIM) anchor; plant the foreign blob over it so the
+        // reload's snapshot scope assert is the thing that fires.
+        Path victimDir = tempDir.resolve("victim");
+        Storage victimStorage = Storage.file(victimDir);
+        new RaftLog(victimStorage, env, VICTIM_GID).closeAnchor();
+        Files.write(victimDir.resolve(SNAP_FILE), foreignBlob);
 
         IntegrityException ex = assertThrows(IntegrityException.class,
-                () -> new RaftLog(Storage.file(tempDir), env, VICTIM_GID));
+                () -> new RaftLog(Storage.file(victimDir), env, VICTIM_GID));
         assertTrue(ex.getMessage().contains("scope mismatch"),
                 "a cross-shard snapshot blob must be refused on reload, got: " + ex.getMessage());
     }
@@ -108,13 +119,19 @@ class RaftLogScopeSpliceRedteamTest {
 
     private void assertCrossShardStateRefused(Path tempDir, IntegrityEnvelope env) {
         Storage storage = Storage.file(tempDir);
-        DurableRaftState foreign = new DurableRaftState(storage, env, FOREIGN_GID);
-        foreign.setTermAndVote(3, NodeId.of(7)); // persists raft.persistent_state under scopeId=1
+        // A foreign shard persists its term/vote into the MERGED anchor under scopeId=FOREIGN_GID
+        // (raft.persistent_state is gone; currentTerm/votedFor now live in the per-shard anchor).
+        RaftLog foreign = new RaftLog(storage, env, FOREIGN_GID);
+        foreign.persistTermVote(3, 7); // writes the raft-anchor under scopeId=FOREIGN_GID
+        foreign.closeAnchor();
 
+        // The victim shard reading the SAME storage refuses: both anchor slots carry
+        // scopeId=FOREIGN_GID, so neither authenticates for VICTIM_GID - a present-but-both-invalid
+        // anchor is a REFUSE (the anchor scope assert catches the cross-shard raft-state splice).
         IntegrityException ex = assertThrows(IntegrityException.class,
-                () -> new DurableRaftState(Storage.file(tempDir), env, VICTIM_GID));
-        assertTrue(ex.getMessage().contains("scope mismatch"),
-                "a cross-shard raft-state artifact must be refused on load, got: " + ex.getMessage());
+                () -> new RaftLog(Storage.file(tempDir), env, VICTIM_GID));
+        assertTrue(ex.getMessage().contains("both slots invalid") || ex.getMessage().contains("scope"),
+                "a cross-shard raft-state (anchor) artifact must be refused on load, got: " + ex.getMessage());
     }
 
     // ---------------------------------------------------------------------------------------------
@@ -166,18 +183,24 @@ class RaftLogScopeSpliceRedteamTest {
 
     private void assertSnapshotScopeForgeRefused(Path tempDir, IntegrityEnvelope env, String expectedInMessage)
             throws Exception {
-        Storage storage = Storage.file(tempDir);
-        RaftLog foreign = new RaftLog(storage, env, FOREIGN_GID);
-        foreign.persistSnapshot(new SnapshotState("foreign-state".getBytes(StandardCharsets.UTF_8), 5, 2, null));
+        // Foreign blob produced in its own dir (its foreign anchor must not shadow the victim's).
+        Path foreignDir = tempDir.resolve("foreign");
+        new RaftLog(Storage.file(foreignDir), env, FOREIGN_GID)
+                .persistSnapshot(new SnapshotState("foreign-state".getBytes(StandardCharsets.UTF_8), 5, 2, null));
 
         // The snapshot blob is a raw envelope in a .dat file (no outer FileStorage frame), so we re-stamp
         // scopeId in the envelope and repair the envelope's own CRC32C - the MAC/tag is all that is left.
-        byte[] blob = Files.readAllBytes(tempDir.resolve(SNAP_FILE));
+        byte[] blob = Files.readAllBytes(foreignDir.resolve(SNAP_FILE));
         forgeScopeInEnvelope(blob, VICTIM_GID);
-        Files.write(tempDir.resolve(SNAP_FILE), blob, StandardOpenOption.TRUNCATE_EXISTING);
+
+        // Plant the forged blob over a victim shard that has its OWN valid (gid=VICTIM) anchor, so the
+        // forged scopeId PASSES the reader assert and only the MAC/GCM tag is left to catch it.
+        Path victimDir = tempDir.resolve("victim");
+        new RaftLog(Storage.file(victimDir), env, VICTIM_GID).closeAnchor();
+        Files.write(victimDir.resolve(SNAP_FILE), blob);
 
         IntegrityException ex = assertThrows(IntegrityException.class,
-                () -> new RaftLog(Storage.file(tempDir), env, VICTIM_GID));
+                () -> new RaftLog(Storage.file(victimDir), env, VICTIM_GID));
         assertTrue(ex.getMessage().contains(expectedInMessage),
                 "re-stamping the snapshot scopeId must break authentication (expected '" + expectedInMessage
                         + "'), got: " + ex.getMessage());

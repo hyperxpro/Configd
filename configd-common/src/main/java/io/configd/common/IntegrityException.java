@@ -7,7 +7,7 @@ package io.configd.common;
  * envelope, a missing MAC or {@code algId=NONE} downgrade.
  * <p>
  * This is unchecked so the durability call sites ({@code RaftLog.readSnapshotBlob},
- * the WAL replay path, {@code DurableRaftState.load}) propagate it as a loud
+ * the WAL replay path, the anchor open path) propagate it as a loud
  * recovery refusal rather than silently swallowing it to {@code null}. A silent
  * downgrade would allow a tampered artifact to be accepted.
  * <p>

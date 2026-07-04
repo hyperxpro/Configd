@@ -122,7 +122,6 @@ public final class RaftLog {
 
     private static final String WAL_NAME = "raft-log";
     private static final String WAL_TMP_NAME = "raft-log.tmp";
-    private static final String SNAPSHOT_META_KEY = "raft-log.snapshot-meta";
     /**
      * Durable storage key for the snapshot BYTES (state-machine bytes plus the
      * SnapshotState envelope). Distinct from {@link #SNAPSHOT_META_KEY}, which
@@ -139,6 +138,19 @@ public final class RaftLog {
      */
     private final SnapshotState recoveredSnapshot;
 
+    /**
+     * The merged per-shard durability anchor (dual-slot {@code raft-anchor}). Non-null exactly when
+     * this log is durable ({@code storage != null}); {@code null} in the in-memory mode. It carries
+     * {@code currentTerm}/{@code votedFor} (subsuming the removed {@code raft.persistent_state}),
+     * {@code snapshotIndex}/{@code snapshotTerm} (subsuming the removed bare {@code snapshot-meta}),
+     * and the {@code lastDurableIndex} high-water mark recovery reconciles the WAL against. Every WAL
+     * durability barrier ({@link #syncWal()}) raises it after the WAL fsync (INV-ANCHOR-ACK); conflict
+     * truncation lowers it before the WAL rewrite (INV-ANCHOR-LOWER); compaction advances its snapshot
+     * boundary last. The owning {@link RaftNode} reads {@code currentTerm}/{@code votedFor} from it and
+     * persists term/vote through {@link #persistTermVote(long, int)} (persist-before-memory).
+     */
+    private final AnchorFile anchor;
+
     public RaftLog() {
         this.entries = new ArrayList<>(1024);
         this.snapshotIndex = 0;
@@ -152,6 +164,7 @@ public final class RaftLog {
         this.chainHead = GENESIS_PREV_HASH.clone();
         this.chainPrevHashes = new ArrayList<>();
         this.recoveredSnapshot = null;
+        this.anchor = null; // in-memory mode: no durable anchor
     }
 
     /**
@@ -224,6 +237,13 @@ public final class RaftLog {
         this.chainHead = GENESIS_PREV_HASH.clone();
         this.chainPrevHashes = new ArrayList<>();
 
+        // Open the merged per-shard anchor beside the WAL. It replaces the removed
+        // raft.persistent_state (currentTerm/votedFor) and raft-log.snapshot-meta
+        // (snapshotIndex/snapshotTerm) and carries the durable-head high-water mark. A real
+        // FileStorage backs it with a dedicated dual-slot file in the WAL directory; every other
+        // backing carries the same image as one self-durable value so a crash model still captures it.
+        this.anchor = AnchorFile.openOverIO(anchorIOFor(storage), gid, integrity);
+
         // Clean up any leftover temp WAL from an incomplete rewrite
         storage.truncateLog(WAL_TMP_NAME);
 
@@ -255,61 +275,11 @@ public final class RaftLog {
             verifyRecoveredChain();
         }
 
-        // Recover snapshot boundary from persisted metadata (written by compact()).
-        // Format: [8-byte snapshotIndex][8-byte snapshotTerm].
-        // This handles both cases:
-        //   (a) WAL has entries starting after index 1 (partial compaction)
-        //   (b) WAL is empty (full compaction - all entries were in the snapshot)
-        byte[] snapMeta = storage.get(SNAPSHOT_META_KEY);
-        if (snapMeta != null && snapMeta.length >= 16) {
-            ByteBuffer metaBuf = ByteBuffer.wrap(snapMeta);
-            long metaSnapshotIndex = metaBuf.getLong();
-            long metaSnapshotTerm = metaBuf.getLong();
-            // Snapshot-join (recovery check): the persisted snapshot boundary MUST sit strictly
-            // below the WAL's first surviving index. A boundary at or beyond firstIndex means the
-            // WAL still holds entries the snapshot claims to have compacted away - an overlapping
-            // / spliced join that never occurs in a legal execution (compact() persists the
-            // metadata AFTER rewriting the WAL, so metadata is never ahead of the WAL). This is
-            // distinct from the LEGAL stale-metadata-behind window (metaSnapshotIndex <
-            // firstIndex - 1), which the WAL-trust reconciliation below reconciles. REFUSE the
-            // overlap. (In Gate 2a the metadata is not yet authenticated; a determined attacker
-            // who also rewrites it is stopped by the authenticated anchor in a later gate.)
-            if (!entries.isEmpty() && metaSnapshotIndex >= entries.getFirst().index()) {
-                throw new IntegrityException("WAL recovery snapshot-join violation for gid " + gid
-                        + ": snapshot metadata boundary " + metaSnapshotIndex
-                        + " is not below the WAL's first surviving index " + entries.getFirst().index()
-                        + " (the WAL retains entries the snapshot compacted - splice refused)");
-            }
-            this.snapshotIndex = metaSnapshotIndex;
-            this.snapshotTerm = metaSnapshotTerm;
-        } else if (!entries.isEmpty()) {
-            // Legacy fallback: infer snapshotIndex from first entry's index.
-            // This handles WALs written before the metadata format was extended
-            // to include snapshotIndex.
-            long firstIndex = entries.getFirst().index();
-            if (firstIndex > 1) {
-                this.snapshotIndex = firstIndex - 1;
-                if (snapMeta != null && snapMeta.length >= 8) {
-                    this.snapshotTerm = ByteBuffer.wrap(snapMeta).getLong();
-                }
-            }
-        }
-
-        // Cross-validate: if WAL entries exist, the metadata's snapshotIndex
-        // must equal (firstEntry.index - 1). Stale metadata from a prior
-        // compaction can disagree if a crash occurred between WAL rewrite and
-        // metadata persist. In that case, trust the WAL (source of truth).
-        if (!entries.isEmpty()) {
-            long expectedSnapshotIndex = entries.getFirst().index() - 1;
-            if (this.snapshotIndex != expectedSnapshotIndex) {
-                this.snapshotIndex = expectedSnapshotIndex;
-                // Stale metadata snapshotTerm is also suspect - reset to 0.
-                // termAt(snapshotIndex) returns 0, which is conservative for
-                // isAtLeastAsUpToDate: may reject a valid vote but never
-                // grants an invalid one.
-                this.snapshotTerm = 0;
-            }
-        }
+        // Anchor recovery: presence gate (FRESH vs REFUSE), snapshot boundary from the authenticated
+        // anchor (the bare snapshot-meta is removed), the Step-2.5 term-witness gate, and the head
+        // reconciliation (W==A accept / W>A accept-forward / W<A REFUSE) plus the WAL-head-term
+        // check. This sets snapshotIndex/snapshotTerm and may rewrite the anchor forward.
+        recoverWithAnchor();
 
         // Recover the durable snapshot bytes (state-machine state at the snapshot
         // boundary) so the owning RaftNode can restore the state machine BEFORE
@@ -326,8 +296,8 @@ public final class RaftLog {
         SnapshotState blob = readSnapshotBlob();
         if (blob != null && blob.lastIncludedIndex() == this.snapshotIndex && this.snapshotIndex > 0) {
             this.recoveredSnapshot = blob;
-            // The blob's term is authoritative for the snapshot boundary even if
-            // the WAL/meta cross-validation conservatively reset snapshotTerm.
+            // The blob's term matches the anchor's snapshotTerm in a legal execution; adopt it as
+            // authoritative for the restored boundary.
             this.snapshotTerm = blob.lastIncludedTerm();
         } else {
             this.recoveredSnapshot = null;
@@ -448,12 +418,56 @@ public final class RaftLog {
 
     /**
      * The Raft group id this log is scoped to (the envelope {@code scopeId} on its WAL
-     * entries and snapshot blob). {@code 0} at N=1. The owning {@link RaftNode} threads
-     * this to its {@link DurableRaftState} so the per-shard raft-state artifact carries
-     * the same scope.
+     * entries, snapshot blob, and merged anchor). {@code 0} at N=1. Frozen to
+     * {@code [0, NODE_SCOPE)}.
      */
     public int gid() {
         return gid;
+    }
+
+    /**
+     * The current term recovered from the merged anchor (0 for a fresh node / the in-memory mode).
+     * The owning {@link RaftNode} seeds its in-memory {@code currentTerm} from this, replacing the
+     * removed {@code DurableRaftState.currentTerm()}.
+     */
+    long recoveredCurrentTerm() {
+        return anchor == null ? 0L : anchor.current().currentTerm();
+    }
+
+    /**
+     * The candidate this node voted for in {@link #recoveredCurrentTerm()}, or {@code -1} for none
+     * (or the in-memory mode). The owning {@link RaftNode} seeds its {@code votedFor} from this,
+     * replacing the removed {@code DurableRaftState.votedFor()}.
+     */
+    int recoveredVotedForId() {
+        return anchor == null ? AnchorRecord.VOTED_FOR_NULL : anchor.current().votedFor();
+    }
+
+    /**
+     * Persist-before-memory term/vote write through the merged anchor (replaces
+     * {@code DurableRaftState.setTerm}/{@code vote}/{@code setTermAndVote}). This is a STANDALONE
+     * durable barrier - it MUST NOT be folded into the flush-cycle head write, or the Step-2.5
+     * invariant {@code anchor.currentTerm >= lastWALTerm} breaks and recovery false-positives. The
+     * durable head and snapshot boundary are unchanged; only currentTerm/votedFor advance. On the
+     * in-memory ({@code anchor == null}) path this is a no-op - term/vote live only in memory. The
+     * caller updates its in-memory currentTerm/votedFor only AFTER this returns.
+     */
+    void persistTermVote(long term, int votedForId) {
+        if (anchor != null) {
+            anchor.writeTermVote(term, votedForId);
+        }
+    }
+
+    /** Releases the anchor's file handle (idempotent, no-op in the in-memory mode). */
+    void closeAnchor() {
+        if (anchor != null) {
+            anchor.close();
+        }
+    }
+
+    /** The merged durability anchor, or {@code null} in the in-memory mode. Package-private for tests. */
+    AnchorFile anchor() {
+        return anchor;
     }
 
     /**
@@ -493,6 +507,16 @@ public final class RaftLog {
                     "Expected index " + expectedIndex + " but got " + entry.index());
         }
         if (storage != null) {
+            if (anchor != null && entry.term() > anchor.current().currentTerm()) {
+                // Term-adoption discipline: a term-T entry is only appended after the node has durably
+                // adopted term T. RaftNode persists that (with correct vote handling) BEFORE it appends,
+                // so in every production path anchor.currentTerm already covers entry.term and this is a
+                // no-op. It fires only for direct-RaftLog callers (tests that append without a RaftNode),
+                // maintaining the anchor.currentTerm >= WAL-term invariant recovery's Step-2.5 gate
+                // relies on. It is a STANDALONE persist-before-append term write (advancing the term
+                // clears the per-term vote, Raft 5.2), never folded into the flush-cycle head write.
+                anchor.writeTermVote(entry.term(), AnchorRecord.VOTED_FOR_NULL);
+            }
             // In the authenticated posture the record chains from the current head: prevHash is the
             // running chainHead, and after writing, chainHead advances to this record's hash. Keyless
             // stays byte-identical (prevHash == null, no chain tracking).
@@ -514,8 +538,16 @@ public final class RaftLog {
      * across the whole batch - the group-commit win over per-entry force.
      */
     public void syncWal() {
-        if (storage != null) {
-            storage.syncLog(WAL_NAME);
+        if (storage == null) {
+            return;
+        }
+        storage.syncLog(WAL_NAME);
+        if (anchor != null) {
+            // INV-ANCHOR-ACK: the anchor fsync joins the WAL barrier. Raise the durable head to the
+            // WAL head AFTER the WAL is durable (W-fsync strictly before A-write before A-fsync), so
+            // any index the caller is about to count toward commit / report as matchIndex is already
+            // anchor-covered. A no-op when the head is unchanged (an empty flush).
+            anchor.writeDurableHead(lastIndex(), lastTerm());
         }
     }
 
@@ -617,6 +649,16 @@ public final class RaftLog {
             chainHead = headHashOfTail();
         }
         if (storage != null) {
+            if (anchor != null) {
+                // INV-ANCHOR-LOWER: lower the anchor's durable head to the post-truncation head and
+                // fsync BEFORE the WAL rewrite. Lowering first means a crash between the lower and the
+                // rewrite leaves anchor.lastDurableIndex <= WAL head (W>=A -> accept-forward), never
+                // anchor > WAL head (a spurious W<A REFUSE on a legal Raft conflict truncation). The
+                // conflict point is always > commitIndex (Raft never truncates a committed entry), so
+                // this downward move never uncovers a committed-and-acked index. The re-append that
+                // follows (in appendEntries) raises the anchor again via syncWal().
+                anchor.writeDurableHead(lastIndex(), lastTerm());
+            }
             rewriteWal();
             // Fsync the directory after WAL rewrite to ensure the rename is durable.
             // Without this, a crash on Linux ext4 after renameLog() but before
@@ -721,29 +763,25 @@ public final class RaftLog {
         this.snapshotIndex = index;
         this.snapshotTerm = term;
         if (storage != null) {
-            // Rewrite the WAL FIRST, then persist snapshot metadata.
+            // Order: persistSnapshot (blob durable, done by the caller before compact) ->
+            // rewriteWal -> dir sync -> advance the anchor's snapshot boundary LAST.
             //
-            // Crash safety analysis:
-            // - Crash after rewriteWal() but before metadata persist:
-            //   Recovery infers snapshotIndex from first WAL entry (correct),
-            //   snapshotTerm defaults to 0 (safe but imprecise - only affects
-            //   termAt(snapshotIndex) and isAtLeastAsUpToDate comparisons).
-            //
-            // - Crash before rewriteWal():
-            //   Old WAL is intact, compaction effectively didn't happen.
-            //   Any stale metadata from a prior run is harmless - it's only
-            //   read when firstIndex > 1, which is consistent with a prior
-            //   successful compaction.
-            //
-            // The reverse order (metadata first, WAL second) is UNSAFE:
-            // crashing after metadata but before WAL rewrite leaves a new
-            // snapshotTerm paired with the old WAL's snapshotIndex inference.
+            // Crash safety:
+            // - Crash after rewriteWal() but before the anchor advance:
+            //   the WAL now starts at index+1 while the anchor still names the OLD snapshot
+            //   boundary; recovery adopts boundary = WAL.firstIndex-1 = index and REQUIRES the
+            //   blob@index that persistSnapshot already made durable (else REFUSE) - the
+            //   "trust the durable WAL/blob over the lagging anchor" accept-forward for the snapshot.
+            // - Crash before rewriteWal(): the old WAL is intact and the anchor is unchanged;
+            //   compaction effectively did not happen.
+            // Anchor-last (never before the WAL rewrite) is the compaction analogue of
+            // INV-ANCHOR-LOWER: the boundary is only committed once the durable prefix it names
+            // (blob + rewritten WAL) is in place.
             rewriteWal();
-            ByteBuffer metaBuf = ByteBuffer.allocate(16);
-            metaBuf.putLong(index);
-            metaBuf.putLong(term);
-            storage.put(SNAPSHOT_META_KEY, metaBuf.array());
             storage.sync();
+            if (anchor != null) {
+                anchor.writeSnapshot(index, term, lastIndex(), lastTerm());
+            }
         }
     }
 
@@ -786,6 +824,122 @@ public final class RaftLog {
      * {@link IntegrityException} (recovery REFUSES). Legitimate compaction (a run that starts at
      * {@code firstIndex > 1}) is fine: the run must merely be internally consecutive, not start at 1.
      */
+    /** Picks the anchor backend: a real dual-slot file for FileStorage, else a self-durable value. */
+    private static AnchorIO anchorIOFor(Storage storage) {
+        return storage.storageDirectory()
+                .<AnchorIO>map(FileAnchorIO::new)
+                .orElseGet(() -> new StorageAnchorIO(storage));
+    }
+
+    /** Whether a durable snapshot blob is present (part of the "non-empty shard dir" presence test). */
+    private boolean snapshotBlobPresent() {
+        return storage.get(SNAPSHOT_BLOB_KEY) != null;
+    }
+
+    /**
+     * Runs the anchor-backed recovery gates (design §2.17 / §4 A1.4 / §6 §2), after the WAL
+     * structural checks (contiguity / term-monotonicity / hash chain) have already run:
+     * <ol>
+     *   <li><b>Presence.</b> No anchor + empty shard dir ⇒ FRESH (lay down the bootstrap anchor);
+     *       no anchor + non-empty shard dir ⇒ REFUSE (an anchor was deleted); present with both
+     *       slots invalid ⇒ REFUSE (tamper, distinct from FRESH).</li>
+     *   <li><b>Snapshot-join.</b> {@code WAL.firstIndex == anchor.snapshotIndex + 1}.</li>
+     *   <li><b>Step-2.5 term-witness.</b> {@code lastWALTerm <= anchor.currentTerm} (a WAL term above
+     *       the anchor's current term is an anchor rollback across a witnessed vote boundary).</li>
+     *   <li><b>Head reconciliation.</b> {@code W == A} accept (and require {@code WAL[W].term ==
+     *       anchor.lastDurableTerm}, the tail-content-rollback closer); {@code W > A} accept-forward
+     *       (adopt the WAL head, keep currentTerm/votedFor verbatim, rewrite the anchor);
+     *       {@code W < A} REFUSE (a committed-and-acked durable entry vanished).</li>
+     * </ol>
+     * Any violation ⇒ {@link IntegrityException} (recovery REFUSES, fail closed).
+     */
+    private void recoverWithAnchor() {
+        boolean shardNonEmpty = !entries.isEmpty() || snapshotBlobPresent();
+        if (!anchor.existedAtOpen()) {
+            if (shardNonEmpty) {
+                throw new IntegrityException("WAL recovery for gid " + gid
+                        + " found data (WAL/snapshot present) but no raft-anchor - an anchor was"
+                        + " deleted; refusing to boot without the durable anchor (fail closed)");
+            }
+            // FRESH node: lay down the bootstrap anchor (seq=1, all zero). snapshotIndex/Term stay 0.
+            anchor.bootstrapFresh();
+            return;
+        }
+        if (!anchor.hasValidRecord()) {
+            throw new IntegrityException("WAL recovery for gid " + gid
+                    + " found a raft-anchor with both slots invalid - refusing (tamper; distinct from a"
+                    + " fresh node, which has no anchor file at all)");
+        }
+
+        AnchorRecord a = anchor.current();
+        // Snapshot-join reconciliation. Let expectedSnap = WAL.firstIndex - 1 (the boundary the WAL
+        // implies). Three cases against the anchor's snapshot boundary:
+        //   expectedSnap == anchor.snapshotIndex : clean join (take the anchor's boundary + term).
+        //   expectedSnap  > anchor.snapshotIndex : WAL-AHEAD accept-forward - a compaction rewrote the
+        //       WAL to start at firstIndex but its anchor snapshot-advance was lost (crash/fsync-fail
+        //       AFTER the WAL rewrite). The durable WAL is authoritative for the boundary; adopt it. The
+        //       matching authenticated blob@expectedSnap must be present (enforced by the snapshot-blob
+        //       recovery + the owner's durable_prefix_no_gap check), and snapshotTerm comes from it.
+        //   expectedSnap  < anchor.snapshotIndex : REFUSE - the WAL retains entries at/below a boundary
+        //       the anchor asserts was committed-and-compacted (a snapshot rollback / pre-snapshot splice).
+        this.snapshotIndex = a.snapshotIndex();
+        this.snapshotTerm = a.snapshotTerm();
+        if (!entries.isEmpty()) {
+            long firstIndex = entries.getFirst().index();
+            long expectedSnap = firstIndex - 1;
+            if (expectedSnap < a.snapshotIndex()) {
+                throw new IntegrityException("WAL recovery snapshot-join violation for gid " + gid
+                        + ": WAL first index " + firstIndex + " is at/below the anchor's snapshot boundary "
+                        + a.snapshotIndex() + " (the WAL retains entries the anchor compacted - rollback refused)");
+            }
+            if (expectedSnap > a.snapshotIndex()) {
+                // Require the matching authenticated blob@expectedSnap; without it this is not a lagging
+                // compaction but a FRONT TRUNCATION fabricating a phantom compaction (committed indices
+                // silently dropped) - REFUSE. With it, the durable WAL+blob are authoritative.
+                SnapshotState blob = readSnapshotBlob();
+                if (blob == null || blob.lastIncludedIndex() != expectedSnap) {
+                    throw new IntegrityException("WAL recovery front-truncation refused for gid " + gid
+                            + ": WAL first index " + firstIndex + " implies a snapshot boundary "
+                            + expectedSnap + " above the anchor's " + a.snapshotIndex()
+                            + " but no matching authenticated snapshot blob is present (phantom compaction)");
+                }
+                this.snapshotIndex = expectedSnap;   // WAL+blob authoritative; the anchor snapshot lagged
+                this.snapshotTerm = blob.lastIncludedTerm();
+            }
+        }
+
+        long walHead = entries.isEmpty() ? a.snapshotIndex() : entries.getLast().index();
+        long walHeadTerm = entries.isEmpty() ? a.snapshotTerm() : entries.getLast().term();
+
+        // Step 2.5: anchor.currentTerm dominates every WAL term in every legal execution.
+        if (walHeadTerm > a.currentTerm()) {
+            throw new IntegrityException("WAL recovery term-witness violation for gid " + gid
+                    + ": WAL last term " + walHeadTerm + " exceeds anchor.currentTerm "
+                    + a.currentTerm() + " (anchor rollback across a vote boundary refused)");
+        }
+
+        long anchorHead = a.lastDurableIndex();
+        if (walHead == anchorHead) {
+            // Tail-content-rollback closer: at a LIVE head (above the snapshot boundary) the WAL's
+            // term must equal the anchor's durable term. At/below the boundary the snapshot binds it.
+            if (walHead > a.snapshotIndex() && walHeadTerm != a.lastDurableTerm()) {
+                throw new IntegrityException("WAL recovery head-term mismatch for gid " + gid
+                        + " at index " + walHead + ": WAL term " + walHeadTerm
+                        + " != anchor.lastDurableTerm " + a.lastDurableTerm()
+                        + " (tail content rollback refused)");
+            }
+        } else if (walHead > anchorHead) {
+            // Accept-forward: (A, W] were never committed-and-client-acked (INV-ANCHOR-ACK). Adopt the
+            // WAL head for the LOG only; currentTerm/votedFor stay verbatim (Step-2.5 proved the anchor
+            // term already dominates, so no repair and no votedFor clear); rewrite the anchor forward.
+            anchor.writeDurableHead(walHead, walHeadTerm);
+        } else {
+            throw new IntegrityException("WAL recovery head-rollback for gid " + gid
+                    + ": WAL last index " + walHead + " is below anchor.lastDurableIndex " + anchorHead
+                    + " (a committed-and-acked durable entry vanished - refusing, fail closed)");
+        }
+    }
+
     private void verifyRecoveredEntries(List<LogEntry> recovered) {
         if (recovered.isEmpty()) {
             return;

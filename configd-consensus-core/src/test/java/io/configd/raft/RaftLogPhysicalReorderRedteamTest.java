@@ -307,10 +307,7 @@ class RaftLogPhysicalReorderRedteamTest {
         w.append(5, 1, "e");
         w.append(6, 1, "f");
         w.append(7, 1, "g");
-        ByteBuffer meta = ByteBuffer.allocate(16);
-        meta.putLong(4); // snapshotIndex == firstIndex - 1 (legal join)
-        meta.putLong(1); // snapshotTerm
-        storage.put("raft-log.snapshot-meta", meta.array());
+        w.setSnapshot(4, 1); // anchor snapshotIndex == firstIndex - 1 (legal join)
 
         RaftLog log = new RaftLog(Storage.file(tempDir), env, GID);
         assertEquals(3, log.size());
@@ -366,13 +363,14 @@ class RaftLogPhysicalReorderRedteamTest {
         List<byte[]> truncated = new ArrayList<>(frames.subList(2, frames.size())); // drop indices 1,2
         Files.write(walPath(tempDir), reassemble(header(wal), truncated), StandardOpenOption.TRUNCATE_EXISTING);
 
-        RaftLog log = new RaftLog(Storage.file(tempDir), env, GID);
-        assertEquals(3, log.size());
-        assertEquals(3, log.entryAt(3).index());
-        assertEquals(2, log.snapshotIndex(),
-                "FINDING: front truncation was accepted as a phantom compaction (snapshotIndex inferred "
-                        + "= 2) - committed indices 1,2 silently lost; the Gate 3 anchor floor (W<A) is the fix "
-                        + "(the surviving suffix [3,4,5] chains correctly, so the hash chain does not catch this)");
+        // Gate 3a CLOSES this gap. The surviving suffix [3,4,5] chains correctly (the hash chain cannot
+        // catch a front truncation), but the anchor still names snapshotIndex=0, so the WAL's new first
+        // index 3 fails the snapshot-join check (firstIndex == anchor.snapshotIndex + 1). Front
+        // truncation can no longer masquerade as a phantom compaction: recovery REFUSES.
+        IntegrityException ex = assertThrows(IntegrityException.class,
+                () -> new RaftLog(Storage.file(tempDir), env, GID));
+        assertTrue(ex.getMessage().contains("front-truncation") || ex.getMessage().contains("phantom"),
+                "Gate 3a anchor must refuse the front-truncation phantom compaction, got: " + ex.getMessage());
     }
 
     // ---------------------------------------------------------------------------------------------

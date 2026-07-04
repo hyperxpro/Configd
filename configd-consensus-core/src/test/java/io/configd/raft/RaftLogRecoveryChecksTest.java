@@ -57,15 +57,22 @@ class RaftLogRecoveryChecksTest {
 
     /** Snapshot persist->reload site: a blob authored under gid=1, reloaded by a gid=0 reader, refused. */
     @Test
-    void snapshotBlobFromAnotherShardIsRefusedOnReload(@TempDir Path tempDir) {
-        Storage storage = Storage.file(tempDir);
+    void snapshotBlobFromAnotherShardIsRefusedOnReload(@TempDir Path tempDir) throws Exception {
         IntegrityEnvelope env = SnapshotIntegrityTest.keyedEnvelope();
-        // Persist a gid=1 blob directly (no WAL), so the reload is what the scope assert catches.
-        RaftLog shard1 = new RaftLog(storage, env, 1);
-        shard1.persistSnapshot(new SnapshotState("shard-1-state".getBytes(StandardCharsets.UTF_8), 5, 2, null));
+        // Persist a gid=1 blob in its OWN dir (its gid=1 anchor must not shadow the gid=0 reader's).
+        Path shard1Dir = tempDir.resolve("shard1");
+        new RaftLog(Storage.file(shard1Dir), env, 1)
+                .persistSnapshot(new SnapshotState("shard-1-state".getBytes(StandardCharsets.UTF_8), 5, 2, null));
+        byte[] foreignBlob = java.nio.file.Files.readAllBytes(shard1Dir.resolve("raft-log.snapshot.dat"));
+
+        // A gid=0 shard with its OWN valid anchor, then the gid=1 blob planted over it: the reload's
+        // snapshot scope assert is what fires.
+        Path shard0Dir = tempDir.resolve("shard0");
+        new RaftLog(Storage.file(shard0Dir), env, 0).closeAnchor();
+        java.nio.file.Files.write(shard0Dir.resolve("raft-log.snapshot.dat"), foreignBlob);
 
         IntegrityException ex = assertThrows(IntegrityException.class,
-                () -> new RaftLog(storage, env, 0));
+                () -> new RaftLog(Storage.file(shard0Dir), env, 0));
         assertTrue(ex.getMessage().contains("scope mismatch"),
                 "a cross-shard snapshot blob must be refused on reload, got: " + ex.getMessage());
     }
@@ -76,24 +83,33 @@ class RaftLogRecoveryChecksTest {
      * This proves the re-wrap uses the receiver's gid and the scope assert covers the local read.
      */
     @Test
-    void installedSnapshotReloadedUnderWrongShardIsRefused(@TempDir Path tempDir) {
-        Storage storage = Storage.file(tempDir);
+    void installedSnapshotReloadedUnderWrongShardIsRefused(@TempDir Path tempDir) throws Exception {
         IntegrityEnvelope env = SnapshotIntegrityTest.keyedEnvelope();
-        RaftLog log = new RaftLog(storage, env, 1); // follower on shard 1 -> RaftNode takes gid from log.gid()
+        // A follower on shard 1 installs a snapshot in its OWN dir, re-wrapping the blob under gid=1.
+        Path shard1Dir = tempDir.resolve("shard1");
+        Storage shard1Storage = Storage.file(shard1Dir);
+        RaftLog log = new RaftLog(shard1Storage, env, 1);
         KvStateMachine sm = new KvStateMachine();
         NodeId leader = NodeId.of(2);
         RaftConfig config = RaftConfig.of(NodeId.of(1), Set.of(leader));
         RaftNode follower = new RaftNode(config, log, NO_PEERS, sm,
-                RandomGenerator.of("L64X128MixRandom"), storage, THROWING, env);
+                RandomGenerator.of("L64X128MixRandom"), shard1Storage, THROWING, env);
 
         KvStateMachine src = new KvStateMachine();
         src.apply(1, 1, KvStateMachine.put("installed", "X"));
         byte[] snapData = src.snapshot();
         InstallSnapshotRequest req = new InstallSnapshotRequest(1, leader, 10, 1, 0, snapData, true);
         follower.handleMessage(req);
+        byte[] reWrappedBlob = java.nio.file.Files.readAllBytes(shard1Dir.resolve("raft-log.snapshot.dat"));
+
+        // Plant the gid=1-wrapped blob over a gid=0 shard with its own valid anchor: the reload's scope
+        // assert refuses it, proving the re-wrap used the receiver's (gid=1) scope.
+        Path shard0Dir = tempDir.resolve("shard0");
+        new RaftLog(Storage.file(shard0Dir), env, 0).closeAnchor();
+        java.nio.file.Files.write(shard0Dir.resolve("raft-log.snapshot.dat"), reWrappedBlob);
 
         IntegrityException ex = assertThrows(IntegrityException.class,
-                () -> new RaftLog(storage, env, 0));
+                () -> new RaftLog(Storage.file(shard0Dir), env, 0));
         assertTrue(ex.getMessage().contains("scope mismatch"),
                 "a re-persisted installed snapshot must be refused when reloaded under the wrong gid, got: "
                         + ex.getMessage());
@@ -187,12 +203,9 @@ class RaftLogRecoveryChecksTest {
         w.append(5, 1, "e");
         w.append(6, 1, "f");
         w.append(7, 1, "g");
-        // ...but snapshot metadata claims a boundary of 6, i.e. AT/beyond the WAL's first index (5):
-        // the WAL retains entries the snapshot supposedly compacted. Illegal join (chain passes first).
-        ByteBuffer meta = ByteBuffer.allocate(16);
-        meta.putLong(6); // snapshotIndex
-        meta.putLong(1); // snapshotTerm
-        storage.put("raft-log.snapshot-meta", meta.array());
+        // ...but the anchor's snapshot boundary claims 6, i.e. AT/beyond the WAL's first index (5):
+        // the WAL retains entries the snapshot supposedly compacted. Illegal join (WAL checks pass).
+        w.setSnapshot(6, 1);
 
         IntegrityException ex = assertThrows(IntegrityException.class,
                 () -> new RaftLog(storage, env, 0));

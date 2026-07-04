@@ -194,11 +194,17 @@ class RaftLogHashChainRedteamTest {
         frames.set(2, a3Frame);
         Files.write(walPath(tempDir), reassemble(header(wal), frames), StandardOpenOption.TRUNCATE_EXISTING);
 
-        RaftLog log = new RaftLog(Storage.file(tempDir), env, GID);
-        assertEquals("A2", new String(log.entryAt(2).command(), StandardCharsets.UTF_8),
-                "RESIDUAL: a rollback to a prior VALID chain is accepted by the chain - the head anchor "
-                        + "(Gate 3 monotonic floor) is what must bound it, not the per-record chain");
-        assertEquals(2, log.entryAt(2).term(), "the suffix rolled back to the older term");
+        // Gate 3a CLOSES this residual: the per-record chain still accepts the rollback (every link is
+        // valid), but the merged anchor's durable head now names index 3 at the CURRENT term (3), while
+        // the rolled-back tail re-terms index 3 to the older term (2). Recovery's WAL-head-term check
+        // (WAL[head].term == anchor.lastDurableTerm) refuses the tail-content rollback. What remains a
+        // residual is only a WHOLE-suffix rollback to a wholly-prior valid chain that ALSO rolls the
+        // anchor back (the monotonic-floor / AnchorWitness case), not this same-head re-term.
+        IntegrityException ex = assertThrows(IntegrityException.class,
+                () -> new RaftLog(Storage.file(tempDir), env, GID));
+        assertTrue(ex.getMessage().contains("tail content rollback")
+                        || ex.getMessage().contains("head-term mismatch"),
+                "Gate 3a anchor must refuse the tail-content rollback, got: " + ex.getMessage());
     }
 
     // ---------------------------------------------------------------------------------------------
