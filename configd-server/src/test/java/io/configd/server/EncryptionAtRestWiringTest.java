@@ -44,14 +44,38 @@ class EncryptionAtRestWiringTest {
     }
 
     @Test
-    void encryptionOffProducesByteIdenticalKeyedHmacEnvelope(@TempDir Path root) throws Exception {
+    void encryptionOffProducesTermVersionedHmacEnvelope(@TempDir Path root) throws Exception {
         System.clearProperty(ENABLE);
         IntegrityEnvelope env = ConfigdServer.deriveRaftIntegrityEnvelope(
                 keyStore(root), keyFile(root), dataDir(root));
-        assertFalse(env.isEncrypting(), "default must NOT encrypt");
-        assertTrue(env.isKeyed(), "default is the keyed HMAC envelope");
-        byte[] wrapped = env.wrap(WAL_MAGIC, SCOPE,SECRET.getBytes(StandardCharsets.UTF_8));
-        assertEquals(IntegrityEnvelope.ALG_HMAC_SHA256, wrapped[6], "OFF writes algId=HMAC (unchanged)");
+        assertFalse(env.isEncrypting(), "default (encryption OFF) must NOT encrypt");
+        assertTrue(env.isKeyed(), "default is the term-versioned keyed HMAC envelope");
+        byte[] wrapped = env.wrap(WAL_MAGIC, SCOPE, SECRET.getBytes(StandardCharsets.UTF_8));
+        assertEquals(IntegrityEnvelope.ALG_HMAC_SHA256, wrapped[6], "OFF writes algId=HMAC");
+        // keyTerm is at v3 offset 12; a fresh node mints activeTerm 1.
+        int keyTerm = ((wrapped[12] & 0xFF) << 24) | ((wrapped[13] & 0xFF) << 16)
+                | ((wrapped[14] & 0xFF) << 8) | (wrapped[15] & 0xFF);
+        assertEquals(1, keyTerm, "the HMAC record is stamped with the keyring activeTerm");
+        // A second boot from the SAME signing key loads the SAME keyring -> verifies the record.
+        IntegrityEnvelope env2 = ConfigdServer.deriveRaftIntegrityEnvelope(
+                keyStore(root), keyFile(root), dataDir(root));
+        assertArrayEquals(SECRET.getBytes(StandardCharsets.UTF_8), env2.unwrap(WAL_MAGIC, SCOPE, wrapped),
+                "a fresh boot from the same signing key verifies the term-versioned HMAC record");
+    }
+
+    @Test
+    void keylessPostureIsByteIdentical_noKeyTerm() {
+        // The operator relaxed byte-identity ONLY for the auth-on HMAC sub-case; the keyless posture
+        // (encryption off AND auth off) MUST stay byte-identical: no keyTerm, payload at offset 12.
+        byte[] payload = "keyless-unchanged".getBytes(StandardCharsets.UTF_8);
+        byte[] wrapped = IntegrityEnvelope.keyless().wrap(WAL_MAGIC, SCOPE, payload);
+        assertEquals(IntegrityEnvelope.ALG_NONE, wrapped[6], "keyless writes algId=NONE");
+        // header(8) + scopeId(4) + payload + CRC(4) - NO keyTerm inserted.
+        assertEquals(IntegrityEnvelope.HEADER_SIZE + IntegrityEnvelope.SCOPE_ID_SIZE
+                        + payload.length + IntegrityEnvelope.CRC_SIZE, wrapped.length,
+                "keyless layout is unchanged (no keyTerm)");
+        byte[] body = java.util.Arrays.copyOfRange(wrapped, 12, 12 + payload.length);
+        assertArrayEquals(payload, body, "keyless payload sits at offset 12, immediately after scopeId");
     }
 
     @Test
@@ -124,6 +148,51 @@ class EncryptionAtRestWiringTest {
         } finally {
             System.clearProperty(ENABLE);
             System.clearProperty(PROVIDER);
+        }
+    }
+
+    @Test
+    void bothAuthOnPosturesMintPreallocatedKeyring(@TempDir Path root) throws Exception {
+        // The keyring is an AUTH-ON feature (operator ruling): BOTH the term-versioned HMAC (encryption
+        // OFF) and the GCM (encryption ON) postures mint the dual-slot keyring, preallocated at the
+        // frozen 131080-byte size (8 + 2*65536). (Only the keyless, no-signing-key posture has none.)
+        System.clearProperty(ENABLE);
+        ConfigdServer.deriveRaftIntegrityEnvelope(keyStore(root), keyFile(root), dataDir(root));
+        Path keyring = dataDir(root).resolve("raft-keyring");
+        assertTrue(java.nio.file.Files.exists(keyring), "encryption OFF (auth on) mints the keyring");
+        assertEquals(131080L, java.nio.file.Files.size(keyring), "frozen preallocated size");
+
+        // ON: a distinct data dir so the two mints don't collide; same frozen keyring geometry.
+        System.setProperty(ENABLE, "true");
+        try {
+            Path onData = root.resolve("data-on");
+            ConfigdServer.deriveRaftIntegrityEnvelope(keyStore(root), keyFile(root), onData);
+            Path onKeyring = onData.resolve("raft-keyring");
+            assertTrue(java.nio.file.Files.exists(onKeyring), "encryption ON mints the keyring");
+            assertEquals(131080L, java.nio.file.Files.size(onKeyring), "frozen preallocated size");
+        } finally {
+            System.clearProperty(ENABLE);
+        }
+    }
+
+    @Test
+    void tamperedKeyringRefusesBoot(@TempDir Path root) throws Exception {
+        System.setProperty(ENABLE, "true");
+        try {
+            // Boot #1 mints the keyring.
+            ConfigdServer.deriveRaftIntegrityEnvelope(keyStore(root), keyFile(root), dataDir(root));
+            Path keyring = dataDir(root).resolve("raft-keyring");
+            // Perform the attack: corrupt the live slot's sealed record on disk.
+            byte[] image = java.nio.file.Files.readAllBytes(keyring);
+            image[8 + 20] ^= 0x40; // slot 0 @ offset 8; flip a byte inside its envelope
+            java.nio.file.Files.write(keyring, image);
+            // Boot #2 must REFUSE (fail-closed) rather than silently re-mint and orphan the data.
+            RuntimeException ex = assertThrows(RuntimeException.class,
+                    () -> ConfigdServer.deriveRaftIntegrityEnvelope(keyStore(root), keyFile(root), dataDir(root)));
+            assertTrue(ex.getMessage() != null && ex.getMessage().contains("no slot verifies"),
+                    "a tampered keyring must fail closed: " + ex.getMessage());
+        } finally {
+            System.clearProperty(ENABLE);
         }
     }
 }

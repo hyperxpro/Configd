@@ -14,9 +14,6 @@ import io.configd.common.IntegrityEnvelope;
 import io.configd.common.NodeId;
 import io.configd.common.SegmentKeyManager;
 import io.configd.common.Storage;
-import io.configd.common.kms.KmsProvider;
-import io.configd.common.kms.KmsUnavailableException;
-import io.configd.common.kms.LocalDerivedKmsProvider;
 import io.configd.common.kms.RootKey;
 import io.configd.distribution.CommitNotification;
 import io.configd.distribution.CommitNotificationSource;
@@ -49,6 +46,7 @@ import io.configd.raft.RaftTransport;
 import io.configd.raft.RaftMessage;
 import io.configd.raft.ProposeOutcome;
 import io.configd.raft.NodeAnchorFile;
+import io.configd.raft.NodeKeyring;
 import io.configd.raft.TopologyDescriptor;
 import io.configd.replication.CrossShardBatchException;
 import io.configd.replication.CrossShardWriteGuard;
@@ -1362,28 +1360,18 @@ public final class ConfigdServer {
                 .putLong(keyId.getMostSignificantBits())
                 .putLong(keyId.getLeastSignificantBits())
                 .array();
-        byte[] info = "configd/raft-at-rest-integrity/v2"
-                .getBytes(java.nio.charset.StandardCharsets.UTF_8);
-        byte[] k = io.configd.common.Hkdf.deriveKey(ikm, salt, info, 32);
         try {
-            javax.crypto.SecretKey integrityKey = new javax.crypto.spec.SecretKeySpec(k, "HmacSHA256");
-
-            // Secure-by-config: when at-rest ENCRYPTION is enabled, wrap the same seam in an
-            // AES-256-GCM envelope (Layer C). K_integrity is carried as the legacy read key so an
-            // existing HMAC-only WAL still recovers during the enable-encryption upgrade. When
-            // encryption is OFF (the default) this returns the byte-identical keyed HMAC envelope.
-            if (encryptionAtRestEnabled()) {
-                return buildEncryptingEnvelope(ikm, salt, keyId, integrityKey);
-            }
-            return new io.configd.common.IntegrityEnvelope(integrityKey);
+            // Auth-on (a signing key is always present): build the persisted keyring and a
+            // term-versioned envelope over ALL retained terms. Encryption ON -> AES-256-GCM (Layer C);
+            // OFF -> term-versioned HMAC (Layer B). Both derive their at-rest keys from the keyring's
+            // independent per-term roots (not the signing key directly), so a term OR signing-key
+            // rotation is non-destructive. Keyless is a no-signing-key posture that never reaches here.
+            return buildTermVersionedEnvelope(ikm, salt, keyId, dataDir);
         } finally {
-            // Zeroize the transient secret-derived material now that the SecretKeySpec (which clones
-            // its input) and the LocalDerivedKmsProvider (which clones its IKM in its ctor and derives
-            // synchronously before buildEncryptingEnvelope returns) hold their own copies. Best-effort
-            // (the JCA SecretKeySpec copies are un-wipeable, JDK-8160206) but consistent discipline: the
-            // raw Ed25519 private-key encoding and K_integrity should not linger on the heap after boot.
+            // Zeroize the transient signing-key material now that the keyring's K_keyringMac/KEK
+            // (SecretKeySpec, which clones) hold their own copies. Best-effort (JDK-8160206): the raw
+            // Ed25519 private-key encoding should not linger on the heap after boot.
             java.util.Arrays.fill(ikm, (byte) 0);
-            java.util.Arrays.fill(k, (byte) 0);
         }
     }
 
@@ -1422,40 +1410,68 @@ public final class ConfigdServer {
      * "data is encrypted at rest" claim becomes fiction). Only {@code local} (HKDF-from-signing-key)
      * ships in v1; a cloud provider is added as a separate module that slots into this same seam.
      *
-     * <b>requireEncrypted (post-migration hardening):</b> once the plaintext/HMAC WAL prefix has been
-     * compacted away, an operator can set {@code configd.raft.encryption.requireEncrypted} so the reader
-     * REFUSES any legacy {@code algId=0/1} record (we pass {@code null} as the legacy read key). This
-     * defends against a rollback/replay of an old plaintext WAL segment. Default: keep reading legacy
-     * records (the migration path).
+     * <b>requireEncrypted (post-migration hardening):</b> once the pre-encryption HMAC WAL prefix has
+     * been compacted away, an operator can set {@code configd.raft.encryption.requireEncrypted} so the
+     * reader REFUSES any legacy {@code algId=1} HMAC record. This defends against a rollback/replay of
+     * an old pre-encryption WAL segment. Default: keep reading them (the migration path).
      *
-     * @param ikm             the signing private-key encoding (the {@code local} KEK IKM)
-     * @param salt            the signing keyId bytes (HKDF salt)
-     * @param keyId           the signing keyId (the loggable KEK reference)
-     * @param legacyReadKey   K_integrity, used to READ any pre-encryption HMAC records (upgrade path)
-     * @return an encrypting {@link IntegrityEnvelope}
+     * <b>The keyring (Gate 4, §2.6/§A2):</b> the per-term at-rest roots are INDEPENDENT random 32-byte
+     * secrets persisted (wrapped) in the dual-slot {@code raft-keyring}, NOT re-derived from the signing
+     * key. This is what kills the documented data-destroying rotation for BOTH postures: HMAC integrity
+     * keys ({@code K_integrity[term]}) and GCM DEKs both derive from those roots, so rotating the signing
+     * key only rewraps the keyring (roots unchanged) and boot loads ALL retained terms so old-term data
+     * still verifies/decrypts. First boot (or the enable-encryption migration) mints a fresh
+     * {@code root[1]}; a present-but-unreadable keyring REFUSES (fail-closed). Boot no longer hardcodes
+     * term=1 - the active write term is the keyring's {@code activeTerm}.
+     *
+     * @param ikm     the signing private-key encoding (the local KEK/mac IKM)
+     * @param salt    the signing keyId bytes (HKDF salt)
+     * @param keyId   the signing keyId (the loggable KEK reference / node id)
+     * @param dataDir the node data directory (where {@code raft-keyring} lives)
+     * @return a term-versioned {@link IntegrityEnvelope} (HMAC when encryption off, GCM when on)
      */
-    private static io.configd.common.IntegrityEnvelope buildEncryptingEnvelope(
-            byte[] ikm, byte[] salt, java.util.UUID keyId, javax.crypto.SecretKey legacyReadKey) {
-        String providerName = System.getProperty("configd.raft.encryption.kms.provider",
-                System.getenv().getOrDefault("CONFIGD_ENCRYPTION_KMS_PROVIDER", "local"));
-        if (!"local".equals(providerName)) {
-            throw new IllegalStateException(
-                    "configd.raft.encryption.kms.provider='" + providerName + "' is not available:"
-                            + " only the built-in 'local' provider (HKDF-from-signing-key) ships in v1."
-                            + " Refusing to start rather than silently downgrade - a silent downgrade is"
-                            + " how a 'data is encrypted at rest' claim becomes fiction. Add the matching"
-                            + " configd-kms-<provider> module to the classpath, or unset the property.");
-        }
+    private static io.configd.common.IntegrityEnvelope buildTermVersionedEnvelope(
+            byte[] ikm, byte[] salt, java.util.UUID keyId, Path dataDir) {
+        boolean encrypt = encryptionAtRestEnabled();
         boolean requireEncrypted = Boolean.getBoolean("configd.raft.encryption.requireEncrypted")
                 || "true".equalsIgnoreCase(System.getenv("CONFIGD_ENCRYPTION_REQUIRE_ENCRYPTED"));
-        // requireEncrypted: drop the legacy HMAC read key so the reader refuses algId=0/1 records.
-        javax.crypto.SecretKey readKey = requireEncrypted ? null : legacyReadKey;
-        // The one boot-time provider call (R1). For 'local' the root is a deterministic HKDF
-        // re-derivation, so it never fails closed; a cloud provider would unwrap a persisted
-        // WrappedKey here and fail closed if the KMS is unreachable.
-        try (KmsProvider kms = new LocalDerivedKmsProvider(ikm, salt, keyId.toString(), 1)) {
-            kms.healthCheck();
-            RootKey root = kms.generateRootKey().rootKey();
+        if (encrypt) {
+            // The KMS provider governs ENCRYPTION-root custody (local vs a cloud CMK). Only 'local'
+            // ships in v1; naming another is a startup error, never a silent downgrade.
+            String providerName = System.getProperty("configd.raft.encryption.kms.provider",
+                    System.getenv().getOrDefault("CONFIGD_ENCRYPTION_KMS_PROVIDER", "local"));
+            if (!"local".equals(providerName)) {
+                throw new IllegalStateException(
+                        "configd.raft.encryption.kms.provider='" + providerName + "' is not available:"
+                                + " only the built-in 'local' provider (signing-key-wrapped keyring) ships in v1."
+                                + " Refusing to start rather than silently downgrade - a silent downgrade is"
+                                + " how a 'data is encrypted at rest' claim becomes fiction. Add the matching"
+                                + " configd-kms-<provider> module to the classpath, or unset the property.");
+            }
+        }
+
+        // Two signing-key-derived, domain-separated keys authenticate and wrap the keyring (§A2.3):
+        //   K_keyringMac authenticates the whole keyring file; KEK_wrap AES-GCM-wraps each root.
+        // Neither derives the roots (those are independent random material in the keyring) - the whole
+        // point of the decoupling that makes both term and signing-key rotation non-destructive.
+        javax.crypto.SecretKey keyringMac = deriveKeyringKey(ikm, salt, KEYRING_MAC_INFO, "HmacSHA256");
+        javax.crypto.SecretKey kek = deriveKeyringKey(ikm, salt, KEYRING_WRAP_INFO, "AES");
+        byte[] nodeKeyId = keyId.toString().getBytes(java.nio.charset.StandardCharsets.UTF_8);
+
+        // The keyring lives in dataDir (production start() already created it; ensure it exists here
+        // too so a direct-call boot path can mint the keyring). Idempotent.
+        try {
+            Files.createDirectories(dataDir);
+        } catch (java.io.IOException e) {
+            throw new IllegalStateException("cannot create data directory for the keyring: " + dataDir, e);
+        }
+
+        // Load (or, on first boot / enable-encryption migration, mint) the persisted keyring, then build
+        // ONE SegmentKeyManager over ALL retained terms with the keyring's activeTerm current. It serves
+        // BOTH the HMAC integrity key (K_integrity[term]) and the GCM DEK. A present-but-unreadable
+        // keyring throws IntegrityException here (fail-closed startup).
+        try (NodeKeyring keyring = NodeKeyring.loadOrCreate(dataDir, keyringMac, kek, nodeKeyId)) {
+            java.util.List<RootKey> roots = keyring.unsealRootKeys(keyId.toString());
             // GENUINE-WHY / INVARIANT: this is ONE SegmentKeyManager, and the SAME instance is shared
             // across ALL N Raft groups (it rides inside the single raftIntegrity envelope passed to every
             // buildRaftGroup). Global no-(key,nonce)-reuse holds because that one manager issues every
@@ -1463,17 +1479,43 @@ public final class ConfigdServer {
             // manager, EACH manager MUST draw its OWN fresh random segmentId (hence its own DEK): sharing
             // a DEK across managers while splitting the nonce counter per group WOULD reuse (key,nonce)
             // and break GCM. Do not split the counter without splitting the segmentId/DEK.
-            SegmentKeyManager keyManager = new SegmentKeyManager(root);
+            SegmentKeyManager keyManager =
+                    SegmentKeyManager.overTerms(roots, keyring.activeTerm(), nodeKeyId);
+            if (encrypt) {
+                LOG.log(Level.INFO,
+                        "At-rest encryption ENABLED (AES-256-GCM, keyring terms={0}, activeTerm={1},"
+                                + " requireEncrypted={2})",
+                        new Object[]{roots.size(), keyring.activeTerm(), requireEncrypted});
+                return io.configd.common.IntegrityEnvelope.encrypting(keyManager, requireEncrypted);
+            }
             LOG.log(Level.INFO,
-                    "At-rest encryption ENABLED (AES-256-GCM, provider={0}, requireEncrypted={1})",
-                    new Object[]{kms.currentKeyId(), requireEncrypted});
-            // The provider is dropped when this block exits (R2): the node runs on the cached root.
-            return io.configd.common.IntegrityEnvelope.encrypting(keyManager, readKey);
-        } catch (KmsUnavailableException e) {
-            // R3: fail closed. A node that cannot unseal its own at-rest key must not pretend it can.
-            throw new IllegalStateException(
-                    "At-rest encryption is enabled but the '" + providerName + "' KMS provider could"
-                            + " not unseal the root key - refusing to start (fail-closed).", e);
+                    "At-rest integrity: term-versioned HMAC (keyring terms={0}, activeTerm={1})",
+                    new Object[]{roots.size(), keyring.activeTerm()});
+            return io.configd.common.IntegrityEnvelope.hmac(keyManager);
+        }
+    }
+
+    /** HKDF info string for the keyring outer-MAC key {@code K_keyringMac} (§A2.3). */
+    private static final byte[] KEYRING_MAC_INFO =
+            "configd/keyring-mac/v1".getBytes(java.nio.charset.StandardCharsets.UTF_8);
+    /** HKDF info string for the keyring root-wrapping KEK {@code KEK_wrap} (§A2.3). */
+    private static final byte[] KEYRING_WRAP_INFO =
+            "configd/keyring-wrap/v1".getBytes(java.nio.charset.StandardCharsets.UTF_8);
+
+    /**
+     * Derives a 32-byte keyring key from the signing key via the SAME HKDF construction as
+     * {@link #deriveRaftIntegrityEnvelope} (IKM = signing private-key encoding, salt = keyId bytes)
+     * but with a distinct {@code info} string, so {@code K_keyringMac} and {@code KEK_wrap} are
+     * domain-separated from each other and from K_integrity / K_audit. The transient derived bytes
+     * are zeroed after the {@link javax.crypto.spec.SecretKeySpec} takes its own copy.
+     */
+    private static javax.crypto.SecretKey deriveKeyringKey(byte[] ikm, byte[] salt, byte[] info,
+                                                           String algorithm) {
+        byte[] k = io.configd.common.Hkdf.deriveKey(ikm, salt, info, 32);
+        try {
+            return new javax.crypto.spec.SecretKeySpec(k, algorithm);
+        } finally {
+            java.util.Arrays.fill(k, (byte) 0);
         }
     }
 

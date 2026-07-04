@@ -49,24 +49,21 @@ class RaftLogEncryptionTest {
     };
     private static final RaftTransport NO_PEERS = (target, message) -> { };
 
-    /** A fresh encrypting envelope over a FIXED root - each call re-derives the same DEKs (restart-safe). */
-    private static IntegrityEnvelope encryptingEnvelope() {
-        return encryptingEnvelopeWithLegacy(null);
-    }
-
-    /** An encrypting envelope over the FIXED root that ALSO reads legacy algId=1 records (migration path). */
-    private static IntegrityEnvelope encryptingEnvelopeWithLegacy(SecretKey legacyHmac) {
+    /** A fresh manager over a FIXED root - each call re-derives the same macKey/DEKs (restart-safe). */
+    private static SegmentKeyManager fixedKeyring() {
         byte[] rootBytes = new byte[32];
         Arrays.fill(rootBytes, (byte) 0x6B);
-        RootKey root = new RootKey(rootBytes, new KeyId("local", "test", 1));
-        return IntegrityEnvelope.encrypting(new SegmentKeyManager(root), legacyHmac);
+        return new SegmentKeyManager(new RootKey(rootBytes, new KeyId("local", "test", 1)));
     }
 
-    /** A fixed keyed HMAC (algId=1) envelope + its key, for the pre-encryption phase of the mixed WAL. */
-    private static SecretKey fixedHmacKey() {
-        byte[] k = new byte[32];
-        Arrays.fill(k, (byte) 0x5A);
-        return new SecretKeySpec(k, "HmacSHA256");
+    /** A fresh encrypting envelope over the FIXED root (also reads its own term-versioned HMAC records). */
+    private static IntegrityEnvelope encryptingEnvelope() {
+        return IntegrityEnvelope.encrypting(fixedKeyring());
+    }
+
+    /** A term-versioned HMAC (algId=1) envelope over the SAME fixed root - the pre-encryption phase. */
+    private static IntegrityEnvelope hmacEnvelope() {
+        return IntegrityEnvelope.hmac(fixedKeyring());
     }
 
     private static RaftNode bootLeader(Storage storage, IntegrityEnvelope env,
@@ -169,31 +166,32 @@ class RaftLogEncryptionTest {
     @Test
     void mixedAlgId1AndAlgId2WalRecoversThroughTheRealSeam(@TempDir Path tempDir) throws Exception {
         Storage storage = Storage.file(tempDir);
-        SecretKey hmac = fixedHmacKey();
 
-        // Phase 1 - pre-encryption: a keyed HMAC envelope writes algId=1 records.
-        IntegrityEnvelope hmacEnv = new IntegrityEnvelope(hmac);
-        RaftNode n1 = bootLeader(storage, hmacEnv, new RaftLog(storage, hmacEnv), new KvStateMachine());
+        // Phase 1 - pre-encryption: a term-versioned HMAC envelope writes algId=1 records (keyed by
+        // K_integrity[1] from the fixed keyring root).
+        RaftNode n1 = bootLeader(storage, hmacEnvelope(),
+                new RaftLog(storage, hmacEnvelope()), new KvStateMachine());
         n1.propose(KvStateMachine.put("a", "1"));
         n1.propose(KvStateMachine.put("b", "2"));
 
-        // Phase 2 - enable encryption: reopen with an encrypting envelope that carries the legacy HMAC
-        // key. Recovery reads the algId=1 records; new proposals are appended as algId=2 -> mixed WAL.
+        // Phase 2 - enable encryption: reopen with an encrypting envelope over the SAME keyring. Recovery
+        // reads the algId=1 records via macKey(keyTerm); new proposals are appended as algId=2 -> mixed WAL.
         KvStateMachine sm2 = new KvStateMachine();
-        RaftNode n2 = bootLeader(storage, encryptingEnvelopeWithLegacy(hmac),
-                new RaftLog(storage, encryptingEnvelopeWithLegacy(hmac)), sm2);
-        assertEquals("1", sm2.snapshotState().get("a"), "phase-2 recovery must read the legacy algId=1 records");
+        RaftNode n2 = bootLeader(storage, encryptingEnvelope(),
+                new RaftLog(storage, encryptingEnvelope()), sm2);
+        assertEquals("1", sm2.snapshotState().get("a"),
+                "phase-2 recovery must read the pre-encryption algId=1 records");
         n2.propose(KvStateMachine.put("c", SECRET));
 
         // The on-disk WAL is genuinely mixed: it carries BOTH algId=1 and algId=2 frames.
         assertEquals(Set.of((byte) IntegrityEnvelope.ALG_HMAC_SHA256, (byte) IntegrityEnvelope.ALG_AES256_GCM),
                 algIdsInWal(Files.readAllBytes(tempDir.resolve("raft-log.wal"))),
-                "the WAL must contain both a legacy HMAC record and an encrypted record");
+                "the WAL must contain both an HMAC record and an encrypted record");
 
         // Phase 3 - restart over the mixed WAL: every record recovers, per-record algId dispatch.
         KvStateMachine sm3 = new KvStateMachine();
-        bootLeader(storage, encryptingEnvelopeWithLegacy(hmac),
-                new RaftLog(storage, encryptingEnvelopeWithLegacy(hmac)), sm3);
+        bootLeader(storage, encryptingEnvelope(),
+                new RaftLog(storage, encryptingEnvelope()), sm3);
         assertEquals(Map.of("a", "1", "b", "2", "c", SECRET), sm3.snapshotState(),
                 "the mixed algId=1/algId=2 WAL must recover fully");
     }

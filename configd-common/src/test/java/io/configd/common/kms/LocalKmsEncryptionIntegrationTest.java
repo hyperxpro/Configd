@@ -57,7 +57,7 @@ class LocalKmsEncryptionIntegrationTest {
             KmsProvider.Provisioned prov = provider.generateRootKey();
             persistedWrapped = prov.wrapped();
             SegmentKeyManager km = new SegmentKeyManager(prov.rootKey());
-            IntegrityEnvelope env = IntegrityEnvelope.encrypting(km, null);
+            IntegrityEnvelope env = IntegrityEnvelope.encrypting(km);
             for (byte[] pt : plaintexts) {
                 onDisk.add(env.wrap(WAL_MAGIC, SCOPE,pt));
             }
@@ -72,7 +72,7 @@ class LocalKmsEncryptionIntegrationTest {
         // ---- boot #2 (RESTART): re-unseal the root from the SAME signing key + persisted WrappedKey ----
         try (KmsProvider provider2 = new LocalDerivedKmsProvider(sk, salt(), "kid", 1)) {
             SegmentKeyManager km2 = SegmentKeyManager.unsealFrom(provider2, persistedWrapped);
-            IntegrityEnvelope env2 = IntegrityEnvelope.encrypting(km2, null);
+            IntegrityEnvelope env2 = IntegrityEnvelope.encrypting(km2);
             for (int i = 0; i < onDisk.size(); i++) {
                 assertArrayEquals(plaintexts.get(i), env2.unwrap(WAL_MAGIC, SCOPE,onDisk.get(i)),
                         "record " + i + " must decrypt to identical bytes after restart");
@@ -85,7 +85,7 @@ class LocalKmsEncryptionIntegrationTest {
         byte[] sk = signingKey((byte) 0x11);
         try (KmsProvider provider = new LocalDerivedKmsProvider(sk, salt(), "kid", 1)) {
             SegmentKeyManager km = SegmentKeyManager.unsealFrom(provider, provider.generateRootKey().wrapped());
-            IntegrityEnvelope env = IntegrityEnvelope.encrypting(km, null);
+            IntegrityEnvelope env = IntegrityEnvelope.encrypting(km);
             byte[] wal = env.wrap(WAL_MAGIC, SCOPE,"w".getBytes(StandardCharsets.UTF_8));
             byte[] snap = env.wrap(SNAP_MAGIC, SCOPE,"s".getBytes(StandardCharsets.UTF_8));
             // v3: segmentId is at [16, 32) (header 8 + scopeId 4 + keyTerm 4).
@@ -109,7 +109,7 @@ class LocalKmsEncryptionIntegrationTest {
         try (KmsProvider p1 = new LocalDerivedKmsProvider(sk1, salt(), "kid", 1)) {
             km = SegmentKeyManager.unsealFrom(p1, p1.generateRootKey().wrapped());
         }
-        IntegrityEnvelope env = IntegrityEnvelope.encrypting(km, null);
+        IntegrityEnvelope env = IntegrityEnvelope.encrypting(km);
 
         // write under term 1
         byte[] oldPlain = "written-under-term-1".getBytes(StandardCharsets.UTF_8);
@@ -141,7 +141,7 @@ class LocalKmsEncryptionIntegrationTest {
             wrapped = provider.generateRootKey().wrapped();
             km = SegmentKeyManager.unsealFrom(provider, wrapped);
         } // provider closed here (R2): the cached root in `km` must remain usable
-        IntegrityEnvelope env = IntegrityEnvelope.encrypting(km, null);
+        IntegrityEnvelope env = IntegrityEnvelope.encrypting(km);
         byte[] pt = "post-close".getBytes(StandardCharsets.UTF_8);
         assertArrayEquals(pt, env.unwrap(WAL_MAGIC, SCOPE,env.wrap(WAL_MAGIC, SCOPE,pt)),
                 "the node runs on the cached root after the provider is dropped");

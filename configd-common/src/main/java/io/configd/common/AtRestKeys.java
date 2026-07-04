@@ -59,4 +59,25 @@ public interface AtRestKeys {
      * @throws IntegrityException if the keyTerm is not in the keyring (fail-closed)
      */
     SecretKey resolveDek(int keyTerm, byte[] segmentId);
+
+    /**
+     * The keyring term new writes stamp (both the HMAC and GCM postures use it). New at-rest records
+     * carry this as their {@code keyTerm}; a rotation advances it while old terms stay retained.
+     *
+     * @return the active write term ({@code >= 1})
+     */
+    int activeTerm();
+
+    /**
+     * READ/WRITE side (HMAC posture): the term-versioned integrity MAC key
+     * {@code K_integrity[keyTerm] = HKDF(root[keyTerm], salt=nodeKeyId, info)}. This is the HMAC
+     * analogue of {@link #resolveDek}: it selects the root for a record's own {@code keyTerm} so an
+     * HMAC segment written under an old term still verifies after rotation (non-destructive), and a
+     * {@code keyTerm} whose root is absent from the keyring FAILS CLOSED.
+     *
+     * @param keyTerm the keyring term stamped in the HMAC envelope
+     * @return the HMAC-SHA-256 integrity key for that term
+     * @throws IntegrityException if the keyTerm is not in the keyring (fail-closed)
+     */
+    SecretKey macKey(int keyTerm);
 }

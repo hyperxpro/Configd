@@ -34,7 +34,7 @@ class NodeAnchorFileTest {
         java.util.Arrays.fill(rootBytes, (byte) 0x6B);
         io.configd.common.kms.RootKey root = new io.configd.common.kms.RootKey(
                 rootBytes, new io.configd.common.kms.KeyId("local", "test", 1));
-        return IntegrityEnvelope.encrypting(new io.configd.common.SegmentKeyManager(root), null);
+        return IntegrityEnvelope.encrypting(new io.configd.common.SegmentKeyManager(root));
     }
 
     private static byte[] hash(int fill) {
