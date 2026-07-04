@@ -32,9 +32,19 @@ final class FileAnchorIO implements AnchorIO {
     /** Open lazily on first create/write; kept open across the process lifetime for in-place writes. */
     private FileChannel channel;
 
+    /** The per-shard {@code raft-anchor} in {@code dir} (the group's WAL directory). */
     FileAnchorIO(Path dir) {
+        this(dir, ANCHOR_FILE_NAME);
+    }
+
+    /**
+     * A slotted anchor file named {@code fileName} in {@code dir}. Same fixed-offset {@code pwrite} +
+     * {@code fdatasync} transport as the per-shard anchor; the node-anchor reuses it with a distinct
+     * name ({@code node-anchor}) in {@code dataDir}, so the proven §2.4 mechanics live in one place.
+     */
+    FileAnchorIO(Path dir, String fileName) {
         this.dir = dir;
-        this.file = dir.resolve(ANCHOR_FILE_NAME);
+        this.file = dir.resolve(fileName);
     }
 
     @Override

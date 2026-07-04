@@ -471,6 +471,28 @@ public final class RaftLog {
     }
 
     /**
+     * The durable-head high-water mark this shard's {@code raft-anchor} records ({@code 0} for a
+     * fresh node / the in-memory mode). This is the value the node-anchor's {@code shardAnchorDigest}
+     * fingerprints (§2.5 / A1.6): a shard wiped to FRESH resets it to 0, changing the digest.
+     *
+     * <p>Read at boot (single-threaded, after recovery, before the owner thread is bound) or on this
+     * group's owner thread (via {@code RaftNode.log()}). It is a plain read of the anchor's in-memory
+     * record - the anchor is owner-thread-confined, so off-owner callers must marshal onto the owner.
+     */
+    public long lastDurableIndex() {
+        return anchor == null ? 0L : anchor.current().lastDurableIndex();
+    }
+
+    /**
+     * Whether this shard's {@code raft-anchor} file existed at open (false ⇒ the shard booted FRESH -
+     * no anchor file - which, once the node-anchor proves the node was already initialized, is the R-f
+     * wipe signature the node-anchor cross-check REFUSEs). {@code false} in the in-memory mode.
+     */
+    public boolean anchorExistedAtOpen() {
+        return anchor != null && anchor.existedAtOpen();
+    }
+
+    /**
      * The number of entries currently stored (excludes snapshotted entries).
      */
     public int size() {
