@@ -1,9 +1,18 @@
 # Peer-Quorum `AnchorWitness` — R-a′ Closure Design Addendum
 
-**Status: DESIGN — 2026-07-04. Closes ratification item 11 (R-a′). No production code in this document.**
-Addendum to `docs/design/frozen-format-v1-2026-07-03.md` (RATIFIED 2026-07-04). Lands as an added
-sub-gate alongside Gate 3 (the anchor/vote path) BEFORE the release tag, so the witness protocol is
-part of the frozen wire from the start — not a post-freeze mutation.
+**Status: AS-BUILT / SHIPPED — 2026-07-04 (Gate 3c). Closes ratification item 11 (R-a′).**
+Addendum to `docs/design/frozen-format-v1-2026-07-03.md`. This design shipped in Gate 3c as the
+peer-quorum `AnchorWitness` (`PeerQuorumAnchorWitness` + the `RaftNode` witness state, wire types
+`RAFT_WITNESS`/`RAFT_WITNESS_REPLY`, and `ConfigdServer` arming when real peers exist), so the
+witness protocol is part of the frozen wire from the start. **As-built deviations from this design,
+after two operator rulings on 2026-07-04:** strict is SPLIT into an always-on **boot** gate
+(unconditional peer-majority — closes R-a′ at N=3) and an OPT-IN **vote** deferral
+(`-Dconfigd.raft.witnessStrict=true`, default fast-vote, because full-strict-default broke 3-node
+failover in the CI smoke); the witness is **armed only when `tcpTransport != null`** (a configured
+multi-node cluster), inert otherwise; a latched node advertises its FROZEN `bootAnchorSeq` to avoid a
+false-refuse on a rolling restart. The N≥5 fast-vote grant→witnessed residual is documented in the
+top-of-doc AS-BUILT block of the main frozen-format doc. This document is design prose; the shipped
+code is authoritative where they differ.
 
 This addendum realizes the frozen `AnchorWitness` SPI (frozen-format §A1.7,
 `frozen-format-v1-2026-07-03.md:881-886`) as a peer-quorum witness that closes the R-a′

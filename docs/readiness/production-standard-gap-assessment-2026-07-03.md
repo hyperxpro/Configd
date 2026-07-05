@@ -2,6 +2,22 @@
 
 **Date:** 2026-07-03
 **Scope:** main @ `012e213`. READ-ONLY assessment — nothing in the repo changed except this file.
+
+> **AS-BUILT UPDATE (2026-07-04).** This assessment is the honest snapshot as of 2026-07-03; its
+> verdicts are preserved. Since then the **frozen-format arc (Gates 1–5)** landed and CLOSED the two
+> frozen-format kernel GAPs called out in §0 (line 38–40): the truncation/rollback **durability
+> anchor** (Gate 3a `raft-anchor` + merge + persist-before-ack + recovery gates; §2.1-6 fsyncgate is
+> part of it) and **non-destructive, reachable key rotation** (Gate 4 persisted dual-slot keyring;
+> the previously data-destroying path is now impossible by construction). Gate 3b added the
+> `node-anchor`, Gate 3c the peer-quorum `AnchorWitness` (R-a′). Gate 5 added the first
+> **encryption-ON, multi-node cluster composition** coverage (`EncryptedMultiShardClusterCompositionTest`)
+> and a **> 4 MiB encrypted snapshot** round-trip (`Over4MiBEncryptedSnapshotRoundTripTest`), closing
+> several of the §2.5 encryption-ON interaction cells. See
+> `docs/design/frozen-format-v1-2026-07-03.md` (its top-of-doc AS-BUILT block) for the shipped detail
+> and the honest residuals (R-a freshness, R-a′ N≥5 fast-vote, R-g audit-not-term-versioned, R-h
+> no-live-rotation-trigger). The OTHER GAPs here (zero independent protocol clients, soak duration,
+> mixed-version story, unversioned edge/etc. formats, leadership auto-balance) are NOT frozen-format
+> items and remain as assessed.
 **The bar:** everything tested, all spec matches industry standards, no compromises. An item is
 `MEETS-BAR` only when the code is right AND a named test proves it AND it matches what an
 industry-grade system (Postgres, etcd, Spanner, CockroachDB, Vault, the Jepsen practice) actually
