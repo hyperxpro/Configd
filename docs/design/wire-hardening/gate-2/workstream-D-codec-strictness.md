@@ -44,3 +44,9 @@ document the bound in the RFC (Gate 5) and defer. Decide during implementation; 
 
 Report: files, each WH item's exact check + where, any new metric (catalog parity), test names+results,
 byte-identity confirmation (goldens green). Leave uncommitted.
+
+## WH-10 addendum (found during Workstream A review)
+`RaftTransportAdapter` has a PRE-EXISTING decode-failure `System.err.println` (~line 119, on the
+`catch` around `RaftMessageCodec.decode`) — an unbounded per-frame log-flood vector on hostile input,
+the same anti-pattern WH-10 targets. Sweep it into the WH-10 rate-limited-Logger fix (it was left as-is
+by Workstream A to stay in scope).
