@@ -462,7 +462,15 @@ public final class TcpRaftTransport implements RaftTransportEndpoint {
                 if (serverAccepted && socket instanceof SSLSocket ssl) {
                     // Layer 1: resolve + authorize the accepted peer's cert identity BEFORE any frame.
                     try {
+                        // Bound the forced handshake (RR-002): a peer that completes the TCP accept but
+                        // stalls mid-TLS-handshake must not park this accept thread. setSoTimeout right
+                        // before startHandshake reaps a stalled handshake in HANDSHAKE_TIMEOUT_MS; the
+                        // read-idle deadline (inboundReadTimeoutMs, already set on the socket in acceptLoop)
+                        // is restored immediately after for the frame read loop. Mirrors the connector's
+                        // bounded-handshake pattern (createClientSocket).
+                        ssl.setSoTimeout(HANDSHAKE_TIMEOUT_MS);
                         ssl.startHandshake(); // force the handshake so the peer cert is available now
+                        ssl.setSoTimeout(inboundReadTimeoutMs);
                     } catch (IOException handshakeFailed) {
                         // A failed/rejected handshake is not an authorized peer; drop (counted).
                         transportMetrics.onPeerIdentityRejected();
