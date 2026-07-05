@@ -61,3 +61,27 @@ On peer-TLS handshake completion (server side, BOTH transports), resolve the pee
 `configd-transport/TlsConfig.java` (+ maybe a new `PeerIdentityPolicy`), `configd-netty/NettyRaftTransport.java`
 (+ `RaftFrameDecoder`), `configd-server` JDK `TcpRaftTransport.java`, the `RaftTransportAdapter` (in-body
 id check), `RaftMessageCodec` (comment honesty), `ConfigdServer` wiring, ConfigdMetrics catalog (new metric).
+
+---
+
+## Review outcome (lead review + adversarial pass)
+
+Independent lead verification: all touched modules compile green; 39 tests pass incl. the redteam-grade
+mTLS-socket binding tests on both tiers (4/4 each) and `WireCompatGoldenBytesTest` 19/19 (valid frames
+byte-identical). `PeerIdentityPolicy` fails closed on unparseable DN / absent marker / not-in-allowlist,
+uses `LdapName` (proper RFC2253), and `fromSystemProperties` throws on malformed entries (fail-closed at
+boot). Enforce/warn gate is byte-identical when unset (additive delegating ctors → dormant path).
+
+Two findings returned to the implementer before commit:
+- **F1 (High — completeness): outbound-reply reader not identity-bound = a bypass.** The reverse
+  direction of a connection WE dialed (`TcpRaftTransport.handleInboundConnection(s,false)` :799; Netty
+  outbound PeerHandler) dispatches frames with NO senderId check. A Byzantine peer that accepted our
+  connection can write forged-senderId frames back on that socket → forged third-node vote/ack, bypassing
+  Layer 2. Fix: pin the outbound reader to the KNOWN dial `target` (hostname-verified on connect) and
+  enforce senderId==target there too, so EVERY frame on EVERY connection is bound when enforced. + test.
+- **F2 (Low — ironic vs WH-10): in-body rejection uses unbounded `System.err.println`.** The in-body
+  mismatch drops the FRAME (not the connection), so an authenticated peer can flood forged-body frames →
+  unbounded log. Fix: rate-limited `Logger.warning` (keep the metric); convert the other rejection prints
+  to `Logger` for consistency.
+
+After F1/F2 land + re-verify green, Workstream A commits.
