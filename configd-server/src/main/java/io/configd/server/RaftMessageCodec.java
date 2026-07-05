@@ -109,9 +109,16 @@ public final class RaftMessageCodec {
     /**
      * Fixed anchor-witness body (bytes): {@code selfAnchorSeq(8) + selfTerm(8) + selfVotedFor(4)
      * + seenOfYouSeq(8) + flags(1)} = 29. The sender id is NOT in the body - it is the transport's
-     * authenticated 4-byte prefix, injected from {@code InboundMessage.from} at decode (see
-     * {@link #decodeWitness}). Shared by {@link MessageType#RAFT_WITNESS} and
-     * {@link MessageType#RAFT_WITNESS_REPLY}.
+     * 4-byte {@code senderId} prefix, injected from {@code InboundMessage.from} at decode (see
+     * {@link #decodeWitness}).
+     *
+     * <p>That prefix is <em>cryptographically bound</em> to the peer's TLS certificate identity
+     * <b>only when a peer-identity allow-list is configured</b> (WH-08/09,
+     * {@code PeerIdentityPolicy}): the transport verifies the accepted peer's cert and drops any frame
+     * whose {@code senderId} differs from the connection's authorized {@code NodeId}. When no allow-list
+     * is configured (default) the prefix is CA-chain-validated but self-declared, so a cert-valid peer
+     * could forge it - the transport logs a one-time warning in that posture. Shared by
+     * {@link MessageType#RAFT_WITNESS} and {@link MessageType#RAFT_WITNESS_REPLY}.
      */
     private static final int WITNESS_BODY_LEN = 8 + 8 + 4 + 8 + 1;
 

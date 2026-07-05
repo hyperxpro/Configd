@@ -30,6 +30,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Consumer;
+import java.util.logging.Logger;
 
 /**
  * TCP-based Raft transport with optional TLS encryption.
@@ -76,6 +77,8 @@ import java.util.function.Consumer;
  */
 public final class TcpRaftTransport implements RaftTransportEndpoint {
 
+    private static final Logger LOG = Logger.getLogger(TcpRaftTransport.class.getName());
+
     /**
      * Bounded TCP connect timeout (ms). Short because consensus traffic is intra-cluster
      * (low RTT) and a stuck connect simply causes a re-attempt on the next tick. Owned by
@@ -105,6 +108,13 @@ public final class TcpRaftTransport implements RaftTransportEndpoint {
     private final TlsManager tlsManager; // nullable for plaintext
     private final Consumer<InboundMessage> inboundHandler;
     private final ConnectionManager connectionManager;
+
+    /** Cert-identity &harr; NodeId binding policy (WH-08/09). Default {@link PeerIdentityPolicy#unenforced()}. */
+    private final PeerIdentityPolicy peerIdentityPolicy;
+    /** Security-event sink (peer-identity rejections). Default {@link RaftTransportMetrics#NOOP}. */
+    private final RaftTransportMetrics transportMetrics;
+    /** Guards the one-time "peer-identity verification unconfigured" warning (unenforced-but-TLS posture). */
+    private final AtomicBoolean unconfiguredWarningEmitted = new AtomicBoolean(false);
 
     private final ConcurrentHashMap<NodeId, PeerConnection> outbound = new ConcurrentHashMap<>();
     /** Inbound sockets accepted by {@link #acceptLoop}; closed on {@link #close}. */
@@ -164,11 +174,39 @@ public final class TcpRaftTransport implements RaftTransportEndpoint {
             TlsManager tlsManager,
             Consumer<InboundMessage> inboundHandler
     ) {
+        // Legacy 5-arg constructor: peer-identity binding unenforced, no metrics sink. Byte- and
+        // behaviour-identical to the pre-WH-08/09 transport (the enforcement path is dormant until an
+        // allow-list policy is supplied via the fuller constructor).
+        this(self, bindAddress, peerAddresses, tlsManager, inboundHandler,
+                PeerIdentityPolicy.unenforced(), RaftTransportMetrics.NOOP);
+    }
+
+    /**
+     * Creates a TCP Raft transport with an explicit peer-identity binding policy and metrics sink
+     * (WH-08/09). When {@code peerIdentityPolicy} is {@linkplain PeerIdentityPolicy#enforced()
+     * enforced}, an accepted peer's TLS cert identity is verified against the allow-list and each
+     * frame's {@code senderId} must match the connection's resolved {@link NodeId}; otherwise the
+     * transport keeps its CA-chain-only behavior (with a one-time warning when TLS is on).
+     *
+     * @param peerIdentityPolicy cert-identity&harr;NodeId binding policy (never null)
+     * @param transportMetrics   security-event sink (never null; pass {@link RaftTransportMetrics#NOOP})
+     */
+    public TcpRaftTransport(
+            NodeId self,
+            InetSocketAddress bindAddress,
+            Map<NodeId, InetSocketAddress> peerAddresses,
+            TlsManager tlsManager,
+            Consumer<InboundMessage> inboundHandler,
+            PeerIdentityPolicy peerIdentityPolicy,
+            RaftTransportMetrics transportMetrics
+    ) {
         this.self = Objects.requireNonNull(self, "self must not be null");
         this.bindAddress = Objects.requireNonNull(bindAddress, "bindAddress must not be null");
         this.peerAddresses = Map.copyOf(Objects.requireNonNull(peerAddresses, "peerAddresses must not be null"));
         this.tlsManager = tlsManager;
         this.inboundHandler = inboundHandler;
+        this.peerIdentityPolicy = Objects.requireNonNull(peerIdentityPolicy, "peerIdentityPolicy must not be null");
+        this.transportMetrics = Objects.requireNonNull(transportMetrics, "transportMetrics must not be null");
         this.connectionManager = new ConnectionManager(Clock.system());
         this.executor = Executors.newVirtualThreadPerTaskExecutor();
         this.connectExecutor = Executors.newSingleThreadScheduledExecutor(r -> {
@@ -193,11 +231,46 @@ public final class TcpRaftTransport implements RaftTransportEndpoint {
         if (!running.compareAndSet(false, true)) {
             throw new IllegalStateException("Transport already started");
         }
+        // Fail closed BEFORE binding: an enforced allow-list without mTLS cannot bind identity to a
+        // certificate, so it would fail OPEN (every frame unauthenticated). Refuse to start rather than
+        // silently downgrade. After this, enforced() implies mTLS on both transports (parity).
+        requirePeerIdentityTransportSecurity();
 
         serverSocket = createServerSocket();
         serverSocket.bind(bindAddress);
 
+        warnIfPeerIdentityUnconfigured();
         executor.submit(this::acceptLoop);
+    }
+
+    /**
+     * Refuses to start when a peer-identity allow-list is {@linkplain PeerIdentityPolicy#enforced()
+     * enforced} but the transport is plaintext (no {@link TlsManager}) - an enforced allow-list without
+     * mTLS is a misconfiguration, never a silent downgrade. Resets {@code running} so the failed start
+     * does not leave the transport half-open.
+     */
+    private void requirePeerIdentityTransportSecurity() {
+        if (peerIdentityPolicy.enforced() && tlsManager == null) {
+            running.set(false);
+            throw new IllegalStateException(
+                    "Raft peer-identity allow-list is configured but the transport is PLAINTEXT (no "
+                            + "TlsManager); enforced identity binding requires mTLS. Refusing to start.");
+        }
+    }
+
+    /**
+     * Emits a loud one-time warning when the transport runs mTLS but no peer-identity allow-list is
+     * configured (WH-08/09 enforce-when-configured, warn-when-not). In this posture a cert-valid peer
+     * can still forge another node's {@code senderId}; only the CA-chain is checked. No warning for
+     * plaintext (test/single-node) or when a policy is enforced.
+     */
+    private void warnIfPeerIdentityUnconfigured() {
+        if (tlsManager != null && !peerIdentityPolicy.enforced()
+                && unconfiguredWarningEmitted.compareAndSet(false, true)) {
+            System.err.println("WARNING: Raft peer-identity verification is UNCONFIGURED ("
+                    + PeerIdentityPolicy.ALLOWED_NODES_PROP + " unset); a cert-valid peer can forge "
+                    + "another node's senderId. Configure an allow-list to enforce identity binding.");
+        }
     }
 
     /**
@@ -304,6 +377,11 @@ public final class TcpRaftTransport implements RaftTransportEndpoint {
         return inboundConnectionsRefused.get();
     }
 
+    @Override
+    public boolean peerIdentityEnforced() {
+        return peerIdentityPolicy.enforced();
+    }
+
     /** Best-effort close of a refused / failed inbound socket (it is being discarded). */
     private static void closeQuietly(Socket s) {
         // s is null for a PeerConnection whose handshake never completed (e.g. a
@@ -349,7 +427,8 @@ public final class TcpRaftTransport implements RaftTransportEndpoint {
                 acceptedSockets.add(clientSocket);
                 executor.submit(() -> {
                     try {
-                        handleInboundConnection(clientSocket);
+                        // Server-accepted: resolve + pin the peer's cert identity (dialTarget null).
+                        handleInboundConnection(clientSocket, true, null);
                     } finally {
                         acceptedSockets.remove(clientSocket);
                     }
@@ -363,13 +442,72 @@ public final class TcpRaftTransport implements RaftTransportEndpoint {
         }
     }
 
-    private void handleInboundConnection(Socket socket) {
+    /**
+     * Reads inbound frames on a connection. WH-08/09 identity binding pins the connection's authorized
+     * {@link NodeId} (when an allow-list is enforced) and drops any frame whose {@code senderId} differs:
+     * <ul>
+     *   <li><b>server-accepted</b> ({@code dialTarget == null}): resolve + authorize the peer's TLS cert
+     *       identity on this accepted socket (Layer 1), then pin it.</li>
+     *   <li><b>outbound-reverse</b> ({@code dialTarget != null}): a peer may reply on a connection WE
+     *       dialed; the far end was hostname-verified on connect, so pin the KNOWN {@code dialTarget}
+     *       directly. This closes the reverse-path bypass - a Byzantine peer that accepted our connection
+     *       cannot write forged-{@code senderId} frames back on it.</li>
+     * </ul>
+     * Unenforced or plaintext leaves {@code pinnedIdentity} null and the read loop unchanged (legacy).
+     */
+    private void handleInboundConnection(Socket socket, boolean serverAccepted, NodeId dialTarget) {
         try (socket) {
+            NodeId pinnedIdentity = null;
+            if (peerIdentityPolicy.enforced()) {
+                if (serverAccepted && socket instanceof SSLSocket ssl) {
+                    // Layer 1: resolve + authorize the accepted peer's cert identity BEFORE any frame.
+                    try {
+                        ssl.startHandshake(); // force the handshake so the peer cert is available now
+                    } catch (IOException handshakeFailed) {
+                        // A failed/rejected handshake is not an authorized peer; drop (counted).
+                        transportMetrics.onPeerIdentityRejected();
+                        if (running.get()) {
+                            LOG.warning(() -> "Peer-identity handshake failed; dropping connection: "
+                                    + handshakeFailed.getMessage());
+                        }
+                        return;
+                    }
+                    pinnedIdentity = peerIdentityPolicy.resolve(resolveCertIdentity(ssl));
+                    if (pinnedIdentity == null) {
+                        transportMetrics.onPeerIdentityRejected();
+                        if (running.get()) {
+                            LOG.warning("Peer certificate identity is not an authorized node; "
+                                    + "dropping connection");
+                        }
+                        return;
+                    }
+                } else if (!serverAccepted && dialTarget != null) {
+                    // Outbound-reverse: the far end is the target we dialed (hostname-verified on connect).
+                    pinnedIdentity = dialTarget;
+                }
+            }
             DataInputStream in = new DataInputStream(socket.getInputStream());
             while (running.get()) {
                 // Read sender NodeId
                 int senderId = in.readInt();
                 NodeId from = NodeId.of(senderId);
+
+                // Layer 2 (WH-08/09): the self-declared senderId prefix must equal the connection's
+                // authenticated identity (cert-resolved on accept, or the dialed target on the reverse
+                // path). A cert-valid peer forging another node's id is dropped (desync-equivalent) and
+                // counted. When enforced, a MISSING pin is also a DENY (fail closed, mirroring the Netty
+                // transport) - enforced() implies mTLS (start() refuses plaintext), so a null pin here is
+                // an unexpected unauthenticated frame, never a legitimate one.
+                if (peerIdentityPolicy.enforced()
+                        && (pinnedIdentity == null || !pinnedIdentity.equals(from))) {
+                    transportMetrics.onPeerIdentityRejected();
+                    if (running.get()) {
+                        NodeId expected = pinnedIdentity;
+                        LOG.warning(() -> "Peer senderId " + from + " does not match connection identity "
+                                + expected + "; dropping connection");
+                    }
+                    return;
+                }
 
                 // Read frame length (first 4 bytes of FrameCodec frame)
                 int frameLength = in.readInt();
@@ -450,6 +588,19 @@ public final class TcpRaftTransport implements RaftTransportEndpoint {
             if (running.get()) {
                 System.err.println("Inbound read error: " + e.getMessage());
             }
+        }
+    }
+
+    /**
+     * The verified peer-certificate Subject DN on an established mTLS socket, or {@code null} if no
+     * verifiable peer certificate is present (fail-closed). Mirrors the edge plane's
+     * {@code resolveCertIdentity}.
+     */
+    private static String resolveCertIdentity(SSLSocket ssl) {
+        try {
+            return ssl.getSession().getPeerPrincipal().getName();
+        } catch (Exception e) {
+            return null; // no verifiable peer certificate
         }
     }
 
@@ -683,7 +834,10 @@ public final class TcpRaftTransport implements RaftTransportEndpoint {
                 // dropped peer is detected promptly even if no write has failed yet.
                 executor.submit(() -> {
                     try {
-                        handleInboundConnection(s);
+                        // Outbound-reverse reader: a peer may reply on this connection WE dialed. Bind its
+                        // frames to the KNOWN target (hostname-verified on connect) so a Byzantine peer
+                        // cannot write forged-senderId frames back on it (WH-08/09 reverse-path binding).
+                        handleInboundConnection(s, false, target);
                     } finally {
                         teardown(s);
                     }

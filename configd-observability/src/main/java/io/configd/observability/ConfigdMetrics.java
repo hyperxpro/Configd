@@ -57,6 +57,16 @@ public final class ConfigdMetrics {
      */
     public static final String NAME_COMMAND_MALFORMED = "configd.command.malformed";
     /**
+     * Raft peer-identity mismatch alarm counter (WH-08/WH-09). Incremented on a consensus-transport
+     * reader / event-loop thread (or the inbound-routing thread) when a peer's authenticated TLS
+     * certificate identity does not authorize the {@code senderId} / in-body {@code leaderId} /
+     * {@code candidateId} it presents - a cert-valid-but-Byzantine cluster member impersonating another
+     * member. The connection is dropped; a non-zero value here is a security event worth alerting on.
+     * Counted only when a peer-identity allow-list is configured (enforce-when-configured). Eager-created
+     * so it emits {@code _total 0} from the first scrape.
+     */
+    public static final String NAME_RAFT_PEER_IDENTITY_MISMATCH = "configd.raft.peer.identity.mismatch";
+    /**
      * Write-overload reject counter. Backs the {@code Retry-After: 1} 429 path
      * ({@code HttpApiServer}) with an emitted, tested series so the sustained-429-rate
      * alert queries something real. Incremented on the HTTP write thread inside the
@@ -112,6 +122,7 @@ public final class ConfigdMetrics {
     private final MetricsRegistry.Counter snapshotInstallFailed;
     private final MetricsRegistry.Counter snapshotRebuild;
     private final MetricsRegistry.Counter commandMalformed;
+    private final MetricsRegistry.Counter raftPeerIdentityMismatch;
     private final MetricsRegistry.Counter writeRejectedOverloaded;
     private final MetricsRegistry.Counter raftElections;
 
@@ -131,6 +142,7 @@ public final class ConfigdMetrics {
         this.snapshotInstallFailed = registry.counter(NAME_SNAPSHOT_INSTALL_FAILED);
         this.snapshotRebuild = registry.counter(NAME_SNAPSHOT_REBUILD);
         this.commandMalformed = registry.counter(NAME_COMMAND_MALFORMED);
+        this.raftPeerIdentityMismatch = registry.counter(NAME_RAFT_PEER_IDENTITY_MISMATCH);
         this.writeRejectedOverloaded = registry.counter(NAME_WRITE_REJECTED_OVERLOADED);
         this.raftElections = registry.counter(NAME_RAFT_ELECTIONS);
         // ACL config-policy loader counters -- PRODUCED and incremented by AclConfigPolicyLoader on this
@@ -181,6 +193,7 @@ public final class ConfigdMetrics {
     public MetricsRegistry.Counter snapshotInstallFailed() { return snapshotInstallFailed; }
     public MetricsRegistry.Counter snapshotRebuild() { return snapshotRebuild; }
     public MetricsRegistry.Counter commandMalformed() { return commandMalformed; }
+    public MetricsRegistry.Counter raftPeerIdentityMismatch() { return raftPeerIdentityMismatch; }
     public MetricsRegistry.Counter writeRejectedOverloaded() { return writeRejectedOverloaded; }
     public MetricsRegistry.Counter raftElections() { return raftElections; }
 

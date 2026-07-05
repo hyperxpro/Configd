@@ -53,6 +53,18 @@ public interface RaftTransportEndpoint extends RaftTransport, AutoCloseable {
      */
     long inboundConnectionsRefused();
 
+    /**
+     * Whether this transport enforces peer-identity binding (WH-08/09) - i.e. a
+     * {@linkplain PeerIdentityPolicy#enforced() non-empty allow-list} is configured. The server wires
+     * the in-body {@code leaderId}/{@code candidateId} check ({@code RaftTransportAdapter}) to the SAME
+     * policy so both layers agree. Default {@code false} (unenforced / no-op transports).
+     *
+     * @return true if the peer-identity allow-list is active
+     */
+    default boolean peerIdentityEnforced() {
+        return false;
+    }
+
     /** Gracefully shuts the transport down. Narrowed from {@link AutoCloseable} to not throw. */
     @Override
     void close();
