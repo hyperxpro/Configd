@@ -516,6 +516,9 @@ public final class NettyRaftTransport implements RaftTransportEndpoint {
                 connectInFlight.set(false);
                 return;
             }
+            if (diagRejoin()) {
+                System.out.println("DIAG-CONNTRY " + self.id() + " -> " + target + " dialing " + address);
+            }
             Bootstrap b = new Bootstrap()
                     .group(worker)
                     .channel(transport.clientChannelClass())
@@ -576,6 +579,9 @@ public final class NettyRaftTransport implements RaftTransportEndpoint {
         }
 
         private void onConnectFailed() {
+            if (diagRejoin()) {
+                System.out.println("DIAG-CONNFAIL " + self.id() + " -> " + target + " connect failed");
+            }
             synchronized (connectionManager) {
                 connectionManager.markDisconnected(target);
             }
@@ -588,6 +594,9 @@ public final class NettyRaftTransport implements RaftTransportEndpoint {
         /** Connection lost: clear the published channel and reconnect if frames remain. */
         private void onChannelClosed(Channel ch) {
             if (this.channel == ch) {
+                if (diagRejoin()) {
+                    System.out.println("DIAG-INACTIVE " + self.id() + " -> " + target + " outbound closed " + ch);
+                }
                 this.channel = null;
                 if (!closed.get() && running.get()) {
                     synchronized (connectionManager) {
