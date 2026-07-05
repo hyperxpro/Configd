@@ -98,6 +98,12 @@ public final class NettyRaftTransport implements RaftTransportEndpoint {
     private final int maxInboundConnections = RaftWireProtocol.maxInboundConnections();
 
     private final ConcurrentHashMap<NodeId, PeerChannel> peers = new ConcurrentHashMap<>();
+
+    // TEMP DIAGNOSTIC (revert): trace inbound frames + outbound connects to root-cause restarted-node rejoin.
+    // Read dynamically so a single test can scope it to itself via the system property (no full-build noise).
+    private static boolean diagRejoin() {
+        return System.getProperty("configd.diag.rejoin") != null;
+    }
     private final AtomicBoolean running = new AtomicBoolean(false);
     private final AtomicLong framesDropped = new AtomicLong();
     private final AtomicLong inboundConnectionsRefused = new AtomicLong();
@@ -266,6 +272,13 @@ public final class NettyRaftTransport implements RaftTransportEndpoint {
 
     private void dispatch(InboundMessage msg) {
         try {
+            if (diagRejoin()) {
+                String mt = String.valueOf(msg.frame().messageType());
+                if (!mt.contains("WITNESS_REPLY")) { // drop the high-volume replies; keep appends + witness queries
+                    System.out.println("DIAG-RX " + self.id() + " <- " + msg.from()
+                            + " type=" + mt + " gid=" + msg.frame().groupId());
+                }
+            }
             if (inboundHandler != null) {
                 inboundHandler.accept(msg);
             }
@@ -549,6 +562,10 @@ public final class NettyRaftTransport implements RaftTransportEndpoint {
                 ch.close();
                 connectInFlight.set(false);
                 return;
+            }
+            if (diagRejoin()) {
+                System.out.println("DIAG-CONN " + self.id() + " -> " + target + " OUTBOUND channel established "
+                        + ch + " queued=" + queue.size());
             }
             this.channel = ch;
             synchronized (connectionManager) {

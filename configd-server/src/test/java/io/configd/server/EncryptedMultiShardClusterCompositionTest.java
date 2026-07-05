@@ -88,6 +88,7 @@ class EncryptedMultiShardClusterCompositionTest {
             "configd.raft.electionTimeoutMaxMs",
             "configd.raft.heartbeatIntervalMs",
             "configd.raft.netty.workerThreads",
+            "configd.diag.rejoin", // TEMP diagnostic (revert): scope rejoin tracing to this test only
     };
     private final Map<String, String> saved = new HashMap<>();
 
@@ -108,6 +109,7 @@ class EncryptedMultiShardClusterCompositionTest {
         System.setProperty("configd.raft.electionTimeoutMaxMs", "3000");
         System.setProperty("configd.raft.heartbeatIntervalMs", "100");
         System.setProperty("configd.raft.netty.workerThreads", "1");
+        System.setProperty("configd.diag.rejoin", "1"); // TEMP diagnostic (revert): trace rejoin in CI
     }
 
     @AfterEach
@@ -218,12 +220,18 @@ class EncryptedMultiShardClusterCompositionTest {
 
         // Restart from the SAME data dir + config; recovery through the encrypted anchors/keyring must
         // NOT fail closed and must NOT false-trip the witness rollback (clean shutdown persisted the anchor).
+        long restartAtNanos = System.nanoTime();
         ConfigdServer restarted = ConfigdServer.start(configs[restartTarget]);
         servers[restartTarget] = restarted;
         running.add(restarted);
+        System.out.println("DIAG-RESTART node " + restartTarget + " restarted; want shard0>=" + postDown0
+                + " shard1>=" + postDown1);
 
         boolean caughtUp0 = awaitUntil(RESTART_MS,
                 () -> appliedIndex(restarted, 0) >= postDown0);
+        System.out.println("DIAG-CATCHUP0 caughtUp0=" + caughtUp0 + " after "
+                + ((System.nanoTime() - restartAtNanos) / 1_000_000L) + "ms idx="
+                + appliedIndex(restarted, 0) + "/" + postDown0);
         boolean caughtUp1 = awaitUntil(RESTART_MS,
                 () -> appliedIndex(restarted, 1) >= postDown1);
         assertTrue(caughtUp0, "restarted node must recover + catch shard 0 up to " + postDown0
