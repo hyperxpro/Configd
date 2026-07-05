@@ -1,6 +1,7 @@
 package io.configd.store;
 
 import io.configd.common.Clock;
+import io.configd.raft.StateMachine;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
@@ -103,6 +104,75 @@ class ConfigStateMachineMetricsTest {
         assertEquals(0, restoreMetrics.snapshotInstallFailedCount.get());
     }
 
+    // -----------------------------------------------------------------------
+    // WH-01: a malformed committed command is skipped deterministically as
+    // NON_MUTATING (never crash-loops the apply loop) and rings the alarm.
+    // -----------------------------------------------------------------------
+
+    @Test
+    void malformedCommittedCommandIsSkippedNotThrown() {
+        // Unknown top-level type byte: frames cleanly (1 byte <= cmdLen bound) but has no grammar.
+        byte[] poison = new byte[]{0x7F};
+
+        long result = assertDoesNotThrow(() -> stateMachine.apply(1, 1, poison),
+                "a malformed committed command must NOT throw out of apply (that is the crash-loop)");
+
+        assertEquals(StateMachine.NON_MUTATING, result,
+                "malformed command must be treated as non-mutating so applyCommitted advances lastApplied");
+        assertEquals(1, metrics.malformedCount.get(),
+                "malformed committed command must ring the onMalformedCommittedCommand alarm");
+        assertEquals(0, metrics.successCount.get(), "no write should have committed");
+        assertEquals(0, metrics.failureCount.get(),
+                "the malformed skip is not a write-commit failure");
+    }
+
+    @Test
+    void malformedSkipIsIdempotentAcrossReplay() {
+        // Re-applying the SAME poison entry (as happens on every tick / WAL replay before the fix)
+        // must keep returning NON_MUTATING without throwing - the property that breaks the crash-loop.
+        byte[] poison = new byte[]{CommandCodec.TYPE_PUT, 0x00}; // truncated key length
+        for (int i = 1; i <= 3; i++) {
+            long r = assertDoesNotThrow(() -> stateMachine.apply(1, 1, poison));
+            assertEquals(StateMachine.NON_MUTATING, r);
+        }
+        assertEquals(3, metrics.malformedCount.get());
+    }
+
+    @Test
+    void applyLoopSurvivesPoisonPillBetweenValidWrites() {
+        // A valid write, then a poison pill, then another valid write: the poison entry is skipped
+        // and the sequence counter advances exactly for the two valid writes (no wedge, no gap).
+        long s1 = stateMachine.apply(1, 1, CommandCodec.encodePut("a", bytes("1")));
+        long poison = stateMachine.apply(2, 1, new byte[]{0x03, 0x00, 0x00, 0x00, 0x01}); // BATCH count=1, no mutation
+        long s2 = stateMachine.apply(3, 1, CommandCodec.encodePut("b", bytes("2")));
+
+        assertEquals(StateMachine.NON_MUTATING, poison, "poison entry is non-mutating");
+        assertEquals(1L, s1, "first valid write commits at seq 1");
+        assertEquals(2L, s2, "second valid write commits at seq 2 - the skipped entry consumed no seq");
+        assertEquals(2, metrics.successCount.get(), "exactly the two valid writes committed");
+        assertEquals(1, metrics.malformedCount.get());
+        // And the store reflects both valid writes.
+        assertTrue(stateMachine.store().get("a").found());
+        assertTrue(stateMachine.store().get("b").found());
+    }
+
+    @Test
+    void blankKeyPoisonPillIsSkippedNotThrown() {
+        // Regression for the SECOND crash-loop path: a blank key surviving decode would throw a plain
+        // IllegalArgumentException from new ConfigMutation.Put deep inside applySwitch. decode now
+        // rejects blank keys, converting this into a deterministic skip.
+        byte[] keyBytes = "   ".getBytes(StandardCharsets.UTF_8);
+        ByteBuffer buf = ByteBuffer.allocate(1 + 2 + keyBytes.length + 4);
+        buf.put(CommandCodec.TYPE_PUT);
+        buf.putShort((short) keyBytes.length);
+        buf.put(keyBytes);
+        buf.putInt(0);
+
+        long result = assertDoesNotThrow(() -> stateMachine.apply(1, 1, buf.array()));
+        assertEquals(StateMachine.NON_MUTATING, result);
+        assertEquals(1, metrics.malformedCount.get());
+    }
+
     @Test
     void restoreSnapshotFailureIncrementsInstallFailed() {
         // Craft a malformed envelope with a negative entry count so the
@@ -128,6 +198,7 @@ class ConfigStateMachineMetricsTest {
         final AtomicLong lastDurationNanos = new AtomicLong(-1);
         final AtomicInteger snapshotRebuildCount = new AtomicInteger();
         final AtomicInteger snapshotInstallFailedCount = new AtomicInteger();
+        final AtomicInteger malformedCount = new AtomicInteger();
 
         @Override public void onWriteCommitSuccess(long applyDurationNanos) {
             successCount.incrementAndGet();
@@ -141,6 +212,9 @@ class ConfigStateMachineMetricsTest {
         }
         @Override public void onSnapshotInstallFailed() {
             snapshotInstallFailedCount.incrementAndGet();
+        }
+        @Override public void onMalformedCommittedCommand() {
+            malformedCount.incrementAndGet();
         }
     }
 }

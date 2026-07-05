@@ -41,6 +41,15 @@ final class ServerStateMachineMetrics implements StateMachineMetrics {
     }
 
     @Override
+    public void onMalformedCommittedCommand() {
+        // A poison-pill committed command was skipped deterministically at apply time. Unlike
+        // onWriteCommitFailure (deliberately not counted here - see class javadoc), this IS counted:
+        // it is a security/integrity alarm, not a routine post-commit apply failure, and it has no
+        // other observable counterpart.
+        metrics.commandMalformed().increment();
+    }
+
+    @Override
     public void onSnapshotRebuildSuccess() {
         metrics.snapshotRebuild().increment();
     }

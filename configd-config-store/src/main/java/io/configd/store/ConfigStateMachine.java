@@ -238,7 +238,27 @@ public final class ConfigStateMachine implements StateMachine {
     @Override
     public long apply(long index, long term, byte[] command) {
         assertOwnerThread();
-        CommandCodec.DecodedCommand decoded = CommandCodec.decode(command);
+        CommandCodec.DecodedCommand decoded;
+        try {
+            decoded = CommandCodec.decode(command);
+        } catch (CommandCodec.MalformedCommandException e) {
+            // WH-01 poison-pill defense. A committed command that framed cleanly (passed the outer
+            // AppendEntries cmdLen bound) but is grammatically malformed would, if we let this throw,
+            // propagate out of apply -> RaftNode.applyCommitted throws BEFORE advancing lastApplied ->
+            // the entry re-applies every tick AND on WAL replay -> durable, cluster-wide crash-loop.
+            // decode() is deterministic, so EVERY replica reaches this branch on the SAME entry and
+            // skips it identically: treat it as NON_MUTATING so applyCommitted advances lastApplied
+            // past it. No crash, no wedge, no divergence. We catch ONLY MalformedCommandException here
+            // (the malformed-decode case) - any other RuntimeException from applySwitch is a real bug
+            // and must still surface via the catch below.
+            metrics.onMalformedCommittedCommand();
+            LOG.log(Level.SEVERE,
+                    "Skipping malformed committed command at index=" + index + " term=" + term
+                            + " (len=" + (command == null ? -1 : command.length)
+                            + ") as non-mutating - poison-pill entry from a Byzantine leader or WAL "
+                            + "corruption; deterministic skip keeps the apply loop live", e);
+            return StateMachine.NON_MUTATING;
+        }
         long applyStart = System.nanoTime();
         boolean mutating = !(decoded instanceof CommandCodec.DecodedCommand.Noop);
 
@@ -294,7 +314,7 @@ public final class ConfigStateMachine implements StateMachine {
                 // Sign BEFORE mutating so a sign failure leaves the store untouched. The signing
                 // payload is computed from the input command and seq - no post-mutation state is
                 // needed - so this ordering is byte-equivalent on the happy path.
-                signCommand(command, seq);
+                signCommand(decoded, command, seq);
                 // sequence_monotonic / sequence_gap_free checks were removed here: with
                 // seq := prevSeq + 1 they are locally vacuous (tautologies that can never fire).
                 // Global apply-order is enforced by RaftNode; per-key order is the real check below.
@@ -312,7 +332,7 @@ public final class ConfigStateMachine implements StateMachine {
             case CommandCodec.DecodedCommand.Delete del -> {
                 long prevSeq = sequenceCounter;
                 long seq = prevSeq + 1;
-                signCommand(command, seq);
+                signCommand(decoded, command, seq);
                 // sequence_monotonic/sequence_gap_free removed here - locally vacuous (see Put case).
                 sequenceCounter = seq;
                 store.delete(del.key(), seq);
@@ -321,7 +341,7 @@ public final class ConfigStateMachine implements StateMachine {
             case CommandCodec.DecodedCommand.Batch batch -> {
                 long prevSeq = sequenceCounter;
                 long seq = prevSeq + 1;
-                signCommand(command, seq);
+                signCommand(decoded, command, seq);
                 // sequence_monotonic/sequence_gap_free removed here - locally vacuous (see Put case).
                 sequenceCounter = seq;
                 store.applyBatch(batch.mutations(), seq);
@@ -607,12 +627,15 @@ public final class ConfigStateMachine implements StateMachine {
      * would be signed differently from a standalone PUT ({@code 0x01})
      * even though they carry the same logical mutation.
      *
-     * @param command the raw command bytes to sign
+     * @param decoded the already-decoded command (decoded once at the {@link #apply} boundary and
+     *                threaded through so signing never re-decodes the raw bytes - that former
+     *                second decode site was strictly downstream of the guarded apply-site decode)
+     * @param command the raw command bytes (used only for the no-op canonical passthrough)
      * @param seq     the applied-mutation sequence this command commits at (== the delta's
      *                {@code toVersion}; {@code seq - 1} is the {@code fromVersion}). Bound into
      *                the signed payload so the version position is authenticated (ADR-0045).
      */
-    private void signCommand(byte[] command, long seq) {
+    private void signCommand(CommandCodec.DecodedCommand decoded, byte[] command, long seq) {
         if (signer == null) {
             return;
         }
@@ -630,7 +653,7 @@ public final class ConfigStateMachine implements StateMachine {
             // the version linkage undetectably. The payload layout matches
             // ConfigDelta.signingPayload(). The canonical form and the seq are both known before
             // any store mutation, so this can run before store.put / applyBatch.
-            byte[] canonical = canonicalize(command);
+            byte[] canonical = canonicalize(decoded, command);
             ByteBuffer buf = ByteBuffer.allocate(canonical.length + 3 * Long.BYTES + nonce.length);
             buf.put(canonical);
             buf.putLong(seq - 1);
@@ -663,14 +686,18 @@ public final class ConfigStateMachine implements StateMachine {
     }
 
     /**
-     * Converts a command to its canonical batch-encoded form.
+     * Converts an already-decoded command to its canonical batch-encoded form.
      * Single PUT and DELETE commands are wrapped in a batch with one
      * mutation. Batch commands are re-encoded through the same path to
      * guarantee byte-identical output regardless of which encoder
      * originally produced the bytes.
+     * <p>
+     * Takes the {@link CommandCodec.DecodedCommand} decoded once at the {@link #apply} boundary
+     * rather than re-decoding the raw bytes: the malformed-command guard therefore lives at exactly
+     * one decode site. {@code command} is retained only for the no-op passthrough (a no-op never
+     * reaches signing, so that branch is defensive).
      */
-    private static byte[] canonicalize(byte[] command) {
-        CommandCodec.DecodedCommand decoded = CommandCodec.decode(command);
+    private static byte[] canonicalize(CommandCodec.DecodedCommand decoded, byte[] command) {
         return switch (decoded) {
             case CommandCodec.DecodedCommand.Put put ->
                     CommandCodec.encodeBatch(List.of(

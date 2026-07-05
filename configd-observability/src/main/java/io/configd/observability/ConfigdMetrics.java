@@ -47,6 +47,16 @@ public final class ConfigdMetrics {
     public static final String NAME_SNAPSHOT_INSTALL_FAILED = "configd.snapshot.install.failed";
     public static final String NAME_SNAPSHOT_REBUILD = "configd.snapshot.rebuild";
     /**
+     * Malformed-committed-command alarm counter. Incremented on the state-machine apply thread when
+     * {@code ConfigStateMachine.apply} decodes a committed command that is grammatically malformed
+     * (framed cleanly but fails {@link io.configd.store.CommandCodec#decode} - a poison-pill entry
+     * from a cert-valid-but-Byzantine leader, or WAL corruption). The entry is skipped deterministically
+     * as non-mutating rather than crash-looping the apply loop; a non-zero value here is a
+     * security/integrity event worth alerting on. Eager-created so it emits {@code _total 0} from the
+     * first scrape.
+     */
+    public static final String NAME_COMMAND_MALFORMED = "configd.command.malformed";
+    /**
      * Write-overload reject counter. Backs the {@code Retry-After: 1} 429 path
      * ({@code HttpApiServer}) with an emitted, tested series so the sustained-429-rate
      * alert queries something real. Incremented on the HTTP write thread inside the
@@ -101,6 +111,7 @@ public final class ConfigdMetrics {
     private final MetricsRegistry.Histogram propagationDelaySeconds;
     private final MetricsRegistry.Counter snapshotInstallFailed;
     private final MetricsRegistry.Counter snapshotRebuild;
+    private final MetricsRegistry.Counter commandMalformed;
     private final MetricsRegistry.Counter writeRejectedOverloaded;
     private final MetricsRegistry.Counter raftElections;
 
@@ -119,6 +130,7 @@ public final class ConfigdMetrics {
         this.edgeReadTotal = registry.counter(NAME_EDGE_READ_TOTAL);
         this.snapshotInstallFailed = registry.counter(NAME_SNAPSHOT_INSTALL_FAILED);
         this.snapshotRebuild = registry.counter(NAME_SNAPSHOT_REBUILD);
+        this.commandMalformed = registry.counter(NAME_COMMAND_MALFORMED);
         this.writeRejectedOverloaded = registry.counter(NAME_WRITE_REJECTED_OVERLOADED);
         this.raftElections = registry.counter(NAME_RAFT_ELECTIONS);
         // ACL config-policy loader counters -- PRODUCED and incremented by AclConfigPolicyLoader on this
@@ -168,6 +180,7 @@ public final class ConfigdMetrics {
     public MetricsRegistry.Histogram propagationDelaySeconds() { return propagationDelaySeconds; }
     public MetricsRegistry.Counter snapshotInstallFailed() { return snapshotInstallFailed; }
     public MetricsRegistry.Counter snapshotRebuild() { return snapshotRebuild; }
+    public MetricsRegistry.Counter commandMalformed() { return commandMalformed; }
     public MetricsRegistry.Counter writeRejectedOverloaded() { return writeRejectedOverloaded; }
     public MetricsRegistry.Counter raftElections() { return raftElections; }
 
