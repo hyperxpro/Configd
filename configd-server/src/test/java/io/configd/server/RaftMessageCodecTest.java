@@ -8,6 +8,7 @@ import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 
 import java.nio.ByteBuffer;
+import java.util.Arrays;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -250,5 +251,95 @@ class RaftMessageCodecTest {
         var req = new RequestVoteRequest(42L, NodeId.of(1), 0L, 0L, false);
         FrameCodec.Frame frame = RaftMessageCodec.encode(req, GROUP_ID);
         assertEquals(42L, frame.term());
+    }
+
+    /**
+     * Codec-strictness batch (Gate 2 Workstream D): WH-05 (negative InstallSnapshot offset) and WH-06
+     * (strict-end trailing-byte rejection on the request-side fixed-shape decoders). Every check rejects
+     * only a malformed frame; the round-trip tests above prove well-formed frames are unaffected.
+     */
+    @Nested
+    class CodecStrictness {
+
+        /** Rebuilds a frame with {@code n} zero padding bytes appended to a valid payload. */
+        private FrameCodec.Frame withTrailing(FrameCodec.Frame good, int n) {
+            byte[] padded = Arrays.copyOf(good.payload(), good.payload().length + n);
+            return new FrameCodec.Frame(good.messageType(), good.groupId(), good.term(), padded);
+        }
+
+        @Test
+        void appendEntriesRejectsTrailingBytes() {
+            // WH-06: a fixed-shape AppendEntries carries no padding past its declared entries.
+            var entries = List.of(new LogEntry(11L, 5L, new byte[]{1, 2, 3}));
+            var req = new AppendEntriesRequest(5L, NodeId.of(2), 10L, 4L, entries, 9L);
+            FrameCodec.Frame good = RaftMessageCodec.encode(req, GROUP_ID);
+            assertDoesNotThrow(() -> RaftMessageCodec.decode(good)); // control: valid frame unaffected
+
+            FrameCodec.Frame bad = withTrailing(good, 1);
+            var ex = assertThrows(IllegalArgumentException.class, () -> RaftMessageCodec.decode(bad));
+            assertTrue(ex.getMessage().contains("trailing"), ex.getMessage());
+        }
+
+        @Test
+        void appendEntriesHeartbeatRejectsTrailingBytes() {
+            // An empty heartbeat (0 entries) is the tightest fixed shape: any trailing byte is padding.
+            var req = new AppendEntriesRequest(5L, NodeId.of(1), 10L, 4L, List.of(), 9L);
+            FrameCodec.Frame bad = withTrailing(RaftMessageCodec.encode(req, GROUP_ID), 4);
+            assertThrows(IllegalArgumentException.class, () -> RaftMessageCodec.decode(bad));
+        }
+
+        @Test
+        void installSnapshotRejectsTrailingBytesAfterConfig() {
+            // WH-06: trailing bytes past the optional configData blob are rejected.
+            byte[] data = {1, 2, 3};
+            byte[] config = {9, 8, 7};
+            var req = new InstallSnapshotRequest(8L, NodeId.of(1), 100L, 7L, 0, data, true, config);
+            FrameCodec.Frame good = RaftMessageCodec.encode(req, GROUP_ID);
+            assertDoesNotThrow(() -> RaftMessageCodec.decode(good)); // control
+
+            FrameCodec.Frame bad = withTrailing(good, 2);
+            var ex = assertThrows(IllegalArgumentException.class, () -> RaftMessageCodec.decode(bad));
+            assertTrue(ex.getMessage().contains("trailing"), ex.getMessage());
+        }
+
+        @Test
+        void installSnapshotRejectsTrailingBytesWithNoConfig() {
+            // The no-config shape (encoder writes configLen=0) must also reject padding after it.
+            byte[] data = {5, 6, 7, 8};
+            var req = new InstallSnapshotRequest(8L, NodeId.of(1), 100L, 7L, 4096, data, false);
+            FrameCodec.Frame bad = withTrailing(RaftMessageCodec.encode(req, GROUP_ID), 1);
+            assertThrows(IllegalArgumentException.class, () -> RaftMessageCodec.decode(bad));
+        }
+
+        @Test
+        void installSnapshotRejectsNegativeOffset() {
+            // WH-05: a negative chunk offset is rejected at decode (symmetry with the response's
+            // nextExpectedOffset check). Build a raw payload with offset = -1, dataLen = 0.
+            ByteBuffer p = ByteBuffer.allocate(4 + 8 + 8 + 4 + 1 + 4);
+            p.putInt(NodeId.of(1).id());
+            p.putLong(100L); // lastIncludedIndex
+            p.putLong(7L);   // lastIncludedTerm
+            p.putInt(-1);    // offset (negative - illegal)
+            p.put((byte) 1); // done
+            p.putInt(0);     // dataLen
+            FrameCodec.Frame bad = new FrameCodec.Frame(
+                    MessageType.INSTALL_SNAPSHOT, GROUP_ID, 8L, p.array());
+            var ex = assertThrows(IllegalArgumentException.class, () -> RaftMessageCodec.decode(bad));
+            assertTrue(ex.getMessage().contains("Negative InstallSnapshot offset"), ex.getMessage());
+        }
+
+        @Test
+        void installSnapshotResponseStillToleratesAbsentTrailingOffset() {
+            // Negative control for WH-06: the response's nextExpectedOffset is a DELIBERATE optional
+            // trailing field and must NOT be made strict-end. A 13-byte legacy response still decodes.
+            ByteBuffer legacy = ByteBuffer.allocate(1 + 4 + 8);
+            legacy.put((byte) 1);
+            legacy.putInt(NodeId.of(3).id());
+            legacy.putLong(42L);
+            FrameCodec.Frame frame = new FrameCodec.Frame(
+                    MessageType.INSTALL_SNAPSHOT_RESPONSE, GROUP_ID, 8L, legacy.array());
+            var result = (InstallSnapshotResponse) RaftMessageCodec.decode(frame);
+            assertEquals(0, result.nextExpectedOffset());
+        }
     }
 }

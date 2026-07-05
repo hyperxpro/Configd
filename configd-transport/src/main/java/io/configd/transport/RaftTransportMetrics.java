@@ -23,6 +23,18 @@ public interface RaftTransportMetrics {
      */
     default void onPeerIdentityRejected() {}
 
+    /**
+     * Records an inbound frame dropped at the Raft message-decode boundary (WH-10): a frame that
+     * framed and CRC-verified cleanly but could not be turned into an actionable {@code RaftMessage} -
+     * a dormant/undecodable {@link MessageType} (e.g. the reserved {@code PLUMTREE_*}/{@code HYPARVIEW_*}
+     * /{@code HEARTBEAT} codes) that has no consensus codec, or a structurally-malformed payload
+     * (truncation, an out-of-range blob length, a negative field). The frame is discarded and the
+     * connection kept, so an authenticated-but-hostile peer could otherwise flood the log one line per
+     * frame; this counter makes the drop-rate observable while the log itself is rate-limited. Backs the
+     * {@code configd_raft_decode_dropped} series. Default no-op so existing sinks need not change.
+     */
+    default void onInboundFrameDropped() {}
+
     /** No-op sink - used by tests and bootstraps with no registry. */
     RaftTransportMetrics NOOP = new RaftTransportMetrics() {};
 }

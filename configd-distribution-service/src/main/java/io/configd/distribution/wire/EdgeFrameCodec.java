@@ -773,6 +773,18 @@ public final class EdgeFrameCodec {
     }
 
     private static EdgeFrame decodeNotify(ByteBuffer p) {
+        // WH-14: enforce the encode-side MAX_NOTIFY_BATCH_BYTES cap on decode too, for canonical-
+        // encoding parity. The payload window handed to a decoder is exactly [count u32][notifications]
+        // (the frame's strict-end is checked by the caller), which is the identical span the encoder
+        // measures (encodeNotifyInto captures payloadStart BEFORE the count int), so this rejects the
+        // same over-cap batch the encoder would refuse. Already bounded by the 2 MiB frame cap, so this
+        // is strictness, not a new resource bound; well-formed frames are far below it and unchanged.
+        int payloadBytes = p.remaining();
+        if (payloadBytes > MAX_NOTIFY_BATCH_BYTES) {
+            throw new CodecException(ErrorCode.FRAME_TOO_LARGE,
+                    "NOTIFY payload " + payloadBytes + " bytes exceeds MAX_NOTIFY_BATCH_BYTES="
+                            + MAX_NOTIFY_BATCH_BYTES);
+        }
         int count = p.getInt();
         if (count < 0 || count > MAX_NOTIFY_BATCH) {
             throw new CodecException(ErrorCode.FRAME_CORRUPT, "bad NOTIFY count: " + count);

@@ -311,6 +311,15 @@ public final class FrameCodec {
         MessageType type = MessageType.fromCode(typeCode);
         int groupId = buf.getInt();
         long term = buf.getLong();
+        if (term < 0) {
+            // WH-07: a Raft term is a monotonic non-negative counter - every legitimate encoder
+            // writes term >= 0 (heartbeat/coalesced sentinels use 0, never a negative). A negative
+            // term survived the CRC above, so it is a deliberately-malformed frame, not a bit-flip.
+            // Reject it here at the shared frame boundary so no per-message decoder must re-check.
+            // groupId is NOT range-checked here (FrameCodec has no shardCount): it is bounded at the
+            // inbound demux, which drops any frame for an unregistered group before allocation.
+            throw new IllegalArgumentException("Negative frame term: " + term);
+        }
         long epoch = buf.getLong();
         if (epoch != RESERVED_EPOCH) {
             // The 8-byte epoch (offset 18) is MBZ in v1: no legitimate peer populates it.

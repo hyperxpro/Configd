@@ -27,4 +27,9 @@ final class ServerRaftTransportMetrics implements RaftTransportMetrics {
     public void onPeerIdentityRejected() {
         metrics.raftPeerIdentityMismatch().increment();
     }
+
+    @Override
+    public void onInboundFrameDropped() {
+        metrics.raftDecodeDropped().increment();
+    }
 }
