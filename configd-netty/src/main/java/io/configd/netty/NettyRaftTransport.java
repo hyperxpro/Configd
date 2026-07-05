@@ -18,6 +18,8 @@ import io.netty.channel.ChannelFuture;
 import io.netty.channel.ChannelHandlerContext;
 import io.netty.channel.ChannelInitializer;
 import io.netty.channel.ChannelOption;
+import io.netty.channel.epoll.EpollChannelOption;
+import io.netty.channel.epoll.EpollSocketChannel;
 import io.netty.channel.EventLoopGroup;
 import io.netty.channel.IoHandlerFactory;
 import io.netty.channel.MultiThreadIoEventLoopGroup;
@@ -96,6 +98,13 @@ public final class NettyRaftTransport implements RaftTransportEndpoint {
     private final int workerThreads;
     private final int inboundReadTimeoutMs = RaftWireProtocol.inboundReadTimeoutMs();
     private final int maxInboundConnections = RaftWireProtocol.maxInboundConnections();
+    /**
+     * Kernel deadline (ms) for our outbound sends to be ACKed before the connection is failed - the
+     * dead/restarted-peer detector for a send-only outbound (see the connect() comment). Well above a
+     * healthy peer's millisecond ACK; tunable, default 10s so a restarted node rejoins promptly.
+     */
+    private static final int OUTBOUND_ACK_TIMEOUT_MS =
+            Integer.getInteger("configd.raft.outboundAckTimeoutMs", 10_000);
 
     private final ConcurrentHashMap<NodeId, PeerChannel> peers = new ConcurrentHashMap<>();
 
@@ -525,6 +534,7 @@ public final class NettyRaftTransport implements RaftTransportEndpoint {
                     .option(ChannelOption.CONNECT_TIMEOUT_MILLIS, RaftWireProtocol.CONNECT_TIMEOUT_MS)
                     .option(ChannelOption.ALLOCATOR, PooledByteBufAllocator.DEFAULT)
                     .option(ChannelOption.TCP_NODELAY, true)
+                    .option(ChannelOption.SO_KEEPALIVE, true)
                     .handler(new ChannelInitializer<Channel>() {
                         @Override
                         protected void initChannel(Channel ch) {
@@ -536,6 +546,17 @@ public final class NettyRaftTransport implements RaftTransportEndpoint {
                             ch.pipeline().addLast(new PeerHandler());
                         }
                     });
+            // A raft outbound channel is SEND-ONLY (a peer replies on ITS OWN outbound, never on the
+            // connection we opened), so a read-idle check can never see a half-open link to a peer that
+            // restarted or crashed - our AppendEntries would blackhole into the dead socket forever with
+            // no reconnect (the peers-never-re-dial-a-restarted-node bug). TCP_USER_TIMEOUT makes the
+            // kernel fail the connection once our sent bytes go unACKed for the window (exactly the
+            // dead/restarted-peer case), so channelInactive fires and we reconnect to the peer's fresh
+            // listener. Epoll-only (the production/Linux tier); a healthy peer ACKs within milliseconds
+            // so a live link never trips it. SO_KEEPALIVE above is the portable backstop on other tiers.
+            if (transport.clientChannelClass() == EpollSocketChannel.class) {
+                b.option(EpollChannelOption.TCP_USER_TIMEOUT, OUTBOUND_ACK_TIMEOUT_MS);
+            }
             ChannelFuture cf = b.connect(address);
             cf.addListener((ChannelFuture f) -> {
                 if (!f.isSuccess()) {
