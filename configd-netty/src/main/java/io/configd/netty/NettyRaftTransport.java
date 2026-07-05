@@ -20,6 +20,8 @@ import io.netty.channel.ChannelInitializer;
 import io.netty.channel.ChannelOption;
 import io.netty.channel.epoll.EpollChannelOption;
 import io.netty.channel.epoll.EpollSocketChannel;
+import io.netty.channel.uring.IoUringChannelOption;
+import io.netty.channel.uring.IoUringSocketChannel;
 import io.netty.channel.EventLoopGroup;
 import io.netty.channel.IoHandlerFactory;
 import io.netty.channel.MultiThreadIoEventLoopGroup;
@@ -536,10 +538,17 @@ public final class NettyRaftTransport implements RaftTransportEndpoint {
             // no reconnect (the peers-never-re-dial-a-restarted-node bug). TCP_USER_TIMEOUT makes the
             // kernel fail the connection once our sent bytes go unACKed for the window (exactly the
             // dead/restarted-peer case), so channelInactive fires and we reconnect to the peer's fresh
-            // listener. Epoll-only (the production/Linux tier); a healthy peer ACKs within milliseconds
-            // so a live link never trips it. SO_KEEPALIVE above is the portable backstop on other tiers.
-            if (transport.clientChannelClass() == EpollSocketChannel.class) {
+            // listener. A healthy peer ACKs within milliseconds so a live link never trips it. Set it on
+            // every native Linux tier that exposes the socket option (epoll AND io_uring). On the pure-NIO
+            // tier the option is unavailable, so a dead peer is detected only by the kernel's TCP
+            // retransmission timeout (tcp_retries2, ~15 min) - SO_KEEPALIVE above does NOT shorten that
+            // (its default idle is 2h and it does not probe while sends are outstanding); NIO is a
+            // test/fallback tier, not the production tier (which auto-selects epoll on Linux).
+            Class<? extends Channel> clientChannel = transport.clientChannelClass();
+            if (clientChannel == EpollSocketChannel.class) {
                 b.option(EpollChannelOption.TCP_USER_TIMEOUT, OUTBOUND_ACK_TIMEOUT_MS);
+            } else if (clientChannel == IoUringSocketChannel.class) {
+                b.option(IoUringChannelOption.TCP_USER_TIMEOUT, OUTBOUND_ACK_TIMEOUT_MS);
             }
             ChannelFuture cf = b.connect(address);
             cf.addListener((ChannelFuture f) -> {

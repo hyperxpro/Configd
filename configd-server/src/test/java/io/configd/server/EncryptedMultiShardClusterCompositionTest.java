@@ -66,7 +66,10 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * properties to the ratio proven stable by {@code NettyConsensusLivenessTest} so scheduling jitter
  * on a busy box cannot manufacture spurious churn.
  */
-@Timeout(360)
+// Pure hang detection: set ABOVE the sum of the internal deadline-poll budgets (2x STABILIZE + the
+// REPLICATE calls + WATCH + 2x RESTART ~= 735s worst-case) so a genuinely slow-but-progressing run on
+// the throttled box is not aborted as a hang before its own deadline-polls conclude.
+@Timeout(780)
 class EncryptedMultiShardClusterCompositionTest {
 
     private static final int NODES = 3;
@@ -162,17 +165,31 @@ class EncryptedMultiShardClusterCompositionTest {
                     "node " + i + " must persist the authenticated topology descriptor at N>1");
         }
 
-        // --- the witness boot-gate clears at quorum on every shard: a stable elected leader per shard
-        //     is only reachable once the strict-boot gate has cleared across a peer majority ---
+        // --- the armed strict-boot witness gate does NOT wrongly block a healthy cluster: with the
+        //     witness armed on every group, a stable leader per shard is still reachable, i.e. the gate
+        //     clears at a peer quorum instead of deadlocking progress. (That the gate correctly REFUSES a
+        //     rolled-back node is a distinct property, proven by the Gate 3c AnchorWitness red-team tests;
+        //     a successful election here does not by itself prove that enforcement.) ---
         for (int gid = 0; gid < SHARDS; gid++) {
             int leader = awaitStableLeader(servers, gid, STABILIZE_MS);
             assertTrue(leader >= 0, "shard " + gid + " must elect a single stable leader within "
-                    + STABILIZE_MS + "ms (proves the armed witness boot-gate cleared at quorum): "
+                    + STABILIZE_MS + "ms (the armed witness gate clears at quorum rather than deadlocking): "
                     + leadershipSnapshot(servers, gid));
         }
 
         // --- a write commits on the shard-0 leader and REPLICATES + applies on all three encrypted
         //     nodes; a co-committed shard-1 write proves independent multi-shard replication ---
+        // First let shard 1 fully converge (all nodes at the same applied index) so the cross-shard
+        // isolation check below cannot race a still-applying shard-1 leader no-op and spuriously fail.
+        assertTrue(awaitUntil(STABILIZE_MS, () -> {
+            long[] a = appliedIndexes(servers, 1);
+            for (long x : a) {
+                if (x != a[0]) {
+                    return false;
+                }
+            }
+            return true;
+        }), "shard 1 must converge on one applied index before the cross-shard isolation baseline");
         long[] before1 = appliedIndexes(servers, 1);
         long committed0 = commitAndAwaitReplication(servers, 0, "cfg/alpha", "v-alpha");
         assertTrue(committed0 > 0, "shard-0 write must reach a committed index");
