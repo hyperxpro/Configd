@@ -1,8 +1,55 @@
 # Configd Frozen-Format v1 — Permanent Format Design & Adversarial Review
 
-**Status: RATIFIED — 2026-07-04. Build arc (Group A) authorized. Formats freeze at the release tag.**
-Repo `main @ 012e213` · designed 2026-07-03, ratified 2026-07-04 · Group A of the production-standard
-gap assessment (`docs/readiness/production-standard-gap-assessment-2026-07-03.md`, items A1–A6).
+**Status: AS-BUILT / SHIPPED — 2026-07-04. Build arc (Group A) complete and merged; formats freeze at the release tag.**
+Repo `main @ 012e213` (design baseline) · designed 2026-07-03, ratified 2026-07-04, **built and merged
+Gates 0–5 (2026-07-04)** · Group A of the production-standard gap assessment
+(`docs/readiness/production-standard-gap-assessment-2026-07-03.md`, items A1–A6).
+
+> **AS-BUILT record (2026-07-04) — read this first; it is the honest truth about what shipped.**
+> The build arc landed as seven gates. Where a Part-I/Part-II statement below describes an intent that
+> shipped differently, the as-built text (this block and the inline `AS-BUILT` notes) governs.
+>
+> - **Gate 1** version markers on every persistent + wire format (fail-closed on unknown).
+> - **Gate 2** per-record scope + position + SHA-256 hash chain in the WAL (reorder/splice/interior-rollback).
+> - **Gate 2b** `TopologyDescriptor` (replaces `raft-shard-count.meta`) + cursor/SUBSCRIBE epoch + `STALE_TOPOLOGY`.
+> - **Gate 3a** the durability kernel: `raft-anchor` + the ⟦SEC-MERGE⟧ (`raft.persistent_state` folded in)
+>   + persist-before-ack + the recovery gates (Step-2.5 term-witness, `W<A` REFUSE, snapshot-join).
+> - **Gate 3b** the `node-anchor` (topology cross-check + audit head + `shardAnchorDigest`, the R-f closer).
+> - **Gate 3c** the peer-quorum `AnchorWitness` (§A1.7 realized), closing **R-a′**. As-built after two
+>   operator rulings: the **boot** gate is UNCONDITIONALLY peer-majority (strict-boot, the default) —
+>   closes R-a′ at N≥3, costing only a node rebooting *into* a partition; the **vote-deferral**
+>   (strict-vote) is OPT-IN via `-Dconfigd.raft.witnessStrict=true` (default fast-vote, to preserve
+>   single-fault leader failover, which full-strict-default broke in the CI smoke). The witness is armed
+>   only where real peers exist (`tcpTransport != null`, i.e. a configured multi-node cluster); a
+>   single-node / sharding-on-one-node deploy leaves it inert (it cannot split-brain). Design addendum:
+>   `docs/design/anchor-witness-peer-quorum-2026-07-04.md`.
+> - **Gate 4** the persisted dual-slot `raft-keyring` (RKYR) + keyTerm-versioned at-rest integrity in
+>   **both** postures (operator ruling "Option B": `keyTerm` is in the algId=1 HMAC body as well as the
+>   algId=2 GCM body; the keyless algId=0 layout stays byte-identical) + non-destructive rotation
+>   (append-and-retain term rotation; rewrap-before-swap signing-key rotation; both crash-atomic) + boot
+>   loads all retained terms (no hardcoded `term=1`).
+> - **Gate 5** the integration sweep + this as-built reconciliation. Two composition proofs landed:
+>   `EncryptedMultiShardClusterCompositionTest` (a real 3-node cluster: encryption ON × multi-shard ×
+>   witness armed × live watches × a follower restart recovering through the encrypted anchors/keyring)
+>   and `Over4MiBEncryptedSnapshotRoundTripTest` (a genuinely > 4 MiB snapshot across the multi-chunk
+>   wire transfer AND the whole-blob GCM-at-rest path, with tamper-refused + keyTerm rotation).
+>
+> **Byte-identity, as-built.** The encryption-OFF posture is byte-identical to pre-freeze **except** the
+> keyed-HMAC auth-on sub-case: Option B put `keyTerm` in the algId=1 HMAC body, so an auth-on-but-not-
+> encrypting node now writes the term-versioned HMAC envelope (not the old fixed-key one). The keyless
+> (no-signing-key) posture stays byte-for-byte identical. This exception is operator-ratified.
+>
+> **Honest residuals (as-built; see §4 §4 for the full list).** R-a (freshness: anchor/keyring/whole-
+> datadir rollback to a prior valid state within a term — external-witness territory); R-a′ residual at
+> **N≥5 under fast-vote** (the default) is a grant→witnessed window that a rollback can exploit only under
+> *sustained* multi-peer announce packet loss — strict-vote closes it absolutely, and it is moot at N≤3;
+> R-b..R-e as designed; and two as-built residuals surfaced during the build: **the security-audit HMAC
+> chain is NOT term-versioned** (`K_audit = HKDF(signing-key)`, §2.10) — a *signing-key* rotation leaves
+> pre-rotation audit records readable but no longer tamper-verifiable across the rotation boundary; and
+> **no live/admin rotation trigger ships in v1** — the term- and signing-key-rotation *mechanisms* are
+> built, crash-atomic, and tested, but there is no wired hot-path or admin call, so a rotation is an
+> out-of-band maintenance operation on a stopped node. Neither is a data-loss defect; both are documented,
+> not overclaimed.
 
 > **Ratification record (2026-07-04).** The operator ratified all twelve §10.2 decisions. Items 1–10
 > are accepted as written. The two freeze-window severity calls (items 11–12, surfaced by the
@@ -433,6 +480,19 @@ unknown tail beyond the known payload tolerated (TLV forward-compat, kept). **Le
 / 512 MiB reassembly cap) and `EdgeSnapshotCodec` (lead u64 = DATA seq, not a version) unchanged —
 carrier-versioned; documented as such.
 
+**AS-BUILT: encryption and chunking are orthogonal and never nest.** At rest the *entire* snapshot
+blob is enveloped ONCE (`RaftLog.serializeSnapshot` → `EnvelopeV3.wrap(SNAP_MAGIC, gid, …)`): one
+algId=2 GCM record with a single `keyTerm` and a single `segmentId` for the whole payload — there is
+no per-chunk envelope. Chunking is a *wire* concern: `RaftNode.sendSnapshotChunk` slices the **raw,
+unenveloped** state-machine bytes (`stateMachine.snapshot()`, the same bytes the at-rest envelope wraps
+as a whole), so an InstallSnapshot chunk carries no `IntegrityEnvelope`; wire confidentiality/integrity
+is the transport's job (mTLS in production, plus the per-frame CRC), and each receiving node
+re-encrypts the reassembled blob independently under its **own** at-rest key when it persists it. A
+`> 4 MiB` snapshot therefore spans multiple wire chunks *as plaintext* while being a single whole-blob
+GCM record on every node's disk. `Over4MiBEncryptedSnapshotRoundTripTest` pins both halves (multi-chunk
+byte-identical reassembly; whole-blob GCM round-trip + tamper-refused + keyTerm rotation). A "per-chunk
+keyTerm/segmentId" mental model does not match the as-built system and would be redundant with mTLS.
+
 ### 2.10 Audit record (inside the `security-audit.wal` frames)
 
 ```
@@ -443,6 +503,16 @@ recordHash = HMAC-SHA256(K_audit, AUDIT_MAGIC ‖ recordVersion ‖ prevHash ‖
 
 The magic+version are **inside the chain input** — a version downgrade breaks the chain. Head
 bound by the node anchor (§2.5). Bad magic/version ⇒ chain-verification throw.
+
+**AS-BUILT residual (audit chain not term-versioned).** `K_audit = HKDF(signing-key)` — it is derived
+directly from the signing key, NOT from a keyring term, so it is the one authenticated at-rest key the
+Gate-4 keyTerm work did NOT term-version. A *signing-key* rotation (rewrap-before-swap, §2.18) leaves
+every pre-rotation audit record readable but no longer tamper-*verifiable* under the new key: the chain
+head the node anchor binds still checks under the current key, but records written before the boundary
+verify only under the retired key. Term rotation is unaffected (it does not touch the signing key).
+This is residual R-g in §4 §4 — tamper-evidence is lost across a signing-key rotation boundary for the
+pre-rotation audit tail; the records themselves are not destroyed. Closing it (deriving `K_audit` from a
+keyring term like the integrity keys) is a post-v1 change since the derivation is frozen at the tag.
 
 ### 2.11 Watch cursor + topology epoch (A4) and SUBSCRIBE resume
 
@@ -565,6 +635,16 @@ under the new KEK into a new slot (`keyringSeq+1`) BEFORE swapping `signing-key.
 then restart — crash on either side of the swap boots on the matching slot; roots unchanged ⇒ all
 old data verifies. Unknown term on read ⇒ fail closed. The anchor authenticates under
 `K_integrity[keyTerm]` with its own `keyTerm` stamp, so neither rotation invalidates old anchors.
+
+**AS-BUILT: the rotation mechanisms ship, but no live/admin trigger does (residual R-h).** `NodeKeyring.
+rotateTerm`, `SegmentKeyManager.rotateTo`, and `NodeKeyring.rewrapForNewSigningKey` are built,
+crash-atomic, and tested (`NodeKeyringTest`, `KeyringKeyTermSelectionTest`, `NodeKeyringRedteamTest`),
+but they have **no `src/main` caller** — boot loads all retained terms and writes on the keyring's
+`activeTerm`, and nothing on the running server or an admin endpoint invokes a rotation. So in v1 a
+rotation is an out-of-band maintenance action against a stopped node's data directory (or a future
+tool), not a hot-path or online operation. This is honest scope, not a defect: the freeze exists so the
+mechanism is correct-by-construction whenever it is wired; wiring an admin/online trigger is post-v1 and
+needs no format change (the keyring format already supports append-and-retain).
 
 ---
 
@@ -959,12 +1039,22 @@ NODE_ANCHOR_PAYLOAD (92 B):   # AS-BUILT Gate 3b (+shardAnchorDigest per ratific
   silent-loss to a detected node-anchor rollback (= R-a): to hide a wipe an attacker must roll/forge the
   node-anchor to a matching-digest version that never existed.
 
-### A1.7 External-witness hook (residual (a) mitigation) — interface only
+### A1.7 External-witness hook (residual (a) mitigation) — SPI + peer-quorum realization built (Gate 3c)
 
 `interface AnchorWitness { void record(int scopeId, long anchorSeq); long lastSeen(int scopeId); }`
 When configured, the anchor writer calls `record` after each fsync and boot calls `lastSeen`; a
-`storedSeq < lastSeen` ⇒ REFUSE (anchor rollback detected via external monotonic storage). Default
-= no witness (residual (a) stands). This is the only construct that can close anchor-rollback.
+`storedSeq < lastSeen` ⇒ REFUSE (anchor rollback detected via external monotonic storage). This is
+the only construct that can close anchor-rollback.
+
+**AS-BUILT (Gate 3c).** The SPI is realized by a **peer-quorum** `AnchorWitness`
+(`PeerQuorumAnchorWitness`): a node's monotonic `anchorSeq` (and its per-term vote) is witnessed over
+the existing Raft channel by a quorum of peers, and a node REFUSES to boot or grant a vote below the
+highest value a peer quorum witnessed from it. This closes **R-a′** exactly where split-brain is
+possible (N≥3); see the AS-BUILT block at the top and `docs/design/anchor-witness-peer-quorum-
+2026-07-04.md`. The **external-monotonic-store** realization (TPM/RPMB/remote KV — the closer for the
+R-a *freshness* residual, a node-local within-term rollback with no live peer to witness it) is NOT
+built in v1; it slots into this same SPI post-v1. So: SPI + peer-quorum realization = built (R-a′
+closed); external-store realization = not built (R-a stands).
 
 ---
 
@@ -1142,7 +1232,7 @@ Step 3); `S`=monotonic `anchorSeq`/`keyringSeq` dual-slot; `X`=external witness 
 | 2 | frame-boundary tail truncation (1..k trailing frames) | **DETECTED** — every survivor is valid, but `W < A` | H |
 | 3 | whole-WAL-file rollback to an older valid WAL | **DETECTED** — older WAL has `W < A` | H |
 | 4 | state rollback ACROSS a term boundary (term goes backward vs the WAL) | **DETECTED** — no separate state file; the Step-2.5 term-witness gate REFUSES `lastWALTerm > anchor.currentTerm` | merged §A1.1 + Step-2.5 |
-| 4b | state rollback WITHIN a term (`votedFor` reset by replaying an older same-term slot) | **RESIDUAL (R-a′ — SAFETY/Election-Safety, red-team §11)** — term unchanged so Step-2.5 is silent; votes aren't WAL-witnessed; worst case = double-vote → divergence, NOT staleness | X only (AnchorWitness) |
+| 4b | state rollback WITHIN a term (`votedFor` reset by replaying an older same-term slot) | **CLOSED at N≥3 (AS-BUILT Gate 3c)** — the peer-quorum `AnchorWitness` REFUSES a boot/vote below the highest `anchorSeq` a peer quorum witnessed. Strict-boot (default) closes the N=3 boot race; strict-vote (opt-in) closes the grant→witnessed window absolutely. **N≥5 fast-vote residual** needs sustained multi-peer announce loss. N=1 has no witness but cannot split-brain. | X (AnchorWitness, §A1.7 built) |
 | 5 | snapshot+meta rollback (older pair) | **DETECTED** — anchor binds `snapshotIndex/Term`; older pair mismatches the anchor / `W<A` | E + H |
 | 6 | snapshot-meta-only tamper | **DETECTED** — meta is removed; boundary now lives authenticated in the anchor | E (anchor) |
 | 7 | in-log reorder (index permutation) | **DETECTED** — embedded index ≠ slot position | C |
@@ -1196,6 +1286,25 @@ contributed to a **committed-and-client-acked** entry.
 - **R-e Un-anchored audit tail** (§A1.6): audit-head anchoring is periodic (reliability's K=64
   records / 1 s), so truncation confined to the last ≤K records / ≤1 s before a crash is undetected.
   Bounded and documented; strictly better than today's fully-undetected audit chain.
+- **R-a′ Within-term `votedFor` rollback (SAFETY / Election-Safety)** — **CLOSED at N≥3 as-built by the
+  Gate-3c peer-quorum `AnchorWitness`** (§A1.7 realized; `docs/design/anchor-witness-peer-quorum-
+  2026-07-04.md`). The strict-**boot** gate (default, unconditional peer-majority) closes the boot-reply
+  race at N=3; strict-**vote** (opt-in, `-Dconfigd.raft.witnessStrict=true`) closes the grant→witnessed
+  window absolutely. **Residual (as-built):** at **N≥5 under the default fast-vote**, a rollback can
+  still escape only under *sustained* multi-peer announce packet loss (a single drop is defeated by the
+  heartbeat-cadence re-announce); it is moot at N≤3, and strict-vote removes it at the cost of
+  single-fault leader failover (why it is opt-in). N=1 has no witness but cannot split-brain.
+- **R-f Single-shard wipe→FRESH** — **CLOSED as-built by the Gate-3b node-anchor `shardAnchorDigest`**
+  (matrix 15b, §2.5). Reduced to R-a (an attacker must roll the node-anchor to a matching-digest prior
+  version, i.e. forge/roll it → needs the key or the witness).
+- **R-g Security-audit chain not term-versioned** (§2.10): `K_audit = HKDF(signing-key)` is the one
+  authenticated at-rest key Gate 4 did not term-version. A *signing-key* rotation leaves pre-rotation
+  audit records readable but not tamper-verifiable across the boundary (records intact; tamper-evidence
+  lost for the pre-rotation tail). Term rotation is unaffected. Post-v1 fix: derive `K_audit` from a
+  keyring term (a frozen-derivation change, so it is a tag-boundary decision).
+- **R-h No live/admin rotation trigger** (§2.18): the term- and signing-key-rotation mechanisms are
+  built + crash-atomic + tested but have no `src/main` caller; a rotation is an out-of-band maintenance
+  operation in v1. No format change is needed to wire an online/admin trigger post-v1.
 
 ---
 
@@ -4416,12 +4525,14 @@ Approving this design freezes the formats forever. The specific decisions being 
 11. **R-a′ within-term `votedFor` rollback = Election Safety (NOT staleness).** Merging the vote
     into the anchor (⟦SEC-MERGE⟧) makes a within-term anchor rollback able to reset `votedFor` and
     cause a double-vote → cluster divergence. The term-witness gate does NOT catch it (term
-    unchanged; votes aren't WAL-witnessed). It is locally undetectable without the external
-    `AnchorWitness` (not built in v1). **Decision:** accept R-a′ documented for v1 (the recommended
-    default — it is the same locally-undetectable class Raft's on-disk vote already lives in, and
-    the merge does not make it *worse* than a separate rolled-back state file would), OR gate v1 on
-    building `AnchorWitness`. If accepted, the ⟦SEC-MERGE⟧ ratification (item 1) is made with this
-    severity in view — the doc no longer labels it "N.A."
+    unchanged; votes aren't WAL-witnessed). It is locally undetectable without a witness.
+    **Decision (RATIFIED, then BUILT — AS-BUILT Gate 3c):** the "accept documented" option was
+    REJECTED; the operator ruled to CLOSE R-a′ by building the peer-quorum `AnchorWitness` (§A1.7).
+    It shipped in Gate 3c: strict-boot (default, unconditional peer-majority) closes the N=3 boot
+    race; strict-vote (opt-in) closes the grant→witnessed window absolutely; the N≥5 fast-vote
+    residual needs sustained multi-peer announce loss. The ⟦SEC-MERGE⟧ (item 1) is kept — it is
+    strictly better and improves the term-crossing case. (This paragraph records the original v1
+    decision menu; the top-of-doc AS-BUILT block is authoritative.)
 12. **R-f single-shard wipe→FRESH — the one freeze-window design choice.** The 60-byte node-anchor
     freezes forever and binds shard *count* but not per-shard liveness, so a shard wiped to empty
     boots FRESH undetected. **Recommended:** add a per-shard liveness binding to the node-anchor
