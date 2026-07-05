@@ -146,6 +146,26 @@ public final class EdgeClientCore {
     /** Default silence factor: reconnect after this many missed heartbeat intervals. */
     public static final int DEFAULT_SILENCE_FACTOR = 8;
 
+    /**
+     * Hard absolute ceiling on a snapshot's total accumulated bytes (WH-13, 512 MiB). The
+     * distribution server declares {@code chunkCount}/{@code totalBytes} in SNAPSHOT_BEGIN, but
+     * both are attacker-controlled (a malicious/compromised server, or plaintext), so the
+     * BEGIN-declared values are themselves capped to this backstop AND the running accumulation
+     * is bounded by it - the real defense against a chunk flood driving the edge heap toward the
+     * codec's {@code ~2 GiB} reassemble ceiling BEFORE any check. Generous for a full-store
+     * snapshot; a legitimate transfer is far below it.
+     */
+    public static final long MAX_SNAPSHOT_TOTAL_BYTES = 512L * 1024 * 1024;
+
+    /**
+     * Hard absolute ceiling on a snapshot's declared chunk count (WH-13). Bounds the
+     * {@code pendingChunks} list length (and its per-element object overhead) independently of
+     * the byte ceiling, so a flood of tiny chunks cannot grow the list unboundedly. At the
+     * 1 MiB per-chunk wire cap a {@link #MAX_SNAPSHOT_TOTAL_BYTES} snapshot needs ~512 chunks;
+     * this ({@value}) leaves ample headroom for a legitimately finer-grained chunking.
+     */
+    public static final int MAX_SNAPSHOT_CHUNKS = 65_536;
+
     private final long heartbeatMs;
     private final int silenceFactor;
 
@@ -191,6 +211,12 @@ public final class EdgeClientCore {
     private final List<EdgeFrame.SnapshotChunk> pendingChunks = new ArrayList<>();
     private long pendingSnapshotSeq = -1L;
     private boolean inSnapshot;
+    /** BEGIN-declared chunk count for the in-flight transfer (WH-13/WH-15 accumulation cap). */
+    private int pendingChunkCount;
+    /** BEGIN-declared total byte length for the in-flight transfer (WH-13/WH-15 accumulation cap). */
+    private long pendingTotalBytes;
+    /** Running sum of accumulated chunk payload bytes for the in-flight transfer (WH-13). */
+    private long accumulatedSnapshotBytes;
 
     /** Pending connection directives for the shell/sim to drain. */
     private final Deque<ConnectionDirective> directives = new ArrayDeque<>();
@@ -255,6 +281,7 @@ public final class EdgeClientCore {
     private int frontierAdvances;
     private int verifyRejections;
     private int disconnectedRebootstraps;
+    private int snapshotChunksRejected;
 
     /**
      * Sim/test constructor: no signature verifier, no epoch persistence (signature rows
@@ -533,9 +560,26 @@ public final class EdgeClientCore {
     }
 
     private void onSnapshotBegin(EdgeFrame.SnapshotBegin b) {
+        // WH-13/WH-15 BEGIN sanity cap: chunkCount/totalBytes are attacker-declared (a malicious
+        // or compromised distribution server, or plaintext), so reject a transfer whose OWN header
+        // already declares more than the hard ceilings before a single chunk is accumulated. The
+        // record ctor has already enforced non-negativity.
+        if (b.chunkCount() > MAX_SNAPSHOT_CHUNKS) {
+            snapshotChunksRejected++;
+            throw new IllegalStateException("SNAPSHOT_BEGIN chunkCount " + b.chunkCount()
+                    + " exceeds MAX_SNAPSHOT_CHUNKS=" + MAX_SNAPSHOT_CHUNKS);
+        }
+        if (b.totalBytes() > MAX_SNAPSHOT_TOTAL_BYTES) {
+            snapshotChunksRejected++;
+            throw new IllegalStateException("SNAPSHOT_BEGIN totalBytes " + b.totalBytes()
+                    + " exceeds MAX_SNAPSHOT_TOTAL_BYTES=" + MAX_SNAPSHOT_TOTAL_BYTES);
+        }
         inSnapshot = true;
         pendingChunks.clear();
         pendingSnapshotSeq = b.snapshotSeq();
+        pendingChunkCount = b.chunkCount();
+        pendingTotalBytes = b.totalBytes();
+        accumulatedSnapshotBytes = 0L;
     }
 
     private void onSnapshotChunk(EdgeFrame.SnapshotChunk c) {
@@ -543,6 +587,24 @@ public final class EdgeClientCore {
             // A chunk with no preceding BEGIN is a protocol error; refuse to reassemble a
             // partial snapshot (silent partial application is the divergence we forbid).
             throw new IllegalStateException("SNAPSHOT_CHUNK received outside a snapshot transfer");
+        }
+        // WH-13 accumulation caps: bound the (chunkCount+1)-th chunk and the running byte sum
+        // against the BEGIN-declared values (WH-15 cross-field), and against the hard ceiling as
+        // the real backstop (the declared values were themselves attacker-supplied, though already
+        // capped to the ceiling at BEGIN). Any breach is a protocol error routed through the same
+        // poison/reconnect path as a chunk-outside-transfer, never a silent unbounded accumulation.
+        if (pendingChunks.size() >= pendingChunkCount) {
+            snapshotChunksRejected++;
+            throw new IllegalStateException("SNAPSHOT_CHUNK count exceeds BEGIN chunkCount="
+                    + pendingChunkCount);
+        }
+        accumulatedSnapshotBytes += c.length();
+        if (accumulatedSnapshotBytes > pendingTotalBytes
+                || accumulatedSnapshotBytes > MAX_SNAPSHOT_TOTAL_BYTES) {
+            snapshotChunksRejected++;
+            throw new IllegalStateException("SNAPSHOT_CHUNK accumulated bytes "
+                    + accumulatedSnapshotBytes + " exceeds BEGIN totalBytes=" + pendingTotalBytes
+                    + " (hard ceiling " + MAX_SNAPSHOT_TOTAL_BYTES + ")");
         }
         pendingChunks.add(c);
     }
@@ -836,6 +898,16 @@ public final class EdgeClientCore {
     /** Number of backward snapshots refused (monotonicity guard). */
     public int backwardSnapshotsRefused() {
         return backwardSnapshotsRefused;
+    }
+
+    /**
+     * Number of snapshot chunks (or over-declaring SNAPSHOT_BEGIN headers) rejected by the
+     * anti-exhaustion accumulation caps (WH-13): a flood beyond the BEGIN-declared
+     * {@code chunkCount}/{@code totalBytes} or the hard {@link #MAX_SNAPSHOT_TOTAL_BYTES} /
+     * {@link #MAX_SNAPSHOT_CHUNKS} ceilings.
+     */
+    public int snapshotChunksRejected() {
+        return snapshotChunksRejected;
     }
 
     /** Number of heartbeats observed. */

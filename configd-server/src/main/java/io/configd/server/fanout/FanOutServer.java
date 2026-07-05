@@ -28,6 +28,7 @@ import java.io.OutputStream;
 import java.net.InetSocketAddress;
 import java.net.ServerSocket;
 import java.net.Socket;
+import java.net.SocketTimeoutException;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ArrayBlockingQueue;
@@ -78,6 +79,31 @@ public final class FanOutServer implements FanOutEndpoint {
 
     /** Bounded TLS handshake timeout (ms), mirroring {@code TcpRaftTransport.HANDSHAKE_TIMEOUT_MS}. */
     static final int HANDSHAKE_TIMEOUT_MS = 2_000;
+
+    /**
+     * System property: the pre-SUBSCRIBE first-frame deadline (ms) for an admitted (post-mTLS)
+     * edge connection (WH-11). Mirrors {@code configd.raft.inboundReadTimeoutMs}; the slow-loris
+     * test sets a short value.
+     */
+    public static final String FIRST_FRAME_DEADLINE_PROP = "configd.edge.firstFrameDeadlineMs";
+
+    /**
+     * Default pre-SUBSCRIBE first-frame deadline (ms). Generous ({@value}) so a healthy subscriber
+     * always sends its SUBSCRIBE / WATCH_CREATE well within it; a peer that completes mTLS then
+     * sends nothing is reaped after this window. AFTER the first routed frame the deadline is
+     * DISARMED - an established subscriber is idle by design (server pushes; the existing
+     * server->client HEARTBEAT is its liveness), so it is never read-idle-reaped.
+     */
+    public static final int DEFAULT_FIRST_FRAME_DEADLINE_MS = 10_000;
+
+    /**
+     * The configured pre-SUBSCRIBE first-frame deadline (ms), tunable via
+     * {@value #FIRST_FRAME_DEADLINE_PROP} (default {@link #DEFAULT_FIRST_FRAME_DEADLINE_MS}).
+     * Shared by both the JDK and Netty edge transports.
+     */
+    public static int firstFrameDeadlineMs() {
+        return Integer.getInteger(FIRST_FRAME_DEADLINE_PROP, DEFAULT_FIRST_FRAME_DEADLINE_MS);
+    }
 
     /** Named config: per-connection outbound transport queue depth (frames). Design section 4. */
     public static final int DEFAULT_TRANSPORT_QUEUE_FRAMES = 64;
@@ -488,6 +514,12 @@ public final class FanOutServer implements FanOutEndpoint {
         private void readerLoop() {
             try {
                 DataInputStream in = new DataInputStream(socket.getInputStream());
+                // WH-11: arm the pre-SUBSCRIBE first-frame deadline. A peer that completed mTLS
+                // (or connected in plaintext) then sends nothing - or dribbles a partial first
+                // frame - fails its read with a SocketTimeoutException and is reaped, instead of
+                // parking a reader thread + FD + cumulator until the OS reaps it. DISARMED below
+                // once the first routed frame arrives (an established subscriber is idle by design).
+                socket.setSoTimeout(firstFrameDeadlineMs());
                 while (alive.get() && running.get()) {
                     EdgeFrame frame = readFrame(in);
                     if (frame == null) {
@@ -495,6 +527,9 @@ public final class FanOutServer implements FanOutEndpoint {
                     }
                     if (!firstFrameRouted) {
                         firstFrameRouted = true;
+                        // WH-11 disarm: rely on the server->client HEARTBEAT for liveness now; do
+                        // NOT read-idle-reap a healthy subscriber that legitimately stays quiet.
+                        socket.setSoTimeout(0);
                         // Outbound flip: a WATCH_CREATE-first connection is a 0x02 watch connection,
                         // so offer() must stamp 0x02 for the client to decode the server's WATCH_* frames.
                         // A 0x03-stamped SUBSCRIBE is a filtered-fan-out connection (ADR-0045), so
@@ -512,6 +547,12 @@ public final class FanOutServer implements FanOutEndpoint {
                     }
                     driver.onInboundFrame(frame);
                 }
+            } catch (SocketTimeoutException e) {
+                // WH-11: the first-frame deadline elapsed with no (complete) routed frame - a
+                // slow-loris. Reaped + counted; the deadline is disarmed after the first frame,
+                // so a post-SUBSCRIBE idle subscriber never reaches here.
+                metrics.onFirstFrameTimeout();
+                close(ErrorCode.PROTOCOL_VIOLATION, "pre-SUBSCRIBE first-frame deadline elapsed");
             } catch (EdgeFrameCodec.CodecException e) {
                 close(e.code(), "decode error: " + e.getMessage());
             } catch (IOException e) {

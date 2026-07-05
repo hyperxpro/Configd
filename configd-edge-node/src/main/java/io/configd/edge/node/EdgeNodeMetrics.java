@@ -32,8 +32,9 @@ import java.util.concurrent.atomic.AtomicLong;
  *       into THIS registry (the counter instance is created here and handed to the core's
  *       constructor);</li>
  *   <li>{@code edge_cursor_lag} (gauge), {@code edge_applied_total},
- *       {@code edge_gaps_total}, {@code edge_snapshots_applied_total} — pumped from the
- *       core's single-writer diagnostics by {@link #syncFromCore};</li>
+ *       {@code edge_gaps_total}, {@code edge_snapshots_applied_total},
+ *       {@code edge_snapshot_chunks_rejected_total} (the WH-13 anti-exhaustion accumulation-cap
+ *       rejections) — pumped from the core's single-writer diagnostics by {@link #syncFromCore};</li>
  *   <li>{@code edge_reads_total}, {@code edge_read_refusals_total{reason}} — the HTTP
  *       serving surface. {@link MetricsRegistry} has no label support, so the
  *       {@code {reason}} label is encoded per the established convention as a per-reason
@@ -64,6 +65,7 @@ final class EdgeNodeMetrics {
     private final MetricsRegistry.Counter applied;
     private final MetricsRegistry.Counter gaps;
     private final MetricsRegistry.Counter snapshotsApplied;
+    private final MetricsRegistry.Counter snapshotChunksRejected;
     private final MetricsRegistry.Counter verifyRejections;
     private final MetricsRegistry.Counter reads;
     private final MetricsRegistry.Counter refusalsCursorBehind;
@@ -86,6 +88,7 @@ final class EdgeNodeMetrics {
     private long lastApplied;
     private int lastGaps;
     private int lastSnapshots;
+    private int lastSnapshotChunksRejected;
     private int lastVerifyRejections;
     private StalenessTracker.State lastState;
 
@@ -94,6 +97,7 @@ final class EdgeNodeMetrics {
         this.applied = registry.counter("edge.applied");
         this.gaps = registry.counter("edge.gaps");
         this.snapshotsApplied = registry.counter("edge.snapshots_applied");
+        this.snapshotChunksRejected = registry.counter("edge.snapshot_chunks_rejected");
         this.verifyRejections = registry.counter("edge.verify_rejections");
         this.reads = registry.counter("edge.reads");
         this.refusalsCursorBehind = registry.counter("edge.read_refusals." + REASON_CURSOR_BEHIND);
@@ -175,6 +179,8 @@ final class EdgeNodeMetrics {
         lastGaps = core.gapsDetected();
         pump(snapshotsApplied, core.snapshotsApplied() - lastSnapshots);
         lastSnapshots = core.snapshotsApplied();
+        pump(snapshotChunksRejected, core.snapshotChunksRejected() - lastSnapshotChunksRejected);
+        lastSnapshotChunksRejected = core.snapshotChunksRejected();
         pump(verifyRejections, core.verifyRejections() - lastVerifyRejections);
         lastVerifyRejections = core.verifyRejections();
         cursorLag.set(core.cursorLag());
