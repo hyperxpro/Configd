@@ -207,13 +207,26 @@ exactly why existing state **MUST** be requested as an explicit snapshot.)*
 ### 3.1 Wire encoding (shared with §1's list cursor)
 
 **W3-5 (encoding — identical to §1 A9-1 / A4-4).** The cursor vector **MUST** be encoded on the wire as a
-**length-prefixed list of `(uint32 gid, uint64 S)` pairs, ordered by `gid` in UNSIGNED ascending order**
-(`gid` is a `uint32`; a driver **MUST** sort and compare it as unsigned, not signed):
+`topologyEpoch:u64` prefix followed by a **length-prefixed list of `(uint32 gid, uint64 S)` pairs, ordered by
+`gid` in UNSIGNED ascending order** (`gid` is a `uint32`; a driver **MUST** sort and compare it as unsigned,
+not signed):
 
 ```
-cursor_vector := [ count:u32 ] ( gid:u32  S:u64 )*count        # ordered by gid UNSIGNED ascending
+cursor_vector := [ topologyEpoch:u64 ] [ count:u32 ] ( gid:u32  S:u64 )*count   # pairs ordered by gid UNSIGNED ascending
                   count == 0  ⇒  "from now per shard"  (W3-4)
 ```
+
+**The leading `topologyEpoch:u64` (frozen-format A4) is REQUIRED and binds the whole resume token to the
+topology generation that minted it** (the server's `ShardMap.epoch()`; §06 F5-3 / F8). The wire floor is
+therefore **12 bytes** (`topologyEpoch:u64 + count:u32`), even for the `count == 0` from-now cursor. A driver
+**MUST**:
+
+- emit the server-supplied epoch verbatim (at **v1 static-N** it is always **`1`** — `INITIAL_TOPOLOGY_EPOCH`);
+- treat epoch **`0`** as **reserved-illegal** — encoding `0` produces a frame the server rejects as
+  `FRAME_CORRUPT` (3), and a decoded `0` is `FRAME_CORRUPT`;
+- carry the epoch as part of the durable cursor and re-send it on resume — if the server's epoch has advanced,
+  it responds with **`STALE_TOPOLOGY`** (12, §07 E3-1): drop the whole cursor and re-hydrate (do **not** merely
+  resume from an earlier `S`). At v1 static-N the epoch never changes, so this never fires.
 
 This is the **same type** as the `list` continuation cursor (§1
 [A4-4](01-paths-and-access.md#42-the-list-operation)) and is declared shared in §1

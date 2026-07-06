@@ -11,7 +11,7 @@ Every code is **validated against the deployed implementation**: the HTTP codes 
 [`AdminApiHandler.java`](../../../configd-server/src/main/java/io/configd/server/AdminApiHandler.java), the
 streaming codes against
 [`ErrorCode.java`](../../../configd-distribution-service/src/main/java/io/configd/distribution/wire/ErrorCode.java)
-(:16–67) and the fan-out close paths. Where this section and a prior RFC claim disagree, **the code wins**.
+(:14–107) and the fan-out close paths. Where this section and a prior RFC claim disagree, **the code wins**.
 This section is **normative**; it **composes with**:
 
 - [`04-data-plane.md`](04-data-plane.md) — produces the HTTP codes; §07 is the consolidated reaction table.
@@ -82,15 +82,15 @@ disambiguate:
 
 ---
 
-## 3. Binary edge streaming `ErrorCode`s (the 11)
+## 3. Binary edge streaming `ErrorCode`s (the 12)
 
-**E3-1.** The closed `ErrorCode` taxonomy (`ErrorCode.java` :16–67). The numeric `code()` (1..11) is the `u8`
-byte on the wire; a driver **MUST** branch on the **numeric code** (never the message, E6) **together with the
-carrier frame** (E3-3), because several codes are scope-overloaded:
+**E3-1.** The closed `ErrorCode` taxonomy (`ErrorCode.java` :14–107). The numeric `code()` (**1..12**) is the
+`u8` byte on the wire; a driver **MUST** branch on the **numeric code** (never the message, E6) **together with
+the carrier frame** (E3-3), because several codes are scope-overloaded:
 
 | Code | Name | When | Scope (carrier) | Driver reaction |
 |---|---|---|---|---|
-| **1** | `BAD_WIRE_VERSION` | version byte ∉ {0x01,0x02}, or wrong **pinned** version (§06 F4) | connection-fatal (`ERROR_CLOSE`) | a wire-version bug — fix the version pin; don't reconnect with the same mistake |
+| **1** | `BAD_WIRE_VERSION` | version byte ∉ {0x01,0x02,0x03}, or wrong **pinned** version (§06 F4) | connection-fatal (`ERROR_CLOSE`) | a wire-version bug — fix the version pin; don't reconnect with the same mistake |
 | **2** | `FRAME_TOO_LARGE` | declared length > 2 MiB (§06 F2) | connection-fatal (`ERROR_CLOSE`) | a producer bug — a conforming driver should never elicit it |
 | **3** | `FRAME_CORRUPT` | CRC mismatch, malformed payload, unknown type, **trailing bytes**, bad cursor (§06 F3/F11) | connection-fatal (`ERROR_CLOSE`) | corruption / framing mistake — reconnect once; if persistent, a codec bug |
 | **4** | `AUTH_FAIL` | mTLS identity rejected at the **connection** boundary (the **401-class**) | **TLS-layer — NOT framed** (server-side metric/close-reason; the driver sees a **TLS handshake failure / reset**, not an `ERROR_CLOSE(4)`) | **(re)authenticate** — check/fix the client cert; do not hot-loop |
@@ -101,6 +101,7 @@ carrier frame** (E3-3), because several codes are scope-overloaded:
 | **9** | `SERVER_SHUTDOWN` | orderly **or** transport-level server-side close; **also** the per-watch `WATCH_CANCEL` acknowledgment reason | **carrier-dependent** — `ERROR_CLOSE` ⇒ connection-fatal; `WATCH_CANCELED` acking your `WATCH_CANCEL` ⇒ per-watch (connection + siblings survive) | `ERROR_CLOSE`: **reconnect** (§05); `WATCH_CANCELED`: **expected ack — do NOT reconnect** |
 | **10** | `PROTOCOL_VIOLATION` | an unexpected frame for the current session state | connection-fatal (`ERROR_CLOSE`) | a driver **state-machine bug** — fix the frame sequence; reconnect |
 | **11** | `NOT_AUTHORIZED` | authenticated but lacks `READ ∧ WATCH` over the watch target (over-broad target, non-root `full_chain_verify`/`FULL`, intersecting `DENY`) — the **403-class** | **per-watch** (`WATCH_CANCELED`; connection survives) | **forbidden** for that target — **do not** retry the same target; request a **narrower** one (§01 §6, §02 W7-5). At **subscription** zero data frames precede it (§02 W7-5); it MAY **also** arrive **mid-stream** as a bounded **revocation** after data has flowed (§02 W7-7) — same reaction (drop the watch) |
+| **12** | `STALE_TOPOLOGY` | the resume token's bound `topologyEpoch` (§06 F5-3 / F8) does **not** match the server's current `ShardMap.epoch()` — the whole topology generation the cursor/`SUBSCRIBE` belongs to is **superseded**. Distinct from `GAP_UNRECOVERABLE` (6): that is "data fell off retention, resume from an earlier position"; `STALE_TOPOLOGY` is "the cursor generation is invalid, drop it entirely" (the etcd `ErrCompacted` model). **At v1 static-N (one deploy-time epoch = `1`) it NEVER fires** — a v2-only code | **carrier-dependent** — per-watch (`WATCH_CANCELED`) for a watch; connection-fatal (`ERROR_CLOSE`) for a legacy `SUBSCRIBE` (§06 F5-3) | **drop the cursor entirely and fully re-hydrate from scratch** (a fresh `WATCH_CREATE`/`SUBSCRIBE` with a **from-now** or `with_initial_snapshot` bootstrap) — **do NOT** re-send the stale cursor, and do **not** merely resume from an earlier `S` (that is the `GAP_UNRECOVERABLE` reaction) |
 
 **E3-2 (the catch-up ladder — a driver MUST handle, not just close).** `DEMOTED_TO_CATCHUP` (7) is **not** a
 close — it rides an `ERROR_CLOSE` (`0x09`) frame but leaves the session **open** (catch-up mode). A slow
@@ -115,12 +116,15 @@ the **carrier** names the **scope**. A driver **MUST** combine them:
 - **`ERROR_CLOSE` (`0x09`)** is **connection-scope** and terminal for every code **except**
   `DEMOTED_TO_CATCHUP` (7), the sole non-fatal code that rides it (E3-2).
 - **`WATCH_CANCELED` (`0x0F`)** is **per-watch-scope** (the connection and sibling watches survive); it carries
-  `NOT_AUTHORIZED` (11), `GAP_UNRECOVERABLE` (6) on the `0x02` plane, and `SERVER_SHUTDOWN` (9) as a
-  `WATCH_CANCEL` ack.
+  `NOT_AUTHORIZED` (11), `GAP_UNRECOVERABLE` (6) on the `0x02` plane, `STALE_TOPOLOGY` (12) for a watch, and
+  `SERVER_SHUTDOWN` (9) as a `WATCH_CANCEL` ack.
+- **`STALE_TOPOLOGY` (12)** is **carrier-dependent** like `GAP_UNRECOVERABLE`: per-watch (`WATCH_CANCELED`) for
+  a watch, connection-fatal (`ERROR_CLOSE`) for a legacy `SUBSCRIBE`. It is a **v2-only** code (never emitted at
+  v1 static-N).
 - **`AUTH_FAIL` (4)** is **not framed at all** — it is the TLS-layer handshake rejection (E3-1 row 4).
 
-So a pure code-byte switch is insufficient for codes **4, 6, 7, 9, 11**; a driver **MUST** key its reaction on
-**(code, carrier frame)**.
+So a pure code-byte switch is insufficient for codes **4, 6, 7, 9, 11, 12**; a driver **MUST** key its reaction
+on **(code, carrier frame)**.
 
 ---
 
@@ -180,7 +184,8 @@ carry control/escape bytes — sanitize before logging). A driver **MUST** branc
   needs a fixed cert) and **`409`** (resend with a **fresh** timestamp+nonce — §04 D11-3 / §05 R6-4).
 - **Recover by a watch/connection action (streaming):** `BAD_SUBSCRIBE` (5) **resource-cap** ⇒ `WATCH_CANCEL`
   (live-watch cap) or **reconnect** (`watch_id` budget); `GAP_UNRECOVERABLE` (6) ⇒ **re-bootstrap from
-  snapshot** (the watch, or the connection on the legacy plane).
+  snapshot** (the watch, or the connection on the legacy plane); `STALE_TOPOLOGY` (12) ⇒ **drop the cursor and
+  fully re-hydrate from scratch** (never re-send the stale cursor — a v2-only code, carrier-dependent scope).
 - **Terminal — do NOT retry unchanged:** `400`, `403`, `404`, `405`, `BAD_SUBSCRIBE` (5, **malformed** spec),
   `NOT_AUTHORIZED` (11, narrow the target), `PROTOCOL_VIOLATION` (10, fix the bug), `BAD_WIRE_VERSION` (1),
   `FRAME_TOO_LARGE` (2).
@@ -196,10 +201,11 @@ carry control/escape bytes — sanitize before logging). A driver **MUST** branc
       mutation timeout / other mutation `5xx` ⇒ indeterminate, retry-to-definite, no RMW** (E2, E7).
 - [ ] Treat a **pre-handshake connection refusal** as a capacity condition (retry/backoff), **not** a protocol
       error (§06 F10-2).
-- [ ] Streaming: handle all **11** `ErrorCode`s with **scope = (code, carrier)** — the **catch-up ladder**
+- [ ] Streaming: handle all **12** `ErrorCode`s with **scope = (code, carrier)** — the **catch-up ladder**
       `DEMOTED_TO_CATCHUP` (7, non-fatal on `0x09` — keep streaming, ack/drain promptly) → `QUARANTINED` (8,
       own backoff + identity cooldown); `GAP_UNRECOVERABLE` (6, re-bootstrap from snapshot, carrier-dependent
-      scope); `BAD_SUBSCRIBE` (5) resource-cap ⇒ `WATCH_CANCEL`/reconnect; `SERVER_SHUTDOWN` (9) in
+      scope); `STALE_TOPOLOGY` (12, v2-only — drop the cursor and fully re-hydrate, carrier-dependent scope);
+      `BAD_SUBSCRIBE` (5) resource-cap ⇒ `WATCH_CANCEL`/reconnect; `SERVER_SHUTDOWN` (9) in
       `WATCH_CANCELED` = expected cancel-ack, don't reconnect; `AUTH_FAIL` (4) = a TLS handshake failure, not a
       frame (E3).
 - [ ] Treat the **401/403 split identically on both planes** — `AUTH_FAIL`(4)/`401` ⇒ re-auth;
