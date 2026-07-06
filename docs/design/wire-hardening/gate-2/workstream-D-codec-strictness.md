@@ -50,3 +50,17 @@ byte-identity confirmation (goldens green). Leave uncommitted.
 `catch` around `RaftMessageCodec.decode`) — an unbounded per-frame log-flood vector on hostile input,
 the same anti-pattern WH-10 targets. Sweep it into the WH-10 rate-limited-Logger fix (it was left as-is
 by Workstream A to stay in scope).
+
+## WH-07 term-reject REVERTED (layering decision, during Gate 2 full-reactor validation)
+The initial WH-07 fix added a negative-term reject in `FrameCodec.decode`. The full-reactor gate
+caught that this breaks `NettyConsensusFrameEncoderByteIdentityTest` / `...AllocationTest`, which
+exercise the FULL i64 range of the `term` header field (Long.MIN_VALUE) to prove encoder byte-identity.
+DECISION: revert the FrameCodec term reject. Rationale — FrameCodec is the PURE FRAMING layer
+(length/version/type/CRC + reserved-epoch-MBZ, a forward-compat invariant); it treats LIVE semantic
+header fields (`term`, `groupId`) as opaque pass-through, which the byte-identity tests encode as a
+contract. D itself already placed the groupId bound at the DEMUX (not FrameCodec) for exactly this
+reason. Term non-negativity is a Raft-SEMANTIC invariant already enforced at the consensus layer: a
+negative term is always < currentTerm (>=0), so RaftNode treats it as stale and ignores it. Pushing
+that check into the framing codec was inconsistent with the codec's contract and its groupId decision.
+Net: WH-07's real content (groupId dropped-at-demux for unregistered groups) stands; the term half is
+correctly located at the consensus layer (already enforced), not the framing codec.

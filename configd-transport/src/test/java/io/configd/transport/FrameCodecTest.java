@@ -107,28 +107,6 @@ class FrameCodecTest {
                 "a non-zero reserved epoch must fail closed on the MBZ check, got: " + ex.getMessage());
     }
 
-    @Test
-    void negativeTermRejected() {
-        // WH-07: a Raft term is a monotonic non-negative counter; a negative term is never produced by
-        // a legitimate encoder. Stamp term = -1 at offset 10 (after length+version+type+groupId), repair
-        // the CRC so the term check (not the checksum) is what fires, and expect a fail-closed rejection.
-        byte[] frame = FrameCodec.encode(MessageType.APPEND_ENTRIES, 42, 7L, "payload".getBytes());
-        ByteBuffer.wrap(frame).putLong(10, -1L); // stamp term = -1
-        recomputeCrc(frame);
-
-        IllegalArgumentException ex = assertThrows(IllegalArgumentException.class,
-                () -> FrameCodec.decode(frame));
-        assertTrue(ex.getMessage().contains("Negative frame term"),
-                "a negative term must fail closed, got: " + ex.getMessage());
-    }
-
-    @Test
-    void zeroTermAccepted() {
-        // Control: term 0 (the heartbeat/coalesced-header sentinel) is NOT negative and must decode.
-        byte[] frame = FrameCodec.encode(MessageType.RAFT_COALESCED_HEARTBEAT, 0, 0L, new byte[0]);
-        assertEquals(0L, FrameCodec.decode(frame).term());
-    }
-
     /** Recomputes the CRC32C trailer over [0, len-4) so only the field-level check under test fails. */
     private static void recomputeCrc(byte[] frame) {
         int crcOffset = frame.length - FrameCodec.TRAILER_SIZE;

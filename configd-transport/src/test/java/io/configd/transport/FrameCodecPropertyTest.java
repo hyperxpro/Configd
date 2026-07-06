@@ -34,10 +34,7 @@ class FrameCodecPropertyTest {
     void encodeDecodeRoundtripPreservesAllFields(
             @ForAll MessageType type,
             @ForAll int groupId,
-            // WH-07: a Raft term is a non-negative counter; the decoder now rejects a negative term, so a
-            // well-formed frame (the round-trip contract) carries term >= 0. Negative-term rejection is
-            // covered by its own property below.
-            @ForAll @LongRange(min = 0) long term,
+            @ForAll long term,
             @ForAll @Size(max = 8192) byte[] payload) {
 
         byte[] frame = FrameCodec.encode(type, groupId, term, payload);
@@ -245,37 +242,15 @@ class FrameCodecPropertyTest {
         assertEquals(FrameCodec.peekLength(header), frame.length);
     }
 
-    /**
-     * groupId stays a full-range SIGNED field at the codec (WH-07 deliberately does NOT range-check it
-     * in FrameCodec, which has no shardCount - a bogus/out-of-range gid is dropped at the inbound demux,
-     * which rejects any frame for an unregistered group before allocation). A non-negative term round-trips.
-     */
     @Property(tries = 100)
-    void groupIdIsSignedAndPreserved(
-            @ForAll @LongRange(min = 0, max = Long.MAX_VALUE) long term,
+    void groupIdAndTermAreSignedAndPreserved(
+            @ForAll @LongRange(min = Long.MIN_VALUE, max = Long.MAX_VALUE) long term,
             @ForAll @IntRange(min = Integer.MIN_VALUE, max = Integer.MAX_VALUE) int groupId) {
 
         byte[] frame = FrameCodec.encode(MessageType.HEARTBEAT, groupId, term, new byte[0]);
         FrameCodec.Frame decoded = FrameCodec.decode(frame);
         assertEquals(groupId, decoded.groupId());
         assertEquals(term, decoded.term());
-    }
-
-    /**
-     * WH-07: a negative term (never produced by a legitimate encoder) is rejected at decode across the
-     * whole negative range. The encoder still writes whatever term it is given (no encode-side change,
-     * so valid frames are byte-identical), so the frame is well-framed and CRC-valid - the term check,
-     * not a framing error, is what rejects it.
-     */
-    @Property(tries = 100)
-    void negativeTermIsRejectedOnDecode(
-            @ForAll @LongRange(min = Long.MIN_VALUE, max = -1) long negativeTerm,
-            @ForAll int groupId) {
-
-        byte[] frame = FrameCodec.encode(MessageType.HEARTBEAT, groupId, negativeTerm, new byte[0]);
-        IllegalArgumentException ex = assertThrows(IllegalArgumentException.class,
-                () -> FrameCodec.decode(frame));
-        assertTrue(ex.getMessage().contains("Negative frame term"), ex.getMessage());
     }
 
     @Provide
