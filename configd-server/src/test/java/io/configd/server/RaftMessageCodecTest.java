@@ -406,5 +406,19 @@ class RaftMessageCodecTest {
                     () -> RaftMessageCodec.decode(withTrailing(good, 1)));
             assertTrue(ex.getMessage().contains("trailing"), ex.getMessage());
         }
+
+        @Test
+        void witnessRejectsTrailingBytes() {
+            // WH-06 (Gate-7 round-2): the witness body is exactly WITNESS_BODY_LEN; a trailing byte is
+            // rejected, matching every other fixed-shape Raft decoder. decodeWitness needs the
+            // authenticated sender, so it is exercised directly rather than via decode().
+            var from = NodeId.of(2);
+            var msg = new io.configd.raft.WitnessMessage(from, 11L, 9L, 3, 4L, true);
+            FrameCodec.Frame good = RaftMessageCodec.encode(msg, GROUP_ID);
+            assertDoesNotThrow(() -> RaftMessageCodec.decodeWitness(good, from)); // control: exact body
+            var ex = assertThrows(IllegalArgumentException.class,
+                    () -> RaftMessageCodec.decodeWitness(withTrailing(good, 1), from));
+            assertTrue(ex.getMessage().contains("trailing"), ex.getMessage());
+        }
     }
 }

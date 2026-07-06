@@ -694,6 +694,10 @@ public final class RaftMessageCodec {
         long seenOfYouSeq = buf.getLong();
         int flags = buf.get() & 0xFF;
         boolean query = (flags & WITNESS_FLAG_QUERY) != 0;
+        // Strict-end (WH-06): the witness body is exactly WITNESS_BODY_LEN; reject any surplus,
+        // matching every other fixed-shape Raft decoder (the Gate-7 round-2 review caught this as the
+        // one fixed-shape decoder the round-1 WH-06 completeness fix missed).
+        rejectTrailingBytes(buf, "Witness");
         if (type == MessageType.RAFT_WITNESS) {
             return new WitnessMessage(from, selfAnchorSeq, selfTerm, selfVotedFor, seenOfYouSeq, query);
         }
