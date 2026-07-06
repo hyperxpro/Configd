@@ -341,5 +341,70 @@ class RaftMessageCodecTest {
             var result = (InstallSnapshotResponse) RaftMessageCodec.decode(frame);
             assertEquals(0, result.nextExpectedOffset());
         }
+
+        // ---- C2 (WH-06 completeness): strict-end on the remaining fixed-size decoders ----
+
+        @Test
+        void appendEntriesResponseRejectsTrailingBytes() {
+            var resp = new AppendEntriesResponse(5L, true, 12L, NodeId.of(3));
+            FrameCodec.Frame good = RaftMessageCodec.encode(resp, GROUP_ID);
+            assertDoesNotThrow(() -> RaftMessageCodec.decode(good)); // control
+            var ex = assertThrows(IllegalArgumentException.class,
+                    () -> RaftMessageCodec.decode(withTrailing(good, 1)));
+            assertTrue(ex.getMessage().contains("trailing"), ex.getMessage());
+        }
+
+        @Test
+        void requestVoteRejectsTrailingBytes() {
+            var req = new RequestVoteRequest(5L, NodeId.of(2), 10L, 4L, false);
+            FrameCodec.Frame good = RaftMessageCodec.encode(req, GROUP_ID);
+            assertDoesNotThrow(() -> RaftMessageCodec.decode(good)); // control
+            var ex = assertThrows(IllegalArgumentException.class,
+                    () -> RaftMessageCodec.decode(withTrailing(good, 1)));
+            assertTrue(ex.getMessage().contains("trailing"), ex.getMessage());
+        }
+
+        @Test
+        void preVoteRejectsTrailingBytes() {
+            // PreVote shares decodeRequestVote; a trailing byte on the PRE_VOTE type is rejected too.
+            var req = new RequestVoteRequest(5L, NodeId.of(2), 10L, 4L, true);
+            FrameCodec.Frame good = RaftMessageCodec.encode(req, GROUP_ID);
+            assertDoesNotThrow(() -> RaftMessageCodec.decode(good)); // control
+            assertThrows(IllegalArgumentException.class,
+                    () -> RaftMessageCodec.decode(withTrailing(good, 2)));
+        }
+
+        @Test
+        void requestVoteResponseRejectsTrailingBytes() {
+            var resp = new RequestVoteResponse(5L, true, NodeId.of(3), false);
+            FrameCodec.Frame good = RaftMessageCodec.encode(resp, GROUP_ID);
+            assertDoesNotThrow(() -> RaftMessageCodec.decode(good)); // control
+            var ex = assertThrows(IllegalArgumentException.class,
+                    () -> RaftMessageCodec.decode(withTrailing(good, 1)));
+            assertTrue(ex.getMessage().contains("trailing"), ex.getMessage());
+        }
+
+        @Test
+        void timeoutNowRejectsTrailingBytes() {
+            var req = new TimeoutNowRequest(5L, NodeId.of(2));
+            FrameCodec.Frame good = RaftMessageCodec.encode(req, GROUP_ID);
+            assertDoesNotThrow(() -> RaftMessageCodec.decode(good)); // control
+            var ex = assertThrows(IllegalArgumentException.class,
+                    () -> RaftMessageCodec.decode(withTrailing(good, 1)));
+            assertTrue(ex.getMessage().contains("trailing"), ex.getMessage());
+        }
+
+        @Test
+        void installSnapshotResponseRejectsTrailingBytesAfterOptionalOffset() {
+            // The strict-end fires AFTER the optional nextExpectedOffset: a full 17-byte response
+            // decodes (control), but a byte PAST the present optional field is rejected.
+            var resp = new InstallSnapshotResponse(8L, true, NodeId.of(3), 42L, 7);
+            FrameCodec.Frame good = RaftMessageCodec.encode(resp, GROUP_ID);
+            var ok = (InstallSnapshotResponse) RaftMessageCodec.decode(good); // control: offset preserved
+            assertEquals(7, ok.nextExpectedOffset());
+            var ex = assertThrows(IllegalArgumentException.class,
+                    () -> RaftMessageCodec.decode(withTrailing(good, 1)));
+            assertTrue(ex.getMessage().contains("trailing"), ex.getMessage());
+        }
     }
 }

@@ -10,7 +10,9 @@ import io.configd.transport.RaftTransportMetrics;
 
 import org.junit.jupiter.api.Test;
 
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -39,6 +41,16 @@ class RaftTransportAdapterIdentityBindingTest {
     private static FrameCodec.Frame appendEntriesFrom(NodeId leaderId) {
         return RaftMessageCodec.encode(
                 new AppendEntriesRequest(5L, leaderId, 0L, 0L, List.of(), 0L), 0);
+    }
+
+    /** A coalesced heartbeat bundling one empty AppendEntries per given leaderId (group ids 0,1,...). */
+    private static FrameCodec.Frame coalescedHeartbeat(NodeId... leaders) {
+        Map<Integer, AppendEntriesRequest> hb = new LinkedHashMap<>();
+        int gid = 0;
+        for (NodeId leader : leaders) {
+            hb.put(gid++, new AppendEntriesRequest(5L, leader, 0L, 0L, List.of(), 0L));
+        }
+        return RaftMessageCodec.encodeCoalescedHeartbeat(hb);
     }
 
     /** A counting {@link RaftTransportMetrics} sink (the SPI keeps a default method, so no lambda). */
@@ -98,6 +110,58 @@ class RaftTransportAdapterIdentityBindingTest {
         assertEquals(1, dispatched.get(), "a same-identity frame must be dispatched");
         assertEquals(0, rejections.get());
         assertNotNull(seen[0]);
+    }
+
+    @Test
+    void coalescedHeartbeatForgedLeaderIdIsDroppedAndCountedWhenEnforced() {
+        // C1 (WH-08/09 coalesced path): a coalesced HB from Node-1 that bundles an HONEST group
+        // (leader Node-1) AND a FORGED group (leader Node-9). The whole frame is dropped and counted -
+        // not even the honest entry slips through - because the sender may only speak for itself.
+        CapturingTransport transport = new CapturingTransport();
+        AtomicInteger rejections = new AtomicInteger();
+        RaftTransportAdapter adapter = new RaftTransportAdapter(transport, 0, true, counting(rejections));
+
+        AtomicInteger dispatched = new AtomicInteger();
+        adapter.registerInboundHandler((from, gid, message) -> dispatched.incrementAndGet());
+
+        transport.inject(NodeId.of(1), coalescedHeartbeat(NodeId.of(1), NodeId.of(9)));
+
+        assertEquals(0, dispatched.get(),
+                "a coalesced HB carrying any forged per-group leaderId must not dispatch ANY group");
+        assertEquals(1, rejections.get(), "the coalesced-path forgery must increment the mismatch counter");
+    }
+
+    @Test
+    void coalescedHeartbeatMatchingLeaderIdsIsDispatchedWhenEnforced() {
+        CapturingTransport transport = new CapturingTransport();
+        AtomicInteger rejections = new AtomicInteger();
+        RaftTransportAdapter adapter = new RaftTransportAdapter(transport, 0, true, counting(rejections));
+
+        AtomicInteger dispatched = new AtomicInteger();
+        adapter.registerInboundHandler((from, gid, message) -> dispatched.incrementAndGet());
+
+        // Every per-group leaderId == from (Node-4): an honest coalesced heartbeat; both groups dispatch.
+        transport.inject(NodeId.of(4), coalescedHeartbeat(NodeId.of(4), NodeId.of(4)));
+
+        assertEquals(2, dispatched.get(), "an honest coalesced HB dispatches every per-group heartbeat");
+        assertEquals(0, rejections.get());
+    }
+
+    @Test
+    void coalescedHeartbeatForgeryIsIgnoredWhenUnenforced() {
+        CapturingTransport transport = new CapturingTransport();
+        AtomicInteger rejections = new AtomicInteger();
+        // Legacy 2-arg constructor => enforcement off: the coalesced path preserves legacy dispatch.
+        RaftTransportAdapter adapter = new RaftTransportAdapter(transport, 0);
+
+        AtomicInteger dispatched = new AtomicInteger();
+        adapter.registerInboundHandler((from, gid, message) -> dispatched.incrementAndGet());
+
+        transport.inject(NodeId.of(1), coalescedHeartbeat(NodeId.of(1), NodeId.of(9)));
+
+        assertEquals(2, dispatched.get(),
+                "with enforcement off the coalesced path preserves legacy dispatch (no in-body check)");
+        assertEquals(0, rejections.get());
     }
 
     @Test

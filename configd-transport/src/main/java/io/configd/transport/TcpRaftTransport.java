@@ -116,6 +116,18 @@ public final class TcpRaftTransport implements RaftTransportEndpoint {
     /** Guards the one-time "peer-identity verification unconfigured" warning (unenforced-but-TLS posture). */
     private final AtomicBoolean unconfiguredWarningEmitted = new AtomicBoolean(false);
 
+    /**
+     * Min interval between throttled inbound decode/handler failure log lines (ns). A decode failure
+     * drops the connection (one line per connection), but a handler throw keeps the read loop running
+     * (one line per frame), so an authenticated-but-hostile peer could otherwise flood the log - the
+     * WH-10 anti-pattern. The connection is dropped or the frame skipped regardless; only the log line
+     * is rate-limited. Mirrors {@code RaftTransportAdapter.LOG_THROTTLE_INTERVAL_NANOS}.
+     */
+    private static final long LOG_THROTTLE_INTERVAL_NANOS = 1_000_000_000L; // 1/sec
+    /** Throttle state for the inbound decode/handler-failure warn (a path a hostile peer could flood). */
+    private final AtomicLong inboundFailureLogLastNanos = new AtomicLong(0L);
+    private final AtomicLong inboundFailureLogSuppressed = new AtomicLong(0L);
+
     private final ConcurrentHashMap<NodeId, PeerConnection> outbound = new ConcurrentHashMap<>();
     /** Inbound sockets accepted by {@link #acceptLoop}; closed on {@link #close}. */
     private final java.util.Set<Socket> acceptedSockets =
@@ -271,6 +283,31 @@ public final class TcpRaftTransport implements RaftTransportEndpoint {
                     + PeerIdentityPolicy.ALLOWED_NODES_PROP + " unset); a cert-valid peer can forge "
                     + "another node's senderId. Configure an allow-list to enforce identity binding.");
         }
+    }
+
+    /**
+     * Emits an inbound decode/handler failure as a WARN at most once per
+     * {@link #LOG_THROTTLE_INTERVAL_NANOS}, counting suppressed lines and reporting (and resetting)
+     * the tally on the line that DOES emit. Shared by the decode-failure and handler-error paths - a
+     * hostile-but-authenticated peer could otherwise flood the log one line per frame (WH-10). Replaces
+     * the prior raw {@code System.err.println}/{@code printStackTrace} so every drop-path uses the same
+     * rate-limited {@link Logger}, uniform with the adapter's in-body/decode-drop throttling.
+     */
+    private void logInboundFailureThrottled(java.util.function.LongFunction<String> message) {
+        long now = System.nanoTime();
+        long last = inboundFailureLogLastNanos.get();
+        if (now - last >= LOG_THROTTLE_INTERVAL_NANOS
+                && inboundFailureLogLastNanos.compareAndSet(last, now)) {
+            long n = inboundFailureLogSuppressed.getAndSet(0L);
+            LOG.warning(() -> message.apply(n));
+        } else {
+            inboundFailureLogSuppressed.incrementAndGet();
+        }
+    }
+
+    /** " (N similar suppressed since last log)" when {@code n > 0}, else "". */
+    private static String suppressedSuffix(long n) {
+        return n > 0 ? " (" + n + " similar suppressed since last log)" : "";
     }
 
     /**
@@ -544,16 +581,19 @@ public final class TcpRaftTransport implements RaftTransportEndpoint {
                     frame = FrameCodec.decode(frameBytes);
                 } catch (FrameCodec.UnsupportedWireVersionException e) {
                     if (running.get()) {
-                        System.err.println("Inbound wire-version mismatch (observed=0x"
-                                + Integer.toHexString(e.observedVersion())
-                                + "); dropping connection: " + e.getMessage());
+                        int observed = e.observedVersion();
+                        String msg = e.getMessage();
+                        logInboundFailureThrottled(suppressed -> "Inbound wire-version mismatch (observed=0x"
+                                + Integer.toHexString(observed)
+                                + "); dropping connection: " + msg + suppressedSuffix(suppressed));
                     }
                     return;
                 } catch (IllegalArgumentException e) {
                     if (running.get()) {
-                        System.err.println("Inbound frame decode failure ("
-                                + e.getClass().getSimpleName()
-                                + "); dropping connection: " + e.getMessage());
+                        String cls = e.getClass().getSimpleName();
+                        String msg = e.getMessage();
+                        logInboundFailureThrottled(suppressed -> "Inbound frame decode failure ("
+                                + cls + "); dropping connection: " + msg + suppressedSuffix(suppressed));
                     }
                     return;
                 }
@@ -570,10 +610,14 @@ public final class TcpRaftTransport implements RaftTransportEndpoint {
                     }
                 } catch (RuntimeException e) {
                     if (running.get()) {
-                        System.err.println("Inbound handler error from peer "
-                                + from + " for frame " + frame.messageType() + ": "
-                                + e.getClass().getName() + ": " + e.getMessage());
-                        e.printStackTrace(System.err);
+                        NodeId peer = from;
+                        MessageType type = frame.messageType();
+                        String detail = e.getClass().getName() + ": " + e.getMessage();
+                        // Throttled (WH-10): the loop keeps reading, so a handler that throws on every
+                        // frame would otherwise emit one WARN + stack trace per frame. Log class+message
+                        // (the stack trace is dropped to keep the line bounded, as the adapter does).
+                        logInboundFailureThrottled(suppressed -> "Inbound handler error from peer " + peer
+                                + " for frame " + type + ": " + detail + suppressedSuffix(suppressed));
                     }
                     // Continue reading; the framing layer is intact.
                 }

@@ -215,6 +215,24 @@ public final class RaftTransportAdapter implements RaftTransport {
                         // non-synchronized node (ADR-0009).
                         Map<Integer, AppendEntriesRequest> heartbeats =
                                 RaftMessageCodec.decodeCoalescedHeartbeat(frame);
+                        // Layer 2 in-body binding (WH-08/09) for the COALESCED path: a coalesced
+                        // heartbeat bundles only the sending leader's own per-group heartbeats, so every
+                        // entry's self-declared leaderId must equal the transport-authenticated sender.
+                        // A cert-valid but Byzantine peer that forges another node's leaderId inside one
+                        // per-group entry is rejected - the WHOLE frame is dropped (not dispatched) and
+                        // counted, mirroring the single-message in-body check below. Scanned in full
+                        // BEFORE any dispatch so a forgery late in the map cannot slip earlier entries
+                        // through. Gated on the allow-list being active (legacy deployments unaffected).
+                        if (enforceIdentity) {
+                            for (Map.Entry<Integer, AppendEntriesRequest> e : heartbeats.entrySet()) {
+                                NodeId bodyId = e.getValue().leaderId();
+                                if (!bodyId.equals(from)) {
+                                    transportMetrics.onPeerIdentityRejected();
+                                    logInBodyRejectionThrottled(from, bodyId, frame.messageType());
+                                    return; // drop the frame; the connection stays (senderId is bound)
+                                }
+                            }
+                        }
                         for (Map.Entry<Integer, AppendEntriesRequest> e : heartbeats.entrySet()) {
                             handler.accept(from, e.getKey(), e.getValue());
                         }

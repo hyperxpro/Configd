@@ -95,8 +95,10 @@ truncation is proven to surface as `MalformedCommandException`, not an underflow
 
 The two new client-facing amplifier bounds (WH-12 `prefixCount`, WH-14 NOTIFY byte-cap) are swept
 across the full int range with CRC repaired, so the bound — not the CRC — is what fires. The
-`SNAPSHOT_CHUNK` **decode** cap is bounded by `MAX_EDGE_FRAME_SIZE` and covered by the arbitrary-byte
-oracle; its **encode** cap `MAX_SNAPSHOT_CHUNK_BYTES` is pinned by `EdgeSnapshotCodecTest`.
+`SNAPSHOT_CHUNK` **decode** enforces its own `MAX_SNAPSHOT_CHUNK_BYTES` = 1 MiB cap (`decodeSnapshotChunk`
+:856–862, `FRAME_TOO_LARGE` above it) — tighter than the 2 MiB `MAX_EDGE_FRAME_SIZE` frame cap — and is
+additionally covered by the arbitrary-byte oracle; the matching **encode** cap is pinned by
+`EdgeSnapshotCodecTest`.
 
 ### `EdgeSnapshotCodec` — snapshot body (`configd-distribution-service`) — **NEW: `EdgeSnapshotCodecFuzzTest`**
 `EdgeSnapshotCodecFuzzTest` (F,P,B,R) + `EdgeSnapshotCodecTest` (P, pre-existing). Previously had

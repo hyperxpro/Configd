@@ -152,6 +152,40 @@ class EdgeFirstFrameDeadlineTest {
         subscribedPeerIsNotReaped(false);
     }
 
+    /**
+     * C3 slow-loris (JDK path): a peer that dribbles &ge;1 byte per window. Each byte arrives well
+     * inside a per-read timeout - so the pre-C3 per-read {@code soTimeout} would keep RESETTING and
+     * never fire - but the whole first frame takes far longer than the ABSOLUTE deadline to arrive.
+     * Only the absolute first-frame budget reaps this. (The Netty path already used a one-shot
+     * absolute scheduled reap, so this evasion never applied there.)
+     */
+    @Test
+    void jdkDribblingPeerIsReaped() throws Exception {
+        int port = startPlaintext(false);
+        client = new Socket();
+        client.connect(new InetSocketAddress("127.0.0.1", port), 2_000);
+        byte[] frame = EdgeFrameCodec.encode(new EdgeFrame.Subscribe(true, List.of(), 0L, -1L, "edge-drip"));
+        // One byte every DEADLINE_MS/3: comfortably inside any per-read window, yet the 4-byte length
+        // prefix alone overruns the absolute deadline - so the connection is reaped mid-first-frame.
+        Thread dripper = new Thread(() -> {
+            try {
+                OutputStream out = client.getOutputStream();
+                for (byte b : frame) {
+                    out.write(b);
+                    out.flush();
+                    Thread.sleep(DEADLINE_MS / 3L);
+                }
+            } catch (Exception ignored) {
+                // the server reaps + closes mid-drip; the pending write then fails - expected
+            }
+        });
+        dripper.setDaemon(true);
+        dripper.start();
+        awaitReap();
+        assertEquals(1, firstFrameTimeouts());
+        dripper.interrupt();
+    }
+
     @Test
     void nettyStalledPeerIsReaped() throws Exception {
         stalledPeerIsReaped(true);

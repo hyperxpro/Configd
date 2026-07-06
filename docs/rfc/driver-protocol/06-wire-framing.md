@@ -118,7 +118,7 @@ and **MUST NOT** accept frames on an unauthenticated transport in production on 
 ## 3. Decode and validation order (fail-closed)
 
 **F3-1 (the exact order — a driver MUST follow it).** A decoder validates in this order
-(`EdgeFrameCodec.decode` :557–640), mapping each failure to a streaming `ErrorCode` (§07):
+(`EdgeFrameCodec.decode` :597–683), mapping each failure to a streaming `ErrorCode` (§07):
 
 1. `data.length ≥ 10` (else **`FRAME_CORRUPT`**).
 2. read `Length` (u32 BE); `10 ≤ Length ≤ 2 MiB` — `Length > 2 MiB` ⇒ **`FRAME_TOO_LARGE`**, `Length < 10` ⇒
@@ -138,7 +138,7 @@ and **MUST NOT** accept frames on an unauthenticated transport in production on 
 length/count prefix** — prefix count, `NOTIFY` count, batch length, cursor count, value length, **and the
 server-controlled snapshot sizes (F7-2, F6-4)** — **against the remaining bytes (and a configured ceiling)
 BEFORE allocating**, so a hostile or compromised peer cannot induce a giant allocation by lying in a length
-field (`decodeCursor` :808–811, `decodeNotify` :693/:709, `decodeSubscribe` :667–669 all bound-then-allocate).
+field (`decodeCursor` :914–917, `decodeNotify` :783/:789, `decodeSubscribe` :717–724 all bound-then-allocate).
 A value being "validated non-negative" (F5) is **not** an upper bound — the driver supplies the upper bound.
 
 ---
@@ -242,7 +242,7 @@ names are cited for cross-language verification.
 
 ```
 [1  u8 ] fullStore        (1 = whole-store subscription; 0 = prefix-filtered)
-[4  u32] prefixCount
+[4  u32] prefixCount      (element cap MAX_PREFIXES = 4096; count > 4096 ⇒ FRAME_CORRUPT — WH-12/F3-2)
   repeated prefixCount times:
     [4 u32] prefixLen
     [prefixLen] prefix    (UTF-8)
@@ -295,8 +295,9 @@ gap; a regression below the applied version **is** a gap). Golden `subscribe_ok_
 
 **F6-3 `NOTIFY` (`0x03`)** — *server→client*; golden `notify_single_unsigned.bin`, `notify_batch_signed.bin`,
 `notify_empty.bin`. A batch of commit notifications (the *encoder* caps it at **64** = `MAX_NOTIFY_BATCH` and
-**256 KiB** = `MAX_NOTIFY_BATCH_BYTES`; the **decoder** enforces `count ≤ 64` but **not** the 256 KiB cap — a
-driver **MUST** bound a received `NOTIFY` by the **2 MiB frame cap** (F3-2), not assume 256 KiB):
+**256 KiB** = `MAX_NOTIFY_BATCH_BYTES`; the **decoder** enforces **both** — `count ≤ 64` **and** the **256 KiB**
+payload cap (WH-14, `FRAME_TOO_LARGE` above it), for canonical-encoding parity. The 256 KiB cap is nested under
+the **2 MiB frame cap** (F3-2); a driver MAY additionally apply its own tighter bound):
 
 ```
 [4 u32] count

@@ -151,6 +151,21 @@ public final class RaftMessageCodec {
         }
     }
 
+    /**
+     * WH-06 strict-end: a fixed-shape decoder consumes exactly its declared payload, so any bytes
+     * left in the buffer are padding a hostile peer appended - reject them (bounded by frame length,
+     * but a real grammar violation). Uniform with the strict-end already enforced by
+     * {@link #decodeAppendEntries}, {@link #decodeInstallSnapshot} and
+     * {@link #decodeCoalescedHeartbeat}. Call AFTER the last field - including any optional trailing
+     * field - has been read, so it never rejects the legitimate absence of an optional field.
+     */
+    private static void rejectTrailingBytes(ByteBuffer buf, String field) {
+        if (buf.hasRemaining()) {
+            throw new IllegalArgumentException(
+                    field + " has " + buf.remaining() + " trailing bytes after a fixed-size payload");
+        }
+    }
+
     private static void checkInstallSnapshotFitsFrame(int dataLen, int configLen) {
         if (dataLen < 0 || configLen < 0) {
             throw new IllegalArgumentException(
@@ -451,6 +466,7 @@ public final class RaftMessageCodec {
         boolean success = buf.get() != 0;
         long matchIndex = buf.getLong();
         NodeId from = NodeId.of(buf.getInt());
+        rejectTrailingBytes(buf, "AppendEntriesResponse");
         return new AppendEntriesResponse(frame.term(), success, matchIndex, from);
     }
 
@@ -471,6 +487,7 @@ public final class RaftMessageCodec {
         NodeId candidateId = NodeId.of(buf.getInt());
         long lastLogIndex = buf.getLong();
         long lastLogTerm = buf.getLong();
+        rejectTrailingBytes(buf, "RequestVote");
         return new RequestVoteRequest(frame.term(), candidateId, lastLogIndex, lastLogTerm, preVote);
     }
 
@@ -489,6 +506,7 @@ public final class RaftMessageCodec {
         checkRemaining(buf, 1 + 4, "RequestVoteResponse payload");
         boolean voteGranted = buf.get() != 0;
         NodeId from = NodeId.of(buf.getInt());
+        rejectTrailingBytes(buf, "RequestVoteResponse");
         return new RequestVoteResponse(frame.term(), voteGranted, from, preVote);
     }
 
@@ -600,6 +618,10 @@ public final class RaftMessageCodec {
                         "Negative InstallSnapshotResponse nextExpectedOffset: " + nextExpectedOffset);
             }
         }
+        // Strict-end AFTER the optional nextExpectedOffset: the absence of the optional field is
+        // legitimate (checked by the hasRemaining() gate above), but bytes past a present-or-absent
+        // field are padding a hostile peer appended - reject them (WH-06 uniformity).
+        rejectTrailingBytes(buf, "InstallSnapshotResponse");
         return new InstallSnapshotResponse(frame.term(), success, from, lastIncludedIndex, nextExpectedOffset);
     }
 
@@ -615,6 +637,7 @@ public final class RaftMessageCodec {
         ByteBuffer buf = ByteBuffer.wrap(frame.payload());
         checkRemaining(buf, 4, "TimeoutNow payload");
         NodeId leaderId = NodeId.of(buf.getInt());
+        rejectTrailingBytes(buf, "TimeoutNow");
         return new TimeoutNowRequest(frame.term(), leaderId);
     }
 
