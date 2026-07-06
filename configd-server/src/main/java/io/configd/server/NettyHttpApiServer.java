@@ -3,6 +3,7 @@ package io.configd.server;
 import io.configd.api.AclService;
 import io.configd.api.AuditLog;
 import io.configd.api.AuthInterceptor;
+import io.configd.common.auth.AuthenticatorChain;
 import io.configd.api.ConfigReadService;
 import io.configd.api.ConfigWriteService;
 import io.configd.api.HealthService;
@@ -43,6 +44,11 @@ import io.netty.handler.timeout.IdleStateHandler;
 
 import javax.net.ssl.SSLContext;
 import javax.net.ssl.SSLEngine;
+import javax.net.ssl.SSLPeerUnverifiedException;
+import java.security.cert.Certificate;
+import java.security.cert.X509Certificate;
+import java.util.ArrayList;
+import java.util.List;
 import java.net.InetSocketAddress;
 import java.net.URI;
 import java.net.URISyntaxException;
@@ -103,6 +109,9 @@ public final class NettyHttpApiServer {
     private final int port;
     private final SSLContext sslContext; // nullable: plain HTTP when null
     private final AdminApiHandler handler;
+    // true when the auth chain includes mtls: the admin TLS then requests (optionally) a client cert so the
+    // mtls authenticator can identify the caller. false = server-side TLS only (byte-identical to before).
+    private final boolean requestClientCert;
     private final NettyTransport.Selection transport;
     private final int workerThreads;
     private final long requestTimeoutMillis;
@@ -151,11 +160,37 @@ public final class NettyHttpApiServer {
                               AuditLog auditLog,
                               ReplayGuard replayGuard,
                               AdminApiHandler.LeadershipAdmin leadershipAdmin) {
+        this(port, sslContext, healthService, prometheusExporter, configStore, writeService, readService,
+                authInterceptor, aclService, strongReadPolicy, leaderHintSupplier, auditLog, replayGuard,
+                leadershipAdmin, null);
+    }
+
+    /**
+     * As the leadership-seam constructor, plus the SPI {@link AuthenticatorChain}. When the chain is
+     * non-null it supersedes {@code authInterceptor} for credential resolution (the {@code basic}/{@code
+     * mtls}/{@code none} or mixed modes); when null this is byte-identical to the legacy bearer wiring.
+     */
+    public NettyHttpApiServer(int port,
+                              SSLContext sslContext,
+                              HealthService healthService,
+                              PrometheusExporter prometheusExporter,
+                              VersionedConfigStore configStore,
+                              ConfigWriteService writeService,
+                              ConfigReadService readService,
+                              AuthInterceptor authInterceptor,
+                              AclService aclService,
+                              StrongReadPolicy strongReadPolicy,
+                              BiFunction<ConfigScope, String, NodeId> leaderHintSupplier,
+                              AuditLog auditLog,
+                              ReplayGuard replayGuard,
+                              AdminApiHandler.LeadershipAdmin leadershipAdmin,
+                              AuthenticatorChain chain) {
         this.port = port;
         this.sslContext = sslContext;
         this.handler = new AdminApiHandler(healthService, prometheusExporter, configStore, writeService,
                 readService, authInterceptor, aclService, strongReadPolicy, leaderHintSupplier,
-                auditLog, replayGuard, leadershipAdmin);
+                auditLog, replayGuard, leadershipAdmin, chain);
+        this.requestClientCert = chain != null && chain.providerTypes().contains("mtls");
         this.workerThreads = Integer.getInteger("configd.server.netty.workerThreads",
                 Math.max(2, Runtime.getRuntime().availableProcessors()));
         this.requestTimeoutMillis = Long.getLong("configd.server.netty.requestTimeoutMillis", 30_000L);
@@ -188,8 +223,12 @@ public final class NettyHttpApiServer {
                         if (sslContext != null) {
                             SSLEngine engine = sslContext.createSSLEngine();
                             engine.setUseClientMode(false);
-                            // No setNeedClientAuth: server-side TLS only, matching the JDK HttpsConfigurator.
-                            // Client identity is the Bearer token; mTLS is the fan-out/consensus surface.
+                            // mTLS mode (chain includes mtls): request an OPTIONAL client cert so the mtls
+                            // authenticator can identify the caller; wantClientAuth (not need) keeps
+                            // bearer/basic clients working. Otherwise server-side TLS only (byte-identical).
+                            if (requestClientCert) {
+                                engine.setWantClientAuth(true);
+                            }
                             ch.pipeline().addLast(new SslHandler(engine));
                         }
                         ch.pipeline().addLast(
@@ -228,11 +267,34 @@ public final class NettyHttpApiServer {
     }
 
     /** A transport-free snapshot of one request, safe to hand to a virtual thread after the {@link ByteBuf} is released. */
-    private record NettyAdminRequest(String method, URI uri, HttpHeaders headers, byte[] body)
+    private record NettyAdminRequest(String method, URI uri, HttpHeaders headers, byte[] body,
+                                     List<X509Certificate> peerCertificates)
             implements AdminApiHandler.AdminRequest {
         @Override
         public String header(String name) {
             return headers.get(name);
+        }
+        // The record's peerCertificates() accessor satisfies AdminRequest.peerCertificates() - the verified
+        // chain is captured on the event loop (below) so the off-loop decision logic needs no channel access.
+    }
+
+    /** Extracts the verified client-certificate chain from the connection's TLS session (empty if none). */
+    private static List<X509Certificate> peerCertificates(ChannelHandlerContext ctx) {
+        SslHandler ssl = ctx.pipeline().get(SslHandler.class);
+        if (ssl == null) {
+            return List.of();
+        }
+        try {
+            Certificate[] certs = ssl.engine().getSession().getPeerCertificates();
+            List<X509Certificate> chain = new ArrayList<>(certs.length);
+            for (Certificate c : certs) {
+                if (c instanceof X509Certificate x) {
+                    chain.add(x);
+                }
+            }
+            return chain;
+        } catch (SSLPeerUnverifiedException e) {
+            return List.of(); // the peer presented no client certificate
         }
     }
 
@@ -317,7 +379,9 @@ public final class NettyHttpApiServer {
             HttpHeaders headers = new DefaultHttpHeaders().add(req.headers());
             byte[] body = ByteBufUtil.getBytes(req.content());
             boolean keepAlive = HttpUtil.isKeepAlive(req);
-            NettyAdminRequest request = new NettyAdminRequest(req.method().name(), uri, headers, body);
+            // Capture the verified client cert (if any) here on the event loop; the decision runs off-loop.
+            NettyAdminRequest request =
+                    new NettyAdminRequest(req.method().name(), uri, headers, body, peerCertificates(ctx));
 
             pending.add(new Pending(request, keepAlive));
             if (!processing) {

@@ -14,6 +14,7 @@ import io.configd.common.IntegrityEnvelope;
 import io.configd.common.NodeId;
 import io.configd.common.SegmentKeyManager;
 import io.configd.common.Storage;
+import io.configd.common.auth.AuthenticatorChain;
 import io.configd.common.config.ConfigException;
 import io.configd.common.config.ConfigSource;
 import io.configd.common.config.EnvConfigSource;
@@ -768,16 +769,35 @@ public final class ConfigdServer {
         // Wire security (TLS already initialized above, before the Raft transport).
         // ---------------------------------------------------------------
         AuthInterceptor authInterceptor = null;
+        AuthenticatorChain authChain = null;
         AclService aclService = null;
         AclConfigPolicyLoader aclPolicyLoader = null;
-        if (!config.authEnabled()) {
+
+        // The pluggable authenticator chain (configd.auth.mode / configd.auth.providers). When configured it
+        // is THE auth mechanism (basic / mtls, or a mixed chain) and supersedes the legacy static
+        // --auth-token. When absent, the posture is exactly as before: a static --auth-token, or auth off.
+        java.util.List<String> authProviders = AuthenticatorChain.configuredProviders(cfg);
+        boolean noAuthMode = authProviders.equals(java.util.List.of("none"));
+        if (noAuthMode) {
+            // Explicit auth-disabled mode. It MUST produce the same handler state as the legacy auth-off
+            // branch (no chain, no interceptor, no ACL -> the open gate, which still refuses a
+            // reserved-prefix `_acl/` WRITE). Routing no-auth THROUGH the handler chain would 401 a
+            // credential-less request - denying exactly what this mode exists to allow - so the chain is
+            // deliberately NOT wired. 'none' mixed with real providers is rejected at build time (fail-loud).
             System.err.println("WARNING: ************************************************************");
-            System.err.println("WARNING: Authentication is DISABLED (--auth-token not set).");
+            System.err.println("WARNING: Authentication is DISABLED (configd.auth.mode=none).");
             System.err.println("WARNING: All write/delete/admin endpoints are unauthenticated.");
-            System.err.println("WARNING: DO NOT run in production without --auth-token.");
+            System.err.println("WARNING: Front this deployment with a trusted reverse proxy.");
             System.err.println("WARNING: ************************************************************");
-        }
-        if (config.authEnabled()) {
+        } else if (!authProviders.isEmpty()) {
+            // Fail-loud on an unknown provider / a missing optional module / 'none' mixed with others.
+            authChain = AuthenticatorChain.build(authProviders, cfg);
+            // Authorization stays in-core: the chain yields a Principal; the AclService (seeded from the
+            // replicated `_acl/` policy) decides access on it. No static break-glass root grant here - the
+            // SPI modes are policy-governed (that grant is a property of the legacy --auth-token path).
+            aclService = new AclService();
+            System.out.println("  Auth (SPI)   : providers=" + authChain.providerTypes());
+        } else if (config.authEnabled()) {
             String expectedToken = config.authToken();
             authInterceptor = new AuthInterceptor(token -> {
                 // F-V7-01 fix: Use constant-time comparison to prevent
@@ -795,7 +815,16 @@ public final class ConfigdServer {
             aclService = new AclService();
             // Grant root principal full access to all keys
             aclService.grant("", ROOT_PRINCIPAL, EnumSet.allOf(AclService.Permission.class));
-            // Config-sourced policy under `_acl/`. ADDITIVE on top of the static grant above (no `_acl/`
+        } else {
+            System.err.println("WARNING: ************************************************************");
+            System.err.println("WARNING: Authentication is DISABLED (--auth-token not set).");
+            System.err.println("WARNING: All write/delete/admin endpoints are unauthenticated.");
+            System.err.println("WARNING: DO NOT run in production without --auth-token.");
+            System.err.println("WARNING: ************************************************************");
+        }
+
+        if (aclService != null) {
+            // Config-sourced policy under `_acl/`. ADDITIVE on top of any static grant above (no `_acl/`
             // keys in production = empty snapshot = byte-identical). Registered BEFORE the tick loop so it
             // observes every `_acl/`-touching apply; the snapshot-install hook covers follower catch-up;
             // the boot seed catches a snapshot-restored prefix. Fail-closed-to-last-good on malformed
@@ -989,7 +1018,8 @@ public final class ConfigdServer {
         // subjects to record once there are principals). KEYED HMAC-SHA256 chain under K_audit (derived
         // above), so a file-rewriting attacker cannot forge a consistent chain. Backed by the durable,
         // append+CRC Storage; bounded to AuditLog.DEFAULT_MAX_RECORDS.
-        AuditLog auditLog = (authInterceptor != null) ? new AuditLog(storage, clock, auditLogKey) : null;
+        AuditLog auditLog = (authInterceptor != null || authChain != null)
+                ? new AuditLog(storage, clock, auditLogKey) : null;
         if (auditLog != null) {
             System.out.println("  Audit log    : security-audit (KEYED HMAC-SHA256 chain, append-only, cap "
                     + AuditLog.DEFAULT_MAX_RECORDS + ")");
@@ -1074,7 +1104,7 @@ public final class ConfigdServer {
                         io.configd.raft.RaftNode owner = driver.getGroup(shardMap.shardFor(scope, key));
                         return owner != null ? owner.leaderId() : null;
                     },
-                    auditLog, replayGuard, leadershipAdmin);
+                    auditLog, replayGuard, leadershipAdmin, authChain);
             httpApiServer.start();
         } catch (Exception e) {
             throw new RuntimeException("Failed to start HTTP API server on port " + config.apiPort(), e);
