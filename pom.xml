@@ -57,6 +57,10 @@
           Pinned for reproducibility. API + 3-tier selector: docs/netty-migration/netty42-api.md.
         -->
         <netty.version>4.2.15.Final</netty.version>
+        <!-- Config-as-SPI (Group B): the YAML parser for the operator-facing config file. Loaded
+             SAFELY (SafeConstructor + resource-exhaustion limits); only configd-server depends on it,
+             so the parser never leaks into the lower zero-heavy-dep modules. Pinned for reproducibility. -->
+        <snakeyaml.version>2.4</snakeyaml.version>
     </properties>
 
     <dependencyManagement>
@@ -160,6 +164,11 @@
                 <artifactId>netty-transport-native-io_uring</artifactId>
                 <version>${netty.version}</version>
                 <classifier>linux-x86_64</classifier>
+            </dependency>
+            <dependency>
+                <groupId>org.yaml</groupId>
+                <artifactId>snakeyaml</artifactId>
+                <version>${snakeyaml.version}</version>
             </dependency>
         </dependencies>
     </dependencyManagement>

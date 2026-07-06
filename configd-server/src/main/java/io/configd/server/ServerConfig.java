@@ -71,6 +71,8 @@ public record ServerConfig(
      *                     linearizable; default "secure/"
      *   --edge-port       C1 fan-out edge endpoint port (ADR-0037); absent = endpoint
      *                     disabled (default). Reuses the Raft TlsManager (mTLS) when configured.
+     *   --config          path to an optional YAML config file (loaded into the ConfigSource by
+     *                     {@code ConfigdServer.loadBootConfig}, not stored on this record)
      * </pre>
      *
      * @param args command-line arguments
@@ -151,6 +153,12 @@ public record ServerConfig(
                 case "--edge-port" -> {
                     requireNextArg(args, i, "--edge-port");
                     edgePort = Integer.parseInt(args[++i]);
+                }
+                case "--config" -> {
+                    // The YAML config file is loaded into the ConfigSource by ConfigdServer.loadBootConfig,
+                    // not stored on this record. Accept and skip its value here so the argument is valid.
+                    requireNextArg(args, i, "--config");
+                    i++;
                 }
                 default -> throw new IllegalArgumentException("Unknown argument: " + args[i]);
             }

@@ -14,6 +14,11 @@ import io.configd.common.IntegrityEnvelope;
 import io.configd.common.NodeId;
 import io.configd.common.SegmentKeyManager;
 import io.configd.common.Storage;
+import io.configd.common.config.ConfigException;
+import io.configd.common.config.ConfigSource;
+import io.configd.common.config.EnvConfigSource;
+import io.configd.common.config.LayeredConfigSource;
+import io.configd.common.config.SystemPropertyConfigSource;
 import io.configd.common.kms.RootKey;
 import io.configd.distribution.CommitNotification;
 import io.configd.distribution.CommitNotificationSource;
@@ -249,12 +254,30 @@ public final class ConfigdServer {
     }
 
     /**
-     * Creates and starts a Configd server from the given configuration.
+     * Creates and starts a Configd server from the given configuration, resolving config against the
+     * ambient system-property + environment source (no YAML file). This is the historical entry point;
+     * with no YAML layer it reads {@code -D} properties and env vars exactly as before, so every existing
+     * caller is byte-identical. {@link #main} uses the {@code ConfigSource}-taking overload to add the
+     * optional {@code --config} YAML layer.
      *
      * @param config the server configuration
      * @return the running server instance
      */
     public static ConfigdServer start(ServerConfig config) {
+        return start(config, ConfigSource.system());
+    }
+
+    /**
+     * Creates and starts a Configd server, resolving all configuration through the supplied
+     * {@link ConfigSource}. The source layers system properties over the environment over an optional
+     * YAML file (see {@link #loadBootConfig}); with no YAML layer it is byte-identical to the ambient
+     * {@link ConfigSource#system()}.
+     *
+     * @param config the server configuration
+     * @param cfg    the resolved configuration source (highest-precedence first internally)
+     * @return the running server instance
+     */
+    public static ConfigdServer start(ServerConfig config, ConfigSource cfg) {
         // Ensure data directory exists
         Path dataDir = config.dataDir();
         try {
@@ -276,7 +299,7 @@ public final class ConfigdServer {
         // -Dconfigd.edge.allowPartialShardView; a WATCH is never refused. See the
         // fanOutConfig.withAllowPartialShardView wiring below. At N=1 (one shard is the whole keyspace)
         // the refusal never fires - byte-identical.
-        int shardCount = resolveShardCount();
+        int shardCount = resolveShardCount(cfg);
         // The StaticShardMap is constructed BELOW, after the Raft integrity envelope exists: its
         // epoch() authority is the authenticated topology descriptor, which is read/verified with
         // that same K_integrity envelope (Gate 2b). Building the map here would have to hardcode the
@@ -306,7 +329,7 @@ public final class ConfigdServer {
                     : dataDir.resolve("signing-key.bin");
             SigningKeyStore keyStore = SigningKeyStore.loadOrCreate(keyFile);
             configSigner = new ConfigSigner(keyStore.keyPair());
-            raftIntegrity = deriveRaftIntegrityEnvelope(keyStore, keyFile, dataDir);
+            raftIntegrity = deriveRaftIntegrityEnvelope(keyStore, keyFile, dataDir, cfg);
             auditLogKey = deriveAuditLogKey(keyStore);
         } catch (SecurityException se) {
             // Fail-closed: surface the co-location refusal with its clear, actionable
@@ -373,10 +396,10 @@ public final class ConfigdServer {
         // operator-tunable via system properties (defaults = the documented 150/300/50 ms). The
         // as-built ceiling is leadership-churn / heartbeat starvation under load, not fsync; a longer
         // election timeout and shorter heartbeat give more headroom for tick-thread scheduling jitter.
-        int electionMinMs = Integer.getInteger("configd.raft.electionTimeoutMinMs", 150);
-        int electionMaxMs = Integer.getInteger("configd.raft.electionTimeoutMaxMs", 300);
-        int heartbeatMs = Integer.getInteger("configd.raft.heartbeatIntervalMs", 50);
-        int maxInflight = Integer.getInteger("configd.raft.maxInflightAppends", 10);
+        int electionMinMs = cfg.getInt("configd.raft.electionTimeoutMinMs", 150);
+        int electionMaxMs = cfg.getInt("configd.raft.electionTimeoutMaxMs", 300);
+        int heartbeatMs = cfg.getInt("configd.raft.heartbeatIntervalMs", 50);
+        int maxInflight = cfg.getInt("configd.raft.maxInflightAppends", 10);
         RaftConfig raftConfig = new RaftConfig(config.nodeId(), config.peers(),
                 electionMinMs, electionMaxMs, heartbeatMs, 64, 256 * 1024, 1024, maxInflight,
                 TICK_PERIOD_MS);
@@ -474,7 +497,7 @@ public final class ConfigdServer {
         // `driver.ownerExecutor(gid).execute(...)`. At N=1 a single owner thread does all of it.
         // ---------------------------------------------------------------
         OwnerExecutorPool ownerPool =
-                new OwnerExecutorPool(Integer.getInteger("configd.raft.ownerPoolSize", 1));
+                new OwnerExecutorPool(cfg.getInt("configd.raft.ownerPoolSize", 1));
         driver.setOwnerPool(ownerPool);
         System.out.println("  Owner pool   : " + ownerPool.size()
                 + " owner thread(s) [Phase 0 B Stage 1B — R-01 deleted, consensus via ownerExecutor(gid)]");
@@ -528,10 +551,12 @@ public final class ConfigdServer {
         //   -Dconfigd.groupCommit.maxBatch=N     -> cap entries per fsync (default 4096; bounds latency)
         //   -Dconfigd.groupCommit.lingerMicros=T -> linger to grow the batch (default 0 = flush ASAP)
         // ---------------------------------------------------------------
+        // Lenient parse (default "true", any non-"true" is false), preserving the historical
+        // Boolean.parseBoolean semantics exactly; the strict cfg.getBoolean is not used here.
         boolean groupCommitEnabled = Boolean.parseBoolean(
-                System.getProperty("configd.groupCommit.enabled", "true"));
-        int groupCommitMaxBatch = Integer.getInteger("configd.groupCommit.maxBatch", 4096);
-        long groupCommitLingerMicros = Long.getLong("configd.groupCommit.lingerMicros", 0L);
+                cfg.getString("configd.groupCommit.enabled").orElse("true"));
+        int groupCommitMaxBatch = cfg.getInt("configd.groupCommit.maxBatch", 4096);
+        long groupCommitLingerMicros = cfg.getLong("configd.groupCommit.lingerMicros", 0L);
         if (groupCommitEnabled) {
             System.out.println("  Group commit : ENABLED (maxBatch=" + groupCommitMaxBatch
                     + ", lingerMicros=" + groupCommitLingerMicros + ")");
@@ -1019,7 +1044,7 @@ public final class ConfigdServer {
         // -Dconfigd.replay.enabled=true so no new CLI/ServerConfig surface is added. Defends only
         // against PASSIVE capture-and-replay; a token holder can still mint fresh requests.
         ReplayGuard replayGuard = null;
-        if (Boolean.getBoolean("configd.replay.enabled")) {
+        if (cfg.getBoolean("configd.replay.enabled", false)) {
             replayGuard = new ReplayGuard(clock);
             System.out.println("  Replay guard : ON (window " + ReplayGuard.DEFAULT_WINDOW_MS
                     + "ms, nonce cap " + ReplayGuard.DEFAULT_MAX_NONCES + ")");
@@ -1113,10 +1138,10 @@ public final class ConfigdServer {
             // (or for a full-store / non-opting edge) the drain is byte-identical to the legacy path.
             // allowPartialShardView gates the legacy whole-store SUBSCRIBE plane at N>1 (primary-shard-
             // only); it never affects a multi-shard WATCH and is inert at N=1.
-            boolean allowPartialShardView = Boolean.getBoolean("configd.edge.allowPartialShardView");
+            boolean allowPartialShardView = cfg.getBoolean("configd.edge.allowPartialShardView", false);
             io.configd.distribution.fanout.FanOutConfig fanOutConfig =
                     io.configd.distribution.fanout.FanOutConfig.defaults()
-                            .withServerSidePrefixFilter(resolveEdgeFilterPosture(),
+                            .withServerSidePrefixFilter(resolveEdgeFilterPosture(cfg),
                                     strongReadPolicy.prefixes())
                             .withAllowPartialShardView(allowPartialShardView);
             fanOutServer = new io.configd.server.fanout.NettyFanOutServer(
@@ -1169,8 +1194,8 @@ public final class ConfigdServer {
         // sub-T period so the K bound can fire before T. A refresh failure is logged and retried - it is
         // OFF the ack path, not the fail-closed halt the per-shard anchor fsync is.
         // ---------------------------------------------------------------
-        long nodeAnchorIntervalMs = Long.getLong("configd.nodeAnchor.intervalMs", 1000L);
-        int nodeAnchorKRecords = Integer.getInteger("configd.nodeAnchor.auditRecords", 64);
+        long nodeAnchorIntervalMs = cfg.getLong("configd.nodeAnchor.intervalMs", 1000L);
+        int nodeAnchorKRecords = cfg.getInt("configd.nodeAnchor.auditRecords", 64);
         long nodeAnchorPollMs = Math.max(50L, Math.min(nodeAnchorIntervalMs, 250L));
         Runnable nodeAnchorRefresh = NodeAnchorService.newRefresher(
                 nodeAnchor, auditLog,
@@ -1356,14 +1381,21 @@ public final class ConfigdServer {
      */
     // Package-private (not private) so EncryptionAtRestWiringTest can assert the flag -> envelope
     // wiring directly, mirroring how enforceSigningKeyNotColocated is exercised by D1FailClosedTest.
+    // The no-cfg overload resolves against the ambient system-property + environment source, keeping
+    // the historical three-argument signature the tests call byte-identical to before config unified.
     static io.configd.common.IntegrityEnvelope deriveRaftIntegrityEnvelope(
             SigningKeyStore keyStore, Path keyFile, Path dataDir) {
+        return deriveRaftIntegrityEnvelope(keyStore, keyFile, dataDir, ConfigSource.system());
+    }
+
+    static io.configd.common.IntegrityEnvelope deriveRaftIntegrityEnvelope(
+            SigningKeyStore keyStore, Path keyFile, Path dataDir, ConfigSource cfg) {
         // FAIL-CLOSED: refuse to derive the at-rest integrity key from a signing key co-located
         // inside the data dir it protects, BEFORE doing any crypto. Default = refuse to start; the
         // dev/test/single-node opt-out (system property OR env var, the latter for CI / docker-compose
-        // where -D is awkward) downgrades to a loud warning.
-        boolean allowColocated = Boolean.getBoolean("configd.security.allowColocatedSigningKey")
-                || "true".equalsIgnoreCase(System.getenv("CONFIGD_ALLOW_COLOCATED_SIGNING_KEY"));
+        // where -D is awkward) downgrades to a loud warning. anyLayerTrue reproduces the original
+        // "system-property OR env-alias" semantics exactly (EITHER being true enables the opt-out).
+        boolean allowColocated = cfg.anyLayerTrue("configd.security.allowColocatedSigningKey");
         enforceSigningKeyNotColocated(keyFile, dataDir, allowColocated);
         byte[] ikm = keyStore.keyPair().getPrivate().getEncoded();
         java.util.UUID keyId = keyStore.keyId();
@@ -1377,7 +1409,7 @@ public final class ConfigdServer {
             // OFF -> term-versioned HMAC (Layer B). Both derive their at-rest keys from the keyring's
             // independent per-term roots (not the signing key directly), so a term OR signing-key
             // rotation is non-destructive. Keyless is a no-signing-key posture that never reaches here.
-            return buildTermVersionedEnvelope(ikm, salt, keyId, dataDir);
+            return buildTermVersionedEnvelope(ikm, salt, keyId, dataDir, cfg);
         } finally {
             // Zeroize the transient signing-key material now that the keyring's K_keyringMac/KEK
             // (SecretKeySpec, which clones) hold their own copies. Best-effort (JDK-8160206): the raw
@@ -1387,9 +1419,8 @@ public final class ConfigdServer {
     }
 
     /** True if at-rest encryption is enabled (system property, or the CI/docker-friendly env var). */
-    private static boolean encryptionAtRestEnabled() {
-        return Boolean.getBoolean("configd.raft.encryption.enabled")
-                || "true".equalsIgnoreCase(System.getenv("CONFIGD_ENCRYPTION_AT_REST"));
+    private static boolean encryptionAtRestEnabled(ConfigSource cfg) {
+        return cfg.anyLayerTrue("configd.raft.encryption.enabled");
     }
 
     /** System property that sets the edge fan-out server-side prefix-filtering posture (ADR-0045). */
@@ -1403,7 +1434,11 @@ public final class ConfigdServer {
      * the fan-out. This is a two-way door, not a one-way door.
      */
     static boolean resolveEdgeFilterPosture() {
-        String v = System.getProperty(EDGE_FILTER_PROP, "on").trim().toLowerCase();
+        return resolveEdgeFilterPosture(ConfigSource.system());
+    }
+
+    static boolean resolveEdgeFilterPosture(ConfigSource cfg) {
+        String v = cfg.getString(EDGE_FILTER_PROP).orElse("on").trim().toLowerCase();
         return switch (v) {
             case "on", "true" -> true;
             case "off", "false" -> false;
@@ -1439,18 +1474,20 @@ public final class ConfigdServer {
      * @param salt    the signing keyId bytes (HKDF salt)
      * @param keyId   the signing keyId (the loggable KEK reference / node id)
      * @param dataDir the node data directory (where {@code raft-keyring} lives)
+     * @param cfg     the resolved configuration source (encryption enable / requireEncrypted / provider)
      * @return a term-versioned {@link IntegrityEnvelope} (HMAC when encryption off, GCM when on)
      */
     private static io.configd.common.IntegrityEnvelope buildTermVersionedEnvelope(
-            byte[] ikm, byte[] salt, java.util.UUID keyId, Path dataDir) {
-        boolean encrypt = encryptionAtRestEnabled();
-        boolean requireEncrypted = Boolean.getBoolean("configd.raft.encryption.requireEncrypted")
-                || "true".equalsIgnoreCase(System.getenv("CONFIGD_ENCRYPTION_REQUIRE_ENCRYPTED"));
+            byte[] ikm, byte[] salt, java.util.UUID keyId, Path dataDir, ConfigSource cfg) {
+        boolean encrypt = encryptionAtRestEnabled(cfg);
+        // anyLayerTrue reproduces the original "system-property OR env-alias" semantics for the flag.
+        boolean requireEncrypted = cfg.anyLayerTrue("configd.raft.encryption.requireEncrypted");
         if (encrypt) {
             // The KMS provider governs ENCRYPTION-root custody (local vs a cloud CMK). Only 'local'
             // ships in v1; naming another is a startup error, never a silent downgrade.
-            String providerName = System.getProperty("configd.raft.encryption.kms.provider",
-                    System.getenv().getOrDefault("CONFIGD_ENCRYPTION_KMS_PROVIDER", "local"));
+            // Precedence: system property, else the env alias, else 'local' - identical to the original
+            // getProperty(prop, getenv.getOrDefault(ENV, "local")) because the env alias maps to this key.
+            String providerName = cfg.getString("configd.raft.encryption.kms.provider").orElse("local");
             if (!"local".equals(providerName)) {
                 throw new IllegalStateException(
                         "configd.raft.encryption.kms.provider='" + providerName + "' is not available:"
@@ -1635,7 +1672,11 @@ public final class ConfigdServer {
      * @throws IllegalArgumentException if {@code N} is out of range
      */
     static int resolveShardCount() {
-        int shardCount = Integer.getInteger("configd.raft.shardCount", 1);
+        return resolveShardCount(ConfigSource.system());
+    }
+
+    static int resolveShardCount(ConfigSource cfg) {
+        int shardCount = cfg.getInt("configd.raft.shardCount", 1);
         if (shardCount < 1 || shardCount > MAX_SHARD_COUNT) {
             throw new IllegalArgumentException(
                     "configd.raft.shardCount must be in [1, " + MAX_SHARD_COUNT + "], got " + shardCount
@@ -1787,7 +1828,13 @@ public final class ConfigdServer {
      * break failover. Package-private static so the production default is directly testable.
      */
     static boolean witnessStrictEnabled() {
-        return "true".equalsIgnoreCase(System.getProperty("configd.raft.witnessStrict", "false"));
+        return witnessStrictEnabled(ConfigSource.system());
+    }
+
+    static boolean witnessStrictEnabled(ConfigSource cfg) {
+        // Lenient "true"-only test: any other value (including empty) stays fast-vote. NOT the strict
+        // cfg.getBoolean - a typo must not throw and break failover, it must fall to the safe default.
+        return "true".equalsIgnoreCase(cfg.getString("configd.raft.witnessStrict").orElse("false"));
     }
 
     static RaftGroupRuntime buildRaftGroup(
@@ -2323,7 +2370,7 @@ public final class ConfigdServer {
         // starve the periodic heartbeat. Excess is shed as Overloaded (-> 429 + Retry-After) on the HTTP
         // thread BEFORE the proposal reaches the executor. Default 0 = OFF (opt-in via
         // -Dconfigd.write.maxInflightProposals=N); the permit is held only for the bounded wait.
-        int maxInflightProposals = Integer.getInteger("configd.write.maxInflightProposals", 0);
+        int maxInflightProposals = ConfigSource.system().getInt("configd.write.maxInflightProposals", 0);
         java.util.concurrent.Semaphore admission =
                 maxInflightProposals > 0 ? new java.util.concurrent.Semaphore(maxInflightProposals) : null;
         return (scope, keys, command) -> {
@@ -2622,19 +2669,54 @@ public final class ConfigdServer {
         System.out.println();
     }
 
+    /**
+     * Resolves the optional YAML config file and builds the boot {@link ConfigSource}. The file is named
+     * by {@code --config <path>}, else the {@code configd.config.file} system property, else the
+     * {@code CONFIGD_CONFIG} environment variable. When none names a file the source is
+     * {@link ConfigSource#system()} (system properties over environment, NO YAML layer) - byte-identical
+     * to the behavior before configuration was unified. A named-but-unreadable / malformed file fails the
+     * boot ({@link ConfigException}). The YAML layer always sits BELOW system properties and the
+     * environment, so every {@code -D} and env override still wins.
+     *
+     * @param args the command-line arguments (scanned for {@code --config})
+     * @return the boot configuration source
+     */
+    static ConfigSource loadBootConfig(String[] args) {
+        String path = null;
+        for (int i = 0; i + 1 < args.length; i++) {
+            if ("--config".equals(args[i])) {
+                path = args[i + 1];
+                break;
+            }
+        }
+        if (path == null || path.isBlank()) {
+            path = System.getProperty("configd.config.file");
+        }
+        if (path == null || path.isBlank()) {
+            path = System.getenv("CONFIGD_CONFIG");
+        }
+        if (path == null || path.isBlank()) {
+            return ConfigSource.system();
+        }
+        ConfigSource yaml = io.configd.server.config.YamlConfigSource.fromFile(Path.of(path));
+        return LayeredConfigSource.of(new SystemPropertyConfigSource(), new EnvConfigSource(), yaml);
+    }
+
     public static void main(String[] args) {
         if (args.length == 0) {
             System.err.println("Usage: configd-server --node-id <id> --data-dir <path> --peers <id,id,...>"
                     + " [--bind-address <addr>] [--bind-port <port>] [--api-port <port>]"
                     + " [--tls-cert <path>] [--tls-key <path>] [--tls-trust-store <path>]"
-                    + " [--auth-token <token>]");
+                    + " [--auth-token <token>] [--config <path>]");
             System.exit(1);
         }
 
         ServerConfig config;
+        ConfigSource cfg;
         try {
             config = ServerConfig.parse(args);
-        } catch (IllegalArgumentException e) {
+            cfg = loadBootConfig(args);
+        } catch (IllegalArgumentException | ConfigException e) {
             System.err.println("Configuration error: " + e.getMessage());
             System.exit(1);
             return;
@@ -2642,7 +2724,7 @@ public final class ConfigdServer {
 
         printBanner(config);
 
-        ConfigdServer server = start(config);
+        ConfigdServer server = start(config, cfg);
 
         System.out.println("Configd server started successfully.");
 

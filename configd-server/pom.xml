@@ -25,6 +25,9 @@
         <!-- Netty 4.2 platform (ADR-0043 M2, DR-N6): the shared transport selector + the HTTP-transport
              dep closure, used by the Netty admin-API adapter (NettyHttpApiServer). PRODUCTION scope. -->
         <dependency><groupId>io.configd</groupId><artifactId>configd-netty</artifactId><version>${project.version}</version></dependency>
+        <!-- Config-as-SPI (Group B): YAML parser for the operator-facing config file. Confined to
+             configd-server (the YamlConfigSource lives here) so it never enters the lower modules. -->
+        <dependency><groupId>org.yaml</groupId><artifactId>snakeyaml</artifactId></dependency>
     </dependencies>
 
     <build>
