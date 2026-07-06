@@ -3,6 +3,13 @@
 ## Status
 Accepted (closes DOC-028 / iter-1 D-004 + iter-2 R-002)
 
+> **Where the current bytes live.** This ADR records the *decision* for the snapshot body format
+> and its three-form, skip-unknown-TLV trailer. The byte-authoritative description of that body as
+> it rides the wire — the reassembled `SNAPSHOT_CHUNK` payload and its trailer detection — is now in
+> [`rfc/driver-protocol/06-wire-framing.md`](../rfc/driver-protocol/06-wire-framing.md) §7 (F7-2),
+> validated against the codecs. Read the RFC for the layout; read this ADR for why it is shaped that
+> way. Where the two disagree, **the code (and the RFC) win**.
+
 ## Context
 
 `ConfigStateMachine.snapshot()` / `restoreSnapshot()` produce and

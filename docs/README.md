@@ -4,7 +4,7 @@ A map of what lives here and where to go.
 
 ## By what you are trying to do
 
-- **Write a client driver** - start with the protocol spec in [`rfc/driver-protocol/`](rfc/driver-protocol/). It is self-contained and implementable end to end, including the wire framing and golden byte vectors.
+- **Write a client driver** - start with the protocol spec in [`rfc/driver-protocol/`](rfc/driver-protocol/). It is self-contained and implementable end to end, including the wire framing and golden byte vectors. The RFC is **the** normative wire specification for both planes - the driver-facing edge/fan-out plane and the intra-cluster Raft plane (`06-wire-framing.md` §1-§12 and §13 respectively, plus `07-errors.md`); it is validated byte-for-byte against the codecs and golden fixtures. ADR-0028 and ADR-0029 record *why* the framing is shaped this way; the RFC records what the bytes are. Where a diagram and the RFC disagree, the RFC (and the code) win.
 - **Deploy or operate a cluster** - [`operations/`](operations/):
   - [`operator-runsheet.md`](operations/operator-runsheet.md) - the server-side release gates (auth, mTLS, audit, replay, signing key, strong reads) and the rate limiter.
   - [`deployer-must-know.md`](operations/deployer-must-know.md) - the deployment-boundary requirements the server does not enforce for you (each is a real failure if ignored).
