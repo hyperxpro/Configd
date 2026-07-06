@@ -2,7 +2,7 @@
 
 - **Status:** Accepted
 - **Date:** 2026-07-02
-- **Interacts with:** ADR-0038 (signed-chain streaming, no coalescing - this ADR relaxes leg (b) under a posture flag and preserves leg (a)), ADR-0030 (centralized write + async full fan-out topology), ADR-0034 (edge boundary: contiguous signed deltas or GAP), F-0052 (per-delta Ed25519 + epoch/nonce replay protection). Grounded in `docs/investigation/edge-fanout-efficiency-2026-07-02.md`.
+- **Interacts with:** ADR-0038 (signed-chain streaming, no coalescing - this ADR relaxes leg (b) under a posture flag and preserves leg (a)), ADR-0030 (centralized write + async full fan-out topology), ADR-0034 (edge boundary: contiguous signed deltas or GAP), F-0052 (per-delta Ed25519 + epoch/nonce replay protection). Grounded in `docs/archive/investigation/edge-fanout-efficiency-2026-07-02.md`.
 
 ## Context
 

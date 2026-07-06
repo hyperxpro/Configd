@@ -286,7 +286,7 @@ State: the at-rest encryption test population is exactly 5 files, all N=1, all c
 `RaftLogEncryptionTest` — single node, `EncryptionAtRestWiringTest` — explicit no-server-boot).
 Scripted grep intersection with any fan-out/coordinator/multi-shard/signature/filter/watch test =
 **zero**. No encrypted record has ever crossed a replicated multi-node cluster in any test. The
-composition was argued clean by tracing (`docs/investigation/encryption-interaction-2026-07-03.md`)
+composition was argued clean by tracing (`docs/archive/investigation/encryption-interaction-2026-07-03.md`)
 — which is exactly the "composes-by-analysis" this bar forbids.
 Close: one `MultiShardIntegratedSweepTest` variant passing
 `IntegrityEnvelope.encrypting(new SegmentKeyManager(localRoot), null)` into `buildRaftGroup`,
