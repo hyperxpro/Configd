@@ -109,9 +109,16 @@ public final class RaftMessageCodec {
     /**
      * Fixed anchor-witness body (bytes): {@code selfAnchorSeq(8) + selfTerm(8) + selfVotedFor(4)
      * + seenOfYouSeq(8) + flags(1)} = 29. The sender id is NOT in the body - it is the transport's
-     * authenticated 4-byte prefix, injected from {@code InboundMessage.from} at decode (see
-     * {@link #decodeWitness}). Shared by {@link MessageType#RAFT_WITNESS} and
-     * {@link MessageType#RAFT_WITNESS_REPLY}.
+     * 4-byte {@code senderId} prefix, injected from {@code InboundMessage.from} at decode (see
+     * {@link #decodeWitness}).
+     *
+     * <p>That prefix is <em>cryptographically bound</em> to the peer's TLS certificate identity
+     * <b>only when a peer-identity allow-list is configured</b> (WH-08/09,
+     * {@code PeerIdentityPolicy}): the transport verifies the accepted peer's cert and drops any frame
+     * whose {@code senderId} differs from the connection's authorized {@code NodeId}. When no allow-list
+     * is configured (default) the prefix is CA-chain-validated but self-declared, so a cert-valid peer
+     * could forge it - the transport logs a one-time warning in that posture. Shared by
+     * {@link MessageType#RAFT_WITNESS} and {@link MessageType#RAFT_WITNESS_REPLY}.
      */
     private static final int WITNESS_BODY_LEN = 8 + 8 + 4 + 8 + 1;
 
@@ -141,6 +148,21 @@ public final class RaftMessageCodec {
             throw new IllegalArgumentException(
                     field + " length " + declared
                             + " exceeds remaining bytes " + buf.remaining());
+        }
+    }
+
+    /**
+     * WH-06 strict-end: a fixed-shape decoder consumes exactly its declared payload, so any bytes
+     * left in the buffer are padding a hostile peer appended - reject them (bounded by frame length,
+     * but a real grammar violation). Uniform with the strict-end already enforced by
+     * {@link #decodeAppendEntries}, {@link #decodeInstallSnapshot} and
+     * {@link #decodeCoalescedHeartbeat}. Call AFTER the last field - including any optional trailing
+     * field - has been read, so it never rejects the legitimate absence of an optional field.
+     */
+    private static void rejectTrailingBytes(ByteBuffer buf, String field) {
+        if (buf.hasRemaining()) {
+            throw new IllegalArgumentException(
+                    field + " has " + buf.remaining() + " trailing bytes after a fixed-size payload");
         }
     }
 
@@ -418,6 +440,13 @@ public final class RaftMessageCodec {
             buf.get(cmd);
             entries.add(new LogEntry(index, term, cmd));
         }
+        if (buf.hasRemaining()) {
+            // WH-06 strict-end: a well-formed AppendEntries is exactly the fixed header plus its
+            // declared entries, with no padding. Reject trailing bytes (uniform with the coalesced
+            // heartbeat and the edge plane) so a hostile peer cannot smuggle bytes past the grammar.
+            throw new IllegalArgumentException(
+                    "AppendEntries has " + buf.remaining() + " trailing bytes after " + numEntries + " entries");
+        }
         return new AppendEntriesRequest(frame.term(), leaderId, prevLogIndex, prevLogTerm, entries, leaderCommit);
     }
 
@@ -437,6 +466,7 @@ public final class RaftMessageCodec {
         boolean success = buf.get() != 0;
         long matchIndex = buf.getLong();
         NodeId from = NodeId.of(buf.getInt());
+        rejectTrailingBytes(buf, "AppendEntriesResponse");
         return new AppendEntriesResponse(frame.term(), success, matchIndex, from);
     }
 
@@ -457,6 +487,7 @@ public final class RaftMessageCodec {
         NodeId candidateId = NodeId.of(buf.getInt());
         long lastLogIndex = buf.getLong();
         long lastLogTerm = buf.getLong();
+        rejectTrailingBytes(buf, "RequestVote");
         return new RequestVoteRequest(frame.term(), candidateId, lastLogIndex, lastLogTerm, preVote);
     }
 
@@ -475,6 +506,7 @@ public final class RaftMessageCodec {
         checkRemaining(buf, 1 + 4, "RequestVoteResponse payload");
         boolean voteGranted = buf.get() != 0;
         NodeId from = NodeId.of(buf.getInt());
+        rejectTrailingBytes(buf, "RequestVoteResponse");
         return new RequestVoteResponse(frame.term(), voteGranted, from, preVote);
     }
 
@@ -506,6 +538,13 @@ public final class RaftMessageCodec {
         long lastIncludedIndex = buf.getLong();
         long lastIncludedTerm = buf.getLong();
         int offset = buf.getInt();
+        if (offset < 0) {
+            // WH-05: reject a negative chunk offset at decode, closing the asymmetry with the
+            // response's nextExpectedOffset check below (:576). Downstream reassembly is a guarded
+            // contiguous-prefix, but the wire violation is rejected here where it enters.
+            throw new IllegalArgumentException(
+                    "Negative InstallSnapshot offset: " + offset);
+        }
         boolean done = buf.get() != 0;
         int dataLen = buf.getInt();
         checkBlobLen(dataLen, MAX_SNAPSHOT_BLOB_LEN, buf, "InstallSnapshot data");
@@ -527,6 +566,14 @@ public final class RaftMessageCodec {
                 configData = new byte[configLen];
                 buf.get(configData);
             }
+        }
+        if (buf.hasRemaining()) {
+            // WH-06 strict-end: the request is a fixed-shape header + data blob + optional configData
+            // blob, nothing more. A frame with configData absent decodes with nothing remaining; a
+            // frame that carried configData consumes it exactly. Any bytes past that are padding a
+            // hostile peer appended - reject them (uniform with decodeAppendEntries / coalesced HB).
+            throw new IllegalArgumentException(
+                    "InstallSnapshot has " + buf.remaining() + " trailing bytes after payload");
         }
         return new InstallSnapshotRequest(frame.term(), leaderId, lastIncludedIndex, lastIncludedTerm,
                 offset, data, done, configData);
@@ -571,6 +618,10 @@ public final class RaftMessageCodec {
                         "Negative InstallSnapshotResponse nextExpectedOffset: " + nextExpectedOffset);
             }
         }
+        // Strict-end AFTER the optional nextExpectedOffset: the absence of the optional field is
+        // legitimate (checked by the hasRemaining() gate above), but bytes past a present-or-absent
+        // field are padding a hostile peer appended - reject them (WH-06 uniformity).
+        rejectTrailingBytes(buf, "InstallSnapshotResponse");
         return new InstallSnapshotResponse(frame.term(), success, from, lastIncludedIndex, nextExpectedOffset);
     }
 
@@ -586,6 +637,7 @@ public final class RaftMessageCodec {
         ByteBuffer buf = ByteBuffer.wrap(frame.payload());
         checkRemaining(buf, 4, "TimeoutNow payload");
         NodeId leaderId = NodeId.of(buf.getInt());
+        rejectTrailingBytes(buf, "TimeoutNow");
         return new TimeoutNowRequest(frame.term(), leaderId);
     }
 
@@ -642,6 +694,10 @@ public final class RaftMessageCodec {
         long seenOfYouSeq = buf.getLong();
         int flags = buf.get() & 0xFF;
         boolean query = (flags & WITNESS_FLAG_QUERY) != 0;
+        // Strict-end (WH-06): the witness body is exactly WITNESS_BODY_LEN; reject any surplus,
+        // matching every other fixed-shape Raft decoder (the Gate-7 round-2 review caught this as the
+        // one fixed-shape decoder the round-1 WH-06 completeness fix missed).
+        rejectTrailingBytes(buf, "Witness");
         if (type == MessageType.RAFT_WITNESS) {
             return new WitnessMessage(from, selfAnchorSeq, selfTerm, selfVotedFor, seenOfYouSeq, query);
         }

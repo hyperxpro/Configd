@@ -64,7 +64,9 @@ import io.configd.store.VersionedConfigStore;
 import io.configd.netty.NettyRaftTransport;
 import io.configd.transport.FrameCodec;
 import io.configd.transport.MessageType;
+import io.configd.transport.PeerIdentityPolicy;
 import io.configd.transport.RaftTransportEndpoint;
+import io.configd.transport.RaftTransportMetrics;
 import io.configd.transport.TcpRaftTransport;
 import io.configd.transport.TlsConfig;
 import io.configd.transport.TlsManager;
@@ -431,8 +433,17 @@ public final class ConfigdServer {
             // EndpointIdentificationAlgorithm=HTTPS). So a frame's attacker-influenceable groupId is only
             // ever demultiplexed for an AUTHENTICATED peer - an unauthenticated/untrusted-cert peer cannot
             // complete the handshake, so its frames never reach the demux (proven by negative test).
+            // Peer-identity binding (WH-08/09): when an allow-list is configured
+            // (configd.raft.peerIdentity.allowedNodes), the transport verifies each accepted peer's
+            // TLS cert identity and binds its senderId; unset keeps CA-chain-only with a one-time
+            // warning. The same policy gates the in-body leaderId/candidateId check in the per-group
+            // RaftTransportAdapter (via tcpTransport.peerIdentityEnforced()), and both share the
+            // ServerRaftTransportMetrics sink so all rejections increment configd_raft_peer_identity_mismatch.
+            PeerIdentityPolicy peerIdentityPolicy = PeerIdentityPolicy.fromSystemProperties();
+            RaftTransportMetrics raftTransportMetrics = new ServerRaftTransportMetrics(configdMetrics);
             tcpTransport = new NettyRaftTransport(
-                    config.nodeId(), bindAddr, peerAddresses, tlsManager, null);
+                    config.nodeId(), bindAddr, peerAddresses, tlsManager, null,
+                    peerIdentityPolicy, raftTransportMetrics);
             // Fail-closed: refuse to start if the operator asked for TLS but the transport did not
             // receive a TlsManager. This catches accidental regressions of the wiring.
             if (config.tlsEnabled() && tcpTransport.tlsManager() == null) {
@@ -1821,7 +1832,8 @@ public final class ConfigdServer {
         CoalescingRaftTransport coalescingTransport = null;
         RaftTransport transport;
         if (tcpTransport != null) {
-            adapter = new RaftTransportAdapter(tcpTransport, groupId);
+            adapter = new RaftTransportAdapter(tcpTransport, groupId,
+                    tcpTransport.peerIdentityEnforced(), new ServerRaftTransportMetrics(configdMetrics));
             coalescingTransport = new CoalescingRaftTransport(adapter, groupId);
             transport = coalescingTransport;
         } else {

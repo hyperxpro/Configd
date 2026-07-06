@@ -54,6 +54,18 @@ public interface StateMachineMetrics {
      */
     default void onApplyOwnerThreadViolation() {}
 
+    /**
+     * Records a malformed committed command observed at apply time - a grammatically-invalid
+     * command that framed cleanly (passed the outer AppendEntries {@code cmdLen} bound) but failed
+     * {@link CommandCodec#decode}. Such an entry is durable in the WAL and re-decodes on every apply
+     * and on replay; the state machine treats it as {@link StateMachine#NON_MUTATING} (a
+     * deterministic, cluster-wide-identical skip) rather than throwing out of the apply loop - this
+     * counter is the alarm that a poison-pill entry was committed (a cert-valid-but-Byzantine leader,
+     * or corruption). Default no-op so existing sinks need not change; the production registry
+     * overrides it.
+     */
+    default void onMalformedCommittedCommand() {}
+
     /** No-op metrics sink - used by tests and bootstraps with no registry. */
     StateMachineMetrics NOOP = new StateMachineMetrics() {
         @Override public void onWriteCommitSuccess(long applyDurationNanos) {}

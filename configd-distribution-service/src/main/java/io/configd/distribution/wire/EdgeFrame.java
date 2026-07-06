@@ -277,6 +277,11 @@ public sealed interface EdgeFrame
             return bytes;
         }
 
+        /** The chunk payload length in bytes (no defensive copy - for accumulation accounting). */
+        public int length() {
+            return bytes.length;
+        }
+
         @Override
         public FrameType type() {
             return FrameType.SNAPSHOT_CHUNK;

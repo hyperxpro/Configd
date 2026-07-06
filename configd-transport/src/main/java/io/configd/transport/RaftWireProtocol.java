@@ -14,8 +14,11 @@ import java.util.Objects;
  *   [4 bytes: sender NodeId, big-endian]
  *   [N bytes: FrameCodec-encoded frame (itself starting with a 4-byte length)]
  * </pre>
- * The 4-byte sender id prefixes each {@link FrameCodec} frame so the receiver knows the origin
- * without trusting payload-internal identity.
+ * The 4-byte sender id prefixes each {@link FrameCodec} frame so the receiver reads the claimed origin
+ * without parsing the payload. The prefix is a self-declared wire value; it is bound to the peer's TLS
+ * certificate identity (and any differing frame dropped) only when a peer-identity allow-list is
+ * configured - see {@link PeerIdentityPolicy} (WH-08/09). Without an allow-list it is CA-chain-validated
+ * but forgeable by a cert-valid peer, and the transport warns once on startup.
  *
  * <h2>Frame discipline</h2>
  * <ul>

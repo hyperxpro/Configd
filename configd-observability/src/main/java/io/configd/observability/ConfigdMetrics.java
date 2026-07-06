@@ -47,6 +47,37 @@ public final class ConfigdMetrics {
     public static final String NAME_SNAPSHOT_INSTALL_FAILED = "configd.snapshot.install.failed";
     public static final String NAME_SNAPSHOT_REBUILD = "configd.snapshot.rebuild";
     /**
+     * Malformed-committed-command alarm counter. Incremented on the state-machine apply thread when
+     * {@code ConfigStateMachine.apply} decodes a committed command that is grammatically malformed
+     * (framed cleanly but fails {@link io.configd.store.CommandCodec#decode} - a poison-pill entry
+     * from a cert-valid-but-Byzantine leader, or WAL corruption). The entry is skipped deterministically
+     * as non-mutating rather than crash-looping the apply loop; a non-zero value here is a
+     * security/integrity event worth alerting on. Eager-created so it emits {@code _total 0} from the
+     * first scrape.
+     */
+    public static final String NAME_COMMAND_MALFORMED = "configd.command.malformed";
+    /**
+     * Raft peer-identity mismatch alarm counter (WH-08/WH-09). Incremented on a consensus-transport
+     * reader / event-loop thread (or the inbound-routing thread) when a peer's authenticated TLS
+     * certificate identity does not authorize the {@code senderId} / in-body {@code leaderId} /
+     * {@code candidateId} it presents - a cert-valid-but-Byzantine cluster member impersonating another
+     * member. The connection is dropped; a non-zero value here is a security event worth alerting on.
+     * Counted only when a peer-identity allow-list is configured (enforce-when-configured). Eager-created
+     * so it emits {@code _total 0} from the first scrape.
+     */
+    public static final String NAME_RAFT_PEER_IDENTITY_MISMATCH = "configd.raft.peer.identity.mismatch";
+    /**
+     * Inbound Raft-frame decode-drop counter (WH-10). Incremented on the inbound-routing thread when a
+     * frame that framed and CRC-verified cleanly could not be decoded into an actionable
+     * {@code RaftMessage} - a dormant/undecodable {@link io.configd.transport.MessageType} with no
+     * consensus codec ({@code PLUMTREE_*}/{@code HYPARVIEW_*}/{@code HEARTBEAT}) or a
+     * structurally-malformed payload (truncation, out-of-range blob length, negative field). The frame is
+     * dropped and the connection kept; the accompanying WARN log is rate-limited, so this counter is the
+     * un-throttled signal of the drop rate - a sustained non-zero value is a version-skew or hostile-peer
+     * signal worth alerting on. Eager-created so it emits {@code _total 0} from the first scrape.
+     */
+    public static final String NAME_RAFT_DECODE_DROPPED = "configd.raft.decode.dropped";
+    /**
      * Write-overload reject counter. Backs the {@code Retry-After: 1} 429 path
      * ({@code HttpApiServer}) with an emitted, tested series so the sustained-429-rate
      * alert queries something real. Incremented on the HTTP write thread inside the
@@ -101,6 +132,9 @@ public final class ConfigdMetrics {
     private final MetricsRegistry.Histogram propagationDelaySeconds;
     private final MetricsRegistry.Counter snapshotInstallFailed;
     private final MetricsRegistry.Counter snapshotRebuild;
+    private final MetricsRegistry.Counter commandMalformed;
+    private final MetricsRegistry.Counter raftPeerIdentityMismatch;
+    private final MetricsRegistry.Counter raftDecodeDropped;
     private final MetricsRegistry.Counter writeRejectedOverloaded;
     private final MetricsRegistry.Counter raftElections;
 
@@ -119,6 +153,9 @@ public final class ConfigdMetrics {
         this.edgeReadTotal = registry.counter(NAME_EDGE_READ_TOTAL);
         this.snapshotInstallFailed = registry.counter(NAME_SNAPSHOT_INSTALL_FAILED);
         this.snapshotRebuild = registry.counter(NAME_SNAPSHOT_REBUILD);
+        this.commandMalformed = registry.counter(NAME_COMMAND_MALFORMED);
+        this.raftPeerIdentityMismatch = registry.counter(NAME_RAFT_PEER_IDENTITY_MISMATCH);
+        this.raftDecodeDropped = registry.counter(NAME_RAFT_DECODE_DROPPED);
         this.writeRejectedOverloaded = registry.counter(NAME_WRITE_REJECTED_OVERLOADED);
         this.raftElections = registry.counter(NAME_RAFT_ELECTIONS);
         // ACL config-policy loader counters -- PRODUCED and incremented by AclConfigPolicyLoader on this
@@ -168,6 +205,9 @@ public final class ConfigdMetrics {
     public MetricsRegistry.Histogram propagationDelaySeconds() { return propagationDelaySeconds; }
     public MetricsRegistry.Counter snapshotInstallFailed() { return snapshotInstallFailed; }
     public MetricsRegistry.Counter snapshotRebuild() { return snapshotRebuild; }
+    public MetricsRegistry.Counter commandMalformed() { return commandMalformed; }
+    public MetricsRegistry.Counter raftPeerIdentityMismatch() { return raftPeerIdentityMismatch; }
+    public MetricsRegistry.Counter raftDecodeDropped() { return raftDecodeDropped; }
     public MetricsRegistry.Counter writeRejectedOverloaded() { return writeRejectedOverloaded; }
     public MetricsRegistry.Counter raftElections() { return raftElections; }
 

@@ -28,6 +28,7 @@ import java.io.OutputStream;
 import java.net.InetSocketAddress;
 import java.net.ServerSocket;
 import java.net.Socket;
+import java.net.SocketTimeoutException;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ArrayBlockingQueue;
@@ -78,6 +79,31 @@ public final class FanOutServer implements FanOutEndpoint {
 
     /** Bounded TLS handshake timeout (ms), mirroring {@code TcpRaftTransport.HANDSHAKE_TIMEOUT_MS}. */
     static final int HANDSHAKE_TIMEOUT_MS = 2_000;
+
+    /**
+     * System property: the pre-SUBSCRIBE first-frame deadline (ms) for an admitted (post-mTLS)
+     * edge connection (WH-11). Mirrors {@code configd.raft.inboundReadTimeoutMs}; the slow-loris
+     * test sets a short value.
+     */
+    public static final String FIRST_FRAME_DEADLINE_PROP = "configd.edge.firstFrameDeadlineMs";
+
+    /**
+     * Default pre-SUBSCRIBE first-frame deadline (ms). Generous ({@value}) so a healthy subscriber
+     * always sends its SUBSCRIBE / WATCH_CREATE well within it; a peer that completes mTLS then
+     * sends nothing is reaped after this window. AFTER the first routed frame the deadline is
+     * DISARMED - an established subscriber is idle by design (server pushes; the existing
+     * server->client HEARTBEAT is its liveness), so it is never read-idle-reaped.
+     */
+    public static final int DEFAULT_FIRST_FRAME_DEADLINE_MS = 10_000;
+
+    /**
+     * The configured pre-SUBSCRIBE first-frame deadline (ms), tunable via
+     * {@value #FIRST_FRAME_DEADLINE_PROP} (default {@link #DEFAULT_FIRST_FRAME_DEADLINE_MS}).
+     * Shared by both the JDK and Netty edge transports.
+     */
+    public static int firstFrameDeadlineMs() {
+        return Integer.getInteger(FIRST_FRAME_DEADLINE_PROP, DEFAULT_FIRST_FRAME_DEADLINE_MS);
+    }
 
     /** Named config: per-connection outbound transport queue depth (frames). Design section 4. */
     public static final int DEFAULT_TRANSPORT_QUEUE_FRAMES = 64;
@@ -488,13 +514,28 @@ public final class FanOutServer implements FanOutEndpoint {
         private void readerLoop() {
             try {
                 DataInputStream in = new DataInputStream(socket.getInputStream());
+                // WH-11 (C3): ABSOLUTE pre-SUBSCRIBE first-frame deadline. A per-read soTimeout is
+                // evadable by a slow-loris that dribbles >=1 byte per window - each partial read resets
+                // the timer, so the deadline never fires; an absolute wall-clock budget is not evadable.
+                // readFrame re-arms the socket timeout to the REMAINING budget before EVERY underlying
+                // read until the first frame is routed (see readBounded), and aborts with a
+                // SocketTimeoutException once the budget is exhausted regardless of dribbles. A peer
+                // that completed mTLS (or connected in plaintext) then stalls - sending nothing OR
+                // dribbling forever - is reaped, instead of parking a reader thread + FD + cumulator
+                // until the OS reaps it. DISARMED (deadline 0, soTimeout 0) once the first routed frame
+                // arrives (an established subscriber is idle by design; liveness rides the HEARTBEAT).
+                long firstFrameDeadlineNanos =
+                        System.nanoTime() + (long) firstFrameDeadlineMs() * 1_000_000L;
                 while (alive.get() && running.get()) {
-                    EdgeFrame frame = readFrame(in);
+                    EdgeFrame frame = readFrame(in, firstFrameRouted ? 0L : firstFrameDeadlineNanos);
                     if (frame == null) {
                         return; // EOF
                     }
                     if (!firstFrameRouted) {
                         firstFrameRouted = true;
+                        // WH-11 disarm: rely on the server->client HEARTBEAT for liveness now; do
+                        // NOT read-idle-reap a healthy subscriber that legitimately stays quiet.
+                        socket.setSoTimeout(0);
                         // Outbound flip: a WATCH_CREATE-first connection is a 0x02 watch connection,
                         // so offer() must stamp 0x02 for the client to decode the server's WATCH_* frames.
                         // A 0x03-stamped SUBSCRIBE is a filtered-fan-out connection (ADR-0045), so
@@ -512,6 +553,12 @@ public final class FanOutServer implements FanOutEndpoint {
                     }
                     driver.onInboundFrame(frame);
                 }
+            } catch (SocketTimeoutException e) {
+                // WH-11: the first-frame deadline elapsed with no (complete) routed frame - a
+                // slow-loris. Reaped + counted; the deadline is disarmed after the first frame,
+                // so a post-SUBSCRIBE idle subscriber never reaches here.
+                metrics.onFirstFrameTimeout();
+                close(ErrorCode.PROTOCOL_VIOLATION, "pre-SUBSCRIBE first-frame deadline elapsed");
             } catch (EdgeFrameCodec.CodecException e) {
                 close(e.code(), "decode error: " + e.getMessage());
             } catch (IOException e) {
@@ -525,25 +572,48 @@ public final class FanOutServer implements FanOutEndpoint {
         /**
          * Reads one frame: length prefix (peekLength-bounded BEFORE allocation), then the body.
          * Returns null on a clean EOF.
+         *
+         * @param deadlineNanos the ABSOLUTE first-frame deadline ({@link System#nanoTime()} basis), or
+         *                      {@code 0} to read unbounded (post-first-frame, disarmed). When non-zero
+         *                      every underlying read is bounded to the REMAINING budget so a byte-per-
+         *                      window slow-loris cannot reset the deadline (WH-11 / C3).
          */
-        private EdgeFrame readFrame(DataInputStream in) throws IOException {
-            int length;
-            try {
-                length = in.readInt();
-            } catch (EOFException eof) {
-                return null; // clean stream end
+        private EdgeFrame readFrame(DataInputStream in, long deadlineNanos) throws IOException {
+            byte[] header4 = new byte[4];
+            if (deadlineNanos != 0L) {
+                // Absolute-deadline first-frame read: bound each underlying read to the remaining budget.
+                try {
+                    if (!readBounded(in, header4, 0, 4, deadlineNanos)) {
+                        return null; // clean EOF before any byte
+                    }
+                } catch (EOFException eof) {
+                    return null; // partial length prefix then EOF: treat as a clean stream end
+                }
+            } else {
+                // Disarmed steady-state read (byte-identical to the pre-C3 path): block indefinitely.
+                int length;
+                try {
+                    length = in.readInt();
+                } catch (EOFException eof) {
+                    return null; // clean stream end
+                }
+                header4[0] = (byte) (length >>> 24);
+                header4[1] = (byte) (length >>> 16);
+                header4[2] = (byte) (length >>> 8);
+                header4[3] = (byte) length;
             }
             // Bounds-check the declared length BEFORE allocating (peekLength-bounded).
-            byte[] header4 = new byte[]{
-                    (byte) (length >>> 24), (byte) (length >>> 16),
-                    (byte) (length >>> 8), (byte) length};
             int total = EdgeFrameCodec.peekLength(header4); // throws CodecException if out of range
             byte[] frameBytes = new byte[total];
             frameBytes[0] = header4[0];
             frameBytes[1] = header4[1];
             frameBytes[2] = header4[2];
             frameBytes[3] = header4[3];
-            in.readFully(frameBytes, 4, total - 4);
+            if (deadlineNanos != 0L) {
+                readBounded(in, frameBytes, 4, total - 4, deadlineNanos); // truncation => EOFException
+            } else {
+                in.readFully(frameBytes, 4, total - 4);
+            }
             if (inboundNegotiatedVersion == 0) {
                 // First frame: accept either version (CRC-validated), then PIN to its stamp.
                 EdgeFrame frame = EdgeFrameCodec.decode(frameBytes);
@@ -552,6 +622,50 @@ public final class FanOutServer implements FanOutEndpoint {
             }
             // Pinned: a frame stamped with the OTHER accepted version -> BAD_WIRE_VERSION (fail closed).
             return EdgeFrameCodec.decode(frameBytes, inboundNegotiatedVersion);
+        }
+
+        /**
+         * Reads exactly {@code len} bytes into {@code dst[off..off+len)}, re-arming the socket read
+         * timeout to the REMAINING first-frame budget before EVERY underlying read (see
+         * {@link #armReadBudget}). This makes the WH-11 deadline ABSOLUTE: a slow-loris that dribbles
+         * >=1 byte per window cannot reset it, because the budget shrinks monotonically and
+         * {@code armReadBudget} throws {@link SocketTimeoutException} once it is exhausted (C3).
+         *
+         * @return {@code true} if all {@code len} bytes were read; {@code false} iff a clean EOF occurs
+         *         BEFORE any byte is read (an idle peer that closed). A partial-then-EOF throws
+         *         {@link EOFException} (a truncated frame).
+         */
+        private boolean readBounded(DataInputStream in, byte[] dst, int off, int len, long deadlineNanos)
+                throws IOException {
+            int read = 0;
+            while (read < len) {
+                armReadBudget(deadlineNanos);
+                int n = in.read(dst, off + read, len - read);
+                if (n < 0) {
+                    if (read == 0) {
+                        return false; // clean EOF before any byte
+                    }
+                    throw new EOFException(
+                            "truncated first frame: read " + read + " of " + len + " bytes before EOF");
+                }
+                read += n;
+            }
+            return true;
+        }
+
+        /**
+         * Shrinks the socket read timeout to the REMAINING first-frame budget so the WH-11 deadline is
+         * absolute (C3). A non-positive remaining budget throws {@link SocketTimeoutException}, reaping
+         * the connection. The remaining budget is rounded UP to at least 1 ms so we never set
+         * {@code soTimeout(0)} (= infinite) from a sub-millisecond remainder.
+         */
+        private void armReadBudget(long deadlineNanos) throws IOException {
+            long remainingNanos = deadlineNanos - System.nanoTime();
+            if (remainingNanos <= 0L) {
+                throw new SocketTimeoutException("pre-SUBSCRIBE first-frame deadline elapsed");
+            }
+            long remainingMs = (remainingNanos + 999_999L) / 1_000_000L; // round up, never 0 = infinite
+            socket.setSoTimeout((int) Math.min(remainingMs, Integer.MAX_VALUE));
         }
 
         // ---- writer thread ----

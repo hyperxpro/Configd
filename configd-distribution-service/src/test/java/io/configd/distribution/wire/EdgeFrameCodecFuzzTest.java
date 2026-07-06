@@ -17,6 +17,7 @@ import java.util.HexFormat;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTimeoutPreemptively;
@@ -325,6 +326,131 @@ class EdgeFrameCodecFuzzTest {
         EdgeFrameCodec.CodecException ex = assertThrows(EdgeFrameCodec.CodecException.class,
                 () -> EdgeFrameCodec.decode(wire));
         assertEquals(ErrorCode.FRAME_CORRUPT, ex.code());
+    }
+
+    // -----------------------------------------------------------------------
+    // 6. Gate-2 amplifier reject paths, machine-swept.
+    //
+    // The Gate-2 hardening added two client-facing amplifier bounds to the edge
+    // codec; EdgeSubscribeBoundsTest / EdgeFrameCodecStrictnessTest pin the
+    // hand-aimed unit cases, and section 1's arbitrary-byte oracle exercises them
+    // incidentally. These properties sweep the exact hostile field with the
+    // fuzzer so the bound is proven across the whole int range, not a few points.
+    //
+    // (The Raft-plane Gate-2 reject paths - WH-05 negative InstallSnapshot offset
+    //  and WH-06 trailing-byte strictness - are machine-swept in
+    //  RaftMessageCodecFuzzTest, the sibling suite in configd-server. The
+    //  SNAPSHOT_CHUNK decode cap is bounded by MAX_EDGE_FRAME_SIZE and covered by
+    //  the section-1 arbitrary-byte oracle; its encode cap
+    //  MAX_SNAPSHOT_CHUNK_BYTES is pinned by EdgeSnapshotCodecTest.)
+    // -----------------------------------------------------------------------
+
+    /**
+     * WH-12: sweep the SUBSCRIBE {@code prefixCount} across the full int range on a CRC-valid frame
+     * that carries only {@code filler} trailing bytes. The tight {@code prefixCount * 4 <= remaining}
+     * pre-check and the {@link EdgeFrameCodec#MAX_PREFIXES} cap must keep decode total: a valid
+     * {@link EdgeFrame} or a {@link EdgeFrameCodec.CodecException} - never an
+     * {@link OutOfMemoryError} from {@code new ArrayList<>(prefixCount)} on a tiny frame, never any
+     * other forbidden throwable. A near-2^31 count on a small frame is the sharpest client-facing
+     * heap amplifier, so this is the highest-value sweep.
+     */
+    @Property(tries = 1500, seed = "6001")
+    void subscribePrefixCountSweepStaysTotalAndBounded(
+            @ForAll int prefixCount,
+            @ForAll @IntRange(min = 0, max = 64) int fillerWords) {
+        byte[] frame = rawSubscribe(prefixCount, fillerWords * 4);
+        assertTimeoutPreemptively(DECODE_BUDGET, () -> {
+            try {
+                assertNotNull(EdgeFrameCodec.decode(frame));
+            } catch (EdgeFrameCodec.CodecException expected) {
+                assertNotNull(expected.code());
+            } catch (Throwable t) {
+                failForbidden("subscribe prefixCount sweep (count=" + prefixCount + ")", frame, t);
+            }
+        });
+    }
+
+    /**
+     * WH-12 boundary: {@code MAX_PREFIXES + 1} with EXACTLY enough filler that the tight byte-bound
+     * passes, so the element-count cap - not the byte-bound - is the guard that fires. Proves the cap
+     * is a real second line and rejects before allocation, as FRAME_CORRUPT.
+     */
+    @Property(tries = 1, seed = "6002")
+    void subscribePrefixCountAtElementCapBoundary() {
+        int count = EdgeFrameCodec.MAX_PREFIXES + 1;
+        byte[] frame = rawSubscribe(count, count * 4); // remaining == count*4, so count*4 > remaining is false
+        EdgeFrameCodec.CodecException ex = assertThrows(EdgeFrameCodec.CodecException.class,
+                () -> EdgeFrameCodec.decode(frame));
+        assertEquals(ErrorCode.FRAME_CORRUPT, ex.code());
+        assertTrue(ex.getMessage().contains("MAX_PREFIXES"), ex.getMessage());
+    }
+
+    /**
+     * WH-14: a NOTIFY payload strictly larger than {@link EdgeFrameCodec#MAX_NOTIFY_BATCH_BYTES} is
+     * rejected as {@link ErrorCode#FRAME_TOO_LARGE} at decode - the byte-sum cap is checked BEFORE the
+     * count field is even read - while a payload at/under the cap stays total (here: a
+     * {@code count}-led parse that surfaces as a clean CodecException on the zero-filled body). Sweeps
+     * the exact boundary the encode-side cap mirrors.
+     */
+    @Property(tries = 1, seed = "6003")
+    void notifyPayloadByteCapBoundary() {
+        int cap = EdgeFrameCodec.MAX_NOTIFY_BATCH_BYTES;
+        for (int payloadLen : new int[]{cap + 1, cap + 4096}) {
+            byte[] frame = rawNotify(payloadLen);
+            EdgeFrameCodec.CodecException ex = assertThrows(EdgeFrameCodec.CodecException.class,
+                    () -> EdgeFrameCodec.decode(frame), "NOTIFY payload " + payloadLen + " over cap");
+            assertEquals(ErrorCode.FRAME_TOO_LARGE, ex.code(), "payloadLen=" + payloadLen);
+        }
+        // At-cap and just-under: the byte-cap does NOT fire; decode stays total (the zero-filled body
+        // parses a count then hits an inner bound / strict-end -> FRAME_CORRUPT, never a forbidden throw).
+        for (int payloadLen : new int[]{cap, cap - 1, 32}) {
+            byte[] frame = rawNotify(payloadLen);
+            assertTimeoutPreemptively(DECODE_BUDGET, () -> {
+                try {
+                    assertNotNull(EdgeFrameCodec.decode(frame));
+                } catch (EdgeFrameCodec.CodecException expected) {
+                    assertNotEquals(ErrorCode.FRAME_TOO_LARGE, expected.code(),
+                            "at/under-cap payload must not be rejected by the byte-cap");
+                } catch (Throwable t) {
+                    failForbidden("notify at-cap", frame, t);
+                }
+            });
+        }
+    }
+
+    /**
+     * Builds a CRC-valid 0x01 SUBSCRIBE frame declaring {@code prefixCount} but carrying only
+     * {@code fillerBytes} of zero payload after the count (mirrors EdgeSubscribeBoundsTest, exposed
+     * here for the fuzzer). Layout: [len][ver 0x01][type SUBSCRIBE][1B fullStore][4B prefixCount][filler].
+     */
+    private static byte[] rawSubscribe(int prefixCount, int fillerBytes) {
+        int payloadLen = 1 + 4 + Math.max(0, fillerBytes);
+        int total = EdgeFrameCodec.HEADER_SIZE + payloadLen + EdgeFrameCodec.TRAILER_SIZE;
+        byte[] f = new byte[total];
+        ByteBuffer bb = ByteBuffer.wrap(f);
+        bb.putInt(total);
+        bb.put(EdgeFrameCodec.EDGE_WIRE_VERSION);      // 0x01
+        bb.put((byte) FrameType.SUBSCRIBE.code());
+        bb.put((byte) 0);                               // fullStore = false
+        bb.putInt(prefixCount);
+        repairCrc(f);
+        return f;
+    }
+
+    /**
+     * Builds a CRC-valid 0x01 NOTIFY frame with a zero-filled payload of {@code payloadLen} bytes.
+     * Layout: [len][ver 0x01][type NOTIFY][payloadLen bytes][crc].
+     */
+    private static byte[] rawNotify(int payloadLen) {
+        int total = EdgeFrameCodec.HEADER_SIZE + payloadLen + EdgeFrameCodec.TRAILER_SIZE;
+        byte[] f = new byte[total];
+        ByteBuffer bb = ByteBuffer.wrap(f);
+        bb.putInt(total);
+        bb.put(EdgeFrameCodec.EDGE_WIRE_VERSION);      // 0x01
+        bb.put((byte) FrameType.NOTIFY.code());
+        // payload stays zero-filled
+        repairCrc(f);
+        return f;
     }
 
     // -----------------------------------------------------------------------

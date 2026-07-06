@@ -3,6 +3,8 @@ package io.configd.store;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 
+import java.nio.BufferUnderflowException;
+import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
 
@@ -203,6 +205,265 @@ class CommandCodecTest {
         void decodeNullThrows() {
             assertThrows(NullPointerException.class,
                     () -> CommandCodec.decode(null));
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // WH-01/02/03/04 hardening: decode is TOTAL / fail-closed. Every malformed
+    // input surfaces as MalformedCommandException (a subtype of
+    // IllegalArgumentException) and NEVER as BufferUnderflowException, so the
+    // Raft apply loop can catch the malformed-decode case specifically and skip
+    // the poison-pill entry deterministically instead of crash-looping.
+    // -----------------------------------------------------------------------
+
+    @Nested
+    class TotalDecodeHardening {
+
+        /** Assert decode rejects {@code bad} with the domain type and never leaks BufferUnderflow. */
+        private void assertMalformed(byte[] bad) {
+            assertThrows(CommandCodec.MalformedCommandException.class,
+                    () -> CommandCodec.decode(bad));
+            // Belt-and-braces: the exact throwable is NOT a BufferUnderflowException (which is NOT an
+            // IllegalArgumentException, so it would have escaped every existing catch site).
+            try {
+                CommandCodec.decode(bad);
+                fail("expected MalformedCommandException");
+            } catch (BufferUnderflowException e) {
+                fail("decode leaked BufferUnderflowException instead of MalformedCommandException");
+            } catch (CommandCodec.MalformedCommandException expected) {
+                // ok
+            }
+        }
+
+        @Test
+        void malformedIsAnIllegalArgumentException() {
+            // Existing callers catch IllegalArgumentException / RuntimeException - the domain type
+            // must remain assignable to both so those sites keep working.
+            assertTrue(IllegalArgumentException.class.isAssignableFrom(
+                    CommandCodec.MalformedCommandException.class));
+        }
+
+        @Test
+        void unknownTopLevelType() {
+            assertMalformed(new byte[]{(byte) 0x7F});
+            assertMalformed(new byte[]{(byte) 0xFF, 0x00, 0x01});
+        }
+
+        @Test
+        void putTruncatedKeyLen() {
+            // type byte present, but only 1 of the 2 key-length bytes.
+            assertMalformed(new byte[]{CommandCodec.TYPE_PUT, 0x00});
+        }
+
+        @Test
+        void putKeyLenExceedsRemaining() {
+            // declares a 5-byte key but supplies 2 bytes.
+            ByteBuffer buf = ByteBuffer.allocate(1 + 2 + 2);
+            buf.put(CommandCodec.TYPE_PUT);
+            buf.putShort((short) 5);
+            buf.put(new byte[]{'a', 'b'});
+            assertMalformed(buf.array());
+        }
+
+        @Test
+        void putTruncatedValueLen() {
+            // valid key, then only 2 of the 4 value-length bytes.
+            ByteBuffer buf = ByteBuffer.allocate(1 + 2 + 1 + 2);
+            buf.put(CommandCodec.TYPE_PUT);
+            buf.putShort((short) 1);
+            buf.put((byte) 'k');
+            buf.putShort((short) 0);
+            assertMalformed(buf.array());
+        }
+
+        @Test
+        void putValueLenExceedsRemaining() {
+            // declares a 1000-byte value but supplies none.
+            ByteBuffer buf = ByteBuffer.allocate(1 + 2 + 1 + 4);
+            buf.put(CommandCodec.TYPE_PUT);
+            buf.putShort((short) 1);
+            buf.put((byte) 'k');
+            buf.putInt(1000);
+            assertMalformed(buf.array());
+        }
+
+        @Test
+        void putOversizeValueLen() {
+            ByteBuffer buf = ByteBuffer.allocate(1 + 2 + 1 + 4);
+            buf.put(CommandCodec.TYPE_PUT);
+            buf.putShort((short) 1);
+            buf.put((byte) 'k');
+            buf.putInt(1_048_577); // 1 byte over MAX_VALUE_SIZE
+            assertMalformed(buf.array());
+        }
+
+        @Test
+        void putNegativeValueLen() {
+            ByteBuffer buf = ByteBuffer.allocate(1 + 2 + 1 + 4);
+            buf.put(CommandCodec.TYPE_PUT);
+            buf.putShort((short) 1);
+            buf.put((byte) 'k');
+            buf.putInt(-1);
+            assertMalformed(buf.array());
+        }
+
+        @Test
+        void deleteTruncatedKey() {
+            // declares a 4-byte key but supplies 1.
+            ByteBuffer buf = ByteBuffer.allocate(1 + 2 + 1);
+            buf.put(CommandCodec.TYPE_DELETE);
+            buf.putShort((short) 4);
+            buf.put((byte) 'x');
+            assertMalformed(buf.array());
+        }
+
+        @Test
+        void batchTruncatedCount() {
+            assertMalformed(new byte[]{CommandCodec.TYPE_BATCH, 0x00, 0x00});
+        }
+
+        @Test
+        void batchNegativeCount() {
+            ByteBuffer buf = ByteBuffer.allocate(1 + 4);
+            buf.put(CommandCodec.TYPE_BATCH);
+            buf.putInt(-1);
+            assertMalformed(buf.array());
+        }
+
+        @Test
+        void batchOversizeCount() {
+            ByteBuffer buf = ByteBuffer.allocate(1 + 4);
+            buf.put(CommandCodec.TYPE_BATCH);
+            buf.putInt(10_001);
+            assertMalformed(buf.array());
+        }
+
+        @Test
+        void batchCountCannotFitRemaining() {
+            // A tiny frame declaring a huge count must be rejected BEFORE the ArrayList allocation:
+            // count=10_000 needs >= 30_000 bytes of mutations but the frame carries none.
+            ByteBuffer buf = ByteBuffer.allocate(1 + 4);
+            buf.put(CommandCodec.TYPE_BATCH);
+            buf.putInt(10_000);
+            assertMalformed(buf.array());
+        }
+
+        @Test
+        void batchUnknownNestedMutationType() {
+            ByteBuffer buf = ByteBuffer.allocate(1 + 4 + 1);
+            buf.put(CommandCodec.TYPE_BATCH);
+            buf.putInt(1);
+            buf.put((byte) 0x7F); // unknown mutation type
+            assertMalformed(buf.array());
+        }
+
+        @Test
+        void batchNestedMutationTruncated() {
+            // count=1, PUT type, then a key-length that overruns the buffer.
+            ByteBuffer buf = ByteBuffer.allocate(1 + 4 + 1 + 2);
+            buf.put(CommandCodec.TYPE_BATCH);
+            buf.putInt(1);
+            buf.put(CommandCodec.TYPE_PUT);
+            buf.putShort((short) 9);
+            assertMalformed(buf.array());
+        }
+
+        @Test
+        void trailingBytesAfterPutRejected() {
+            byte[] valid = CommandCodec.encodePut("k", bytes("v"));
+            byte[] padded = new byte[valid.length + 3];
+            System.arraycopy(valid, 0, padded, 0, valid.length);
+            assertMalformed(padded);
+        }
+
+        @Test
+        void trailingBytesAfterDeleteRejected() {
+            byte[] valid = CommandCodec.encodeDelete("k");
+            byte[] padded = new byte[valid.length + 1];
+            System.arraycopy(valid, 0, padded, 0, valid.length);
+            padded[valid.length] = 0x42;
+            assertMalformed(padded);
+        }
+
+        @Test
+        void trailingBytesAfterBatchRejected() {
+            byte[] valid = CommandCodec.encodeBatch(List.of(new ConfigMutation.Put("a", bytes("1"))));
+            byte[] padded = new byte[valid.length + 5];
+            System.arraycopy(valid, 0, padded, 0, valid.length);
+            assertMalformed(padded);
+        }
+
+        @Test
+        void emptyPutKeyRejected() {
+            // keyLen=0 - impossible via the write API (rejects isBlank), so a poison-pill only.
+            ByteBuffer buf = ByteBuffer.allocate(1 + 2 + 4);
+            buf.put(CommandCodec.TYPE_PUT);
+            buf.putShort((short) 0);
+            buf.putInt(0);
+            assertMalformed(buf.array());
+        }
+
+        @Test
+        void blankPutKeyRejected() {
+            // whitespace-only key: ConfigMutation.Put would throw a plain IllegalArgumentException
+            // deep inside apply (out of the malformed-decode catch), so decode must reject it here.
+            byte[] keyBytes = "   ".getBytes(StandardCharsets.UTF_8);
+            ByteBuffer buf = ByteBuffer.allocate(1 + 2 + keyBytes.length + 4);
+            buf.put(CommandCodec.TYPE_PUT);
+            buf.putShort((short) keyBytes.length);
+            buf.put(keyBytes);
+            buf.putInt(0);
+            assertMalformed(buf.array());
+        }
+
+        @Test
+        void blankDeleteKeyRejected() {
+            byte[] keyBytes = "\t".getBytes(StandardCharsets.UTF_8);
+            ByteBuffer buf = ByteBuffer.allocate(1 + 2 + keyBytes.length);
+            buf.put(CommandCodec.TYPE_DELETE);
+            buf.putShort((short) keyBytes.length);
+            buf.put(keyBytes);
+            assertMalformed(buf.array());
+        }
+
+        @Test
+        void blankKeyNestedInBatchRejected() {
+            byte[] keyBytes = " ".getBytes(StandardCharsets.UTF_8);
+            ByteBuffer buf = ByteBuffer.allocate(1 + 4 + 1 + 2 + keyBytes.length);
+            buf.put(CommandCodec.TYPE_BATCH);
+            buf.putInt(1);
+            buf.put(CommandCodec.TYPE_DELETE);
+            buf.putShort((short) keyBytes.length);
+            buf.put(keyBytes);
+            assertMalformed(buf.array());
+        }
+
+        @Test
+        void validCommandsStillDecodeByteIdentical() {
+            // Byte-fidelity: every valid command round-trips unchanged. A blank key is NOT a valid
+            // command (the write API forbids it), so rejecting it does not regress fidelity.
+            byte[] put = CommandCodec.encodePut("db.host", bytes("localhost"));
+            assertArrayEquals(put, reencode(CommandCodec.decode(put)));
+
+            byte[] emptyVal = CommandCodec.encodePut("k", new byte[0]);
+            assertArrayEquals(emptyVal, reencode(CommandCodec.decode(emptyVal)));
+
+            byte[] del = CommandCodec.encodeDelete("cache.ttl");
+            assertArrayEquals(del, reencode(CommandCodec.decode(del)));
+
+            byte[] batch = CommandCodec.encodeBatch(List.of(
+                    new ConfigMutation.Put("a", bytes("1")),
+                    new ConfigMutation.Delete("b")));
+            assertArrayEquals(batch, reencode(CommandCodec.decode(batch)));
+        }
+
+        private byte[] reencode(CommandCodec.DecodedCommand decoded) {
+            return switch (decoded) {
+                case CommandCodec.DecodedCommand.Put p -> CommandCodec.encodePut(p.key(), p.value());
+                case CommandCodec.DecodedCommand.Delete d -> CommandCodec.encodeDelete(d.key());
+                case CommandCodec.DecodedCommand.Batch b -> CommandCodec.encodeBatch(b.mutations());
+                case CommandCodec.DecodedCommand.Noop n -> new byte[0];
+            };
         }
     }
 

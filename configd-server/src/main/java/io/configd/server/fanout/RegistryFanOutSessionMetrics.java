@@ -50,6 +50,7 @@ public final class RegistryFanOutSessionMetrics implements FanOutSessionMetrics 
     private final MetricsRegistry.Counter demotionsOther;
     private final MetricsRegistry.Counter closedOther;
     private final MetricsRegistry.Counter sessionsRefused;
+    private final MetricsRegistry.Counter firstFrameTimeouts;
     private final MetricsRegistry.Counter subscribeTail;
     private final MetricsRegistry.Counter subscribeSnapshotFirst;
 
@@ -125,6 +126,11 @@ public final class RegistryFanOutSessionMetrics implements FanOutSessionMetrics 
         // Admission-bound refusals (edge.fanout.transport.maxSessions).
         this.sessionsRefused = registry.counter("edge.fanout.sessions_refused");
 
+        // WH-11 pre-SUBSCRIBE first-frame-deadline reaps: an admitted (post-mTLS) connection that
+        // did not send its first routed control frame (SUBSCRIBE / WATCH_CREATE) within the
+        // first-frame window, closed as a slow-loris.
+        this.firstFrameTimeouts = registry.counter("edge.fanout.first_frame_timeouts");
+
         // The subscribe-time replay-vs-re-bootstrap decision (per-reason-suffix
         // convention) + the horizon-distance input as a last-decision gauge.
         this.subscribeTail = registry.counter("edge.fanout.subscribe.tail");
@@ -161,6 +167,15 @@ public final class RegistryFanOutSessionMetrics implements FanOutSessionMetrics 
     /** A connection refused at the admission bound ({@code maxSessions}), pre-handshake. */
     public void onSessionRefused() {
         sessionsRefused.increment();
+    }
+
+    /**
+     * An admitted (post-mTLS) connection was reaped for missing the pre-SUBSCRIBE first-frame
+     * deadline (WH-11 slow-loris). Driven by the transport (both FanOutServer and NettyFanOutServer),
+     * not the session core, so it lives here alongside {@link #onSessionRefused()}.
+     */
+    public void onFirstFrameTimeout() {
+        firstFrameTimeouts.increment();
     }
 
     /** A subscriber disconnected (FanOutServer drives this on teardown). */

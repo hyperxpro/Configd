@@ -38,6 +38,7 @@ import java.io.IOException;
 import java.net.InetSocketAddress;
 import java.util.Map;
 import java.util.Objects;
+import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -102,6 +103,8 @@ public final class NettyFanOutServer implements FanOutEndpoint {
     private final FanOutConfig config;
     private final int transportQueueFrames;
     private final int maxSessions;
+    /** WH-11 pre-SUBSCRIBE first-frame deadline (ms); shared config with the JDK transport. */
+    private final int firstFrameDeadlineMs = FanOutServer.firstFrameDeadlineMs();
     private final SlowConsumerGovernor governor;
     private final RegistryFanOutSessionMetrics metrics;
     private final Clock clock;
@@ -367,6 +370,13 @@ public final class NettyFanOutServer implements FanOutEndpoint {
         /** Event-loop-only: whether the connection-type-deciding first inbound frame has been seen. */
         private boolean firstInboundSeen;
 
+        /**
+         * WH-11: the one-shot pre-SUBSCRIBE first-frame reap task, armed on session start
+         * (post-mTLS / plaintext admission) and cancelled when the first routed frame arrives.
+         * Event-loop-only (armed, cancelled, and fired all on the event loop).
+         */
+        private ScheduledFuture<?> firstFrameDeadline;
+
         @Override
         public void channelActive(ChannelHandlerContext ctx) {
             this.channel = ctx.channel();
@@ -435,12 +445,32 @@ public final class NettyFanOutServer implements FanOutEndpoint {
             connectedCounted = true;
             Thread.ofVirtual().name("edge-netty-session-" + identity)
                     .start(() -> driver.runSessionLoop(() -> alive.get() && running.get()));
+            // WH-11: arm the pre-SUBSCRIBE first-frame deadline now that the connection is admitted
+            // (post-mTLS / plaintext). A one-shot event-loop task reaps a peer that never sends its
+            // first routed frame; channelRead0 cancels it on the first frame (an established
+            // subscriber is idle by design and relies on the server->client HEARTBEAT for liveness).
+            firstFrameDeadline = ctx.executor().schedule(
+                    () -> onFirstFrameDeadline(ctx), firstFrameDeadlineMs, TimeUnit.MILLISECONDS);
+        }
+
+        /** WH-11 reap: fires on the event loop if no routed frame arrived within the deadline. */
+        private void onFirstFrameDeadline(ChannelHandlerContext ctx) {
+            if (!firstInboundSeen && alive.get()) {
+                metrics.onFirstFrameTimeout();
+                teardown(ErrorCode.PROTOCOL_VIOLATION, "pre-SUBSCRIBE first-frame deadline elapsed");
+            }
         }
 
         @Override
         protected void channelRead0(ChannelHandlerContext ctx, EdgeFrame frame) {
             if (!firstInboundSeen) {
                 firstInboundSeen = true;
+                // WH-11 disarm: the first routed frame arrived; cancel the reap task so an
+                // established, legitimately-idle subscriber is never read-idle-reaped.
+                if (firstFrameDeadline != null) {
+                    firstFrameDeadline.cancel(false);
+                    firstFrameDeadline = null;
+                }
                 // Outbound flip: a WATCH_CREATE-first connection is a 0x02 watch connection, so the
                 // encoder must stamp 0x02 for the client to decode the server's WATCH_* frames. A
                 // 0x03-stamped SUBSCRIBE is a filtered-fan-out connection (ADR-0045), so the encoder

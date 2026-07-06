@@ -119,6 +119,15 @@ public final class EdgeFrameCodec {
     /** Max encoded NOTIFY payload bytes (256 KiB; {@code batchMaxBytes}). */
     public static final int MAX_NOTIFY_BATCH_BYTES = 256 * 1024;
 
+    /**
+     * Hard ceiling on a SUBSCRIBE {@code prefixCount} (WH-12). A real SUBSCRIBE carries a
+     * handful of prefixes; this generous production cap ({@value}) bounds the pre-authorization
+     * element-count amplifier on top of the tight {@code prefixCount * 4 <= remaining} byte
+     * pre-check (min prefix = a {@code u32} length of a zero-length string = 4 bytes). A valid
+     * SUBSCRIBE is far below it, so well-formed frames stay byte-identical.
+     */
+    public static final int MAX_PREFIXES = 4096;
+
     private EdgeFrameCodec() {
         // utility class
     }
@@ -415,6 +424,9 @@ public final class EdgeFrameCodec {
     /** Minimum bytes of one encoded {@link EdgeFrame.WatchChange}: keyLen(u32) + kind(u8) + valLen(i32). */
     private static final int MIN_CHANGE_BYTES = 9;
 
+    /** Minimum bytes of one encoded SUBSCRIBE prefix: a {@code u32} length of a zero-length string. */
+    private static final int SUBSCRIBE_PREFIX_MIN_BYTES = 4;
+
     /** True iff {@code t} is a {@code 0x0A..0x12} watch frame (legal only under 0x02; W5-11). */
     private static boolean isWatchType(FrameType t) {
         return switch (t) {
@@ -696,8 +708,18 @@ public final class EdgeFrameCodec {
     private static EdgeFrame decodeSubscribe(ByteBuffer p, byte version) {
         boolean fullStore = p.get() != 0;
         int prefixCount = p.getInt();
-        if (prefixCount < 0 || prefixCount > p.remaining()) {
+        // Tight bounds-before-allocation (WH-12): each prefix is >= 4 bytes (a u32 length of a
+        // zero-length string), so prefixCount * 4 is the minimum encoded size - a far tighter
+        // pre-check than the legacy `> remaining` (bytes, not elements), parity with the watch
+        // decoders (cursor / shards / changes). The (long) cast binds before the multiply, so no
+        // overflow. MAX_PREFIXES then caps the element count itself: a real SUBSCRIBE is well
+        // under it, so this rejects only a hostile amplifier, never a well-formed frame.
+        if (prefixCount < 0 || (long) prefixCount * SUBSCRIBE_PREFIX_MIN_BYTES > p.remaining()) {
             throw new CodecException(ErrorCode.FRAME_CORRUPT, "bad prefix count: " + prefixCount);
+        }
+        if (prefixCount > MAX_PREFIXES) {
+            throw new CodecException(ErrorCode.FRAME_CORRUPT,
+                    "prefix count " + prefixCount + " exceeds MAX_PREFIXES=" + MAX_PREFIXES);
         }
         List<String> prefixes = new ArrayList<>(prefixCount);
         for (int i = 0; i < prefixCount; i++) {
@@ -751,6 +773,18 @@ public final class EdgeFrameCodec {
     }
 
     private static EdgeFrame decodeNotify(ByteBuffer p) {
+        // WH-14: enforce the encode-side MAX_NOTIFY_BATCH_BYTES cap on decode too, for canonical-
+        // encoding parity. The payload window handed to a decoder is exactly [count u32][notifications]
+        // (the frame's strict-end is checked by the caller), which is the identical span the encoder
+        // measures (encodeNotifyInto captures payloadStart BEFORE the count int), so this rejects the
+        // same over-cap batch the encoder would refuse. Already bounded by the 2 MiB frame cap, so this
+        // is strictness, not a new resource bound; well-formed frames are far below it and unchanged.
+        int payloadBytes = p.remaining();
+        if (payloadBytes > MAX_NOTIFY_BATCH_BYTES) {
+            throw new CodecException(ErrorCode.FRAME_TOO_LARGE,
+                    "NOTIFY payload " + payloadBytes + " bytes exceeds MAX_NOTIFY_BATCH_BYTES="
+                            + MAX_NOTIFY_BATCH_BYTES);
+        }
         int count = p.getInt();
         if (count < 0 || count > MAX_NOTIFY_BATCH) {
             throw new CodecException(ErrorCode.FRAME_CORRUPT, "bad NOTIFY count: " + count);

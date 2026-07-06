@@ -93,6 +93,7 @@ class EdgeMetricsContractTest {
             "edge_applied_total",
             "edge_gaps_total",
             "edge_snapshots_applied_total",
+            "edge_snapshot_chunks_rejected_total",
             "edge_verify_rejections_total",
             // read-serving surface
             "edge_reads_total",
@@ -133,6 +134,7 @@ class EdgeMetricsContractTest {
             "edge_fanout_sessions_closed_other_total",
             // admission + subscribe-time decision
             "edge_fanout_sessions_refused_total",
+            "edge_fanout_first_frame_timeouts_total",
             "edge_fanout_subscribe_tail_total",
             "edge_fanout_subscribe_snapshot_first_total",
             "edge_fanout_subscribe_horizon_distance",

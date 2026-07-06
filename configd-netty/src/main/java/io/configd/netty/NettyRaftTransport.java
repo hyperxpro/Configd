@@ -5,8 +5,10 @@ import io.configd.common.NodeId;
 import io.configd.transport.ConnectionManager;
 import io.configd.transport.FrameCodec;
 import io.configd.transport.InboundMessage;
+import io.configd.transport.PeerIdentityPolicy;
 import io.configd.transport.RaftTransport;
 import io.configd.transport.RaftTransportEndpoint;
+import io.configd.transport.RaftTransportMetrics;
 import io.configd.transport.RaftWireProtocol;
 import io.configd.transport.TlsConfig;
 import io.configd.transport.TlsManager;
@@ -27,8 +29,10 @@ import io.netty.channel.IoHandlerFactory;
 import io.netty.channel.MultiThreadIoEventLoopGroup;
 import io.netty.channel.SimpleChannelInboundHandler;
 import io.netty.handler.ssl.SslHandler;
+import io.netty.handler.ssl.SslHandshakeCompletionEvent;
 import io.netty.handler.timeout.IdleStateEvent;
 import io.netty.handler.timeout.IdleStateHandler;
+import io.netty.util.AttributeKey;
 
 import javax.net.ssl.SSLContext;
 import javax.net.ssl.SSLEngine;
@@ -89,12 +93,26 @@ public final class NettyRaftTransport implements RaftTransportEndpoint {
 
     private static final Logger LOG = Logger.getLogger(NettyRaftTransport.class.getName());
 
+    /**
+     * Per-channel pinned peer {@link NodeId}, resolved from the peer's certificate on handshake
+     * completion (WH-08/09). Present only on server-accepted connections under an enforced
+     * {@link PeerIdentityPolicy}; {@code channelRead0} binds each frame's {@code senderId} to it.
+     */
+    static final AttributeKey<NodeId> PEER_IDENTITY = AttributeKey.valueOf("configd.raft.peerIdentity");
+
     private final NodeId self;
     private final InetSocketAddress bindAddress;
     private final Map<NodeId, InetSocketAddress> peerAddresses;
     private final TlsManager tlsManager; // nullable for plaintext (test/single-node)
     private final Consumer<InboundMessage> inboundHandler; // nullable
     private final ConnectionManager connectionManager;
+
+    /** Cert-identity &harr; NodeId binding policy (WH-08/09). Default {@link PeerIdentityPolicy#unenforced()}. */
+    private final PeerIdentityPolicy peerIdentityPolicy;
+    /** Security-event sink (peer-identity rejections). Default {@link RaftTransportMetrics#NOOP}. */
+    private final RaftTransportMetrics transportMetrics;
+    /** Guards the one-time "peer-identity verification unconfigured" warning (unenforced-but-TLS posture). */
+    private final AtomicBoolean unconfiguredWarningEmitted = new AtomicBoolean(false);
 
     private final NettyTransport.Selection transport;
     private final int workerThreads;
@@ -134,11 +152,37 @@ public final class NettyRaftTransport implements RaftTransportEndpoint {
                               Map<NodeId, InetSocketAddress> peerAddresses,
                               TlsManager tlsManager,
                               Consumer<InboundMessage> inboundHandler) {
+        // Legacy 5-arg constructor: peer-identity binding unenforced, no metrics sink. Byte- and
+        // behaviour-identical to the pre-WH-08/09 transport (the enforcement path is dormant until an
+        // allow-list policy is supplied via the fuller constructor).
+        this(self, bindAddress, peerAddresses, tlsManager, inboundHandler,
+                PeerIdentityPolicy.unenforced(), RaftTransportMetrics.NOOP);
+    }
+
+    /**
+     * Creates a Netty consensus transport with an explicit peer-identity binding policy and metrics
+     * sink (WH-08/09). When {@code peerIdentityPolicy} is {@linkplain PeerIdentityPolicy#enforced()
+     * enforced}, an accepted peer's TLS cert identity is verified against the allow-list on handshake
+     * completion and each frame's {@code senderId} must match the connection's resolved {@link NodeId};
+     * otherwise the transport keeps its CA-chain-only behavior (with a one-time warning when TLS is on).
+     *
+     * @param peerIdentityPolicy cert-identity&harr;NodeId binding policy (never null)
+     * @param transportMetrics   security-event sink (never null; pass {@link RaftTransportMetrics#NOOP})
+     */
+    public NettyRaftTransport(NodeId self,
+                              InetSocketAddress bindAddress,
+                              Map<NodeId, InetSocketAddress> peerAddresses,
+                              TlsManager tlsManager,
+                              Consumer<InboundMessage> inboundHandler,
+                              PeerIdentityPolicy peerIdentityPolicy,
+                              RaftTransportMetrics transportMetrics) {
         this.self = Objects.requireNonNull(self, "self must not be null");
         this.bindAddress = Objects.requireNonNull(bindAddress, "bindAddress must not be null");
         this.peerAddresses = Map.copyOf(Objects.requireNonNull(peerAddresses, "peerAddresses must not be null"));
         this.tlsManager = tlsManager;
         this.inboundHandler = inboundHandler;
+        this.peerIdentityPolicy = Objects.requireNonNull(peerIdentityPolicy, "peerIdentityPolicy must not be null");
+        this.transportMetrics = Objects.requireNonNull(transportMetrics, "transportMetrics must not be null");
         this.connectionManager = new ConnectionManager(Clock.system());
         this.transport = NettyTransport.select();
         this.workerThreads = Integer.getInteger("configd.raft.netty.workerThreads",
@@ -157,6 +201,15 @@ public final class NettyRaftTransport implements RaftTransportEndpoint {
     public void start() throws IOException {
         if (!running.compareAndSet(false, true)) {
             throw new IllegalStateException("Transport already started");
+        }
+        // Fail closed BEFORE binding: an enforced allow-list without mTLS cannot bind identity to a
+        // certificate, so it would fail OPEN. Refuse to start rather than silently downgrade. After
+        // this, enforced() implies mTLS on both transports (parity with the JDK transport).
+        if (peerIdentityPolicy.enforced() && tlsManager == null) {
+            running.set(false);
+            throw new IllegalStateException(
+                    "Raft peer-identity allow-list is configured but the transport is PLAINTEXT (no "
+                            + "TlsManager); enforced identity binding requires mTLS. Refusing to start.");
         }
         IoHandlerFactory ioFactory = transport.ioHandlerFactory();
         boss = new MultiThreadIoEventLoopGroup(1, ioFactory);
@@ -188,8 +241,24 @@ public final class NettyRaftTransport implements RaftTransportEndpoint {
             Thread.currentThread().interrupt();
             throw new IOException("interrupted binding NettyRaftTransport", e);
         }
+        warnIfPeerIdentityUnconfigured();
         LOG.info(() -> "NettyRaftTransport listening on " + serverChannel.localAddress()
                 + (tlsManager != null ? " (mTLS)" : " (PLAINTEXT)") + " [tier=" + transport.tier() + "]");
+    }
+
+    /**
+     * Emits a loud one-time warning when the transport runs mTLS but no peer-identity allow-list is
+     * configured (WH-08/09 enforce-when-configured, warn-when-not). In this posture a cert-valid peer
+     * can still forge another node's {@code senderId}; only the CA-chain is checked. No warning for
+     * plaintext (test/single-node) or when a policy is enforced.
+     */
+    private void warnIfPeerIdentityUnconfigured() {
+        if (tlsManager != null && !peerIdentityPolicy.enforced()
+                && unconfiguredWarningEmitted.compareAndSet(false, true)) {
+            LOG.warning(() -> "Raft peer-identity verification is UNCONFIGURED ("
+                    + PeerIdentityPolicy.ALLOWED_NODES_PROP + " unset); a cert-valid peer can forge "
+                    + "another node's senderId. Configure an allow-list to enforce identity binding.");
+        }
     }
 
     @Override
@@ -242,6 +311,11 @@ public final class NettyRaftTransport implements RaftTransportEndpoint {
     @Override
     public long inboundConnectionsRefused() {
         return inboundConnectionsRefused.get();
+    }
+
+    @Override
+    public boolean peerIdentityEnforced() {
+        return peerIdentityPolicy.enforced();
     }
 
     @Override
@@ -369,6 +443,18 @@ public final class NettyRaftTransport implements RaftTransportEndpoint {
 
         @Override
         protected void channelRead0(ChannelHandlerContext ctx, InboundMessage msg) {
+            // Layer 2 (WH-08/09): the self-declared senderId prefix must equal the connection's
+            // authenticated cert identity (pinned on handshake). A cert-valid peer forging another
+            // node's id is dropped (desync-equivalent) and counted. Only active when an allow-list is
+            // enforced; the JDK transport applies the identical check in handleInboundConnection.
+            if (peerIdentityPolicy.enforced()) {
+                NodeId pinned = ctx.channel().attr(PEER_IDENTITY).get();
+                if (pinned == null || !pinned.equals(msg.from())) {
+                    transportMetrics.onPeerIdentityRejected();
+                    ctx.close();
+                    return;
+                }
+            }
             dispatch(msg);
         }
 
@@ -380,7 +466,41 @@ public final class NettyRaftTransport implements RaftTransportEndpoint {
                 ctx.close();
                 return;
             }
+            if (evt instanceof SslHandshakeCompletionEvent handshake) {
+                // Layer 1 (WH-08/09): on a successful mTLS handshake under an enforced allow-list,
+                // resolve the peer's certificate identity and pin the NodeId it is authorized to
+                // present. A cert whose identity is not in the allow-list (e.g. a plain client cert
+                // with no node marker) cannot open a peer connection - drop (counted). Unenforced or
+                // plaintext leaves no pinned attribute and the read path unchanged (legacy behaviour).
+                // A FAILED handshake needs no action here: the SslHandler closes the channel itself.
+                if (handshake.isSuccess() && peerIdentityPolicy.enforced()) {
+                    NodeId pinned = peerIdentityPolicy.resolve(resolveCertIdentity(ctx));
+                    if (pinned == null) {
+                        transportMetrics.onPeerIdentityRejected();
+                        ctx.close();
+                        return;
+                    }
+                    ctx.channel().attr(PEER_IDENTITY).set(pinned);
+                }
+            }
             ctx.fireUserEventTriggered(evt);
+        }
+
+        /**
+         * The verified peer-certificate Subject DN on this channel's {@link SslHandler}, or
+         * {@code null} if no verifiable peer certificate is present (fail-closed). Mirrors the edge
+         * plane's {@code NettyFanOutServer.resolveCertIdentity}.
+         */
+        private String resolveCertIdentity(ChannelHandlerContext ctx) {
+            SslHandler ssl = ctx.pipeline().get(SslHandler.class);
+            if (ssl == null) {
+                return null;
+            }
+            try {
+                return ssl.engine().getSession().getPeerPrincipal().getName();
+            } catch (Exception e) {
+                return null; // no verifiable peer certificate
+            }
         }
 
         @Override
@@ -627,6 +747,15 @@ public final class NettyRaftTransport implements RaftTransportEndpoint {
         private final class PeerHandler extends SimpleChannelInboundHandler<InboundMessage> {
             @Override
             protected void channelRead0(ChannelHandlerContext ctx, InboundMessage msg) {
+                // Layer 2 reverse-path binding (WH-08/09): a peer may reply on this connection WE dialed.
+                // The far end is the target we connected to (hostname-verified on connect), so any frame
+                // whose senderId differs from `target` is a forged-id injection - drop + count. Only
+                // active when an allow-list is enforced; mirrors the JDK outbound-reverse reader.
+                if (peerIdentityPolicy.enforced() && !target.equals(msg.from())) {
+                    transportMetrics.onPeerIdentityRejected();
+                    ctx.close();
+                    return;
+                }
                 dispatch(msg); // a peer may reply on the connection we opened (JDK reads here too)
             }
 

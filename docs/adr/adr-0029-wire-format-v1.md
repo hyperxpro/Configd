@@ -4,6 +4,15 @@
 **Supersedes:** ADR-0010 (v0 wire format - header-only, no version, no checksum)
 **Related:** ADR-0028 (snapshot on-disk format - same TLV-style forward-compat philosophy applied to a different boundary)
 
+> **Where the current bytes live.** This ADR is the canonical origin of the framing *discipline* —
+> a version byte, a CRC32C-Castagnoli trailer, CRC-before-type validation, and fail-closed
+> forward-compat — and the wire-compat CI gate still cites its §8.10. The *concrete* diagram below
+> predates the wire-hardening Gate-2 additions (the Raft frame is now `HEADER_SIZE = 26` with an
+> 8-byte reserved `epoch` slot). For the byte-authoritative wire layout, read
+> [`rfc/driver-protocol/06-wire-framing.md`](../rfc/driver-protocol/06-wire-framing.md) — the edge
+> plane in §1–§12 and the Raft plane in §13 — which is validated against the codecs and the golden
+> fixtures. Where this ADR's diagram and that section disagree, **the code (and the RFC) win**.
+
 ## Context
 
 The v0 wire format (`[length(4)][type(1)][groupId(4)][term(8)][payload]`) shipped in
