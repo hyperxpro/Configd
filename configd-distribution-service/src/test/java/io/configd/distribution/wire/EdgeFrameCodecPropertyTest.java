@@ -204,11 +204,13 @@ class EdgeFrameCodecPropertyTest {
     @Property(tries = 100)
     void wrongVersionWithValidCrcIsRejectedAsBadVersion(
             @ForAll @IntRange(min = 0, max = 255) int rawVersion) {
-        // 0x01, 0x02, and 0x03 are all accepted versions now (W1-3 / ADR-0045); only OTHER
-        // versions are BAD_WIRE_VERSION.
+        // 0x01, 0x02, 0x03, and the 0x04 auth version are all accepted now (W1-3 / ADR-0045 / AU3-3);
+        // only OTHER versions are BAD_WIRE_VERSION. (A business CURSOR_ACK stamped 0x04 is a legal-version
+        // but illegal-type frame -> FRAME_CORRUPT, not BAD_WIRE_VERSION, so 0x04 is skipped here.)
         if ((byte) rawVersion == EdgeFrameCodec.EDGE_WIRE_VERSION
                 || (byte) rawVersion == EdgeFrameCodec.EDGE_WIRE_VERSION_V2
-                || (byte) rawVersion == EdgeFrameCodec.EDGE_WIRE_VERSION_V3) {
+                || (byte) rawVersion == EdgeFrameCodec.EDGE_WIRE_VERSION_V3
+                || (byte) rawVersion == EdgeFrameCodec.EDGE_WIRE_VERSION_V4) {
             return;
         }
         // A minimal CURSOR_ACK frame, then rewrite version + fix CRC.

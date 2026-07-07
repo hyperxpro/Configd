@@ -1,5 +1,6 @@
 package io.configd.distribution.wire;
 
+import io.configd.common.auth.Credential;
 import io.configd.distribution.CommitNotification;
 import io.configd.store.CommandCodec;
 import io.configd.store.ConfigDelta;
@@ -97,6 +98,24 @@ public final class EdgeFrameCodec {
      * SUBSCRIBE to an old server fails LOUD rather than misparsing.
      */
     public static final byte EDGE_WIRE_VERSION_V3 = (byte) 0x03;
+
+    /**
+     * The auth-phase edge wire version (AU3-3). A {@code 0x04}-stamped frame carries an
+     * {@link EdgeFrame.Auth} or {@link EdgeFrame.RefreshAuth} - and is the <b>only</b> version under which
+     * those two types may be encoded or decoded; conversely no business/watch type is legal under
+     * {@code 0x04} (a violation either way is {@link ErrorCode#FRAME_CORRUPT}, mirroring the
+     * {@code WATCH_*}/{@code 0x02} rule). {@code 0x04} auth frames are <b>version-pin-exempt</b>: unlike
+     * {@code 0x01}/{@code 0x02}/{@code 0x03}, a {@code 0x04} frame does not establish or violate a
+     * connection's protocol-version pin (the transport decoder enforces that), so an auth frame may
+     * interleave on a connection pinned to any business version. The decoder accepts {@code 0x01},
+     * {@code 0x02}, {@code 0x03}, and {@code 0x04}; any other value is {@link ErrorCode#BAD_WIRE_VERSION}.
+     */
+    public static final byte EDGE_WIRE_VERSION_V4 = (byte) 0x04;
+
+    /** AUTH/REFRESH_AUTH payload scheme tag: a bearer token. */
+    private static final int AUTH_SCHEME_BEARER = 1;
+    /** AUTH/REFRESH_AUTH payload scheme tag: HTTP Basic user + password. */
+    private static final int AUTH_SCHEME_BASIC = 2;
 
     /** Fixed header: 4 (length) + 1 (version) + 1 (type) = 6 bytes. */
     public static final int HEADER_SIZE = 6;
@@ -249,14 +268,28 @@ public final class EdgeFrameCodec {
         Objects.requireNonNull(frame, "frame must not be null");
         Objects.requireNonNull(sink, "sink must not be null");
         if (version != EDGE_WIRE_VERSION && version != EDGE_WIRE_VERSION_V2
-                && version != EDGE_WIRE_VERSION_V3) {
+                && version != EDGE_WIRE_VERSION_V3 && version != EDGE_WIRE_VERSION_V4) {
             throw new IllegalArgumentException("unsupported edge wire version for encode: 0x"
                     + Integer.toHexString(version & 0xFF));
         }
-        if (version != EDGE_WIRE_VERSION_V2 && isWatchType(frame.type())) {
-            throw new IllegalArgumentException(frame.type()
-                    + " is a 0x02 watch frame and cannot be encoded on a 0x"
-                    + Integer.toHexString(version & 0xFF) + " connection (W5-11)");
+        // Type<->version legality (mirrored on decode): AUTH/REFRESH_AUTH are the ONLY types legal under
+        // 0x04, and no business/watch type is legal under 0x04; WATCH_* are 0x02-only.
+        boolean authType = isAuthType(frame.type());
+        if (version == EDGE_WIRE_VERSION_V4) {
+            if (!authType) {
+                throw new IllegalArgumentException(frame.type()
+                        + " is not an auth-phase frame and cannot be encoded under 0x04 (AU3-3)");
+            }
+        } else {
+            if (authType) {
+                throw new IllegalArgumentException(frame.type()
+                        + " is a 0x04 auth-phase frame and can be encoded only under 0x04 (AU3-3)");
+            }
+            if (version != EDGE_WIRE_VERSION_V2 && isWatchType(frame.type())) {
+                throw new IllegalArgumentException(frame.type()
+                        + " is a 0x02 watch frame and cannot be encoded on a 0x"
+                        + Integer.toHexString(version & 0xFF) + " connection (W5-11)");
+            }
         }
         final int start = sink.writerIndex();
         sink.writeInt(0); // total-length placeholder, back-patched below
@@ -300,7 +333,46 @@ public final class EdgeFrameCodec {
             case EdgeFrame.WatchSnapshotBegin f -> encodeWatchSnapshotBeginInto(f, sink);
             case EdgeFrame.WatchSnapshotChunk f -> encodeWatchSnapshotChunkInto(f, sink);
             case EdgeFrame.WatchSnapshotEnd f -> encodeWatchSnapshotEndInto(f, sink);
+            case EdgeFrame.Auth f -> encodeAuthCredentialInto(f.credential(), sink);
+            case EdgeFrame.RefreshAuth f -> encodeAuthCredentialInto(f.credential(), sink);
         }
+    }
+
+    /**
+     * Encodes the shared AUTH/REFRESH_AUTH payload: {@code [scheme u8]} then, for a bearer,
+     * {@code [token_len u32][token UTF-8]}; for basic, {@code [user_len u32][user][pass_len u32][pass]}.
+     * The credential is guaranteed frame-carriable by {@link EdgeFrame.Auth}'s constructor; a client
+     * certificate never reaches here.
+     */
+    private static void encodeAuthCredentialInto(Credential credential, FrameSink sink) {
+        switch (credential) {
+            case Credential.BearerToken bearer -> {
+                sink.writeByte((byte) AUTH_SCHEME_BEARER);
+                writeLengthPrefixed(sink, bearer.token().getBytes(StandardCharsets.UTF_8));
+            }
+            case Credential.BasicCredential basic -> {
+                sink.writeByte((byte) AUTH_SCHEME_BASIC);
+                writeLengthPrefixed(sink, basic.username().getBytes(StandardCharsets.UTF_8));
+                byte[] pass = utf8Bytes(basic.password());
+                writeLengthPrefixed(sink, pass);
+                java.util.Arrays.fill(pass, (byte) 0); // wipe the transient password bytes
+            }
+            case Credential.ClientCertificate ignored -> throw new IllegalArgumentException(
+                    "a client certificate is an mTLS handshake artifact and cannot be encoded in an AUTH frame");
+        }
+    }
+
+    private static void writeLengthPrefixed(FrameSink sink, byte[] bytes) {
+        sink.writeInt(bytes.length);
+        sink.writeBytes(bytes);
+    }
+
+    /** Encodes a {@code char[]} to UTF-8 bytes WITHOUT interning it as a String (redaction discipline). */
+    private static byte[] utf8Bytes(char[] chars) {
+        java.nio.ByteBuffer bb = StandardCharsets.UTF_8.encode(java.nio.CharBuffer.wrap(chars));
+        byte[] out = new byte[bb.remaining()];
+        bb.get(out);
+        return out;
     }
 
     private static void encodeSubscribeInto(EdgeFrame.Subscribe f, FrameSink sink, byte version) {
@@ -434,6 +506,11 @@ public final class EdgeFrameCodec {
                  WATCH_CANCELED, WATCH_SNAPSHOT_BEGIN, WATCH_SNAPSHOT_CHUNK, WATCH_SNAPSHOT_END -> true;
             default -> false;
         };
+    }
+
+    /** The auth-phase types (0x04-only, version-pin-exempt). */
+    private static boolean isAuthType(FrameType t) {
+        return t == FrameType.AUTH || t == FrameType.REFRESH_AUTH;
     }
 
     /**
@@ -582,7 +659,7 @@ public final class EdgeFrameCodec {
      */
     public static EdgeFrame decode(byte[] data, byte negotiatedVersion) {
         if (negotiatedVersion != EDGE_WIRE_VERSION && negotiatedVersion != EDGE_WIRE_VERSION_V2
-                && negotiatedVersion != EDGE_WIRE_VERSION_V3) {
+                && negotiatedVersion != EDGE_WIRE_VERSION_V3 && negotiatedVersion != EDGE_WIRE_VERSION_V4) {
             throw new IllegalArgumentException("unsupported negotiated edge wire version: 0x"
                     + Integer.toHexString(negotiatedVersion & 0xFF));
         }
@@ -632,12 +709,13 @@ public final class EdgeFrameCodec {
         // three and the FrameType gates which payloads are legal under which version (below).
         byte version = buf.get();
         if (version != EDGE_WIRE_VERSION && version != EDGE_WIRE_VERSION_V2
-                && version != EDGE_WIRE_VERSION_V3) {
+                && version != EDGE_WIRE_VERSION_V3 && version != EDGE_WIRE_VERSION_V4) {
             throw new CodecException(ErrorCode.BAD_WIRE_VERSION,
                     "unsupported edge wire version: 0x" + Integer.toHexString(version & 0xFF)
                             + " (expected 0x" + Integer.toHexString(EDGE_WIRE_VERSION & 0xFF)
                             + ", 0x" + Integer.toHexString(EDGE_WIRE_VERSION_V2 & 0xFF)
-                            + ", or 0x" + Integer.toHexString(EDGE_WIRE_VERSION_V3 & 0xFF) + ")");
+                            + ", 0x" + Integer.toHexString(EDGE_WIRE_VERSION_V3 & 0xFF)
+                            + ", or 0x" + Integer.toHexString(EDGE_WIRE_VERSION_V4 & 0xFF) + ")");
         }
         // Per-connection version pin (W5-11): on a connection that negotiated one version, a
         // frame stamped with the OTHER accepted version fails closed as BAD_WIRE_VERSION - so a
@@ -654,14 +732,26 @@ public final class EdgeFrameCodec {
         } catch (IllegalArgumentException e) {
             throw new CodecException(ErrorCode.FRAME_CORRUPT, e.getMessage());
         }
-        // A WATCH_* type is legal only on a 0x02-stamped frame (W5-11); on a 0x01 or 0x03 frame
-        // it is a protocol violation surfaced as FRAME_CORRUPT (consistent with the codec's
-        // structural-error taxonomy; the CRC has already been verified, so this is a
-        // deliberately-constructed frame, not a bit-flip).
-        if (version != EDGE_WIRE_VERSION_V2 && isWatchType(type)) {
-            throw new CodecException(ErrorCode.FRAME_CORRUPT,
-                    type + " is a 0x02 watch frame and is not legal on a 0x"
-                            + Integer.toHexString(version & 0xFF) + "-stamped frame");
+        // Type<->version legality (mirrors encode). The CRC is already verified, so a violation is a
+        // deliberately-constructed frame, surfaced as FRAME_CORRUPT (the codec's structural taxonomy),
+        // never a misleading "bad version". AUTH/REFRESH_AUTH are the ONLY types legal under 0x04, and no
+        // business/watch type is legal under 0x04; WATCH_* are 0x02-only.
+        if (version == EDGE_WIRE_VERSION_V4) {
+            if (!isAuthType(type)) {
+                throw new CodecException(ErrorCode.FRAME_CORRUPT,
+                        type + " is not an auth-phase frame and is not legal on a 0x04-stamped frame");
+            }
+        } else {
+            if (isAuthType(type)) {
+                throw new CodecException(ErrorCode.FRAME_CORRUPT,
+                        type + " is a 0x04 auth-phase frame and is not legal on a 0x"
+                                + Integer.toHexString(version & 0xFF) + "-stamped frame");
+            }
+            if (version != EDGE_WIRE_VERSION_V2 && isWatchType(type)) {
+                throw new CodecException(ErrorCode.FRAME_CORRUPT,
+                        type + " is a 0x02 watch frame and is not legal on a 0x"
+                                + Integer.toHexString(version & 0xFF) + "-stamped frame");
+            }
         }
 
         // Payload window: [HEADER_SIZE, crcOffset).
@@ -702,6 +792,24 @@ public final class EdgeFrameCodec {
             case WATCH_SNAPSHOT_BEGIN -> decodeWatchSnapshotBegin(p);
             case WATCH_SNAPSHOT_CHUNK -> decodeWatchSnapshotChunk(p);
             case WATCH_SNAPSHOT_END -> decodeWatchSnapshotEnd(p);
+            case AUTH -> new EdgeFrame.Auth(decodeAuthCredential(p));
+            case REFRESH_AUTH -> new EdgeFrame.RefreshAuth(decodeAuthCredential(p));
+        };
+    }
+
+    /**
+     * Decodes the shared AUTH/REFRESH_AUTH credential payload (bounds-checked, redaction-safe: no error
+     * message ever echoes a token/password byte, only lengths and the scheme number). Structural bounds
+     * only - the receive-side policy caps (max token size) are enforced by the transport gate, which has
+     * the {@code ConfigSource}. The generic strict-end check in {@code decode} rejects trailing bytes.
+     */
+    private static Credential decodeAuthCredential(ByteBuffer p) {
+        int scheme = p.get() & 0xFF;
+        return switch (scheme) {
+            case AUTH_SCHEME_BEARER -> new Credential.BearerToken(readString(p, "auth token"));
+            case AUTH_SCHEME_BASIC -> new Credential.BasicCredential(
+                    readString(p, "auth username"), readCharsUtf8(p, "auth password"));
+            default -> throw new CodecException(ErrorCode.FRAME_CORRUPT, "unknown auth scheme: " + scheme);
         };
     }
 
@@ -1109,6 +1217,29 @@ public final class EdgeFrameCodec {
         byte[] b = new byte[len];
         p.get(b);
         return new String(b, StandardCharsets.UTF_8);
+    }
+
+    /**
+     * Reads a u32-length-prefixed UTF-8 field into a {@code char[]} WITHOUT interning it as a String
+     * (redaction discipline for the auth password), wiping the transient decoded bytes. Bounds-checked;
+     * error messages carry only the field label and length, never the field bytes.
+     */
+    private static char[] readCharsUtf8(ByteBuffer p, String field) {
+        if (p.remaining() < 4) {
+            throw new CodecException(ErrorCode.FRAME_CORRUPT, "truncated reading " + field + " length");
+        }
+        int len = p.getInt();
+        if (len < 0 || len > p.remaining()) {
+            throw new CodecException(ErrorCode.FRAME_CORRUPT,
+                    "bad " + field + " length: " + len + " (remaining " + p.remaining() + ")");
+        }
+        byte[] b = new byte[len];
+        p.get(b);
+        java.nio.CharBuffer cb = StandardCharsets.UTF_8.decode(java.nio.ByteBuffer.wrap(b));
+        char[] chars = new char[cb.remaining()];
+        cb.get(chars);
+        java.util.Arrays.fill(b, (byte) 0);
+        return chars;
     }
 
     // -----------------------------------------------------------------------

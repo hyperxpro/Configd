@@ -1,6 +1,7 @@
 package io.configd.edge.node;
 
 import io.configd.common.Clock;
+import io.configd.common.auth.Credential;
 import io.configd.distribution.wire.EdgeFrame;
 import io.configd.distribution.wire.EdgeFrameCodec;
 import io.configd.distribution.wire.WatchCursor;
@@ -120,6 +121,12 @@ public final class EdgeStreamClient implements AutoCloseable {
      */
     private final byte wireVersion;
     private final boolean acceptFiltered;
+    /**
+     * The credential presented in an {@code AUTH} frame at connect (bearer / basic token auth), or
+     * {@code null} for an mTLS-only / plaintext edge - which sends no AUTH frame and is byte-identical
+     * to before. Additive: a certificate-only edge configures none.
+     */
+    private final Credential authCredential;
     private final TlsManager tlsManager; // null = plaintext (test / single-node)
     private final long backoffBaseMs;
     private final long silenceWindowMs;
@@ -175,6 +182,23 @@ public final class EdgeStreamClient implements AutoCloseable {
                             long backoffBaseMs, int silenceFactor,
                             Clock clock, EdgeNodeMetrics metrics, Runnable rebootstrapHook,
                             Runnable terminalAction, boolean acceptFiltered) {
+        this(endpoints, edgeId, prefixes, tlsManager, backoffBaseMs, silenceFactor, clock,
+                metrics, rebootstrapHook, terminalAction, acceptFiltered, null);
+    }
+
+    /**
+     * @param authCredential the credential to present in an {@code AUTH} frame at connect (a
+     *                       {@link Credential.BearerToken} or {@link Credential.BasicCredential}), or
+     *                       {@code null} for an mTLS-only / plaintext edge (no AUTH frame,
+     *                       byte-identical). The frame is written synchronously before the SUBSCRIBE, so
+     *                       the server authenticates the connection before the first business frame.
+     */
+    public EdgeStreamClient(List<InetSocketAddress> endpoints, String edgeId,
+                            List<String> prefixes, TlsManager tlsManager,
+                            long backoffBaseMs, int silenceFactor,
+                            Clock clock, EdgeNodeMetrics metrics, Runnable rebootstrapHook,
+                            Runnable terminalAction, boolean acceptFiltered, Credential authCredential) {
+        this.authCredential = authCredential;
         this.endpoints = List.copyOf(Objects.requireNonNull(endpoints, "endpoints"));
         if (this.endpoints.isEmpty()) {
             throw new IllegalArgumentException("at least one endpoint is required");
@@ -461,6 +485,15 @@ public final class EdgeStreamClient implements AutoCloseable {
                     prefixes.isEmpty(), prefixes, WatchCursor.INITIAL_TOPOLOGY_EPOCH, cursor,
                     failedOver ? cursor : -1L, edgeId, acceptFiltered);
             OutputStream out = socket.getOutputStream();
+            if (authCredential != null) {
+                // Token / basic auth: present the credential in an AUTH frame (0x04, version-pin exempt)
+                // BEFORE the first business frame, so the server authenticates the connection before the
+                // SUBSCRIBE. Written synchronously here (before the writer thread exists), so the AUTH
+                // deterministically precedes the SUBSCRIBE on the wire. An mTLS-only edge configures no
+                // credential -> no AUTH frame -> byte-identical.
+                out.write(EdgeFrameCodec.encode(
+                        new EdgeFrame.Auth(authCredential), EdgeFrameCodec.EDGE_WIRE_VERSION_V4));
+            }
             out.write(EdgeFrameCodec.encode(subscribe, wireVersion));
             out.flush();
 

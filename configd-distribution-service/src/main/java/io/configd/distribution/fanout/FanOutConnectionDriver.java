@@ -133,6 +133,14 @@ public final class FanOutConnectionDriver implements WatchMultiplexSink.Coordina
     private final FanOutSessionMetrics metrics;
     private final Clock clock;
     private final String edgeIdentity;
+    /**
+     * The authenticated principal's roles, threaded into every {@link WatchAuthorizer} call so the edge
+     * honors role/claim-based grants exactly as the HTTP plane does ({@code AclService.isAllowed(id,
+     * roles, ...)}). {@code Set.of()} on the legacy cert-DN / plaintext path (byte-identical: the ACL
+     * resolves the DN's config-bound roles internally); the token-auth path populates it from the
+     * verified {@code Principal}, so a bearer/basic/OIDC caller's asserted roles gate the edge feed.
+     */
+    private final Set<String> edgeRoles;
     private final BiConsumer<ErrorCode, String> teardownHook;
 
     /**
@@ -274,6 +282,24 @@ public final class FanOutConnectionDriver implements WatchMultiplexSink.Coordina
                                   TransportSink sink, FanOutConfig config, FanOutSessionMetrics metrics,
                                   Clock clock, SlowConsumerGovernor governor, String edgeIdentity,
                                   BiConsumer<ErrorCode, String> teardownHook, WatchAuthorizer authorizer) {
+        this(sources, replaySources, allGids, shardResolver, topologyEpoch, sink, config, metrics, clock,
+                governor, edgeIdentity, Set.of(), teardownHook, authorizer);
+    }
+
+    /**
+     * The multi-shard constructor with the authenticated principal's {@code edgeRoles} - threaded into
+     * every {@link WatchAuthorizer} call so the edge honors role/claim-based grants exactly as the HTTP
+     * plane does. Every other constructor delegates here with {@code Set.of()} (the byte-identical legacy
+     * cert-DN / plaintext edge, where the ACL resolves the DN's config-bound roles internally); the live
+     * server's token-auth path passes the verified principal's asserted roles.
+     */
+    public FanOutConnectionDriver(Map<Integer, CommitNotificationSource> sources,
+                                  Map<Integer, ReplaySource> replaySources,
+                                  int[] allGids, ShardResolver shardResolver, long topologyEpoch,
+                                  TransportSink sink, FanOutConfig config, FanOutSessionMetrics metrics,
+                                  Clock clock, SlowConsumerGovernor governor, String edgeIdentity,
+                                  Set<String> edgeRoles,
+                                  BiConsumer<ErrorCode, String> teardownHook, WatchAuthorizer authorizer) {
         this.sources = Map.copyOf(Objects.requireNonNull(sources, "sources"));
         this.replaySources = Map.copyOf(Objects.requireNonNull(replaySources, "replaySources"));
         this.allGids = Objects.requireNonNull(allGids, "allGids").clone();
@@ -292,6 +318,7 @@ public final class FanOutConnectionDriver implements WatchMultiplexSink.Coordina
         this.clock = Objects.requireNonNull(clock, "clock");
         this.governor = Objects.requireNonNull(governor, "governor");
         this.edgeIdentity = Objects.requireNonNull(edgeIdentity, "edgeIdentity");
+        this.edgeRoles = Set.copyOf(Objects.requireNonNull(edgeRoles, "edgeRoles"));
         this.teardownHook = Objects.requireNonNull(teardownHook, "teardownHook");
         this.authorizer = authorizer; // nullable => no watch capability => fail-closed
         this.knownGids = new java.util.HashSet<>(this.allGids.length);
@@ -640,7 +667,7 @@ public final class FanOutConnectionDriver implements WatchMultiplexSink.Coordina
         // PREFIX/FULL scatters to all.
         int[] coveredGids = coveredGidsFor(target);
         watchRegistry.register(new WatchRegistry.WatchEntry(
-                watchId, edgeIdentity, Set.of(), target, coveredGids,
+                watchId, edgeIdentity, edgeRoles, target, coveredGids,
                 startCursorS(create.cursor(), primaryGid), create.flags()));
         if (!coreSubscribed) {
             coreSubscribed = true;
@@ -806,7 +833,7 @@ public final class FanOutConnectionDriver implements WatchMultiplexSink.Coordina
      */
     private void reauthorizeLiveWatches() {
         // Snapshot the live entries - we cancel during iteration. Each entry's principal is
-        // edgeIdentity and roles Set.of(), so authorize(target) re-runs the SAME whole-target gate the
+        // edgeIdentity and roles edgeRoles, so authorize(target) re-runs the SAME whole-target gate the
         // create used, now against the reloaded ACL snapshot (fail-closed on any throwable).
         for (WatchRegistry.WatchEntry e : List.copyOf(watchRegistry.liveEntries())) {
             if (!authorize(e.target())) {
@@ -827,15 +854,17 @@ public final class FanOutConnectionDriver implements WatchMultiplexSink.Coordina
      * The watch-authorization gate (W7) - fail-closed on every doubt: a {@code null}
      * authorizer (no capability wired), an unauthenticated principal ({@code "plaintext"}), a
      * {@code false} verdict, or <b>any throwable</b> from the SPI all deny. The asserted-roles set
-     * is empty on the cert-DN edge path; the adapter resolves ACL-static / config-bound roles
-     * internally.
+     * ({@link #edgeRoles}) is empty on the cert-DN / plaintext path (the adapter resolves the DN's
+     * ACL-static / config-bound roles internally) and carries the verified principal's roles on the
+     * token-auth path, so a bearer/basic/OIDC caller's claim-derived roles gate the edge exactly as the
+     * HTTP plane's {@code AclService.isAllowed(id, roles, ...)} does.
      */
     private boolean authorize(WatchTarget target) {
         if (authorizer == null || "plaintext".equals(edgeIdentity)) {
             return false;
         }
         try {
-            return authorizer.authorizeWatch(edgeIdentity, Set.of(), target);
+            return authorizer.authorizeWatch(edgeIdentity, edgeRoles, target);
         } catch (Throwable t) {
             return false; // fail-closed on ANY throwable (W7 / SPI contract)
         }
@@ -855,7 +884,7 @@ public final class FanOutConnectionDriver implements WatchMultiplexSink.Coordina
             return true; // auth off: no principal model to evaluate, admit as before this gate existed
         }
         try {
-            return authorizer.authorizeSubscribe(edgeIdentity, Set.of());
+            return authorizer.authorizeSubscribe(edgeIdentity, edgeRoles);
         } catch (Throwable t) {
             return false; // fail-closed on ANY throwable (same contract as the watch gate)
         }

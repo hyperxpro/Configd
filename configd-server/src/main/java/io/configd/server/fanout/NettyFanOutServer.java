@@ -38,6 +38,7 @@ import java.io.IOException;
 import java.net.InetSocketAddress;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -120,6 +121,14 @@ public final class NettyFanOutServer implements FanOutEndpoint {
      */
     private final WatchAuthorizer authorizer;
 
+    /**
+     * The edge token-authentication posture, or {@code null} when only mTLS / plaintext is configured.
+     * When non-null the pipeline installs the {@link EdgeAuthGateHandler}, the decoder enforces the
+     * pre-auth frame ceiling, and the edge TLS is {@code wantClientAuth} (a certificate-less token
+     * client may connect). When {@code null} the endpoint is byte-identical to the pre-token edge.
+     */
+    private final EdgeAuthConfig edgeAuth;
+
     private final NettyTransport.Selection transport;
     private final AtomicBoolean running = new AtomicBoolean(false);
     /** Live connections INCLUDING mid-handshake (the bound is applied before the handshake). */
@@ -190,7 +199,7 @@ public final class NettyFanOutServer implements FanOutEndpoint {
         this(Map.of(0, Objects.requireNonNull(source, "source")),
                 Map.of(0, Objects.requireNonNull(replaySource, "replaySource")),
                 new int[]{0}, SINGLE_SHARD, WatchCursor.INITIAL_TOPOLOGY_EPOCH, bindAddress, tlsManager,
-                config, transportQueueFrames, maxSessions, governor, metrics, clock, authorizer);
+                config, transportQueueFrames, maxSessions, governor, metrics, clock, authorizer, null);
     }
 
     /**
@@ -198,6 +207,10 @@ public final class NettyFanOutServer implements FanOutEndpoint {
      * resolver the fan-out/fan-in coordinator fans a watch across. At {@code N = 1} the single-source
      * constructors delegate here with single-entry maps and the single-shard resolver, so one core is
      * the single-shard drain (byte-identical). {@code ConfigdServer} threads the real per-shard maps.
+     *
+     * @param edgeAuth the edge token-authentication posture, or {@code null} for the mTLS-only /
+     *                 plaintext posture (byte-identical to the pre-token edge: no gate, no pre-auth
+     *                 ceiling, {@code needClientAuth})
      */
     public NettyFanOutServer(Map<Integer, CommitNotificationSource> shardSources,
                              Map<Integer, ReplaySource> shardReplaySources,
@@ -212,7 +225,8 @@ public final class NettyFanOutServer implements FanOutEndpoint {
                              SlowConsumerGovernor governor,
                              RegistryFanOutSessionMetrics metrics,
                              Clock clock,
-                             WatchAuthorizer authorizer) {
+                             WatchAuthorizer authorizer,
+                             EdgeAuthConfig edgeAuth) {
         this.shardSources = Map.copyOf(Objects.requireNonNull(shardSources, "shardSources"));
         this.shardReplaySources = Map.copyOf(Objects.requireNonNull(shardReplaySources, "shardReplaySources"));
         this.allGids = Objects.requireNonNull(allGids, "allGids").clone();
@@ -240,6 +254,7 @@ public final class NettyFanOutServer implements FanOutEndpoint {
                 Math.max(2, Runtime.getRuntime().availableProcessors()));
         this.transport = NettyTransport.select();
         this.authorizer = authorizer; // nullable => no watch capability => driver fails closed
+        this.edgeAuth = edgeAuth; // nullable => mTLS-only / plaintext => byte-identical to the pre-token edge
     }
 
     @Override
@@ -277,8 +292,17 @@ public final class NettyFanOutServer implements FanOutEndpoint {
                         if (tlsManager != null) {
                             ch.pipeline().addLast(newSslHandler());
                         }
-                        ch.pipeline().addLast(new ByteToEdgeFrameDecoder());
+                        // Token-auth: the decoder enforces the pre-auth ceiling while UNAUTHENTICATED,
+                        // and the gate (after the encoder, before the connection) admits exactly one
+                        // authentication before any business frame reaches the session. Without it the
+                        // pipeline is byte-identical to the pre-token edge.
+                        ch.pipeline().addLast(edgeAuth != null
+                                ? new ByteToEdgeFrameDecoder(true, edgeAuth.preAuthMaxFrameBytes())
+                                : new ByteToEdgeFrameDecoder());
                         ch.pipeline().addLast(new EdgeFrameToByteEncoder(() -> conn.wireVersion));
+                        if (edgeAuth != null) {
+                            ch.pipeline().addLast(new EdgeAuthGateHandler(edgeAuth, metrics, clock));
+                        }
                         ch.pipeline().addLast(conn);
                     }
                 });
@@ -297,7 +321,14 @@ public final class NettyFanOutServer implements FanOutEndpoint {
         SSLContext sslContext = tlsManager.currentContext();
         SSLEngine engine = sslContext.createSSLEngine();
         engine.setUseClientMode(false);
-        engine.setNeedClientAuth(true); // mTLS REQUIRED: the edge endpoint always demands a client cert
+        if (edgeAuth != null) {
+            // Token auth is configured: a certificate-less token client must be able to connect, so the
+            // client cert becomes WANTED not REQUIRED. A presented cert is still validated against the
+            // trust store (a bad cert fails the handshake); a certless client proceeds to its AUTH frame.
+            engine.setWantClientAuth(true);
+        } else {
+            engine.setNeedClientAuth(true); // mTLS REQUIRED: the edge endpoint always demands a client cert
+        }
         TlsConfig tlsConfig = tlsManager.config();
         if (tlsConfig != null) {
             if (!tlsConfig.protocols().isEmpty()) {
@@ -389,21 +420,36 @@ public final class NettyFanOutServer implements FanOutEndpoint {
                 ctx.close();
                 return;
             }
-            if (tlsManager == null) {
-                startSession(ctx, "plaintext"); // plaintext: no handshake to await
+            if (tlsManager == null && edgeAuth == null) {
+                startSession(ctx, "plaintext", Set.of()); // plaintext: no handshake to await
             }
+            // With token auth on, the session start is deferred to the gate's EdgeAuthenticated event -
+            // even in plaintext, where the connection's first frame must be an AUTH.
             ctx.fireChannelActive();
         }
 
         @Override
         public void userEventTriggered(ChannelHandlerContext ctx, Object evt) {
+            if (edgeAuth != null) {
+                // Token auth: the gate owns authentication and fires EdgeAuthenticated (from a verified
+                // client cert at the handshake, or from an accepted AUTH frame). The raw
+                // SslHandshakeCompletionEvent is consumed by the gate and never reaches here, so the
+                // session starts only once identity is established.
+                if (evt instanceof EdgeAuthenticated authenticated) {
+                    startSession(ctx, authenticated.principal().id(), authenticated.principal().roles());
+                }
+                ctx.fireUserEventTriggered(evt);
+                return;
+            }
             if (evt instanceof SslHandshakeCompletionEvent handshake) {
                 if (handshake.isSuccess()) {
                     String identity = resolveCertIdentity(ctx);
                     if (identity == null) {
                         rejectHandshake(ctx); // handshake "succeeded" but no verifiable peer cert
                     } else {
-                        startSession(ctx, identity);
+                        // Legacy mTLS: roles stay empty (the ACL resolves the DN's config-bound roles
+                        // internally) - byte-identical to before.
+                        startSession(ctx, identity, Set.of());
                     }
                 } else {
                     // No cert / untrusted CA / expired / version-downgrade -> the handshake failed.
@@ -433,13 +479,13 @@ public final class NettyFanOutServer implements FanOutEndpoint {
             ctx.close();
         }
 
-        private void startSession(ChannelHandlerContext ctx, String identity) {
+        private void startSession(ChannelHandlerContext ctx, String identity, Set<String> roles) {
             if (started || !alive.get()) {
                 return;
             }
             started = true;
             this.driver = new FanOutConnectionDriver(shardSources, shardReplaySources, allGids,
-                    shardResolver, topologyEpoch, this, config, metrics, clock, governor, identity,
+                    shardResolver, topologyEpoch, this, config, metrics, clock, governor, identity, roles,
                     this::teardown, authorizer);
             metrics.onSubscriberConnected();
             connectedCounted = true;

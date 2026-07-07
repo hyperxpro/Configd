@@ -1174,6 +1174,24 @@ public final class ConfigdServer {
                             .withServerSidePrefixFilter(resolveEdgeFilterPosture(cfg),
                                     strongReadPolicy.prefixes())
                             .withAllowPartialShardView(allowPartialShardView);
+            // Edge token authentication (Gate 3): when the SHARED auth chain (one chain, both planes)
+            // contains a bearer or basic provider, the edge admits token/basic AUTH frames additively -
+            // mTLS clients stay byte-identical (no AUTH frame, cert-auth at the handshake), a
+            // certificate-less token client presents an AUTH frame. When the chain is mTLS-only or
+            // absent, edgeAuth stays null and the edge is byte-identical to the pre-token endpoint.
+            io.configd.server.fanout.EdgeAuthConfig edgeAuth = null;
+            if (authChain != null) {
+                java.util.List<String> edgeProviderTypes = authChain.providerTypes();
+                if (edgeProviderTypes.contains("bearer") || edgeProviderTypes.contains("basic")) {
+                    int preAuthMaxFrameBytes = cfg.getInt("configd.edge.preAuthMaxFrameBytes", 16_384);
+                    int maxAuthTokenBytes = cfg.getInt("configd.edge.maxAuthTokenBytes", 8_192);
+                    // Placeholder session lifetime; Gate 5 replaces this fixed TTL with the real
+                    // credential lead-time model (token exp / cert notAfter minus a refresh window).
+                    long authTtlMs = cfg.getLong("configd.edge.authTtlMs", 3_600_000L);
+                    edgeAuth = new io.configd.server.fanout.EdgeAuthConfig(
+                            authChain, preAuthMaxFrameBytes, maxAuthTokenBytes, authTtlMs);
+                }
+            }
             fanOutServer = new io.configd.server.fanout.NettyFanOutServer(
                     edgeShardSources, edgeShardReplaySources, edgeAllGids, edgeShardResolver,
                     shardMap.epoch(),
@@ -1182,7 +1200,7 @@ public final class ConfigdServer {
                     fanOutConfig,
                     io.configd.server.fanout.FanOutServer.DEFAULT_TRANSPORT_QUEUE_FRAMES,
                     io.configd.server.fanout.FanOutServer.DEFAULT_MAX_SESSIONS,
-                    slowConsumerGovernor, fanOutMetrics, clock, watchAuthorizer);
+                    slowConsumerGovernor, fanOutMetrics, clock, watchAuthorizer, edgeAuth);
             // Fail-closed: if TLS is enabled on the CLI but the edge endpoint did not receive a
             // TlsManager, refuse to start (no plaintext edge traffic in a TLS deployment).
             if (config.tlsEnabled() && tlsManager == null) {

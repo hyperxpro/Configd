@@ -1,6 +1,9 @@
 package io.configd.server.fanout;
 
 import io.configd.common.Clock;
+import io.configd.common.auth.AuthResult;
+import io.configd.common.auth.Credential;
+import io.configd.common.auth.Principal;
 import io.configd.distribution.CommitNotificationSource;
 import io.configd.distribution.ReplaySource;
 import io.configd.distribution.fanout.FanOutConfig;
@@ -29,12 +32,19 @@ import java.net.InetSocketAddress;
 import java.net.ServerSocket;
 import java.net.Socket;
 import java.net.SocketTimeoutException;
+import java.security.cert.Certificate;
+import java.security.cert.X509Certificate;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.ScheduledFuture;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.logging.Level;
 import java.util.logging.Logger;
@@ -148,6 +158,22 @@ public final class FanOutServer implements FanOutEndpoint {
      */
     private final WatchAuthorizer authorizer;
 
+    /**
+     * The edge token-authentication posture, or {@code null} for the mTLS-only / plaintext posture
+     * (byte-identical to the pre-token edge). When non-null the blocking reader gates every connection
+     * on an accepted {@code AUTH} frame (unless a verified client cert authenticated it at the
+     * handshake), the frame reader enforces the pre-auth ceiling, and the listen socket is
+     * {@code wantClientAuth}.
+     */
+    private final EdgeAuthConfig edgeAuth;
+
+    /**
+     * The one-shot token-TTL expiry scheduler, shared by all token connections; {@code null} when
+     * token auth is off (no allocation on the byte-identical path). A fired task closes the socket, so
+     * the blocking reader unwinds into the teardown path.
+     */
+    private final ScheduledExecutorService authExpiryScheduler;
+
     private final ExecutorService executor = Executors.newVirtualThreadPerTaskExecutor();
     private final Set<Socket> liveSockets = ConcurrentHashMap.newKeySet();
     private final AtomicBoolean running = new AtomicBoolean(false);
@@ -225,7 +251,7 @@ public final class FanOutServer implements FanOutEndpoint {
         this(Map.of(0, java.util.Objects.requireNonNull(source, "source")),
                 Map.of(0, java.util.Objects.requireNonNull(replaySource, "replaySource")),
                 new int[]{0}, SINGLE_SHARD, WatchCursor.INITIAL_TOPOLOGY_EPOCH, bindAddress, tlsManager,
-                config, transportQueueFrames, maxSessions, governor, metrics, clock, authorizer);
+                config, transportQueueFrames, maxSessions, governor, metrics, clock, authorizer, null);
     }
 
     /**
@@ -233,6 +259,9 @@ public final class FanOutServer implements FanOutEndpoint {
      * resolver the fan-out/fan-in coordinator fans a watch across. At {@code N = 1} the single-source
      * constructors delegate here with single-entry maps and the single-shard resolver, so one core is
      * the single-shard drain (byte-identical). {@code ConfigdServer} threads the real per-shard maps.
+     *
+     * @param edgeAuth the edge token-authentication posture, or {@code null} for the mTLS-only /
+     *                 plaintext posture (byte-identical to the pre-token edge)
      */
     public FanOutServer(Map<Integer, CommitNotificationSource> shardSources,
                         Map<Integer, ReplaySource> shardReplaySources,
@@ -247,7 +276,8 @@ public final class FanOutServer implements FanOutEndpoint {
                         SlowConsumerGovernor governor,
                         RegistryFanOutSessionMetrics metrics,
                         Clock clock,
-                        WatchAuthorizer authorizer) {
+                        WatchAuthorizer authorizer,
+                        EdgeAuthConfig edgeAuth) {
         this.shardSources = Map.copyOf(java.util.Objects.requireNonNull(shardSources, "shardSources"));
         this.shardReplaySources =
                 Map.copyOf(java.util.Objects.requireNonNull(shardReplaySources, "shardReplaySources"));
@@ -273,6 +303,14 @@ public final class FanOutServer implements FanOutEndpoint {
         this.metrics = java.util.Objects.requireNonNull(metrics, "metrics");
         this.clock = java.util.Objects.requireNonNull(clock, "clock");
         this.authorizer = authorizer; // nullable => no watch capability => driver fails closed
+        this.edgeAuth = edgeAuth; // nullable => mTLS-only / plaintext => byte-identical to the pre-token edge
+        this.authExpiryScheduler = (edgeAuth != null)
+                ? Executors.newSingleThreadScheduledExecutor(r -> {
+                    Thread t = new Thread(r, "edge-jdk-auth-expiry");
+                    t.setDaemon(true);
+                    return t;
+                })
+                : null;
     }
 
     /** The slow-consumer governor this endpoint enforces (C4; for tests/diagnostics). */
@@ -311,6 +349,9 @@ public final class FanOutServer implements FanOutEndpoint {
             closeQuietly(s);
         }
         executor.shutdownNow();
+        if (authExpiryScheduler != null) {
+            authExpiryScheduler.shutdownNow();
+        }
     }
 
     // -----------------------------------------------------------------------
@@ -348,6 +389,7 @@ public final class FanOutServer implements FanOutEndpoint {
 
     private void handleConnection(Socket socket) {
         String edgeIdentity;
+        boolean authGated;
         try {
             if (socket instanceof SSLSocket ssl) {
                 // Bounded handshake (no deadline-less blocking).
@@ -355,7 +397,30 @@ public final class FanOutServer implements FanOutEndpoint {
                 ssl.startHandshake();
                 ssl.setSoTimeout(0);
             }
-            edgeIdentity = resolveEdgeIdentity(socket);
+            if (edgeAuth != null) {
+                // Token auth: a verified client certificate authenticates at the handshake
+                // (byte-identical identity, no AUTH frame); a certificate-less client must present an
+                // AUTH frame, so the reader gates it. The listen socket is wantClientAuth, so a certless
+                // handshake succeeds and returns no peer certificate.
+                List<X509Certificate> chain = verifiedPeerChain(socket);
+                if (chain != null) {
+                    AuthResult result = edgeAuth.authenticateClientCertificate(chain);
+                    if (result instanceof AuthResult.Authenticated a) {
+                        edgeIdentity = a.principal().id();
+                        authGated = false;
+                    } else {
+                        LOG.fine(() -> "FanOutServer client certificate rejected");
+                        metrics.onSessionClosed(ErrorCode.AUTH_FAIL.name());
+                        return;
+                    }
+                } else {
+                    edgeIdentity = null; // established by the AUTH frame the reader awaits
+                    authGated = true;
+                }
+            } else {
+                edgeIdentity = resolveEdgeIdentity(socket); // throws over mTLS if no verifiable cert
+                authGated = false;
+            }
         } catch (IOException e) {
             // A failed/rejected mTLS handshake (no cert, wrong CA) lands here. AUTH_FAIL.
             LOG.fine(() -> "FanOutServer handshake/identity rejected: " + e.getMessage());
@@ -363,8 +428,27 @@ public final class FanOutServer implements FanOutEndpoint {
             return;
         }
 
-        Connection conn = new Connection(socket, edgeIdentity);
+        Connection conn = new Connection(socket, edgeIdentity, authGated);
         conn.run();
+    }
+
+    /** The verified peer certificate chain, or {@code null} if the peer presented none (certless). */
+    private static List<X509Certificate> verifiedPeerChain(Socket socket) {
+        if (!(socket instanceof SSLSocket ssl)) {
+            return null; // plaintext token connection: certless, must AUTH
+        }
+        try {
+            Certificate[] certs = ssl.getSession().getPeerCertificates();
+            List<X509Certificate> chain = new ArrayList<>(certs.length);
+            for (Certificate c : certs) {
+                if (c instanceof X509Certificate x) {
+                    chain.add(x);
+                }
+            }
+            return chain.isEmpty() ? null : chain;
+        } catch (Exception e) {
+            return null; // no verifiable client certificate
+        }
     }
 
     // -----------------------------------------------------------------------
@@ -410,17 +494,21 @@ public final class FanOutServer implements FanOutEndpoint {
             SSLServerSocketFactory factory = tlsManager.currentContext().getServerSocketFactory();
             SSLServerSocket ss = (SSLServerSocket) factory.createServerSocket();
             TlsConfig tlsConfig = tlsManager.config();
-            if (tlsConfig != null) {
-                // mTLS REQUIRED: the edge endpoint always demands a client cert.
+            // Token auth relaxes the client cert from REQUIRED to WANTED so a certificate-less token
+            // client can connect (a presented cert is still validated; a certless one proceeds to its
+            // AUTH frame). Without token auth the edge always demands a client cert (mTLS REQUIRED).
+            if (edgeAuth != null) {
+                ss.setWantClientAuth(true);
+            } else {
                 ss.setNeedClientAuth(true);
+            }
+            if (tlsConfig != null) {
                 if (!tlsConfig.protocols().isEmpty()) {
                     ss.setEnabledProtocols(tlsConfig.protocols().toArray(String[]::new));
                 }
                 if (!tlsConfig.ciphers().isEmpty()) {
                     ss.setEnabledCipherSuites(tlsConfig.ciphers().toArray(String[]::new));
                 }
-            } else {
-                ss.setNeedClientAuth(true);
             }
             return ss;
         }
@@ -451,12 +539,42 @@ public final class FanOutServer implements FanOutEndpoint {
     private final class Connection implements TransportSink {
 
         private final Socket socket;
+        /**
+         * The bound edge identity. For a cert-authenticated or non-token connection it is known at
+         * construction (byte-identical to before); for a certificate-less token connection it is
+         * {@code null} until the {@code AUTH} frame resolves it, at which point the session starts
+         * bound to the token principal's id.
+         */
         private final String edgeIdentity;
+        /**
+         * True when this connection must authenticate via an {@code AUTH} frame before any business
+         * frame (a certificate-less token connection). The driver + writer + session threads start
+         * lazily on that authentication. False for the cert / non-token path, which starts eagerly and
+         * is byte-identical to the pre-token reader.
+         */
+        private final boolean authGated;
         private final ArrayBlockingQueue<byte[]> outbound;
         private final AtomicBoolean alive = new AtomicBoolean(true);
 
-        /** The transport-agnostic session brain (created in {@link #run()} before the reader runs). */
+        /** The transport-agnostic session brain (created eagerly, or lazily on token auth). */
         private volatile FanOutConnectionDriver driver;
+
+        /** The writer / session threads (fields so a token connection can start them lazily). */
+        private Thread writer;
+        private Thread sessionThread;
+
+        /** Whether {@code onSubscriberConnected} was counted (pairs the disconnect; token-gated pre-auth
+         * connections never connect, so their teardown must not emit a phantom disconnect). */
+        private volatile boolean connectedCounted;
+
+        /** Reader-thread-only: the per-connection auth state (only meaningful when {@link #authGated}). */
+        private AuthState authState = AuthState.UNAUTHENTICATED;
+
+        /** Reader-thread-only: whether the first BUSINESS frame (which pins the outbound version) was seen. */
+        private boolean firstBusinessRouted;
+
+        /** The token-TTL expiry one-shot, armed on token auth and re-armed on {@code REFRESH_AUTH}. */
+        private volatile ScheduledFuture<?> expiryTask;
 
         /**
          * Negotiated OUTBOUND edge wire version. Default {@code 0x01} (legacy); flipped to
@@ -478,35 +596,49 @@ public final class FanOutServer implements FanOutEndpoint {
         /** Reader-thread-only: whether the connection-type-deciding first inbound frame has been routed. */
         private boolean firstFrameRouted;
 
-        Connection(Socket socket, String edgeIdentity) {
+        Connection(Socket socket, String edgeIdentity, boolean authGated) {
             this.socket = socket;
             this.edgeIdentity = edgeIdentity;
+            this.authGated = authGated;
             this.outbound = new ArrayBlockingQueue<>(transportQueueFrames);
         }
 
         void run() {
-            // The driver uses THIS connection as its TransportSink + teardown hook. Created before
-            // the reader sees SUBSCRIBE so onSubscribe (run on the session thread) can emit
-            // SUBSCRIBE_OK; the driver's demotion arm tears the connection down with the on-wire
-            // ErrorCode.QUARANTINED (code 8) + socket close when policy trips.
-            this.driver = new FanOutConnectionDriver(shardSources, shardReplaySources, allGids,
-                    shardResolver, topologyEpoch, this, config, metrics, clock, governor, edgeIdentity,
-                    this::teardown, authorizer);
-            metrics.onSubscriberConnected();
-
-            Thread writer = Thread.ofVirtual().name("edge-writer-" + edgeIdentity).unstarted(this::writerLoop);
-            Thread sessionThread = Thread.ofVirtual().name("edge-session-" + edgeIdentity)
-                    .unstarted(() -> driver.runSessionLoop(() -> alive.get() && running.get()));
-            writer.start();
-            sessionThread.start();
             try {
+                if (!authGated) {
+                    // Cert / non-token: identity known at the handshake; start eagerly with empty roles
+                    // (the ACL resolves the DN's config-bound roles internally) - byte-identical.
+                    startSessionThreads(edgeIdentity, Set.of());
+                }
+                // A token-gated connection starts its session lazily when its AUTH frame authenticates.
                 readerLoop(); // runs on the accept-submitted virtual thread
             } finally {
                 teardown(ErrorCode.SERVER_SHUTDOWN, "connection closed");
-                // Join the helpers so teardown is complete before the socket is released.
+                // Join the helpers so teardown is complete before the socket is released (they are null
+                // for a token connection that closed before authenticating).
                 joinQuietly(writer);
                 joinQuietly(sessionThread);
             }
+        }
+
+        /**
+         * Creates the session brain and starts the writer + session threads, bound to {@code identity}.
+         * The driver is created before the reader routes SUBSCRIBE so {@code onSubscribe} (on the
+         * session thread) can emit SUBSCRIBE_OK, and its demotion arm tears the connection down with the
+         * on-wire {@code QUARANTINED} + socket close when policy trips. Called exactly once per
+         * connection - eagerly for a cert / non-token connection, or lazily on the first token auth.
+         */
+        private void startSessionThreads(String identity, Set<String> roles) {
+            this.driver = new FanOutConnectionDriver(shardSources, shardReplaySources, allGids,
+                    shardResolver, topologyEpoch, this, config, metrics, clock, governor, identity, roles,
+                    this::teardown, authorizer);
+            metrics.onSubscriberConnected();
+            connectedCounted = true;
+            this.writer = Thread.ofVirtual().name("edge-writer-" + identity).unstarted(this::writerLoop);
+            this.sessionThread = Thread.ofVirtual().name("edge-session-" + identity)
+                    .unstarted(() -> driver.runSessionLoop(() -> alive.get() && running.get()));
+            writer.start();
+            sessionThread.start();
         }
 
         // ---- reader thread (decode only; routing is the driver's, never touches the session) ----
@@ -533,25 +665,27 @@ public final class FanOutServer implements FanOutEndpoint {
                     }
                     if (!firstFrameRouted) {
                         firstFrameRouted = true;
-                        // WH-11 disarm: rely on the server->client HEARTBEAT for liveness now; do
-                        // NOT read-idle-reap a healthy subscriber that legitimately stays quiet.
+                        // WH-11 disarm: rely on the server->client HEARTBEAT for liveness now; do NOT
+                        // read-idle-reap a healthy subscriber that legitimately stays quiet. On a token
+                        // connection the first routed frame is the AUTH frame, so this bounds the
+                        // pre-auth window (an authenticated peer that then idles is trusted).
                         socket.setSoTimeout(0);
-                        // Outbound flip: a WATCH_CREATE-first connection is a 0x02 watch connection,
-                        // so offer() must stamp 0x02 for the client to decode the server's WATCH_* frames.
-                        // A 0x03-stamped SUBSCRIBE is a filtered-fan-out connection (ADR-0045), so
-                        // offer() stamps 0x03 for the SUBSCRIBE_OK filtered confirm and every
-                        // subsequent frame the edge's 0x03-pinned reader decodes. A plain 0x01
-                        // SUBSCRIBE stays 0x01 (byte-identical). The flip happens-before any outbound
-                        // frame the session thread later produces (posted as a session command AFTER
-                        // this flip).
-                        if (frame instanceof EdgeFrame.WatchCreate) {
-                            wireVersion = EdgeFrameCodec.EDGE_WIRE_VERSION_V2;
-                        } else if (frame instanceof EdgeFrame.Subscribe
-                                && inboundNegotiatedVersion == EdgeFrameCodec.EDGE_WIRE_VERSION_V3) {
-                            wireVersion = EdgeFrameCodec.EDGE_WIRE_VERSION_V3;
+                    }
+                    // Token-auth gate: a certificate-less token connection admits ONLY an AUTH frame
+                    // until it authenticates (which starts the session lazily). Once authenticated, its
+                    // AUTH-family control frames (REFRESH_AUTH, a stray AUTH) are handled here rather than
+                    // routed to the session; business frames fall through to routeBusinessFrame.
+                    if (authGated) {
+                        if (!authState.isAuthenticated()) {
+                            admitPreAuth(frame);
+                            continue;
+                        }
+                        if (frame instanceof EdgeFrame.Auth || frame instanceof EdgeFrame.RefreshAuth) {
+                            handlePostAuthControl(frame);
+                            continue;
                         }
                     }
-                    driver.onInboundFrame(frame);
+                    routeBusinessFrame(frame);
                 }
             } catch (SocketTimeoutException e) {
                 // WH-11: the first-frame deadline elapsed with no (complete) routed frame - a
@@ -566,6 +700,110 @@ public final class FanOutServer implements FanOutEndpoint {
                 if (alive.get()) {
                     LOG.fine(() -> "edge reader I/O end: " + e.getMessage());
                 }
+            }
+        }
+
+        /**
+         * Routes a business frame to the session, flipping the outbound wire version on the FIRST such
+         * frame: a WATCH_CREATE-first connection stamps 0x02 (the client decodes the server's WATCH_*
+         * frames); a 0x03-stamped SUBSCRIBE stamps 0x03 (the ADR-0045 filtered-fan-out confirm); a plain
+         * 0x01 SUBSCRIBE stays 0x01 (byte-identical). On a token connection the first business frame
+         * arrives after the AUTH, so the flip is decoupled from the pre-auth first-frame deadline.
+         */
+        private void routeBusinessFrame(EdgeFrame frame) {
+            if (!firstBusinessRouted) {
+                firstBusinessRouted = true;
+                if (frame instanceof EdgeFrame.WatchCreate) {
+                    wireVersion = EdgeFrameCodec.EDGE_WIRE_VERSION_V2;
+                } else if (frame instanceof EdgeFrame.Subscribe
+                        && inboundNegotiatedVersion == EdgeFrameCodec.EDGE_WIRE_VERSION_V3) {
+                    wireVersion = EdgeFrameCodec.EDGE_WIRE_VERSION_V3;
+                }
+            }
+            driver.onInboundFrame(frame);
+        }
+
+        /**
+         * Admits the single pre-auth frame of a token connection: only an AUTH frame is accepted, and a
+         * rejected AUTH closes the connection (so a retry costs a fresh handshake, bounding the pre-auth
+         * verification cost). On success the session starts lazily, bound to the token principal's id,
+         * and the TTL expiry is armed.
+         */
+        private void admitPreAuth(EdgeFrame frame) {
+            if (frame instanceof EdgeFrame.Auth authFrame) {
+                Credential credential = authFrame.credential();
+                if (!edgeAuth.credentialWithinCaps(credential)) {
+                    teardown(ErrorCode.AUTH_FAIL, "auth credential exceeds the permitted size");
+                    return;
+                }
+                AuthResult result = edgeAuth.resolveFrameCredential(credential);
+                if (result instanceof AuthResult.Authenticated a) {
+                    Principal principal = a.principal();
+                    authState = AuthState.authenticated(principal,
+                            clock.currentTimeMillis() + edgeAuth.tokenTtlMs());
+                    startSessionThreads(principal.id(), principal.roles());
+                    armExpiry();
+                } else {
+                    teardown(ErrorCode.AUTH_FAIL, "authentication failed");
+                }
+            } else {
+                teardown(ErrorCode.PROTOCOL_VIOLATION,
+                        "expected an AUTH frame before authenticating, got " + frame.type());
+            }
+        }
+
+        /**
+         * Handles an AUTH-family control frame on an already-authenticated token connection: a
+         * REFRESH_AUTH re-resolves the credential and re-arms the expiry (CREDENTIAL_EXPIRED on any
+         * non-acceptance); a stray AUTH is a PROTOCOL_VIOLATION. The identity is not re-bound in v1.
+         */
+        private void handlePostAuthControl(EdgeFrame frame) {
+            if (frame instanceof EdgeFrame.RefreshAuth refresh) {
+                Credential credential = refresh.credential();
+                if (!edgeAuth.credentialWithinCaps(credential)) {
+                    teardown(ErrorCode.CREDENTIAL_EXPIRED, "refresh credential exceeds the permitted size");
+                    return;
+                }
+                AuthResult result = edgeAuth.resolveFrameCredential(credential);
+                if (result instanceof AuthResult.Authenticated a) {
+                    if (authState instanceof AuthState.Authenticated bound
+                            && !bound.principal().id().equals(a.principal().id())) {
+                        // A refresh renews the SAME identity's token; a different identity is anomalous -
+                        // fail closed rather than silently extend (the driver's identity is fixed at
+                        // first authentication).
+                        teardown(ErrorCode.AUTH_FAIL,
+                                "refresh credential resolves to a different identity than the "
+                                        + "connection is bound to");
+                        return;
+                    }
+                    authState = AuthState.authenticated(a.principal(),
+                            clock.currentTimeMillis() + edgeAuth.tokenTtlMs());
+                    armExpiry();
+                } else {
+                    teardown(ErrorCode.CREDENTIAL_EXPIRED, "credential refresh rejected");
+                }
+            } else {
+                teardown(ErrorCode.PROTOCOL_VIOLATION,
+                        "AUTH received on an already-authenticated connection");
+            }
+        }
+
+        /**
+         * Arms (or re-arms) the token-TTL expiry one-shot: a fired task tears the connection down with
+         * the on-wire {@code CREDENTIAL_EXPIRED}, which closes the socket and unwinds the blocking reader.
+         */
+        private void armExpiry() {
+            cancelExpiry();
+            expiryTask = authExpiryScheduler.schedule(
+                    () -> teardown(ErrorCode.CREDENTIAL_EXPIRED, "token credential expired"),
+                    edgeAuth.tokenTtlMs(), TimeUnit.MILLISECONDS);
+        }
+
+        private void cancelExpiry() {
+            ScheduledFuture<?> t = expiryTask;
+            if (t != null) {
+                t.cancel(false);
+                expiryTask = null;
             }
         }
 
@@ -604,6 +842,15 @@ public final class FanOutServer implements FanOutEndpoint {
             }
             // Bounds-check the declared length BEFORE allocating (peekLength-bounded).
             int total = EdgeFrameCodec.peekLength(header4); // throws CodecException if out of range
+            // Pre-auth ceiling: while a token connection is UNAUTHENTICATED, a hostile peer cannot
+            // induce even a mid-size allocation before proving identity - the declared length is capped
+            // at the small pre-auth ceiling here, BEFORE the frame buffer is sized (mirrors the Netty
+            // decoder). Dormant on the non-token path (byte-identical: authGated == false).
+            if (authGated && !authState.isAuthenticated() && total > edgeAuth.preAuthMaxFrameBytes()) {
+                throw new EdgeFrameCodec.CodecException(ErrorCode.FRAME_TOO_LARGE,
+                        "pre-auth frame length " + total + " exceeds the pre-auth ceiling "
+                                + edgeAuth.preAuthMaxFrameBytes());
+            }
             byte[] frameBytes = new byte[total];
             frameBytes[0] = header4[0];
             frameBytes[1] = header4[1];
@@ -614,13 +861,20 @@ public final class FanOutServer implements FanOutEndpoint {
             } else {
                 in.readFully(frameBytes, 4, total - 4);
             }
+            if (EdgeFrameCodec.peekVersion(frameBytes) == EdgeFrameCodec.EDGE_WIRE_VERSION_V4) {
+                // Auth-phase frame (AU3-3): version-pin EXEMPT. Decode under 0x04 (only AUTH/REFRESH_AUTH
+                // are legal there) and NEVER read or set the business-version pin, so it may interleave on
+                // a connection pinned to any business version - symmetric to the Netty decoder. A
+                // bit-flipped version byte still fails the CRC (checked first) -> FRAME_CORRUPT.
+                return EdgeFrameCodec.decode(frameBytes, EdgeFrameCodec.EDGE_WIRE_VERSION_V4);
+            }
             if (inboundNegotiatedVersion == 0) {
-                // First frame: accept either version (CRC-validated), then PIN to its stamp.
+                // First business frame: accept 0x01/0x02/0x03 (CRC-validated), then PIN to its stamp.
                 EdgeFrame frame = EdgeFrameCodec.decode(frameBytes);
                 inboundNegotiatedVersion = EdgeFrameCodec.peekVersion(frameBytes); // known 0x01/0x02/0x03
                 return frame;
             }
-            // Pinned: a frame stamped with the OTHER accepted version -> BAD_WIRE_VERSION (fail closed).
+            // Pinned: a business frame stamped with the OTHER accepted version -> BAD_WIRE_VERSION.
             return EdgeFrameCodec.decode(frameBytes, inboundNegotiatedVersion);
         }
 
@@ -725,11 +979,15 @@ public final class FanOutServer implements FanOutEndpoint {
             if (!alive.compareAndSet(true, false)) {
                 return; // already torn down
             }
+            cancelExpiry();
             FanOutConnectionDriver d = driver;
             FanOutSessionCore s = (d != null) ? d.session() : null;
-            if (s != null && s.state() != FanOutSessionCore.SessionState.CLOSED) {
-                // Best-effort: try to push a final ERROR_CLOSE before the socket dies. Stamp the
-                // connection's negotiated version so a 0x02 watch client can decode the bye.
+            // Best-effort: try to push a final ERROR_CLOSE before the socket dies, stamping the
+            // connection's negotiated version so a 0x02 watch client can decode the bye. A token
+            // connection can be torn down BEFORE its session exists (a pre-auth reject / cap / expiry),
+            // where d == null; it still deserves the AUTH_FAIL / CREDENTIAL_EXPIRED bye.
+            boolean wantBye = (d == null) || (s != null && s.state() != FanOutSessionCore.SessionState.CLOSED);
+            if (wantBye) {
                 try {
                     byte[] bye = EdgeFrameCodec.encode(new EdgeFrame.ErrorClose(code, message), wireVersion);
                     socket.getOutputStream().write(bye);
@@ -741,10 +999,17 @@ public final class FanOutServer implements FanOutEndpoint {
             outbound.offer(POISON); // unblock the writer's take()
             closeQuietly(socket);
             metrics.onSessionClosed(code.name());
-            metrics.onSubscriberDisconnected();
+            if (connectedCounted) {
+                // Pairs the onSubscriberConnected the session start counted. A token connection that
+                // closed before authenticating never connected, so it must not emit a phantom disconnect.
+                metrics.onSubscriberDisconnected();
+            }
         }
 
         private void joinQuietly(Thread t) {
+            if (t == null) {
+                return; // a token connection may close before its session threads exist
+            }
             try {
                 t.join(1_000);
             } catch (InterruptedException e) {

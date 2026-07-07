@@ -10,6 +10,11 @@ package io.configd.distribution.wire;
  * client-facing <b>watch</b> frames (W5-1); they are legal <b>only</b> on a {@code 0x02}
  * connection ({@link EdgeFrameCodec#EDGE_WIRE_VERSION_V2}) - a watch type on a
  * {@code 0x01}-stamped frame decodes as {@link ErrorCode#FRAME_CORRUPT} (W5-11).
+ * <b>Codes {@code 0x13..0x14}</b> are the client-to-server <b>auth-phase</b> frames (AU3-3);
+ * they are legal <b>only</b> on a {@code 0x04} frame ({@link EdgeFrameCodec#EDGE_WIRE_VERSION_V4})
+ * and are version-pin-exempt (they never establish or violate the connection's protocol-version
+ * pin - a {@code 0x04} auth frame may interleave on a {@code 0x01}/{@code 0x02}/{@code 0x03}
+ * connection).
  */
 public enum FrameType {
 
@@ -41,7 +46,13 @@ public enum FrameType {
     /** Server-to-client: per-{@code (watch_id, gid)} catch-up snapshot chunk. */
     WATCH_SNAPSHOT_CHUNK(0x11),
     /** Server-to-client: per-{@code (watch_id, gid)} catch-up snapshot trailer. */
-    WATCH_SNAPSHOT_END(0x12);
+    WATCH_SNAPSHOT_END(0x12),
+
+    // ---- Auth-phase frames (AU3-3); 0x04-only, version-pin-exempt ----
+    /** Client-to-server: present a token/basic credential to authenticate the connection. */
+    AUTH(0x13),
+    /** Client-to-server: present a fresh credential to extend an already-authenticated connection. */
+    REFRESH_AUTH(0x14);
 
     private final int code;
 

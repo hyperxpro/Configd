@@ -1,5 +1,6 @@
 package io.configd.distribution.wire;
 
+import io.configd.common.auth.Credential;
 import io.configd.distribution.CommitNotification;
 
 import java.util.List;
@@ -33,7 +34,8 @@ public sealed interface EdgeFrame
         EdgeFrame.CursorAck, EdgeFrame.Heartbeat, EdgeFrame.ErrorClose,
         EdgeFrame.WatchCreate, EdgeFrame.WatchCancel, EdgeFrame.WatchCreated,
         EdgeFrame.WatchEvent, EdgeFrame.WatchProgress, EdgeFrame.WatchCanceled,
-        EdgeFrame.WatchSnapshotBegin, EdgeFrame.WatchSnapshotChunk, EdgeFrame.WatchSnapshotEnd {
+        EdgeFrame.WatchSnapshotBegin, EdgeFrame.WatchSnapshotChunk, EdgeFrame.WatchSnapshotEnd,
+        EdgeFrame.Auth, EdgeFrame.RefreshAuth {
 
     /** The wire type code carried in the frame header. */
     FrameType type();
@@ -385,6 +387,63 @@ public sealed interface EdgeFrame
         @Override
         public FrameType type() {
             return FrameType.ERROR_CLOSE;
+        }
+    }
+
+    // =======================================================================
+    // Auth-phase frames (0x04 only, version-pin-exempt; AU3-3).
+    // =======================================================================
+
+    /**
+     * Client->server auth-phase frame presenting a credential to authenticate the connection (AU3-3).
+     * Encodable/decodable ONLY under {@link EdgeFrameCodec#EDGE_WIRE_VERSION_V4} and version-pin-exempt.
+     * The {@link Credential} is constrained to the two frame-carriable shapes - a bearer token or a basic
+     * user+password; a client certificate is an mTLS handshake artifact (never sent in a frame), so it is
+     * rejected here. The credential's {@code toString} is redacted, so the frame never logs the secret.
+     *
+     * @param credential a {@link Credential.BearerToken} or {@link Credential.BasicCredential}
+     */
+    record Auth(Credential credential) implements EdgeFrame {
+
+        public Auth {
+            Objects.requireNonNull(credential, "credential must not be null");
+            requireFrameCarriable(credential);
+        }
+
+        @Override
+        public FrameType type() {
+            return FrameType.AUTH;
+        }
+    }
+
+    /**
+     * Client->server refresh of an already-authenticated connection: presents a fresh credential to
+     * extend the session (AU3-3). Identical payload shape to {@link Auth}; a distinct type so the intent
+     * is self-describing on the wire.
+     *
+     * @param credential a {@link Credential.BearerToken} or {@link Credential.BasicCredential}
+     */
+    record RefreshAuth(Credential credential) implements EdgeFrame {
+
+        public RefreshAuth {
+            Objects.requireNonNull(credential, "credential must not be null");
+            requireFrameCarriable(credential);
+        }
+
+        @Override
+        public FrameType type() {
+            return FrameType.REFRESH_AUTH;
+        }
+    }
+
+    /**
+     * A credential that can ride an AUTH/REFRESH_AUTH frame is a bearer token or a basic user+password.
+     * A {@link Credential.ClientCertificate} is an mTLS handshake artifact and is never framed.
+     */
+    private static void requireFrameCarriable(Credential c) {
+        if (!(c instanceof Credential.BearerToken || c instanceof Credential.BasicCredential)) {
+            throw new IllegalArgumentException("an AUTH/REFRESH_AUTH frame credential must be a BearerToken"
+                    + " or BasicCredential, not " + c.getClass().getSimpleName());
         }
     }
 

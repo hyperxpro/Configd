@@ -97,8 +97,9 @@ class EdgeFrameCodecGoldenFixtureTest {
     void fixtureSetCoversEveryTypeAndErrorCode() {
         List<EdgeFrame> all = new ArrayList<>(EdgeFrameFixtures.build().values());
         all.addAll(EdgeFrameFixtures.buildV2().values());
+        all.addAll(EdgeFrameFixtures.buildV4().values());
 
-        // Every FrameType present in some fixture (v1 or v2).
+        // Every FrameType present in some fixture (v1, v2, or v4 auth).
         for (FrameType ft : FrameType.values()) {
             boolean present = all.stream().anyMatch(f -> f.type() == ft);
             if (!present) {
