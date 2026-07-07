@@ -18,7 +18,10 @@ import java.security.cert.Certificate;
 import java.security.cert.X509Certificate;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.Executor;
+import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.TimeUnit;
+import java.util.function.Consumer;
 
 /**
  * The edge token-authentication gate: a per-connection inbound handler installed AFTER
@@ -65,6 +68,13 @@ final class EdgeAuthGateHandler extends ChannelInboundHandlerAdapter {
     private final RegistryFanOutSessionMetrics metrics;
     private final Clock clock;
     private final int firstFrameDeadlineMs;
+    /**
+     * Bounded off-loop pool for the (blocking, ~50-150ms PBKDF2) credential resolution. Never resolve a
+     * credential inline on the event loop - that stalls every other connection on this shared Netty
+     * worker. Nullable only as a can't-happen safety net (the gate is installed only when token auth is
+     * configured, and the server always supplies a pool then); a null pool falls back to inline resolution.
+     */
+    private final Executor authWorker;
 
     /** The pre-auth first-frame reaper (armed once the connection awaits an AUTH frame). */
     private ScheduledFuture<?> preAuthDeadline;
@@ -72,14 +82,22 @@ final class EdgeAuthGateHandler extends ChannelInboundHandlerAdapter {
     private ScheduledFuture<?> expiry;
     /** Event-loop-only: whether an {@link EdgeAuthenticated} has been fired (post-auth teardown routing). */
     private boolean authenticated;
+    /**
+     * Event-loop-only single-flight guard: a credential resolution is dispatched to {@link #authWorker}
+     * and not yet resumed. Bounds each connection to ONE in-flight PBKDF2 - a second pre-auth AUTH frame
+     * fails closed and duplicate REFRESH_AUTH frames are dropped, so neither a stray frame nor
+     * REFRESH_AUTH spam can amplify verification work.
+     */
+    private boolean resolving;
 
     EdgeAuthGateHandler(EdgeAuthConfig auth, EdgeCertGate certGate,
-                        RegistryFanOutSessionMetrics metrics, Clock clock) {
+                        RegistryFanOutSessionMetrics metrics, Clock clock, Executor authWorker) {
         this.auth = auth;
         this.certGate = certGate;
         this.metrics = metrics;
         this.clock = clock;
         this.firstFrameDeadlineMs = FanOutServer.firstFrameDeadlineMs();
+        this.authWorker = authWorker;
     }
 
     @Override
@@ -106,10 +124,12 @@ final class EdgeAuthGateHandler extends ChannelInboundHandlerAdapter {
             // downstream FanOutConnection starts only from the EdgeAuthenticated event we fire.
             if (handshake.isSuccess()) {
                 List<X509Certificate> chain = verifiedPeerChain(ctx);
-                if (chain != null) {
+                if (chain != null && auth.mtlsConfigured()) {
                     authenticateCertificate(ctx, chain);
                 } else {
-                    armPreAuthDeadline(ctx); // certificate-less token client: await its AUTH frame
+                    // Certificate-less, OR a cert on a token-only edge (mtls not in the chain): do NOT
+                    // auto-authenticate the presented cert - await the client's AUTH frame instead.
+                    armPreAuthDeadline(ctx);
                 }
             } else {
                 closePreAuth(ctx, ErrorCode.AUTH_FAIL, "edge TLS handshake failed");
@@ -198,6 +218,15 @@ final class EdgeAuthGateHandler extends ChannelInboundHandlerAdapter {
     // -----------------------------------------------------------------------
 
     private void onUnauthenticatedFrame(ChannelHandlerContext ctx, EdgeFrame frame) {
+        if (resolving) {
+            // A credential resolution is already in flight for this connection (the single pre-auth
+            // attempt is being verified off the event loop). A second pre-auth frame before it completes
+            // is anomalous and would dispatch a second PBKDF2 - fail closed, preserving the
+            // one-attempt-per-handshake bound.
+            closePreAuth(ctx, ErrorCode.PROTOCOL_VIOLATION,
+                    "a pre-auth frame arrived while authentication was in progress");
+            return;
+        }
         cancelPreAuthDeadline(); // the first routed frame has arrived; the pre-auth budget is spent
         if (frame instanceof EdgeFrame.Auth authFrame) {
             Credential credential = authFrame.credential();
@@ -205,13 +234,21 @@ final class EdgeAuthGateHandler extends ChannelInboundHandlerAdapter {
                 closePreAuth(ctx, ErrorCode.AUTH_FAIL, "auth credential exceeds the permitted size");
                 return;
             }
-            AuthResult result = auth.resolveFrameCredential(credential);
-            if (result instanceof AuthResult.Authenticated a) {
-                install(ctx, a.principal(),
-                        auth.tokenCloseDeadlineMillis(a, clock.currentTimeMillis()), TOKEN_EXPIRED_MESSAGE);
-            } else {
-                closePreAuth(ctx, ErrorCode.AUTH_FAIL, "authentication failed");
-            }
+            resolveOffLoop(ctx, credential, result -> {
+                if (result instanceof AuthResult.Authenticated a) {
+                    install(ctx, a.principal(),
+                            auth.tokenCloseDeadlineMillis(a, clock.currentTimeMillis()), TOKEN_EXPIRED_MESSAGE);
+                } else if (result instanceof AuthResult.Unavailable) {
+                    // The authenticator's backend (OIDC JWKS, ...) was unreachable, so the credential
+                    // could not be VERIFIED - distinct from a bad credential (a down IdP locking out
+                    // legitimate clients). The wire close stays AUTH_FAIL (golden-pinned taxonomy); only
+                    // the server metric reason distinguishes so an operator can alert on IdP health.
+                    closePreAuthReason(ctx, ErrorCode.AUTH_FAIL, "AUTH_UNAVAILABLE",
+                            "authentication temporarily unavailable");
+                } else {
+                    closePreAuth(ctx, ErrorCode.AUTH_FAIL, "authentication failed");
+                }
+            });
         } else {
             closePreAuth(ctx, ErrorCode.PROTOCOL_VIOLATION,
                     "expected an AUTH frame before authenticating, got " + frame.type());
@@ -221,38 +258,89 @@ final class EdgeAuthGateHandler extends ChannelInboundHandlerAdapter {
     private void onAuthenticatedFrame(ChannelHandlerContext ctx, EdgeFrame frame) {
         switch (frame) {
             case EdgeFrame.RefreshAuth refresh -> {
+                if (resolving) {
+                    // A refresh is already being verified off the event loop; drop this duplicate rather
+                    // than dispatch a second PBKDF2 (REFRESH_AUTH-spam amplification). The in-flight
+                    // refresh still completes; the session stays valid until its current expiry.
+                    return;
+                }
                 Credential credential = refresh.credential();
                 if (!auth.credentialWithinCaps(credential)) {
                     closePostAuth(ctx, ErrorCode.CREDENTIAL_EXPIRED,
                             "refresh credential exceeds the permitted size");
                     return;
                 }
-                AuthResult result = auth.resolveFrameCredential(credential);
-                if (result instanceof AuthResult.Authenticated a) {
-                    AuthState current = ctx.channel().attr(ByteToEdgeFrameDecoder.AUTH_STATE).get();
-                    if (current instanceof AuthState.Authenticated bound
-                            && !bound.principal().id().equals(a.principal().id())) {
-                        // A refresh renews the SAME identity's token; a different identity on an
-                        // established connection is anomalous - fail closed rather than silently extend
-                        // (the driver's identity is fixed at first authentication, so extending would
-                        // desync the bound id from the presented credential).
-                        closePostAuth(ctx, ErrorCode.AUTH_FAIL,
-                                "refresh credential resolves to a different identity than the "
-                                        + "connection is bound to");
-                        return;
+                resolveOffLoop(ctx, credential, result -> {
+                    if (result instanceof AuthResult.Authenticated a) {
+                        AuthState current = ctx.channel().attr(ByteToEdgeFrameDecoder.AUTH_STATE).get();
+                        if (current instanceof AuthState.Authenticated bound
+                                && !bound.principal().id().equals(a.principal().id())) {
+                            // A refresh renews the SAME identity's token; a different identity on an
+                            // established connection is anomalous - fail closed rather than silently extend
+                            // (the driver's identity is fixed at first authentication, so extending would
+                            // desync the bound id from the presented credential).
+                            closePostAuth(ctx, ErrorCode.AUTH_FAIL,
+                                    "refresh credential resolves to a different identity than the "
+                                            + "connection is bound to");
+                            return;
+                        }
+                        // Re-arm the session lifetime; the identity is NOT re-bound in v1.
+                        ctx.channel().attr(ByteToEdgeFrameDecoder.AUTH_STATE)
+                                .set(AuthState.authenticated(a.principal(),
+                                        auth.tokenCloseDeadlineMillis(a, clock.currentTimeMillis())));
+                        armExpiry(ctx, TOKEN_EXPIRED_MESSAGE);
+                    } else {
+                        closePostAuth(ctx, ErrorCode.CREDENTIAL_EXPIRED, "credential refresh rejected");
                     }
-                    // Re-arm the session lifetime; the identity is NOT re-bound in v1.
-                    ctx.channel().attr(ByteToEdgeFrameDecoder.AUTH_STATE)
-                            .set(AuthState.authenticated(a.principal(),
-                                    auth.tokenCloseDeadlineMillis(a, clock.currentTimeMillis())));
-                    armExpiry(ctx, TOKEN_EXPIRED_MESSAGE);
-                } else {
-                    closePostAuth(ctx, ErrorCode.CREDENTIAL_EXPIRED, "credential refresh rejected");
-                }
+                });
             }
             case EdgeFrame.Auth ignored -> closePostAuth(ctx, ErrorCode.PROTOCOL_VIOLATION,
                     "AUTH received on an already-authenticated connection");
             default -> ctx.fireChannelRead(frame); // business frame -> session
+        }
+    }
+
+    /**
+     * Resolves a credential OFF the event loop on the bounded {@link #authWorker}, then resumes
+     * {@code resume} back ON the event loop with the outcome. Basic verification is a deliberately
+     * expensive PBKDF2 (~50-150ms); running it inline would stall every other connection sharing this
+     * Netty worker. Sets the {@link #resolving} single-flight guard for the dispatch window so a second
+     * credential frame cannot spawn a concurrent PBKDF2 on the same connection. All state transitions
+     * in {@code resume} run on the event loop.
+     */
+    private void resolveOffLoop(ChannelHandlerContext ctx, Credential credential,
+                               Consumer<AuthResult> resume) {
+        if (authWorker == null) {
+            resume.accept(safeResolve(credential)); // safety net: no pool => inline (we are on the EL)
+            return;
+        }
+        resolving = true;
+        try {
+            authWorker.execute(() -> {
+                AuthResult result = safeResolve(credential);
+                ctx.executor().execute(() -> {
+                    resolving = false;
+                    if (ctx.channel().isActive()) {
+                        resume.accept(result);
+                    }
+                });
+            });
+        } catch (RejectedExecutionException rejected) {
+            // The pool is shutting down (server close) or saturated beyond its queue: resolve inline on
+            // the event loop rather than leave the connection hung. Rare; not the hot path.
+            resolving = false;
+            resume.accept(safeResolve(credential));
+        }
+    }
+
+    /** Resolves a credential, mapping any verifier fault to a retryable {@code Unavailable} (never a hang). */
+    private AuthResult safeResolve(Credential credential) {
+        try {
+            return auth.resolveFrameCredential(credential);
+        } catch (Throwable t) {
+            return new AuthResult.Unavailable("edge credential verification error");
+        } finally {
+            credential.wipeSecret(); // zero any Basic password char[] once verification is done
         }
     }
 
@@ -337,7 +425,17 @@ final class EdgeAuthGateHandler extends ChannelInboundHandlerAdapter {
      * subscriber-connected gauge was never incremented, so nothing decrements it).
      */
     private void closePreAuth(ChannelHandlerContext ctx, ErrorCode code, String message) {
-        metrics.onSessionClosed(code.name());
+        closePreAuthReason(ctx, code, code.name(), message);
+    }
+
+    /**
+     * Pre-auth close with an explicit {@code metricReason} decoupled from the on-wire {@code code}, so
+     * an {@code Unavailable} (IdP/JWKS outage) can land in its own {@code AUTH_UNAVAILABLE} series while
+     * the wire still closes with the golden-pinned {@code AUTH_FAIL}.
+     */
+    private void closePreAuthReason(ChannelHandlerContext ctx, ErrorCode code, String metricReason,
+                                    String message) {
+        metrics.onSessionClosed(metricReason);
         close(ctx, code, message);
     }
 

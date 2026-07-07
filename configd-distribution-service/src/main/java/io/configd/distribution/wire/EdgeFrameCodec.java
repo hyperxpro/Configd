@@ -626,7 +626,7 @@ public final class EdgeFrameCodec {
 
     /**
      * Decodes a single complete frame, accepting any negotiated version ({@code 0x01}/{@code 0x02}
-     * /{@code 0x03}). The array must contain exactly one frame.
+     * /{@code 0x03}/{@code 0x04}). The array must contain exactly one frame.
      *
      * <p>Validation order (deliberate, mirroring {@code FrameCodec}): length bounds ->
      * length==data.length -> CRC32C -> version -> type -> payload.
@@ -1286,7 +1286,8 @@ public final class EdgeFrameCodec {
      *
      * @param data a buffer with at least {@link #HEADER_SIZE} bytes
      * @return the stamped version byte (expected {@link #EDGE_WIRE_VERSION},
-     *         {@link #EDGE_WIRE_VERSION_V2}, or {@link #EDGE_WIRE_VERSION_V3})
+     *         {@link #EDGE_WIRE_VERSION_V2}, {@link #EDGE_WIRE_VERSION_V3}, or
+     *         {@link #EDGE_WIRE_VERSION_V4})
      * @throws CodecException if the buffer is shorter than {@link #HEADER_SIZE}
      */
     public static byte peekVersion(byte[] data) {

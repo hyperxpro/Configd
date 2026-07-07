@@ -91,6 +91,13 @@ public final class FanOutServer implements FanOutEndpoint {
     static final int HANDSHAKE_TIMEOUT_MS = 2_000;
 
     /**
+     * Bounded deadline (ms) for the best-effort teardown bye-write. A stuck peer's write is force-closed
+     * after this so it can neither block the caller nor park an FD indefinitely (Java blocking sockets
+     * have no write timeout).
+     */
+    static final int BYE_WRITE_TIMEOUT_MS = 2_000;
+
+    /**
      * System property: the pre-SUBSCRIBE first-frame deadline (ms) for an admitted (post-mTLS)
      * edge connection (WH-11). Mirrors {@code configd.raft.inboundReadTimeoutMs}; the slow-loris
      * test sets a short value.
@@ -417,7 +424,7 @@ public final class FanOutServer implements FanOutEndpoint {
                 // AUTH frame, so the reader gates it. The listen socket is wantClientAuth, so a certless
                 // handshake succeeds and returns no peer certificate.
                 List<X509Certificate> chain = verifiedPeerChain(socket);
-                if (chain != null) {
+                if (chain != null && edgeAuth.mtlsConfigured()) {
                     AuthResult result = edgeAuth.authenticateClientCertificate(chain);
                     if (!(result instanceof AuthResult.Authenticated a)) {
                         LOG.fine(() -> "FanOutServer client certificate rejected");
@@ -433,7 +440,10 @@ public final class FanOutServer implements FanOutEndpoint {
                     authGated = false;
                     certCloseDeadline = certGate.certCloseDeadlineMillis(chain);
                 } else {
-                    edgeIdentity = null; // established by the AUTH frame the reader awaits
+                    // Certificate-less, OR a cert on a token-only edge (mtls not in the chain): do NOT
+                    // auto-authenticate the presented cert - the identity is established by the AUTH frame
+                    // the reader awaits.
+                    edgeIdentity = null;
                     authGated = true;
                 }
             } else {
@@ -627,9 +637,6 @@ public final class FanOutServer implements FanOutEndpoint {
          */
         private byte inboundNegotiatedVersion;
 
-        /** Reader-thread-only: whether the connection-type-deciding first inbound frame has been routed. */
-        private boolean firstFrameRouted;
-
         Connection(Socket socket, String edgeIdentity, boolean authGated, long certCloseDeadlineMillis) {
             this.socket = socket;
             this.edgeIdentity = edgeIdentity;
@@ -692,20 +699,15 @@ public final class FanOutServer implements FanOutEndpoint {
                 // dribbling forever - is reaped, instead of parking a reader thread + FD + cumulator
                 // until the OS reaps it. DISARMED (deadline 0, soTimeout 0) once the first routed frame
                 // arrives (an established subscriber is idle by design; liveness rides the HEARTBEAT).
-                long firstFrameDeadlineNanos =
+                // The deadline is DISARMED (deadline 0, soTimeout 0) once the first BUSINESS frame is
+                // routed - not the first frame - so a token connection stays bounded across BOTH its
+                // pre-auth AUTH window and (after re-arm on auth) its pre-SUBSCRIBE window.
+                long deadlineNanos =
                         System.nanoTime() + (long) firstFrameDeadlineMs() * 1_000_000L;
                 while (alive.get() && running.get()) {
-                    EdgeFrame frame = readFrame(in, firstFrameRouted ? 0L : firstFrameDeadlineNanos);
+                    EdgeFrame frame = readFrame(in, deadlineNanos);
                     if (frame == null) {
                         return; // EOF
-                    }
-                    if (!firstFrameRouted) {
-                        firstFrameRouted = true;
-                        // WH-11 disarm: rely on the server->client HEARTBEAT for liveness now; do NOT
-                        // read-idle-reap a healthy subscriber that legitimately stays quiet. On a token
-                        // connection the first routed frame is the AUTH frame, so this bounds the
-                        // pre-auth window (an authenticated peer that then idles is trusted).
-                        socket.setSoTimeout(0);
                     }
                     // Token-auth gate: a certificate-less token connection admits ONLY an AUTH frame
                     // until it authenticates (which starts the session lazily). Once authenticated, its
@@ -714,12 +716,29 @@ public final class FanOutServer implements FanOutEndpoint {
                     if (authGated) {
                         if (!authState.isAuthenticated()) {
                             admitPreAuth(frame);
+                            if (authState.isAuthenticated()) {
+                                // RE-ARM a fresh pre-SUBSCRIBE window on authentication so an
+                                // authed-but-never-SUBSCRIBE token connection is reaped, rather than
+                                // parking a reader thread + FD with soTimeout 0 (parity with the Netty
+                                // transport, which re-arms its first-frame deadline in startSession).
+                                deadlineNanos =
+                                        System.nanoTime() + (long) firstFrameDeadlineMs() * 1_000_000L;
+                            }
                             continue;
                         }
                         if (frame instanceof EdgeFrame.Auth || frame instanceof EdgeFrame.RefreshAuth) {
                             handlePostAuthControl(frame);
                             continue;
                         }
+                    }
+                    // A business frame (SUBSCRIBE / WATCH_CREATE): DISARM the pre-SUBSCRIBE deadline
+                    // before routing - an established subscriber is idle by design and relies on the
+                    // server->client HEARTBEAT for liveness. On a non-token connection this is the first
+                    // routed frame (byte-identical to the prior first-frame disarm); on a token
+                    // connection it fires only after AUTH + the re-armed pre-SUBSCRIBE window.
+                    if (!firstBusinessRouted) {
+                        socket.setSoTimeout(0);
+                        deadlineNanos = 0L;
                     }
                     routeBusinessFrame(frame);
                 }
@@ -773,12 +792,17 @@ public final class FanOutServer implements FanOutEndpoint {
                     return;
                 }
                 AuthResult result = edgeAuth.resolveFrameCredential(credential);
+                credential.wipeSecret(); // zero any Basic password char[] once verification is done
                 if (result instanceof AuthResult.Authenticated a) {
                     Principal principal = a.principal();
                     authState = AuthState.authenticated(principal,
                             edgeAuth.tokenCloseDeadlineMillis(a, clock.currentTimeMillis()));
                     startSessionThreads(principal.id(), principal.roles());
                     armExpiry();
+                } else if (result instanceof AuthResult.Unavailable) {
+                    // The authenticator's backend was unreachable (a down IdP locking out legitimate
+                    // clients) - a distinct metric series from a bad credential. Wire stays AUTH_FAIL.
+                    teardown(ErrorCode.AUTH_FAIL, "authentication temporarily unavailable", "AUTH_UNAVAILABLE");
                 } else {
                     teardown(ErrorCode.AUTH_FAIL, "authentication failed");
                 }
@@ -801,6 +825,7 @@ public final class FanOutServer implements FanOutEndpoint {
                     return;
                 }
                 AuthResult result = edgeAuth.resolveFrameCredential(credential);
+                credential.wipeSecret(); // zero any Basic password char[] once verification is done
                 if (result instanceof AuthResult.Authenticated a) {
                     if (authState instanceof AuthState.Authenticated bound
                             && !bound.principal().id().equals(a.principal().id())) {
@@ -837,7 +862,7 @@ public final class FanOutServer implements FanOutEndpoint {
             }
             long delay = Math.max(0L, a.expiresAtMillis() - clock.currentTimeMillis());
             expiryTask = authExpiryScheduler.schedule(
-                    () -> teardown(ErrorCode.CREDENTIAL_EXPIRED, "token credential expired"),
+                    () -> tearDownOffScheduler(ErrorCode.CREDENTIAL_EXPIRED, "token credential expired"),
                     delay, TimeUnit.MILLISECONDS);
         }
 
@@ -852,8 +877,18 @@ public final class FanOutServer implements FanOutEndpoint {
             }
             long delay = Math.max(0L, certCloseDeadlineMillis - clock.currentTimeMillis());
             expiryTask = authExpiryScheduler.schedule(
-                    () -> teardown(ErrorCode.CREDENTIAL_EXPIRED, EdgeCertGate.CERT_EXPIRED_MESSAGE),
+                    () -> tearDownOffScheduler(ErrorCode.CREDENTIAL_EXPIRED, EdgeCertGate.CERT_EXPIRED_MESSAGE),
                     delay, TimeUnit.MILLISECONDS);
+        }
+
+        /**
+         * Runs an expiry-fired teardown OFF the shared single-threaded {@code authExpiryScheduler}.
+         * teardown does a best-effort BLOCKING bye-write; running it on the scheduler thread would let one
+         * stuck peer head-of-line-block every OTHER connection's expiry. A virtual thread keeps the
+         * scheduler free (the write is separately bounded by teardown's watchdog).
+         */
+        private void tearDownOffScheduler(ErrorCode code, String message) {
+            Thread.ofVirtual().name("edge-expiry-teardown").start(() -> teardown(code, message));
         }
 
         private void cancelExpiry() {
@@ -1033,6 +1068,15 @@ public final class FanOutServer implements FanOutEndpoint {
         // ---- teardown (idempotent) ----
 
         private void teardown(ErrorCode code, String message) {
+            teardown(code, message, code.name());
+        }
+
+        /**
+         * Teardown with an explicit {@code metricReason} decoupled from the on-wire {@code code}. Lets an
+         * {@code Unavailable} (IdP/JWKS outage) land in its own {@code AUTH_UNAVAILABLE} series while the
+         * wire still closes with the golden-pinned {@code AUTH_FAIL}.
+         */
+        private void teardown(ErrorCode code, String message, String metricReason) {
             if (!alive.compareAndSet(true, false)) {
                 return; // already torn down
             }
@@ -1045,17 +1089,32 @@ public final class FanOutServer implements FanOutEndpoint {
             // where d == null; it still deserves the AUTH_FAIL / CREDENTIAL_EXPIRED bye.
             boolean wantBye = (d == null) || (s != null && s.state() != FanOutSessionCore.SessionState.CLOSED);
             if (wantBye) {
+                // The bye-write is a BLOCKING socket write and Java has no write-timeout: a stuck peer
+                // (full send buffer, not draining) would block this thread. An expiry-fired teardown is
+                // dispatched OFF the shared single-threaded authExpiryScheduler (see tearDownOffScheduler)
+                // so the scheduler stays free, and a watchdog force-closes the socket after a bounded
+                // deadline, which unblocks a stuck write (it throws, caught below) so the FD is reclaimed
+                // rather than parked until the OS reaps it. No scheduler (mTLS-only, no expiry configured)
+                // => no watchdog, byte-identical to before.
+                ScheduledFuture<?> writeWatchdog = (authExpiryScheduler != null)
+                        ? authExpiryScheduler.schedule(
+                                () -> closeQuietly(socket), BYE_WRITE_TIMEOUT_MS, TimeUnit.MILLISECONDS)
+                        : null;
                 try {
                     byte[] bye = EdgeFrameCodec.encode(new EdgeFrame.ErrorClose(code, message), wireVersion);
                     socket.getOutputStream().write(bye);
                     socket.getOutputStream().flush();
                 } catch (Exception ignored) {
                     // the peer may already be gone; teardown proceeds regardless
+                } finally {
+                    if (writeWatchdog != null) {
+                        writeWatchdog.cancel(false);
+                    }
                 }
             }
             outbound.offer(POISON); // unblock the writer's take()
             closeQuietly(socket);
-            metrics.onSessionClosed(code.name());
+            metrics.onSessionClosed(metricReason);
             if (connectedCounted) {
                 // Pairs the onSubscriberConnected the session start counted. A token connection that
                 // closed before authenticating never connected, so it must not emit a phantom disconnect.

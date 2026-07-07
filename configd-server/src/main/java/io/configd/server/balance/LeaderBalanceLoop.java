@@ -11,6 +11,8 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
+import java.util.logging.Level;
+import java.util.logging.Logger;
 
 /**
  * The decentralized leadership auto-balance loop: one per node, on its own dedicated single-thread
@@ -39,6 +41,8 @@ import java.util.concurrent.TimeUnit;
  * invoked there (or directly by a single-threaded test). {@code closed} is the one cross-thread field.
  */
 public final class LeaderBalanceLoop implements AutoCloseable {
+
+    private static final Logger LOG = Logger.getLogger(LeaderBalanceLoop.class.getName());
 
     /**
      * Drives one leadership transfer through the server's wired, owner-thread-confined admin path.
@@ -112,8 +116,10 @@ public final class LeaderBalanceLoop implements AutoCloseable {
             runOnce();
         } catch (Throwable t) {
             // A transient read/transfer failure must never kill the loop (which would leave leadership
-            // permanently unbalanced). Log and continue; the next cadence re-observes cleanly.
-            System.err.println("WARNING: leadership auto-balance cycle failed (continuing): " + t);
+            // permanently unbalanced). Count it (so a PERSISTENTLY-throwing loop is alertable, not just
+            // stderr-visible) and continue; the next cadence re-observes cleanly.
+            metrics.cycleError();
+            LOG.log(Level.WARNING, "leadership auto-balance cycle failed (continuing)", t);
         } finally {
             scheduleNext();
         }
@@ -157,21 +163,24 @@ public final class LeaderBalanceLoop implements AutoCloseable {
             // Observe-only: emit the would-be move but do not execute it. Still enter cooldown so the
             // preview shows the same one-per-cooldown cadence the live loop would exhibit.
             metrics.wouldTransfer();
-            System.out.println("leadership auto-balance (dry-run): would transfer group "
-                    + move.groupId() + " to " + move.target() + " (spread " + plan.leaderSpread() + ")");
+            LOG.log(Level.INFO, "leadership auto-balance (dry-run): would transfer group {0} to {1} (spread {2})",
+                    new Object[]{move.groupId(), move.target(), plan.leaderSpread()});
             cooldownUntilMillis = now + config.cooldownMs();
             return;
         }
 
         boolean initiated = transfer.transfer(move.groupId(), move.target());
-        metrics.transferInitiated();
         if (initiated) {
-            System.out.println("leadership auto-balance: transferring group " + move.groupId()
-                    + " to " + move.target() + " (spread " + plan.leaderSpread() + ")");
+            // Count only ACTUAL initiations: transfers_initiated must mean "transfers this node drove",
+            // not "attempts" (a declined transfer increments transfer_refused, so attempts = initiated +
+            // refused). Incrementing before the refusal check would inflate the success series.
+            metrics.transferInitiated();
+            LOG.log(Level.INFO, "leadership auto-balance: transferring group {0} to {1} (spread {2})",
+                    new Object[]{move.groupId(), move.target(), plan.leaderSpread()});
         } else {
             metrics.transferRefused();
-            System.out.println("leadership auto-balance: transfer of group " + move.groupId()
-                    + " to " + move.target() + " was declined (no longer leader or change pending)");
+            LOG.log(Level.INFO, "leadership auto-balance: transfer of group {0} to {1} was declined "
+                    + "(no longer leader or change pending)", new Object[]{move.groupId(), move.target()});
         }
         // Cooldown regardless of the immediate result - a declined transfer is treated as one attempt,
         // so a group mid-membership-change is not retried every cadence.

@@ -57,13 +57,26 @@ public final class EdgeCertGate {
     private final RevocationChecker checker;
     private final CredentialExpiryPolicy expiryPolicy;
     private final boolean enforceCertNotAfter;
+    /**
+     * Nullable observability hook fired once per fail-open ADMIT (LAX + responder unreachable), so a
+     * degraded-revocation posture is alertable, not just logged. Null on {@link #OFF} and wherever no
+     * metric sink is threaded in (revocation cannot fail-open when it is OFF, so a null hook is inert).
+     */
+    private final Runnable onFailOpenAdmit;
 
     public EdgeCertGate(RevocationPolicy revocationPolicy, RevocationChecker checker,
                         CredentialExpiryPolicy expiryPolicy, boolean enforceCertNotAfter) {
+        this(revocationPolicy, checker, expiryPolicy, enforceCertNotAfter, null);
+    }
+
+    public EdgeCertGate(RevocationPolicy revocationPolicy, RevocationChecker checker,
+                        CredentialExpiryPolicy expiryPolicy, boolean enforceCertNotAfter,
+                        Runnable onFailOpenAdmit) {
         this.revocationPolicy = Objects.requireNonNull(revocationPolicy, "revocationPolicy");
         this.checker = checker;
         this.expiryPolicy = Objects.requireNonNull(expiryPolicy, "expiryPolicy");
         this.enforceCertNotAfter = enforceCertNotAfter;
+        this.onFailOpenAdmit = onFailOpenAdmit;
     }
 
     /**
@@ -90,10 +103,15 @@ public final class EdgeCertGate {
         boolean admit = revocationPolicy.admits(status);
         if (revocationPolicy.shouldAlarm(status)) {
             // The responder-down alarm: lax pairs it with a fail-open ADMIT, strict with a fail-closed
-            // REJECT. A loud WARNING is the operator signal (a dedicated metric is a natural follow-on).
+            // REJECT. A loud WARNING is the operator signal; the fail-open ADMIT also increments a
+            // dedicated counter (via onFailOpenAdmit) so a degraded-revocation posture is alertable, not
+            // just log-visible.
             LOG.log(Level.WARNING, () -> "edge revocation responder UNREACHABLE for client cert '"
                     + leaf.getSubjectX500Principal().getName() + "' under mode " + revocationPolicy.mode()
                     + " -> " + (admit ? "ADMIT (fail-open)" : "REJECT (fail-closed)"));
+            if (admit && onFailOpenAdmit != null) {
+                onFailOpenAdmit.run();
+            }
         } else if (!admit) {
             LOG.log(Level.FINE, () -> "edge client cert REVOKED (mode " + revocationPolicy.mode() + "): "
                     + leaf.getSubjectX500Principal().getName());

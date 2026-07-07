@@ -33,6 +33,13 @@ import java.util.Set;
  *       deployments that name their IdP roles to match Configd's.</li>
  * </ul>
  *
+ * <p><b>Security note - prefer the roleMap allowlist for untrusted claims.</b> Pass-through (empty roleMap)
+ * turns whatever the claim contains into role names verbatim. That is safe only when the mapped claim is
+ * ISSUER-controlled (Keycloak {@code realm_access.roles}, group memberships) rather than CLIENT-influenceable.
+ * The OAuth {@code scope}/{@code scp} claim is client-requested, so pass-through of {@code scope} lets a
+ * caller name its own roles - configure a {@code roleMap.<scope>=<role>} allowlist for any issuer whose
+ * mapped claim a client can influence (boot emits a warning for the {@code scope}/{@code scp} pass-through case).
+ *
  * <p>Stateless and immutable; safe to share across threads.
  */
 final class ClaimsRoleMapper {

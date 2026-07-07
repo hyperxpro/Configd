@@ -24,6 +24,18 @@ public sealed interface Credential
         permits Credential.ClientCertificate, Credential.BearerToken, Credential.BasicCredential {
 
     /**
+     * Best-effort wipe of any in-memory secret material once verification is done: zeroes the Basic
+     * password {@code char[]} so it does not linger on the heap. A no-op for the other cases (a
+     * {@link BearerToken} is a String, which the JVM cannot wipe in place; an mTLS chain carries no
+     * secret). Idempotent and safe to call in a {@code finally}.
+     */
+    default void wipeSecret() {
+        if (this instanceof BasicCredential b) {
+            b.wipe();
+        }
+    }
+
+    /**
      * An ALREADY-VERIFIED mTLS peer certificate chain (the TLS stack ran client-cert verification). The
      * {@link Authenticator} reads identity off it (Subject DN / SAN); it does NOT re-validate the chain -
      * verification is the transport's job, and feeding an unverified chain here is a wiring bug.
@@ -65,6 +77,11 @@ public sealed interface Credential
         public BasicCredential {
             Objects.requireNonNull(username, "username");
             Objects.requireNonNull(password, "password");
+        }
+
+        /** Overwrites the password {@code char[]} with NULs. Call after verification via {@link #wipeSecret()}. */
+        void wipe() {
+            java.util.Arrays.fill(password, '\0');
         }
 
         @Override

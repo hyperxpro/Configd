@@ -53,6 +53,7 @@ public final class RegistryFanOutSessionMetrics implements FanOutSessionMetrics 
     private final MetricsRegistry.Counter firstFrameTimeouts;
     private final MetricsRegistry.Counter subscribeTail;
     private final MetricsRegistry.Counter subscribeSnapshotFirst;
+    private final MetricsRegistry.Counter revocationFailOpenAdmits;
 
     // --- Server-side prefix-filtering counters (ADR-0045) ---
     private final MetricsRegistry.Counter filteredDeltas;
@@ -100,18 +101,28 @@ public final class RegistryFanOutSessionMetrics implements FanOutSessionMetrics 
                 registry.counter("edge.fanout.demotions." + DemotionEvent.REASON_TRANSPORT_BLOCK));
         this.demotionsOther = registry.counter("edge.fanout.demotions.other");
 
-        // Close reasons map to the ErrorCode.name() the session passes; pre-register the
-        // common ones, plus an other bucket.
-        this.closedByReason = Map.of(
-                "SERVER_SHUTDOWN", registry.counter("edge.fanout.sessions_closed.server_shutdown"),
-                "PROTOCOL_VIOLATION", registry.counter("edge.fanout.sessions_closed.protocol_violation"),
-                "FRAME_CORRUPT", registry.counter("edge.fanout.sessions_closed.frame_corrupt"),
-                "BAD_WIRE_VERSION", registry.counter("edge.fanout.sessions_closed.bad_wire_version"),
-                "AUTH_FAIL", registry.counter("edge.fanout.sessions_closed.auth_fail"),
-                "GAP_UNRECOVERABLE", registry.counter("edge.fanout.sessions_closed.gap_unrecoverable"),
-                "QUARANTINED", registry.counter("edge.fanout.sessions_closed.quarantined"),
-                "BAD_SUBSCRIBE", registry.counter("edge.fanout.sessions_closed.bad_subscribe"),
-                "transport_gone", registry.counter("edge.fanout.sessions_closed.transport_gone"));
+        // Close reasons map to the ErrorCode.name() the session passes (plus the two synthetic reasons
+        // AUTH_UNAVAILABLE and transport_gone that carry no ErrorCode); pre-register the common ones,
+        // plus an other bucket. More than 10 entries, so Map.ofEntries (Map.of tops out at 10).
+        this.closedByReason = Map.ofEntries(
+                Map.entry("SERVER_SHUTDOWN", registry.counter("edge.fanout.sessions_closed.server_shutdown")),
+                Map.entry("PROTOCOL_VIOLATION", registry.counter("edge.fanout.sessions_closed.protocol_violation")),
+                Map.entry("FRAME_CORRUPT", registry.counter("edge.fanout.sessions_closed.frame_corrupt")),
+                Map.entry("BAD_WIRE_VERSION", registry.counter("edge.fanout.sessions_closed.bad_wire_version")),
+                Map.entry("AUTH_FAIL", registry.counter("edge.fanout.sessions_closed.auth_fail")),
+                // AUTH_UNAVAILABLE: the credential could not be VERIFIED because the authenticator's backend
+                // (OIDC JWKS, LDAP, ...) was unreachable - a distinct series from AUTH_FAIL (a bad credential)
+                // so an operator can alert on "a down IdP is locking out legitimate clients" at 3am. The wire
+                // still closes AUTH_FAIL (the taxonomy is golden-pinned); only the server metric distinguishes.
+                Map.entry("AUTH_UNAVAILABLE", registry.counter("edge.fanout.sessions_closed.auth_unavailable")),
+                // CREDENTIAL_EXPIRED: token TTL elapsed / a REFRESH_AUTH presented an unacceptable credential /
+                // a cert notAfter reached mid-connection. Its own series so an aged-out close is not folded
+                // into the generic `other` bucket.
+                Map.entry("CREDENTIAL_EXPIRED", registry.counter("edge.fanout.sessions_closed.credential_expired")),
+                Map.entry("GAP_UNRECOVERABLE", registry.counter("edge.fanout.sessions_closed.gap_unrecoverable")),
+                Map.entry("QUARANTINED", registry.counter("edge.fanout.sessions_closed.quarantined")),
+                Map.entry("BAD_SUBSCRIBE", registry.counter("edge.fanout.sessions_closed.bad_subscribe")),
+                Map.entry("transport_gone", registry.counter("edge.fanout.sessions_closed.transport_gone")));
         this.closedOther = registry.counter("edge.fanout.sessions_closed.other");
 
         // Slow-consumer policy series (eagerly registered). One counter per governor
@@ -130,6 +141,11 @@ public final class RegistryFanOutSessionMetrics implements FanOutSessionMetrics 
         // did not send its first routed control frame (SUBSCRIBE / WATCH_CREATE) within the
         // first-frame window, closed as a slow-loris.
         this.firstFrameTimeouts = registry.counter("edge.fanout.first_frame_timeouts");
+
+        // Revocation fail-open admits (Gate 5): under LAX with the responder unreachable, an edge client
+        // cert is ADMITTED (fail-open) rather than rejected. A degraded-revocation posture must be
+        // alertable - a rising rate means the cluster is admitting certs it could not check for revocation.
+        this.revocationFailOpenAdmits = registry.counter("edge.fanout.revocation_fail_open_admits");
 
         // The subscribe-time replay-vs-re-bootstrap decision (per-reason-suffix
         // convention) + the horizon-distance input as a last-decision gauge.
@@ -181,6 +197,14 @@ public final class RegistryFanOutSessionMetrics implements FanOutSessionMetrics 
     /** A subscriber disconnected (FanOutServer drives this on teardown). */
     public void onSubscriberDisconnected() {
         connectedSubscribers.updateAndGet(v -> v > 0 ? v - 1 : 0);
+    }
+
+    /**
+     * An edge client cert was ADMITTED fail-open because the revocation responder was unreachable under
+     * LAX (a degraded-revocation posture). Driven by {@link EdgeCertGate#admit} on both transports.
+     */
+    public void onRevocationFailOpenAdmit() {
+        revocationFailOpenAdmits.increment();
     }
 
     /** Current connected-subscriber count (for tests / diagnostics). */

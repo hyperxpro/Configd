@@ -46,6 +46,14 @@ public final class AuthenticatorChain {
 
     private static final Logger LOG = Logger.getLogger(AuthenticatorChain.class.getName());
 
+    /**
+     * Provider names that consume a {@code BearerToken} and would therefore be starved by an EARLIER
+     * catch-all {@code bearer} (which hard-rejects any token it does not recognize). If any of these
+     * follows {@code bearer} in the configured order the chain fails CLOSED at boot rather than silently
+     * disabling them. A future bearer-type provider (a custom JWT authenticator) should be added here.
+     */
+    private static final Set<String> BEARER_TYPE_PROVIDERS = Set.of("oidc");
+
     private final List<Authenticator> authenticators;
 
     /** @param authenticators the resolution order (highest-priority first); must be non-empty. */
@@ -146,13 +154,25 @@ public final class AuthenticatorChain {
         }
         Map<String, AuthenticatorFactory> registry = discoverFactories();
 
-        // Warn if the static catch-all 'bearer' precedes a more-specific bearer-type provider (e.g. oidc):
-        // it would hard-reject every foreign token before that provider ever runs, silently disabling it.
+        // The static catch-all 'bearer' hard-rejects (INVALID_CREDENTIAL) any BearerToken it does not
+        // recognize, so any OTHER bearer-type provider (oidc) placed after it never runs - every one of its
+        // JWTs is rejected before it is reached. That silently and totally disables the later provider, so
+        // fail CLOSED at boot. A NON-bearer provider after 'bearer' (e.g. mtls, a different credential type)
+        // is not shadowed, so it only draws the ordering warning.
         int bearerIdx = names.indexOf("bearer");
         if (bearerIdx >= 0 && bearerIdx != names.size() - 1) {
+            List<String> after = names.subList(bearerIdx + 1, names.size()).stream()
+                    .map(String::trim).collect(Collectors.toList());
+            List<String> shadowed = after.stream()
+                    .filter(BEARER_TYPE_PROVIDERS::contains).collect(Collectors.toList());
+            if (!shadowed.isEmpty()) {
+                throw new IllegalStateException("authentication provider 'bearer' is a catch-all and MUST be "
+                        + "LAST in configd.auth.providers: it hard-rejects every token before the bearer-type "
+                        + "provider(s) " + shadowed + " placed after it can run, silently disabling them. "
+                        + "Reorder so 'bearer' is last (the correct order is e.g. mtls,oidc,bearer).");
+            }
             LOG.log(Level.WARNING, "authentication provider ''bearer'' is a catch-all and should be LAST in "
-                    + "configd.auth.providers; providers after it ({0}) may never run",
-                    names.subList(bearerIdx + 1, names.size()));
+                    + "configd.auth.providers; providers after it ({0}) may never run", after);
         }
 
         List<Authenticator> chain = new ArrayList<>(names.size());

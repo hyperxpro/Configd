@@ -35,6 +35,16 @@ import java.util.logging.Logger;
  * rotated CRL is picked up without a re-parse on every connection, and the (cold) admission path does not
  * re-read/parse a multi-KiB CRL per connect. A CRL past its own {@code nextUpdate} is treated as stale
  * ({@code UNKNOWN}) exactly as a browser would decline to trust an expired CRL.
+ *
+ * <h2>Trust invariant (do not lose this if extended)</h2>
+ * This checker trusts the CRL FILE ON DISK as-is: it does NOT verify the CRL's issuer signature. That is
+ * correct ONLY because the file is operator-provisioned onto the node's own trusted storage (the same
+ * trust class as the node's config and key material) - a local file an attacker cannot forge without
+ * already owning the box. If this is ever extended to FETCH a CRL from a URL / the certificate's
+ * CRL-Distribution-Point, that fetched CRL is attacker-influenceable and MUST be signature-verified
+ * against the issuing CA's public key (RFC 5280 sec.6.3, {@code X509CRL.verify(issuerPublicKey)}) BEFORE
+ * its contents are trusted - otherwise a forged CRL could mark a revoked cert GOOD (or a valid one
+ * REVOKED). Keep the fetch-then-verify order if you add remote retrieval.
  */
 public final class CrlFileRevocationChecker implements RevocationChecker {
 

@@ -289,6 +289,27 @@ public final class ConfigdServer {
      * @return the running server instance
      */
     public static ConfigdServer start(ServerConfig config, ConfigSource cfg) {
+        // A fail-closed boot must not leave a half-started process alive. Long-lived resources (the
+        // Netty consensus/API/edge transports, whose event loops are NON-daemon, plus the owner pool
+        // and helper executors) register a teardown action as they come up; if any later step throws
+        // (an OIDC discovery failure while building the auth chain, a missing provider module, a
+        // port-in-use, a TLS-without-manager refusal), the resources are closed in reverse creation
+        // order before the failure propagates, so no live event loop or bound port outlives the failed
+        // boot. main() turns the propagated failure into a non-zero System.exit; embedders/tests see a
+        // clean throw with nothing leaked. On success the accumulator is abandoned and the returned
+        // server's shutdown() owns teardown from that point. Registering is failure-path-only
+        // bookkeeping - the success path's behaviour and wire output are unchanged.
+        java.util.Deque<Runnable> bootTeardown = new java.util.ArrayDeque<>();
+        try {
+            return startInternal(config, cfg, bootTeardown);
+        } catch (RuntimeException | Error failure) {
+            closeBootResources(bootTeardown);
+            throw failure;
+        }
+    }
+
+    private static ConfigdServer startInternal(
+            ServerConfig config, ConfigSource cfg, java.util.Deque<Runnable> bootTeardown) {
         // Ensure data directory exists
         Path dataDir = config.dataDir();
         try {
@@ -492,6 +513,21 @@ public final class ConfigdServer {
             // peer's senderId and join consensus, so refuse to boot. Auth-disabled or plaintext-interior
             // deployments keep today's loud-warning open gate (this returns without throwing).
             peerIdentityPolicy.requireEnforcedUnderAuth(isAuthEnabled(cfg, config), config.tlsEnabled());
+            // Shared-CA assumption note: with peer-identity enforced under auth + TLS but NO separate peer
+            // trust store, the Raft interior trusts the SAME CA as the client/edge plane. Peer
+            // authorization then rests entirely on the allow-list marker AND on that CA never issuing a
+            // node-marker (or an allow-listed identity) to a client cert - a single-CA operator invariant.
+            // A separate peer trust store removes the assumption (a client cert cannot chain to the peer CA
+            // at all). Recommend it for a hardened deployment.
+            boolean separatePeerTrust =
+                    !cfg.getString(PeerIdentityPolicy.TRUST_STORE_PROP).orElse("").trim().isEmpty();
+            if (peerIdentityPolicy.enforced() && isAuthEnabled(cfg, config) && config.tlsEnabled()
+                    && !separatePeerTrust) {
+                System.out.println("  Raft peer CA : SHARED with the client/edge CA (no "
+                        + PeerIdentityPolicy.TRUST_STORE_PROP + "); peer authorization then relies on the CA "
+                        + "never issuing an allow-listed node identity to a client cert. Recommend a separate "
+                        + "peer trust store for a hardened deployment.");
+            }
             RaftTransportMetrics raftTransportMetrics = new ServerRaftTransportMetrics(configdMetrics);
             tcpTransport = new NettyRaftTransport(
                     config.nodeId(), bindAddr, peerAddresses, tlsManager, null,
@@ -527,6 +563,7 @@ public final class ConfigdServer {
         // ---------------------------------------------------------------
         OwnerExecutorPool ownerPool =
                 new OwnerExecutorPool(cfg.getInt("configd.raft.ownerPoolSize", 1));
+        bootTeardown.push(ownerPool::shutdown);
         driver.setOwnerPool(ownerPool);
         System.out.println("  Owner pool   : " + ownerPool.size()
                 + " owner thread(s) [Phase 0 B Stage 1B — R-01 deleted, consensus via ownerExecutor(gid)]");
@@ -555,11 +592,13 @@ public final class ConfigdServer {
             t.setDaemon(true);
             return t;
         });
+        bootTeardown.push(readDispatchExecutor::shutdownNow);
         ScheduledExecutorService tlsReloadExecutor = Executors.newSingleThreadScheduledExecutor(r -> {
             Thread t = new Thread(r, "configd-tls-reload");
             t.setDaemon(true);
             return t;
         });
+        bootTeardown.push(tlsReloadExecutor::shutdownNow);
         // Off-ack-path node-anchor refresh (audit head + shard-liveness digest, §2.5 / A1.6). Its own
         // single thread so a slow/failed refresh never delays an owner tick or a read.
         ScheduledExecutorService nodeAnchorExecutor = Executors.newSingleThreadScheduledExecutor(r -> {
@@ -567,6 +606,7 @@ public final class ConfigdServer {
             t.setDaemon(true);
             return t;
         });
+        bootTeardown.push(nodeAnchorExecutor::shutdownNow);
 
         // ---------------------------------------------------------------
         // Group commit (per group). Each group's coalescing durability flush dispatches onto THAT group's
@@ -722,6 +762,16 @@ public final class ConfigdServer {
                 throw new RuntimeException("Failed to start TCP Raft transport on "
                         + config.bindAddress() + ":" + config.bindPort(), e);
             }
+            // The transport's non-daemon Netty event loops (and its bound port) are now live: a
+            // fail-closed throw further down must close them or the JVM cannot exit.
+            final RaftTransportEndpoint startedTransport = tcpTransport;
+            bootTeardown.push(() -> {
+                try {
+                    startedTransport.close();
+                } catch (Exception ignored) {
+                    // best-effort teardown of a failed boot
+                }
+            });
         }
 
         // ---------------------------------------------------------------
@@ -1173,6 +1223,7 @@ public final class ConfigdServer {
         } catch (Exception e) {
             throw new RuntimeException("Failed to start HTTP API server on port " + config.apiPort(), e);
         }
+        bootTeardown.push(httpApiServer::stop);
 
         // ---------------------------------------------------------------
         // Fan-out edge endpoint, optional (--edge-port). Drives the SAME FanOutSessionCore the
@@ -1264,7 +1315,7 @@ public final class ConfigdServer {
             // EdgeCertGate.OFF is byte-identical to before. This gate is wired ONLY to the edge plane; the
             // Raft interior never constructs one, so the exemptInterNode invariant holds by construction.
             io.configd.server.fanout.EdgeCertGate edgeCertGate =
-                    buildEdgeCertGate(cfg);
+                    buildEdgeCertGate(cfg, fanOutMetrics);
             fanOutServer = new io.configd.server.fanout.NettyFanOutServer(
                     edgeShardSources, edgeShardReplaySources, edgeAllGids, edgeShardResolver,
                     shardMap.epoch(),
@@ -1281,8 +1332,10 @@ public final class ConfigdServer {
                         "TLS is enabled but FanOutServer has no TlsManager — refusing to start "
                                 + "to avoid plaintext edge traffic");
             }
+            final io.configd.server.fanout.FanOutEndpoint startedFanOut = fanOutServer;
             try {
                 fanOutServer.start();
+                bootTeardown.push(startedFanOut::close);
                 System.out.println("  Edge port    : " + fanOutServer.localPort()
                         + (tlsManager != null ? " (mTLS)" : " (PLAINTEXT)") + " [C1 fan-out, ADR-0037]");
                 if (shardCount > 1) {
@@ -1426,6 +1479,7 @@ public final class ConfigdServer {
         // driver.
         if (server.leaderBalanceLoop != null) {
             server.leaderBalanceLoop.start();
+            bootTeardown.push(server.leaderBalanceLoop::close);
         }
 
         // Register shutdown hook
@@ -1901,7 +1955,8 @@ public final class ConfigdServer {
      * lookup returns {@code UNKNOWN} and the mode decides (lax fails open + alarms; strict fails closed).
      * A real responder plugs into that seam as a follow-on.
      */
-    private static io.configd.server.fanout.EdgeCertGate buildEdgeCertGate(ConfigSource cfg) {
+    private static io.configd.server.fanout.EdgeCertGate buildEdgeCertGate(
+            ConfigSource cfg, io.configd.server.fanout.RegistryFanOutSessionMetrics metrics) {
         io.configd.common.auth.RevocationPolicy revocationPolicy =
                 io.configd.common.auth.RevocationPolicy.fromConfig(cfg);
         if (!revocationPolicy.exemptInterNode()) {
@@ -1945,7 +2000,8 @@ public final class ConfigdServer {
             return io.configd.server.fanout.EdgeCertGate.OFF; // byte-identical
         }
         return new io.configd.server.fanout.EdgeCertGate(
-                revocationPolicy, revocationChecker, expiryPolicy, enforceCertNotAfter);
+                revocationPolicy, revocationChecker, expiryPolicy, enforceCertNotAfter,
+                metrics::onRevocationFailOpenAdmit);
     }
 
     /**
@@ -2798,6 +2854,22 @@ public final class ConfigdServer {
     }
 
     /**
+     * Best-effort teardown of the long-lived resources a partial boot created, run in reverse
+     * creation order (LIFO) when {@link #start(ServerConfig, ConfigSource)} fails. Each action
+     * swallows its own failure so one stuck close neither masks the others nor the original boot
+     * failure that triggered the teardown.
+     */
+    private static void closeBootResources(java.util.Deque<Runnable> bootTeardown) {
+        while (!bootTeardown.isEmpty()) {
+            try {
+                bootTeardown.pop().run();
+            } catch (Throwable t) {
+                System.err.println("WARNING: boot-failure cleanup step threw (continuing): " + t);
+            }
+        }
+    }
+
+    /**
      * Returns the multi-raft driver for this server.
      */
     public MultiRaftDriver driver() {
@@ -2999,7 +3071,21 @@ public final class ConfigdServer {
 
         printBanner(config);
 
-        ConfigdServer server = start(config, cfg);
+        ConfigdServer server;
+        try {
+            server = start(config, cfg);
+        } catch (RuntimeException | Error e) {
+            // A fail-closed boot (missing auth-provider module, unreachable IdP during auth-chain
+            // build, port already in use, TLS-without-manager) escapes here. start() has already
+            // closed whatever it created, but exit UNCONDITIONALLY with a non-zero code: without
+            // this the main thread dies while non-daemon Netty event loops keep the JVM up, so the
+            // process prints a stack trace and hangs, bound but serving nothing. A clean non-zero
+            // exit lets an orchestrator restart or alert instead.
+            System.err.println("FATAL: Configd server failed to start: " + e.getMessage());
+            e.printStackTrace();
+            System.exit(1);
+            return; // unreachable - System.exit does not return; keeps `server` definitely-assigned
+        }
 
         System.out.println("Configd server started successfully.");
 

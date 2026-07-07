@@ -96,8 +96,26 @@ public record EdgeAuthConfig(AuthenticatorChain chain, int preAuthMaxFrameBytes,
         return chain.resolve(credential);
     }
 
+    /**
+     * Whether mTLS is a configured edge authenticator (the shared chain lists an {@code mtls} provider).
+     * A token-only edge (chain without {@code mtls}) must NOT turn a presented trust-store cert into an
+     * authenticated identity - the callers gate the handshake cert path on this so a certificate client
+     * on such an edge falls through to token auth, symmetric with the HTTP plane (where a cert
+     * authenticates only if the chain lists {@code mtls}).
+     */
+    boolean mtlsConfigured() {
+        return chain.providerTypes().contains("mtls");
+    }
+
     /** Authenticates an already-verified peer certificate chain to its identity-only principal. */
     AuthResult authenticateClientCertificate(List<X509Certificate> verifiedChain) {
+        if (!mtlsConfigured()) {
+            // Defense in depth: a presented cert must not auto-authenticate on a token-only edge (that
+            // would admit ANY trust-store cert). Callers already gate on mtlsConfigured(); this fails
+            // closed if a future caller forgets.
+            return new AuthResult.Denied(io.configd.common.auth.DenyReason.NOT_THIS_AUTHENTICATOR,
+                    "mTLS is not a configured edge authenticator");
+        }
         return EDGE_MTLS.authenticate(new Credential.ClientCertificate(verifiedChain));
     }
 

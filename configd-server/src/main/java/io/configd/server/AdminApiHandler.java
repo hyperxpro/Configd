@@ -253,10 +253,7 @@ public final class AdminApiHandler {
         // not authorization (no ACL for metrics scraping). Never echo the credential.
         if (chain != null) {
             Credential cred = credentialFrom(req);
-            io.configd.common.auth.AuthResult r = (cred == null)
-                    ? new io.configd.common.auth.AuthResult.Denied(
-                            io.configd.common.auth.DenyReason.NO_CREDENTIAL, "missing auth token")
-                    : chain.resolve(cred);
+            io.configd.common.auth.AuthResult r = resolveAndWipe(cred);
             if (r instanceof io.configd.common.auth.AuthResult.Unavailable) {
                 return json(503, "authentication temporarily unavailable");
             }
@@ -833,6 +830,25 @@ public final class AdminApiHandler {
      * mode) is used instead. Returns {@code null} when nothing usable is presented (the chain path then
      * treats it as "no credential" -&gt; 401).
      */
+    /**
+     * Resolves a credential through the authenticator chain and WIPES its secret material afterward (the
+     * Basic password {@code char[]}), so a verified password does not linger on the heap. A null credential
+     * (no / malformed / unrecognized-scheme Authorization header) maps to the same {@code NO_CREDENTIAL}
+     * Denied the inline sites used. The Basic {@code new String(decoded)} in {@link #credentialFrom} cannot
+     * be wiped in place (Strings are immutable); only its {@code char[]} copy on the credential is.
+     */
+    private io.configd.common.auth.AuthResult resolveAndWipe(Credential cred) {
+        if (cred == null) {
+            return new io.configd.common.auth.AuthResult.Denied(
+                    io.configd.common.auth.DenyReason.NO_CREDENTIAL, "missing auth token");
+        }
+        try {
+            return chain.resolve(cred);
+        } finally {
+            cred.wipeSecret();
+        }
+    }
+
     private static Credential credentialFrom(AdminRequest req) {
         String authHeader = req.header("Authorization");
         if (authHeader != null) {
@@ -872,10 +888,7 @@ public final class AdminApiHandler {
      */
     private AuthCheck checkAuthViaChain(AdminRequest req, String key, AclService.Permission permission, boolean reserved) {
         Credential cred = credentialFrom(req);
-        io.configd.common.auth.AuthResult r = (cred == null)
-                ? new io.configd.common.auth.AuthResult.Denied(
-                        io.configd.common.auth.DenyReason.NO_CREDENTIAL, "missing auth token")
-                : chain.resolve(cred);
+        io.configd.common.auth.AuthResult r = resolveAndWipe(cred);
         if (r instanceof io.configd.common.auth.AuthResult.Unavailable) {
             return AuthCheck.unavailable("authentication temporarily unavailable");
         }
@@ -904,10 +917,7 @@ public final class AdminApiHandler {
     /** The SPI-chain analogue of {@link #checkAdmin} (ADMIN-gated control op): same stricter fail-closed posture. */
     private AuthCheck checkAdminViaChain(AdminRequest req, String resourceKey) {
         Credential cred = credentialFrom(req);
-        io.configd.common.auth.AuthResult r = (cred == null)
-                ? new io.configd.common.auth.AuthResult.Denied(
-                        io.configd.common.auth.DenyReason.NO_CREDENTIAL, "missing auth token")
-                : chain.resolve(cred);
+        io.configd.common.auth.AuthResult r = resolveAndWipe(cred);
         if (r instanceof io.configd.common.auth.AuthResult.Unavailable) {
             return AuthCheck.unavailable("authentication temporarily unavailable");
         }

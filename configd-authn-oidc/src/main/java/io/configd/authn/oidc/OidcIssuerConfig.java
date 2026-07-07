@@ -44,6 +44,9 @@ import java.util.Set;
  */
 final class OidcIssuerConfig {
 
+    private static final java.util.logging.Logger LOG =
+            java.util.logging.Logger.getLogger(OidcIssuerConfig.class.getName());
+
     private final String issuerUri;
     private final String audience;
     private final URL jwksUri;            // may be null until resolved by discovery
@@ -105,6 +108,19 @@ final class OidcIssuerConfig {
         String rolePrefix = cfg.getString(prefix + "rolePrefix").orElse("");
         Map<String, String> roleMap = parseRoleMap(cfg, prefix + "roleMap.");
         ClaimsRoleMapper roleMapper = new ClaimsRoleMapper(claimsPath, roleMap, rolePrefix);
+        // Privilege foot-gun warning: an EMPTY roleMap is pass-through (the external claim values become
+        // Configd role names verbatim). When the mapped claim is the CLIENT-INFLUENCEABLE OAuth scope
+        // (scope/scp - the client requests it and, for many IdPs, gets it), pass-through lets a caller
+        // name its own roles. Recommend the roleMap allowlist for any untrusted-claim IdP.
+        if (roleMap.isEmpty() && claimsPath != null) {
+            String leaf = claimsPath.substring(claimsPath.lastIndexOf('.') + 1);
+            if (leaf.equals("scope") || leaf.equals("scp")) {
+                LOG.warning("OIDC issuer '" + name + "': claimsPath='" + claimsPath + "' maps the "
+                        + "client-influenceable OAuth scope to role names with an EMPTY roleMap (pass-through) "
+                        + "- a caller can name its own roles. Configure a roleMap.<scope>=<role> allowlist for "
+                        + "this issuer, or map a non-client-controlled claim (groups / realm_access.roles).");
+            }
+        }
 
         JwksSettings jwks = new JwksSettings(
                 seconds(cfg, prefix + "jwks.ttlSeconds", 600),

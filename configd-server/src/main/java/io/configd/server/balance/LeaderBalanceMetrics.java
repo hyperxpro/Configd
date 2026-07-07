@@ -37,6 +37,13 @@ public interface LeaderBalanceMetrics {
     /** {@code reason} is one of the {@code LeaderBalancePlanner.REASON_*} constants (bounded set). */
     void skippedUnstable(String reason);
 
+    /**
+     * A balance cadence threw from {@code runOnce()} (a transient read/transfer fault). The loop swallows
+     * it to stay alive; this counter makes a PERSISTENTLY-throwing loop metric-visible (and alertable)
+     * rather than only stderr-visible.
+     */
+    void cycleError();
+
     /** A sink that records nothing - for tests and for the loop when metrics are not wired. */
     LeaderBalanceMetrics NOOP = new LeaderBalanceMetrics() {
         @Override public void leaderSpread(int spread) { }
@@ -45,6 +52,7 @@ public interface LeaderBalanceMetrics {
         @Override public void transferRefused() { }
         @Override public void wouldTransfer() { }
         @Override public void skippedUnstable(String reason) { }
+        @Override public void cycleError() { }
     };
 
     /**
@@ -63,6 +71,7 @@ public interface LeaderBalanceMetrics {
         static final String NAME_TRANSFERS_INITIATED = "configd.raft.autobalance.transfers_initiated";
         static final String NAME_TRANSFER_REFUSED = "configd.raft.autobalance.transfer_refused";
         static final String NAME_WOULD_TRANSFER = "configd.raft.autobalance.would_transfer";
+        static final String NAME_CYCLE_ERRORS = "configd.raft.autobalance.cycle_errors";
         static final String NAME_SKIPPED_UNSTABLE_BASE = "configd.raft.autobalance.skipped_unstable";
 
         private final MetricsRegistry registry;
@@ -71,6 +80,7 @@ public interface LeaderBalanceMetrics {
         private final MetricsRegistry.Counter transfersInitiated;
         private final MetricsRegistry.Counter transferRefused;
         private final MetricsRegistry.Counter wouldTransfer;
+        private final MetricsRegistry.Counter cycleErrors;
 
         RegistryLeaderBalanceMetrics(MetricsRegistry registry) {
             this.registry = Objects.requireNonNull(registry, "registry");
@@ -79,6 +89,7 @@ public interface LeaderBalanceMetrics {
             this.transfersInitiated = registry.counter(NAME_TRANSFERS_INITIATED);
             this.transferRefused = registry.counter(NAME_TRANSFER_REFUSED);
             this.wouldTransfer = registry.counter(NAME_WOULD_TRANSFER);
+            this.cycleErrors = registry.counter(NAME_CYCLE_ERRORS);
             // Eager-create the bounded reason series so they exist from the first scrape.
             registry.counter(skipSeries(LeaderBalancePlanner.REASON_UNKNOWN_LEADER));
             registry.counter(skipSeries(LeaderBalancePlanner.REASON_TERM_CHURN));
@@ -112,6 +123,11 @@ public interface LeaderBalanceMetrics {
         @Override
         public void wouldTransfer() {
             wouldTransfer.increment();
+        }
+
+        @Override
+        public void cycleError() {
+            cycleErrors.increment();
         }
 
         @Override

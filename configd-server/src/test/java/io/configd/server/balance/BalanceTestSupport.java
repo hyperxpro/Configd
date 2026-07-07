@@ -137,6 +137,7 @@ final class BalanceTestSupport {
         int transfersInitiated;
         int transfersRefused;
         int wouldTransfers;
+        int cycleErrors;
         int lastSpread = -1;
         boolean lastCooldownActive;
         final Map<String, Integer> skipped = new HashMap<>();
@@ -169,6 +170,11 @@ final class BalanceTestSupport {
         @Override
         public void skippedUnstable(String reason) {
             skipped.merge(reason, 1, Integer::sum);
+        }
+
+        @Override
+        public void cycleError() {
+            cycleErrors++;
         }
 
         int skipped(String reason) {

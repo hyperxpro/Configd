@@ -148,6 +148,15 @@ public final class NettyFanOutServer implements FanOutEndpoint {
     private volatile EventLoopGroup boss;
     private volatile EventLoopGroup worker;
     private volatile Channel serverChannel;
+    /**
+     * Bounded worker pool for OFF-event-loop credential resolution. Basic verification is a deliberately
+     * expensive PBKDF2 (~50-150ms); running it inline on a shared Netty worker would stall every other
+     * connection on that loop (an unauthenticated event-loop-stall DoS, amplified by REFRESH_AUTH spam).
+     * Bounded (not virtual-thread-per-task) because the work is CPU-bound: more concurrent PBKDF2 than
+     * cores only thrashes, so the pool caps total verification CPU. Null when token auth is not configured
+     * (byte-identical mTLS-only / plaintext edge).
+     */
+    private volatile java.util.concurrent.ExecutorService authWorker;
 
     public NettyFanOutServer(InetSocketAddress bindAddress,
                              TlsManager tlsManager,
@@ -289,6 +298,9 @@ public final class NettyFanOutServer implements FanOutEndpoint {
         IoHandlerFactory ioFactory = transport.ioHandlerFactory();
         boss = new MultiThreadIoEventLoopGroup(1, ioFactory);
         worker = new MultiThreadIoEventLoopGroup(workerThreads, ioFactory);
+        if (edgeAuth != null) {
+            authWorker = newAuthWorkerPool();
+        }
         ServerBootstrap b = new ServerBootstrap()
                 .group(boss, worker)
                 .channel(transport.serverChannelClass())
@@ -315,7 +327,8 @@ public final class NettyFanOutServer implements FanOutEndpoint {
                                 : new ByteToEdgeFrameDecoder());
                         ch.pipeline().addLast(new EdgeFrameToByteEncoder(() -> conn.wireVersion));
                         if (edgeAuth != null) {
-                            ch.pipeline().addLast(new EdgeAuthGateHandler(edgeAuth, certGate, metrics, clock));
+                            ch.pipeline().addLast(
+                                    new EdgeAuthGateHandler(edgeAuth, certGate, metrics, clock, authWorker));
                         }
                         ch.pipeline().addLast(conn);
                     }
@@ -328,6 +341,22 @@ public final class NettyFanOutServer implements FanOutEndpoint {
         }
         LOG.info(() -> "NettyFanOutServer listening on " + serverChannel.localAddress()
                 + (tlsManager != null ? " (mTLS)" : " (PLAINTEXT)") + " [tier=" + transport.tier() + "]");
+    }
+
+    /**
+     * The bounded off-loop credential-resolution pool. Sized to the CPU count (PBKDF2 is CPU-bound, so
+     * more threads than cores only thrashes), overridable via {@code configd.edge.authWorkerThreads}, and
+     * floored at 1. Daemon threads so they never hold the JVM up.
+     */
+    private static java.util.concurrent.ExecutorService newAuthWorkerPool() {
+        int threads = Math.max(1, Integer.getInteger(
+                "configd.edge.authWorkerThreads", Runtime.getRuntime().availableProcessors()));
+        java.util.concurrent.atomic.AtomicInteger seq = new java.util.concurrent.atomic.AtomicInteger();
+        return java.util.concurrent.Executors.newFixedThreadPool(threads, r -> {
+            Thread t = new Thread(r, "configd-edge-auth-" + seq.incrementAndGet());
+            t.setDaemon(true);
+            return t;
+        });
     }
 
     /** Builds the server-mode mTLS {@link SslHandler} - the SAME SSLContext/protocols/ciphers as the JDK server. */
@@ -375,6 +404,10 @@ public final class NettyFanOutServer implements FanOutEndpoint {
         }
         if (worker != null) {
             worker.shutdownGracefully(0, 2, TimeUnit.SECONDS);
+        }
+        java.util.concurrent.ExecutorService aw = authWorker;
+        if (aw != null) {
+            aw.shutdownNow();
         }
     }
 
@@ -669,6 +702,16 @@ public final class NettyFanOutServer implements FanOutEndpoint {
             ScheduledFuture<?> ce = certExpiry;
             if (ce != null) {
                 ce.cancel(false); // a fired task is a teardown no-op, but cancel avoids retaining ctx to notAfter
+            }
+            // Cancel the pre-SUBSCRIBE first-frame reaper if it is still pending (a connection torn down
+            // before it sent its first routed frame - a RST during the pre-SUBSCRIBE window). channelRead0
+            // cancels it on the first frame; without this cancel, connect/RST churn retains ~rate x 10s
+            // scheduled tasks on the event loop until they individually fire (mirrors the gate cancelling
+            // its preAuthDeadline in handlerRemoved).
+            ScheduledFuture<?> ff = firstFrameDeadline;
+            if (ff != null) {
+                ff.cancel(false);
+                firstFrameDeadline = null;
             }
             Channel ch = channel;
             FanOutConnectionDriver d = driver;
