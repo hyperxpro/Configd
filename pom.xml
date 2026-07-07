@@ -21,6 +21,7 @@
         <module>configd-distribution-service</module>
         <module>configd-control-plane-api</module>
         <module>configd-authn-oidc</module>
+        <module>configd-kms-vault</module>
         <module>configd-testkit</module>
         <module>configd-server</module>
         <module>configd-edge-node</module>

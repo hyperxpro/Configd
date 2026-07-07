@@ -1,0 +1,4 @@
+# Test-only external KMS provider (type: test-kms). Present ONLY on the configd-server test classpath so the
+# external-custody boot path (ConfigdServer.unsealKeyringCustodySecret -> KmsSealedRootStore -> unwrap) can be
+# proven end-to-end without a live backend. Never on the production classpath.
+io.configd.server.InMemoryTestKmsProviderFactory

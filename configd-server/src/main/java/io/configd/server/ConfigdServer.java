@@ -1557,28 +1557,34 @@ public final class ConfigdServer {
         boolean encrypt = encryptionAtRestEnabled(cfg);
         // anyLayerTrue reproduces the original "system-property OR env-alias" semantics for the flag.
         boolean requireEncrypted = cfg.anyLayerTrue("configd.raft.encryption.requireEncrypted");
-        if (encrypt) {
-            // The KMS provider governs ENCRYPTION-root custody (local vs a cloud CMK). Only 'local'
-            // ships in v1; naming another is a startup error, never a silent downgrade.
-            // Precedence: system property, else the env alias, else 'local' - identical to the original
-            // getProperty(prop, getenv.getOrDefault(ENV, "local")) because the env alias maps to this key.
-            String providerName = cfg.getString("configd.raft.encryption.kms.provider").orElse("local");
-            if (!"local".equals(providerName)) {
-                throw new IllegalStateException(
-                        "configd.raft.encryption.kms.provider='" + providerName + "' is not available:"
-                                + " only the built-in 'local' provider (signing-key-wrapped keyring) ships in v1."
-                                + " Refusing to start rather than silently downgrade - a silent downgrade is"
-                                + " how a 'data is encrypted at rest' claim becomes fiction. Add the matching"
-                                + " configd-kms-<provider> module to the classpath, or unset the property.");
-            }
-        }
+        // Resolve the KEYRING-CUSTODY SECRET: the IKM the two keyring-wrapping keys (K_keyringMac and
+        // KEK_wrap) are HKDF-derived from. For 'local' - and for the encryption-OFF term-versioned HMAC
+        // posture - it IS the signing-key IKM, byte-identical to every prior boot: the raw signing key
+        // never crosses the KMS SPI boundary (secret minimisation), and existing encrypted data still
+        // decrypts because the derivation is unchanged. For an EXTERNAL custodian (vault-transit, a cloud
+        // CMK, ...) it is a per-node secret UNSEALED ONCE through the KmsProvider at boot (R1/R2); an
+        // unreachable custodian FAILS CLOSED (R3) - never a silent downgrade to no encryption or a
+        // different provider. Only encryption-ON with a non-'local' provider takes the SPI branch.
+        String providerName = encrypt
+                ? cfg.getString("configd.raft.encryption.kms.provider").orElse("local").trim()
+                : "local";
+        boolean externalCustody = encrypt && !"local".equals(providerName);
+        byte[] custodySecret = externalCustody
+                ? unsealKeyringCustodySecret(providerName, dataDir, keyId, cfg)
+                : ikm; // ALIAS of the caller's signing-key IKM (zeroed by deriveRaftIntegrityEnvelope)
 
-        // Two signing-key-derived, domain-separated keys authenticate and wrap the keyring (§A2.3):
+        // Two custody-secret-derived, domain-separated keys authenticate and wrap the keyring (§A2.3):
         //   K_keyringMac authenticates the whole keyring file; KEK_wrap AES-GCM-wraps each root.
         // Neither derives the roots (those are independent random material in the keyring) - the whole
         // point of the decoupling that makes both term and signing-key rotation non-destructive.
-        javax.crypto.SecretKey keyringMac = deriveKeyringKey(ikm, salt, KEYRING_MAC_INFO, "HmacSHA256");
-        javax.crypto.SecretKey kek = deriveKeyringKey(ikm, salt, KEYRING_WRAP_INFO, "AES");
+        javax.crypto.SecretKey keyringMac = deriveKeyringKey(custodySecret, salt, KEYRING_MAC_INFO, "HmacSHA256");
+        javax.crypto.SecretKey kek = deriveKeyringKey(custodySecret, salt, KEYRING_WRAP_INFO, "AES");
+        if (externalCustody) {
+            // The two keyring keys have taken their own copies (SecretKeySpec clones); wipe the external
+            // custody secret, a distinct array this method owns. The 'local'/OFF path aliases the caller's
+            // ikm (zeroed by deriveRaftIntegrityEnvelope), so it is deliberately NOT touched here.
+            java.util.Arrays.fill(custodySecret, (byte) 0);
+        }
         byte[] nodeKeyId = keyId.toString().getBytes(java.nio.charset.StandardCharsets.UTF_8);
 
         // The keyring lives in dataDir (production start() already created it; ensure it exists here
@@ -1615,6 +1621,68 @@ public final class ConfigdServer {
                     "At-rest integrity: term-versioned HMAC (keyring terms={0}, activeTerm={1})",
                     new Object[]{roots.size(), keyring.activeTerm()});
             return io.configd.common.IntegrityEnvelope.hmac(keyManager);
+        }
+    }
+
+    /**
+     * Unseals the per-node keyring-custody secret through an EXTERNAL {@link io.configd.common.kms.KmsProvider}
+     * discovered by {@link io.configd.common.kms.KmsProviderFactory} (ServiceLoader). This is the genuine SPI
+     * boot seam for every non-{@code local} custodian.
+     * <p>
+     * Fail-loud: a selected provider whose module is not on the classpath is a startup error (R3 - never a
+     * silent downgrade). First boot / enable-encryption migration mints and seals a fresh secret and persists
+     * its {@link io.configd.common.kms.WrappedKey} beside the keyring (mirroring the keyring's own first-boot
+     * mint); every later boot reads that carrier and performs the ONE {@code unwrap} call. Fail-closed
+     * ({@link io.configd.common.kms.KmsUnavailableException}) if the backend is unreachable at boot - the node
+     * refuses to start. The provider is {@code close()}d (its token dropped) the instant the secret is
+     * recovered (R2), so no live provider handle survives onto the data path.
+     *
+     * @return the freshly-unsealed custody secret; the CALLER owns and zeroes it after deriving the keyring keys
+     */
+    private static byte[] unsealKeyringCustodySecret(
+            String providerName, Path dataDir, java.util.UUID keyId, ConfigSource cfg) {
+        java.util.Map<String, io.configd.common.kms.KmsProviderFactory> factories =
+                io.configd.common.kms.KmsProviderFactory.discover();
+        io.configd.common.kms.KmsProviderFactory factory = factories.get(providerName);
+        if (factory == null) {
+            throw new IllegalStateException(
+                    "configd.raft.encryption.kms.provider='" + providerName + "' is not available: it is not"
+                            + " the built-in 'local' provider and no configd-kms-<provider> module on the"
+                            + " classpath provides it. Refusing to start rather than silently downgrade - a"
+                            + " silent downgrade is how a 'data is encrypted at rest' claim becomes fiction."
+                            + " Add the matching module to the runtime classpath, or unset the property."
+                            + " Known external providers: " + new java.util.TreeSet<>(factories.keySet()));
+        }
+        try {
+            Files.createDirectories(dataDir);
+        } catch (java.io.IOException e) {
+            throw new IllegalStateException("cannot create data directory for the KMS sealed root: " + dataDir, e);
+        }
+        Path sealedRoot = dataDir.resolve(KmsSealedRootStore.FILE_NAME);
+        io.configd.common.kms.KmsBootContext ctx =
+                new io.configd.common.kms.KmsBootContext(keyId.toString());
+        try (io.configd.common.kms.KmsProvider provider = factory.create(cfg, ctx)) {
+            provider.healthCheck(); // pre-flight reachability; unreachable -> KmsUnavailableException -> fail closed
+            io.configd.common.kms.RootKey root;
+            if (KmsSealedRootStore.exists(sealedRoot)) {
+                root = provider.unwrap(KmsSealedRootStore.read(sealedRoot)); // the ONE boot call
+            } else {
+                io.configd.common.kms.KmsProvider.Provisioned provisioned = provider.generateRootKey();
+                KmsSealedRootStore.write(sealedRoot, provisioned.wrapped()); // persist the sealed carrier (fsync)
+                root = provisioned.rootKey();
+            }
+            try {
+                LOG.log(Level.INFO, "At-rest keyring custody unsealed via KMS provider ''{0}'' (keyId={1})",
+                        new Object[]{providerName, root.keyId()});
+                return root.withMaterial(byte[]::clone);
+            } finally {
+                root.destroy(); // the caller now owns the returned bytes; wipe our RootKey handle
+            }
+        } catch (io.configd.common.kms.KmsUnavailableException e) {
+            throw new IllegalStateException(
+                    "at-rest KMS provider '" + providerName + "' is unavailable at boot - refusing to start"
+                            + " (fail closed). The node will NOT fall back to no encryption or a different"
+                            + " provider. Cause: " + e.getMessage(), e);
         }
     }
 
