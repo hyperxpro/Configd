@@ -1,6 +1,7 @@
 package io.configd.server;
 
 import io.configd.api.AclService;
+import io.configd.api.AdminService;
 import io.configd.api.AuditLog;
 import io.configd.api.AuthInterceptor;
 import io.configd.api.ConfigReadService;
@@ -59,6 +60,10 @@ import io.configd.replication.CrossShardWriteGuard;
 import io.configd.replication.MultiRaftDriver;
 import io.configd.replication.OwnerExecutorPool;
 import io.configd.replication.StaticShardMap;
+import io.configd.server.balance.LeaderBalanceConfig;
+import io.configd.server.balance.LeaderBalanceLoop;
+import io.configd.server.balance.LeaderBalanceMetrics;
+import io.configd.server.balance.LeaderView;
 import io.configd.store.Compactor;
 import io.configd.store.ConfigDelta;
 import io.configd.store.ConfigSigner;
@@ -210,6 +215,9 @@ public final class ConfigdServer {
     /** The live /metrics exporter - exposed via {@link #scrapeMetrics()} so a contract
      *  test can assert the running server emits the SLO series with real data (not zero). */
     private final io.configd.observability.PrometheusExporter prometheusExporter;
+    /** The decentralized leadership auto-balance loop; {@code null} at N=1 / single-node / when the kill
+     *  switch is off (see the wiring gate). Owns its own dedicated executor; closed on shutdown. */
+    private final LeaderBalanceLoop leaderBalanceLoop;
 
     private ConfigdServer(ServerConfig config, MultiRaftDriver driver,
                           ConfigStateMachine stateMachine,
@@ -230,7 +238,8 @@ public final class ConfigdServer {
                           HyParViewOverlay hyParViewOverlay,
                           SubscriptionManager subscriptionManager,
                           RolloutController rolloutController,
-                          io.configd.observability.PrometheusExporter prometheusExporter) {
+                          io.configd.observability.PrometheusExporter prometheusExporter,
+                          LeaderBalanceLoop leaderBalanceLoop) {
         this.config = config;
         this.driver = driver;
         this.stateMachine = stateMachine;
@@ -252,6 +261,7 @@ public final class ConfigdServer {
         this.subscriptionManager = subscriptionManager;
         this.rolloutController = rolloutController;
         this.prometheusExporter = prometheusExporter;
+        this.leaderBalanceLoop = leaderBalanceLoop;
     }
 
     /**
@@ -1108,6 +1118,42 @@ public final class ConfigdServer {
         // (otherwise the sharded aggregate collapses toward the single-group plateau with no lever).
         DriverLeadershipAdmin leadershipAdmin = new DriverLeadershipAdmin(driver);
 
+        // Decentralized leadership auto-balance loop (one per node). It sheds - never pulls - at most one
+        // led group per cadence to an under-loaded peer, so post-failover leader drift no longer collapses
+        // the sharded aggregate toward the single-group plateau. It is created ONLY in the horizontal-scale
+        // regime it targets - more than one shard AND at least one peer - and stays off when the operator
+        // flips the kill switch. At N=1 or single-node the distribution is trivially flat (spread 0), so
+        // building the loop would add a daemon thread that could never act; not building it keeps those
+        // deployments byte-identical. Transfers go through the same owner-thread-confined
+        // DriverLeadershipAdmin path the admin endpoint uses. See docs/design/group-b/investigation/
+        // 06-leadership-auto-balance.md.
+        LeaderBalanceConfig balanceConfig = LeaderBalanceConfig.fromConfig(cfg);
+        LeaderBalanceLoop leaderBalanceLoop = null;
+        if (balanceConfig.enabled() && shardCount > 1 && !config.peers().isEmpty()) {
+            LeaderView balanceView = LeaderView.overDriver(driver, config.peers());
+            LeaderBalanceLoop.LeadershipTransfer transferSeam = (gid, target) -> {
+                try {
+                    return leadershipAdmin.transferLeadership(gid, target)
+                            instanceof AdminService.AdminResult.Success;
+                } catch (RuntimeException wedgedOrTimedOut) {
+                    // A wedged/overloaded owner surfaces as the admin path's bounded timeout (its 503
+                    // contract). Treat it as a declined attempt so it folds into the loop's refused +
+                    // cooldown path, never a retry storm.
+                    return false;
+                }
+            };
+            leaderBalanceLoop = new LeaderBalanceLoop(
+                    balanceView, transferSeam, balanceConfig, clock,
+                    new java.util.Random(), LeaderBalanceMetrics.forRegistry(metricsRegistry));
+            System.out.println("  Leader balance: ON (interval " + balanceConfig.intervalMs() + "ms, threshold "
+                    + balanceConfig.imbalanceThreshold() + ", cooldown " + balanceConfig.cooldownMs() + "ms"
+                    + (balanceConfig.dryRun() ? ", DRY-RUN" : "") + ") [auto-balance leadership across boxes]");
+        } else {
+            System.out.println("  Leader balance: OFF ("
+                    + (!balanceConfig.enabled() ? "kill switch"
+                            : shardCount <= 1 ? "single shard" : "single node") + ")");
+        }
+
         NettyHttpApiServer httpApiServer;
         try {
             // The read 503 X-Leader-Hint is SHARD- AND SCOPE-AWARE - resolved for the shard that owns
@@ -1260,7 +1306,7 @@ public final class ConfigdServer {
                 anchorWitness,
                 httpApiServer, tcpTransport, fanOutServer, aclPolicyLoader,
                 watchService, fanOutBuffer, compactor, plumtreeNode, hyParViewOverlay,
-                subscriptionManager, rolloutController, prometheusExporter);
+                subscriptionManager, rolloutController, prometheusExporter, leaderBalanceLoop);
 
         // ---------------------------------------------------------------
         // Schedule the off-ack-path node-anchor refresh (audit head + shard-liveness digest). The write
@@ -1374,6 +1420,14 @@ public final class ConfigdServer {
             }, TLS_RELOAD_INTERVAL_MS, TLS_RELOAD_INTERVAL_MS, TimeUnit.MILLISECONDS);
         }
 
+        // Start the leadership auto-balance loop (only present in the N>1 / multi-node regime; see the
+        // wiring gate above). Its own dedicated executor means its jittered cadence never touches the
+        // consensus tick. Started after the server is fully wired so the first cadence observes a live
+        // driver.
+        if (server.leaderBalanceLoop != null) {
+            server.leaderBalanceLoop.start();
+        }
+
         // Register shutdown hook
         Runtime.getRuntime().addShutdownHook(new Thread(() -> {
             System.out.println("Configd shutting down...");
@@ -1392,6 +1446,12 @@ public final class ConfigdServer {
      * Finally the {@code tlsReloadExecutor} is the slowest to drain and is stopped last.
      */
     public void shutdown() {
+        // Stop the leadership auto-balance loop FIRST so it initiates no new transfers against a driver /
+        // owner pool that is about to be torn down. Its own executor drains independently; a null loop
+        // (N=1 / single-node / kill switch off) is a no-op.
+        if (leaderBalanceLoop != null) {
+            leaderBalanceLoop.close();
+        }
         // Edge endpoint FIRST: it is a pure consumer of the readSince/replay seams, so closing it
         // before the HTTP API / owner pool / Raft teardown lets edge subscribers receive a clean
         // SERVER_SHUTDOWN and stops any new readSince/replay pulls against a store/consensus engine
