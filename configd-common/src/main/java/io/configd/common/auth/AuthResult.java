@@ -13,10 +13,35 @@ import java.util.Objects;
 public sealed interface AuthResult
         permits AuthResult.Authenticated, AuthResult.Denied, AuthResult.Unavailable {
 
-    /** The credential verified to a {@link Principal}. */
-    record Authenticated(Principal principal) implements AuthResult {
+    /**
+     * {@link Authenticated#credentialExpiresAtMillis} sentinel: the authenticator has no authority-issued
+     * absolute expiry for this credential (an mTLS peer cert, a Basic password, or the static bearer token,
+     * none of which carry an {@code exp}). The consuming connection gate then falls back to its own
+     * session-lifetime cap. A credential that DOES carry an authority expiry (an OIDC/JWT access token's
+     * {@code exp}) reports that instant instead, and the gate closes the connection at {@code exp + leeway}.
+     */
+    long NO_EXPIRY = Long.MAX_VALUE;
+
+    /**
+     * The credential verified to a {@link Principal}. {@code credentialExpiresAtMillis} is the
+     * authority-issued absolute expiry of the credential (epoch millis, e.g. a JWT {@code exp} claim), or
+     * {@link #NO_EXPIRY} when the credential carries none. It exists so a long-lived authenticated
+     * connection can be closed when the presented credential actually expires (the Gate-5 expiry model),
+     * rather than only at a server-computed session cap; it is redaction-safe (a timestamp, never the
+     * credential). The single-argument constructor preserves the pre-expiry behaviour ({@link #NO_EXPIRY}).
+     */
+    record Authenticated(Principal principal, long credentialExpiresAtMillis) implements AuthResult {
         public Authenticated {
             Objects.requireNonNull(principal, "principal");
+            if (credentialExpiresAtMillis < 0L) {
+                throw new IllegalArgumentException(
+                        "credentialExpiresAtMillis must be non-negative or NO_EXPIRY: " + credentialExpiresAtMillis);
+            }
+        }
+
+        /** A principal with no authority-issued credential expiry ({@link #NO_EXPIRY}). */
+        public Authenticated(Principal principal) {
+            this(principal, NO_EXPIRY);
         }
     }
 

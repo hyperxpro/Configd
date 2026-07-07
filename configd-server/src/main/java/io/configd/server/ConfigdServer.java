@@ -1209,7 +1209,8 @@ public final class ConfigdServer {
                     // exp + leeway instead. A REFRESH_AUTH re-arms it.
                     long defaultTokenTtlMs = cfg.getLong("configd.edge.authTtlMs", 3_600_000L);
                     edgeAuth = new io.configd.server.fanout.EdgeAuthConfig(
-                            authChain, preAuthMaxFrameBytes, maxAuthTokenBytes, defaultTokenTtlMs);
+                            authChain, preAuthMaxFrameBytes, maxAuthTokenBytes, defaultTokenTtlMs,
+                            io.configd.common.auth.CredentialExpiryPolicy.fromConfig(cfg));
                 }
             }
             // Gate 5: the edge client-cert validity gate (online revocation + mid-connection notAfter

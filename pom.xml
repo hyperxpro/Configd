@@ -20,6 +20,7 @@
         <module>configd-replication-engine</module>
         <module>configd-distribution-service</module>
         <module>configd-control-plane-api</module>
+        <module>configd-authn-oidc</module>
         <module>configd-testkit</module>
         <module>configd-server</module>
         <module>configd-edge-node</module>
@@ -61,6 +62,11 @@
              SAFELY (SafeConstructor + resource-exhaustion limits); only configd-server depends on it,
              so the parser never leaks into the lower zero-heavy-dep modules. Pinned for reproducibility. -->
         <snakeyaml.version>2.4</snakeyaml.version>
+        <!-- OAuth2/OIDC resource-server (Group B): the JOSE/JWT validation library. Only the optional
+             configd-authn-oidc module depends on it, so the JWT SDK never leaks into the core modules.
+             Nimbus 10.x is self-contained (its BouncyCastle/Tink deps are optional and unused for the
+             RS256/ES256 JDK verification path). Pinned for reproducibility. -->
+        <nimbus-jose-jwt.version>10.9</nimbus-jose-jwt.version>
     </properties>
 
     <dependencyManagement>
@@ -169,6 +175,11 @@
                 <groupId>org.yaml</groupId>
                 <artifactId>snakeyaml</artifactId>
                 <version>${snakeyaml.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.nimbusds</groupId>
+                <artifactId>nimbus-jose-jwt</artifactId>
+                <version>${nimbus-jose-jwt.version}</version>
             </dependency>
         </dependencies>
     </dependencyManagement>

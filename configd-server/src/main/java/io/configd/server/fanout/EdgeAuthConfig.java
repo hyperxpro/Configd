@@ -3,6 +3,7 @@ package io.configd.server.fanout;
 import io.configd.common.auth.AuthResult;
 import io.configd.common.auth.AuthenticatorChain;
 import io.configd.common.auth.Credential;
+import io.configd.common.auth.CredentialExpiryPolicy;
 import io.configd.common.auth.MtlsAuthenticator;
 
 import java.nio.charset.StandardCharsets;
@@ -44,9 +45,24 @@ import java.util.Set;
  * @param defaultTokenTtlMs    the session lifetime armed on a static token auth (a bearer/basic credential
  *                             with no authority-issued expiry); {@code now + defaultTokenTtlMs} is the close
  *                             deadline, on the server clock, no skew leeway
+ * @param expiryPolicy         the Gate-5 window/leeway model; used only to turn an authority-issued token
+ *                             expiry (an OIDC/JWT {@code exp}, surfaced on {@link AuthResult.Authenticated})
+ *                             into a close deadline of {@code exp + leeway}. Ignored for a static token,
+ *                             which has no authority expiry - so the four-argument constructor (which
+ *                             defaults it) is byte-identical to the pre-Gate-6 behaviour.
  */
 public record EdgeAuthConfig(AuthenticatorChain chain, int preAuthMaxFrameBytes,
-                             int maxAuthTokenBytes, long defaultTokenTtlMs) {
+                             int maxAuthTokenBytes, long defaultTokenTtlMs, CredentialExpiryPolicy expiryPolicy) {
+
+    /**
+     * Backward-compatible constructor for the static-token posture (no authority expiry): the expiry policy
+     * defaults to {@link CredentialExpiryPolicy#DEFAULTS} and is never consulted, so this is byte-identical
+     * to the pre-Gate-6 edge auth config.
+     */
+    public EdgeAuthConfig(AuthenticatorChain chain, int preAuthMaxFrameBytes, int maxAuthTokenBytes,
+                          long defaultTokenTtlMs) {
+        this(chain, preAuthMaxFrameBytes, maxAuthTokenBytes, defaultTokenTtlMs, CredentialExpiryPolicy.DEFAULTS);
+    }
 
     /** Fixed cap on a Basic username's UTF-8 length (a policy bound, not a wire constant). */
     static final int MAX_BASIC_USERNAME_BYTES = 256;
@@ -63,6 +79,7 @@ public record EdgeAuthConfig(AuthenticatorChain chain, int preAuthMaxFrameBytes,
 
     public EdgeAuthConfig {
         Objects.requireNonNull(chain, "chain");
+        Objects.requireNonNull(expiryPolicy, "expiryPolicy");
         if (preAuthMaxFrameBytes <= 0) {
             throw new IllegalArgumentException("preAuthMaxFrameBytes must be positive: " + preAuthMaxFrameBytes);
         }
@@ -92,6 +109,23 @@ public record EdgeAuthConfig(AuthenticatorChain chain, int preAuthMaxFrameBytes,
      */
     long staticTokenCloseDeadlineMillis(long nowMillis) {
         return nowMillis + defaultTokenTtlMs;
+    }
+
+    /**
+     * The close deadline for a token connection given the authenticated result. When the authenticator
+     * surfaced an authority-issued credential expiry (an OIDC/JWT {@code exp}), the connection closes at
+     * {@code exp + leeway} per the Gate-5 model (the leeway accommodates cross-clock skew against the
+     * issuing authority). When it did not ({@link AuthResult#NO_EXPIRY} - a static bearer/basic token), this
+     * falls back to the server-computed {@code now + defaultTokenTtlMs} with no leeway, byte-identical to the
+     * pre-Gate-6 static-token path. This is the seam that lets a token connection close exactly when the
+     * presented token expires rather than only at a fixed session cap.
+     */
+    long tokenCloseDeadlineMillis(AuthResult.Authenticated authenticated, long nowMillis) {
+        long credentialExpiresAtMillis = authenticated.credentialExpiresAtMillis();
+        if (credentialExpiresAtMillis == AuthResult.NO_EXPIRY) {
+            return staticTokenCloseDeadlineMillis(nowMillis);
+        }
+        return expiryPolicy.serverCloseDeadlineMillis(credentialExpiresAtMillis);
     }
 
     /**

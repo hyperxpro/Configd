@@ -1,0 +1,47 @@
+{
+  "realm": "configd",
+  "enabled": true,
+  "accessTokenLifespan": 60,
+  "sslRequired": "none",
+  "roles": {
+    "realm": [
+      { "name": "configd-admins" },
+      { "name": "configd-readers" }
+    ]
+  },
+  "clients": [
+    {
+      "clientId": "configd-svc",
+      "enabled": true,
+      "protocol": "openid-connect",
+      "publicClient": false,
+      "clientAuthenticatorType": "client-secret",
+      "secret": "configd-secret",
+      "serviceAccountsEnabled": true,
+      "standardFlowEnabled": false,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "protocolMappers": [
+        {
+          "name": "configd-api-audience",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
+          "consentRequired": false,
+          "config": {
+            "included.custom.audience": "configd-api",
+            "id.token.claim": "false",
+            "access.token.claim": "true"
+          }
+        }
+      ]
+    }
+  ],
+  "users": [
+    {
+      "username": "service-account-configd-svc",
+      "enabled": true,
+      "serviceAccountClientId": "configd-svc",
+      "realmRoles": ["configd-admins"]
+    }
+  ]
+}

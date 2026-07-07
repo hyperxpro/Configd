@@ -208,7 +208,7 @@ final class EdgeAuthGateHandler extends ChannelInboundHandlerAdapter {
             AuthResult result = auth.resolveFrameCredential(credential);
             if (result instanceof AuthResult.Authenticated a) {
                 install(ctx, a.principal(),
-                        auth.staticTokenCloseDeadlineMillis(clock.currentTimeMillis()), TOKEN_EXPIRED_MESSAGE);
+                        auth.tokenCloseDeadlineMillis(a, clock.currentTimeMillis()), TOKEN_EXPIRED_MESSAGE);
             } else {
                 closePreAuth(ctx, ErrorCode.AUTH_FAIL, "authentication failed");
             }
@@ -244,7 +244,7 @@ final class EdgeAuthGateHandler extends ChannelInboundHandlerAdapter {
                     // Re-arm the session lifetime; the identity is NOT re-bound in v1.
                     ctx.channel().attr(ByteToEdgeFrameDecoder.AUTH_STATE)
                             .set(AuthState.authenticated(a.principal(),
-                                    auth.staticTokenCloseDeadlineMillis(clock.currentTimeMillis())));
+                                    auth.tokenCloseDeadlineMillis(a, clock.currentTimeMillis())));
                     armExpiry(ctx, TOKEN_EXPIRED_MESSAGE);
                 } else {
                     closePostAuth(ctx, ErrorCode.CREDENTIAL_EXPIRED, "credential refresh rejected");

@@ -776,7 +776,7 @@ public final class FanOutServer implements FanOutEndpoint {
                 if (result instanceof AuthResult.Authenticated a) {
                     Principal principal = a.principal();
                     authState = AuthState.authenticated(principal,
-                            edgeAuth.staticTokenCloseDeadlineMillis(clock.currentTimeMillis()));
+                            edgeAuth.tokenCloseDeadlineMillis(a, clock.currentTimeMillis()));
                     startSessionThreads(principal.id(), principal.roles());
                     armExpiry();
                 } else {
@@ -813,7 +813,7 @@ public final class FanOutServer implements FanOutEndpoint {
                         return;
                     }
                     authState = AuthState.authenticated(a.principal(),
-                            edgeAuth.staticTokenCloseDeadlineMillis(clock.currentTimeMillis()));
+                            edgeAuth.tokenCloseDeadlineMillis(a, clock.currentTimeMillis()));
                     armExpiry();
                 } else {
                     teardown(ErrorCode.CREDENTIAL_EXPIRED, "credential refresh rejected");

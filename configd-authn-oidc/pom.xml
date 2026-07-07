@@ -1,0 +1,60 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <parent>
+        <groupId>io.configd</groupId>
+        <artifactId>configd</artifactId>
+        <version>0.1.0-SNAPSHOT</version>
+    </parent>
+
+    <artifactId>configd-authn-oidc</artifactId>
+
+    <!--
+      OPTIONAL authenticator module: the OAuth2/OIDC resource-server provider. It is discovered by
+      ServiceLoader (META-INF/services/io.configd.common.auth.AuthenticatorFactory) when it is on the
+      runtime classpath and 'oidc' is named in configd.auth.providers. The core (configd-server /
+      configd-control-plane-api) never compile-depends on this module, so the Nimbus JOSE/JWT SDK - the
+      only heavy dependency here - stays out of core, exactly as the optional cloud KMS modules keep their
+      vendor SDKs out of configd-common. Nimbus 10.x is self-contained (BouncyCastle/Tink are optional and
+      unused for the RS256/ES256 JDK verification path), so this module adds no transitive runtime tree.
+    -->
+    <dependencies>
+        <dependency>
+            <groupId>io.configd</groupId>
+            <artifactId>configd-common</artifactId>
+            <version>${project.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>com.nimbusds</groupId>
+            <artifactId>nimbus-jose-jwt</artifactId>
+        </dependency>
+
+        <!-- Keycloak Testcontainers integration test (real IdP proof). Test-scope, and the IT itself is
+             guarded on -Dconfigd.it.containers=true so it does NOT run in the normal reactor - it needs
+             a Docker daemon and pulls the Keycloak image. Versions are pinned locally to this module. -->
+        <dependency>
+            <groupId>org.testcontainers</groupId>
+            <artifactId>testcontainers</artifactId>
+            <version>1.20.4</version>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>com.github.dasniko</groupId>
+            <artifactId>testcontainers-keycloak</artifactId>
+            <version>3.7.0</version>
+            <scope>test</scope>
+        </dependency>
+        <!-- The Keycloak admin client (used by the IT to roll signing keys) needs jackson-annotations >= 2.12
+             (for JsonKey), but a transitive drags in 2.10.3. Pin it to match the resolved databind/core 2.17.x
+             so the admin client's Jackson provider loads. Test-scope only. -->
+        <dependency>
+            <groupId>com.fasterxml.jackson.core</groupId>
+            <artifactId>jackson-annotations</artifactId>
+            <version>2.17.2</version>
+            <scope>test</scope>
+        </dependency>
+    </dependencies>
+</project>
