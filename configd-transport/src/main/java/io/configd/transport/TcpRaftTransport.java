@@ -17,6 +17,8 @@ import java.net.InetSocketAddress;
 import java.net.ServerSocket;
 import java.net.Socket;
 import java.net.SocketException;
+import java.security.cert.Certificate;
+import java.security.cert.X509Certificate;
 import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.ArrayBlockingQueue;
@@ -517,7 +519,7 @@ public final class TcpRaftTransport implements RaftTransportEndpoint {
                         }
                         return;
                     }
-                    pinnedIdentity = peerIdentityPolicy.resolve(resolveCertIdentity(ssl));
+                    pinnedIdentity = resolvePinnedIdentity(ssl);
                     if (pinnedIdentity == null) {
                         transportMetrics.onPeerIdentityRejected();
                         if (running.get()) {
@@ -644,6 +646,18 @@ public final class TcpRaftTransport implements RaftTransportEndpoint {
     }
 
     /**
+     * Resolves the peer's authorized {@link NodeId} from its verified certificate, per the policy's
+     * marker mode. RDN mode (default) reads the Subject-DN marker - the same call as before, so an RDN
+     * deployment is byte-identical. SAN-URI mode reads the peer cert's SAN URI entries.
+     */
+    private NodeId resolvePinnedIdentity(SSLSocket ssl) {
+        if (peerIdentityPolicy.usesSanUriMarker()) {
+            return peerIdentityPolicy.resolveFromSanUris(resolvePeerCertificate(ssl));
+        }
+        return peerIdentityPolicy.resolve(resolveCertIdentity(ssl));
+    }
+
+    /**
      * The verified peer-certificate Subject DN on an established mTLS socket, or {@code null} if no
      * verifiable peer certificate is present (fail-closed). Mirrors the edge plane's
      * {@code resolveCertIdentity}.
@@ -651,6 +665,19 @@ public final class TcpRaftTransport implements RaftTransportEndpoint {
     private static String resolveCertIdentity(SSLSocket ssl) {
         try {
             return ssl.getSession().getPeerPrincipal().getName();
+        } catch (Exception e) {
+            return null; // no verifiable peer certificate
+        }
+    }
+
+    /**
+     * The verified peer end-entity {@link X509Certificate} on an established mTLS socket, or {@code null}
+     * if none is present (fail-closed). Used only for SAN-URI marker resolution.
+     */
+    private static X509Certificate resolvePeerCertificate(SSLSocket ssl) {
+        try {
+            Certificate[] chain = ssl.getSession().getPeerCertificates();
+            return (chain != null && chain.length > 0 && chain[0] instanceof X509Certificate x) ? x : null;
         } catch (Exception e) {
             return null; // no verifiable peer certificate
         }
@@ -680,7 +707,9 @@ public final class TcpRaftTransport implements RaftTransportEndpoint {
      */
     private Socket createClientSocket(InetSocketAddress address) throws IOException {
         if (tlsManager != null) {
-            SSLContext ctx = tlsManager.currentContext();
+            // peerContext(): the Raft interior may use a SEPARATE peer trust anchor. Identical to
+            // currentContext() unless configd.raft.peerIdentity.trustStore is set (byte-identical then).
+            SSLContext ctx = tlsManager.peerContext();
             SSLSocketFactory factory = ctx.getSocketFactory();
             // Use the hostname (not InetAddress) so the JDK keeps the SNI name and performs
             // HTTPS endpoint identification against it (hostname verification).
@@ -737,7 +766,8 @@ public final class TcpRaftTransport implements RaftTransportEndpoint {
 
     private ServerSocket createServerSocket() throws IOException {
         if (tlsManager != null) {
-            SSLContext ctx = tlsManager.currentContext();
+            // peerContext(): the Raft interior may use a SEPARATE peer trust anchor (see createClientSocket).
+            SSLContext ctx = tlsManager.peerContext();
             SSLServerSocketFactory factory = ctx.getServerSocketFactory();
             SSLServerSocket serverSocket = (SSLServerSocket) factory.createServerSocket();
             TlsConfig tlsConfig = tlsManager.config();

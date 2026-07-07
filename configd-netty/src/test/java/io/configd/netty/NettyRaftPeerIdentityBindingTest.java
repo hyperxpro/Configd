@@ -52,10 +52,20 @@ class NettyRaftPeerIdentityBindingTest {
     private static Path node2Ks;
     private static Path clientKs;
     private static Path trustStore;
+    /** A SEPARATE peer trust store containing ONLY the real node leaves (node1, node2) - R3. */
+    private static Path peerTrust;
+    /** An impostor {@code CN=raft-node-1} with a DIFFERENT key, NOT in {@link #peerTrust} (T5). */
+    private static Path impostorKs;
+    /** A node cert whose identity is carried in a SAN URI (SPIFFE), not the CN (SAN-URI marker mode). */
+    private static Path sanNode2Ks;
     private static final char[] PASS = "changeit".toCharArray();
 
     private static final PeerIdentityPolicy ENFORCED = PeerIdentityPolicy.of("CN",
             Map.of("raft-node-1", NodeId.of(1), "raft-node-2", NodeId.of(2)));
+
+    /** SAN-URI marker allow-list: SPIFFE ids -> NodeId. Mirrors etcd {@code --peer-cert-allowed-hostname}. */
+    private static final PeerIdentityPolicy ENFORCED_SAN = PeerIdentityPolicy.ofSanUri(
+            Map.of("spiffe://configd/node-1", NodeId.of(1), "spiffe://configd/node-2", NodeId.of(2)));
 
     private final List<NettyRaftTransport> transports = new CopyOnWriteArrayList<>();
     private final List<SSLServerSocket> maliciousServers = new CopyOnWriteArrayList<>();
@@ -80,6 +90,22 @@ class NettyRaftPeerIdentityBindingTest {
         importCert(trustStore, "node1", node1Cert);
         importCert(trustStore, "node2", node2Cert);
         importCert(trustStore, "client", clientCert);
+
+        // R3 separate peer trust anchor: trusts ONLY the real node leaves. An impostor CN=raft-node-1
+        // (different key) is not in it, so it fails the peer handshake despite the matching CN (T5).
+        peerTrust = fixtureDir.resolve("peer-trust.p12");
+        impostorKs = fixtureDir.resolve("impostor-ks.p12");
+        importCert(peerTrust, "node1", node1Cert);
+        importCert(peerTrust, "node2", node2Cert);
+        genKeyPair(impostorKs, "impostor", "CN=raft-node-1,O=configd-test"); // same CN, different key
+
+        // SAN-URI marker fixture: identity in a SAN URI (SPIFFE), CN deliberately raft-client.
+        sanNode2Ks = fixtureDir.resolve("san-node2-ks.p12");
+        Path sanNode2Cert = fixtureDir.resolve("san-node2.pem");
+        genKeyPairWithSan(sanNode2Ks, "sannode2", "CN=raft-client,O=configd-test",
+                "uri:spiffe://configd/node-2,dns:localhost,ip:127.0.0.1");
+        exportCert(sanNode2Ks, "sannode2", sanNode2Cert);
+        importCert(trustStore, "sannode2", sanNode2Cert);
     }
 
     @AfterAll
@@ -221,6 +247,73 @@ class NettyRaftPeerIdentityBindingTest {
                 "an enforced allow-list without mTLS must fail loud at startup, never fail open");
     }
 
+    // ---- Test 7: separate peer CA (R3) - a client-CA cert with a matching CN fails the HANDSHAKE. ----
+
+    @Test
+    @Timeout(120)
+    void impostorNotInPeerTrustFailsHandshakeEvenWithMatchingCn() throws Exception {
+        AtomicInteger inbound = new AtomicInteger();
+        AtomicInteger rejections = new AtomicInteger();
+        // Server uses a SEPARATE peer trust anchor (node1+node2 only). The impostor's self-signed
+        // CN=raft-node-1 is not in it, so the peer handshake fails structurally before resolve() runs.
+        // (Netty closes the channel at the SSL layer on a failed handshake - no rejection metric, unlike
+        // the JDK transport which counts the handshake failure; both structurally admit no frame.)
+        int port = startServerWithPeerTrust(ENFORCED, peerTrust, inbound, rejections);
+
+        connectHandshakeWrite(impostorKs, 1, port);
+
+        assertNoInboundWithin(inbound, 1_000);
+        assertEquals(0, inbound.get(),
+                "a cert not chaining to the peer CA must never open a peer connection, even with a matching CN");
+    }
+
+    @Test
+    @Timeout(120)
+    void realNodeUnderSeparatePeerTrustIsDelivered() throws Exception {
+        // Control: under the same separate peer CA, a real node-2 cert (in the peer trust store) is delivered.
+        AtomicInteger inbound = new AtomicInteger();
+        AtomicInteger rejections = new AtomicInteger();
+        int port = startServerWithPeerTrust(ENFORCED, peerTrust, inbound, rejections);
+
+        connectHandshakeWrite(node2Ks, 2, port);
+
+        awaitInbound(inbound, 1, 3_000);
+        assertEquals(1, inbound.get(), "a peer trusted by the separate peer CA must still be delivered");
+        assertEquals(0, rejections.get());
+    }
+
+    // ---- Test 8: SAN-URI (SPIFFE) marker mode - identity carried in a SAN URI, not the CN. ----
+
+    @Test
+    @Timeout(120)
+    void sanUriMarkerAuthorizesPeerBySpiffeId() throws Exception {
+        AtomicInteger inbound = new AtomicInteger();
+        AtomicInteger rejections = new AtomicInteger();
+        int port = startServer(ENFORCED_SAN, inbound, rejections);
+
+        // sanNode2 carries spiffe://configd/node-2 in a SAN URI (CN is deliberately raft-client).
+        connectHandshakeWrite(sanNode2Ks, 2, port);
+
+        awaitInbound(inbound, 1, 3_000);
+        assertEquals(1, inbound.get(), "a peer whose SAN URI is in the allow-list must be delivered");
+        assertEquals(0, rejections.get());
+    }
+
+    @Test
+    @Timeout(120)
+    void sanUriMarkerRejectsCertWithoutSpiffeId() throws Exception {
+        AtomicInteger inbound = new AtomicInteger();
+        AtomicInteger rejections = new AtomicInteger();
+        int port = startServer(ENFORCED_SAN, inbound, rejections);
+
+        // The plain client cert has no SAN URI; under SAN-URI mode it resolves to null -> rejected + counted.
+        connectHandshakeWrite(clientKs, 2, port);
+
+        assertNoInboundWithin(inbound, 1_000);
+        assertEquals(0, inbound.get(), "a cert with no allow-listed SAN URI must not open a peer connection");
+        assertTrue(rejections.get() >= 1, "a missing SAN-URI marker must increment the mismatch counter");
+    }
+
     // ---- helpers ----
 
     private NettyRaftTransport startClientTransport(NodeId peerId, int peerPort, PeerIdentityPolicy policy,
@@ -272,14 +365,28 @@ class NettyRaftPeerIdentityBindingTest {
 
     private int startServer(PeerIdentityPolicy policy, AtomicInteger inbound, AtomicInteger rejections)
             throws Exception {
+        return startServer(policy, null, inbound, rejections);
+    }
+
+    /** Starts the server (node-1) with a SEPARATE peer trust store (R3) for the Raft interior. */
+    private int startServerWithPeerTrust(PeerIdentityPolicy policy, Path peerTrustStore,
+            AtomicInteger inbound, AtomicInteger rejections) throws Exception {
+        return startServer(policy, peerTrustStore, inbound, rejections);
+    }
+
+    private int startServer(PeerIdentityPolicy policy, Path peerTrustStore,
+            AtomicInteger inbound, AtomicInteger rejections) throws Exception {
         TlsConfig serverTls = new TlsConfig(node1Cert, node1Ks, trustStore, true,
                 List.of("TLS_AES_256_GCM_SHA384"), List.of("TLSv1.3"), PASS);
         RaftTransportMetrics metrics = new RaftTransportMetrics() {
             @Override public void onPeerIdentityRejected() { rejections.incrementAndGet(); }
         };
+        TlsManager tlsManager = peerTrustStore == null
+                ? new TlsManager(serverTls)
+                : new TlsManager(serverTls, peerTrustStore, PASS);
         NettyRaftTransport server = new NettyRaftTransport(
                 NodeId.of(1), new InetSocketAddress("127.0.0.1", 0), Map.of(),
-                new TlsManager(serverTls), msg -> inbound.incrementAndGet(),
+                tlsManager, msg -> inbound.incrementAndGet(),
                 policy, metrics);
         transports.add(server);
         server.start();
@@ -367,9 +474,14 @@ class NettyRaftPeerIdentityBindingTest {
     }
 
     private static void genKeyPair(Path keyStore, String alias, String dname) throws Exception {
+        genKeyPairWithSan(keyStore, alias, dname, "dns:localhost,ip:127.0.0.1");
+    }
+
+    private static void genKeyPairWithSan(Path keyStore, String alias, String dname, String san)
+            throws Exception {
         runKeytool("keytool", "-genkeypair", "-alias", alias,
                 "-keyalg", "EC", "-groupname", "secp256r1", "-sigalg", "SHA256withECDSA",
-                "-validity", "1", "-dname", dname, "-ext", "san=dns:localhost,ip:127.0.0.1",
+                "-validity", "1", "-dname", dname, "-ext", "san=" + san,
                 "-storetype", "PKCS12", "-keystore", keyStore.toString(),
                 "-storepass", "changeit", "-keypass", "changeit");
     }

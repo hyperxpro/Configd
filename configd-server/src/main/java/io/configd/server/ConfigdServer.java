@@ -429,7 +429,20 @@ public final class ConfigdServer {
             try {
                 TlsConfig tlsConfig = TlsConfig.mtls(
                         config.tlsCertPath(), config.tlsKeyPath(), config.tlsTrustStorePath());
-                tlsManager = new TlsManager(tlsConfig);
+                // Optional SEPARATE peer trust anchor for the Raft interior (etcd --peer-trusted-ca-file /
+                // ZooKeeper ssl.quorum.trustStore). When set, the Raft transport trusts the peer CA instead
+                // of the shared client/edge CA, so a client certificate that does not chain to the peer CA
+                // cannot complete the peer handshake. Unset -> the shared trust store (byte-identical).
+                String peerTrust = cfg.getString(PeerIdentityPolicy.TRUST_STORE_PROP).orElse("").trim();
+                if (peerTrust.isEmpty()) {
+                    tlsManager = new TlsManager(tlsConfig);
+                } else {
+                    char[] peerTrustPassword = cfg.getString(PeerIdentityPolicy.TRUST_STORE_PASSWORD_PROP)
+                            .map(String::toCharArray).orElse(null);
+                    tlsManager = new TlsManager(tlsConfig, Path.of(peerTrust), peerTrustPassword);
+                    System.out.println("  Raft peer CA : separate peer trust store ("
+                            + PeerIdentityPolicy.TRUST_STORE_PROP + ")");
+                }
                 sslContext = tlsManager.currentContext();
             } catch (Exception e) {
                 throw new RuntimeException("Failed to initialize TLS", e);
@@ -463,7 +476,12 @@ public final class ConfigdServer {
             // warning. The same policy gates the in-body leaderId/candidateId check in the per-group
             // RaftTransportAdapter (via tcpTransport.peerIdentityEnforced()), and both share the
             // ServerRaftTransportMetrics sink so all rejections increment configd_raft_peer_identity_mismatch.
-            PeerIdentityPolicy peerIdentityPolicy = PeerIdentityPolicy.fromSystemProperties();
+            PeerIdentityPolicy peerIdentityPolicy = PeerIdentityPolicy.fromConfig(cfg);
+            // Group B node-join gate: an authenticated cluster with TLS on the Raft interior MUST
+            // enumerate its peers. Without an allow-list, any client cert the CA trusts could forge a
+            // peer's senderId and join consensus, so refuse to boot. Auth-disabled or plaintext-interior
+            // deployments keep today's loud-warning open gate (this returns without throwing).
+            peerIdentityPolicy.requireEnforcedUnderAuth(isAuthEnabled(cfg, config), config.tlsEnabled());
             RaftTransportMetrics raftTransportMetrics = new ServerRaftTransportMetrics(configdMetrics);
             tcpTransport = new NettyRaftTransport(
                     config.nodeId(), bindAddr, peerAddresses, tlsManager, null,
@@ -1732,6 +1750,19 @@ public final class ConfigdServer {
                             + " the deployment (changing it requires a manual reshard).");
         }
         return shardCount;
+    }
+
+    /**
+     * Whether authentication is enabled for the node-join gate's fail-closed default: the pluggable
+     * {@code configd.auth.*} chain is configured (and is not the explicit auth-disabled {@code none}
+     * posture), OR the legacy static {@code --auth-token} is set. Mirrors the auth-wiring predicate below
+     * ({@code configuredProviders} / {@code authEnabled}) so the boot gate and the request-path auth agree
+     * on what "authenticated" means.
+     */
+    private static boolean isAuthEnabled(ConfigSource cfg, ServerConfig config) {
+        List<String> providers = AuthenticatorChain.configuredProviders(cfg);
+        boolean spiAuthEnabled = !providers.isEmpty() && !providers.equals(List.of("none"));
+        return spiAuthEnabled || config.authEnabled();
     }
 
     /**
