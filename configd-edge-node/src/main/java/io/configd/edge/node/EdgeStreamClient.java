@@ -2,6 +2,7 @@ package io.configd.edge.node;
 
 import io.configd.common.Clock;
 import io.configd.common.auth.Credential;
+import io.configd.common.auth.CredentialExpiryPolicy;
 import io.configd.distribution.wire.EdgeFrame;
 import io.configd.distribution.wire.EdgeFrameCodec;
 import io.configd.distribution.wire.WatchCursor;
@@ -104,6 +105,9 @@ public final class EdgeStreamClient implements AutoCloseable {
     /** Session-loop poll cadence (ms): the core tick / directive-drain period. */
     static final long TICK_POLL_MS = 50;
 
+    /** {@code tokenExpiresAtMillis} sentinel for a credential with no active expiry (static token / cert / none). */
+    static final long NO_EXPIRY = Long.MAX_VALUE;
+
     /** Sentinel posted by the reader when the connection ended. */
     private static final Object CLOSED = new Object();
     /** Sentinel pushed to the outbound queue to unblock the writer's blocking take(). */
@@ -127,6 +131,16 @@ public final class EdgeStreamClient implements AutoCloseable {
      * to before. Additive: a certificate-only edge configures none.
      */
     private final Credential authCredential;
+    /**
+     * Optional proactive token refresh (Gate 5): renew a re-presentable credential AHEAD of its expiry so
+     * a long-lived edge stream is never cut off at the server's hard-expiry close. Dormant unless supplied
+     * - a static token (no {@code exp}) or an mTLS-only edge sets {@code null}, which is byte-identical (no
+     * proactive {@code REFRESH_AUTH} on the wire). A cert cannot refresh in-band, so this is token-only.
+     * Gate 6 wires it once a token carries an OIDC {@code exp}.
+     */
+    private final ProactiveRefresh proactiveRefresh;
+    /** The current credential's absolute expiry (ms), advanced on each proactive refresh. Session-thread-only. */
+    private long tokenExpiresAtMillis;
     private final TlsManager tlsManager; // null = plaintext (test / single-node)
     private final long backoffBaseMs;
     private final long silenceWindowMs;
@@ -198,7 +212,26 @@ public final class EdgeStreamClient implements AutoCloseable {
                             long backoffBaseMs, int silenceFactor,
                             Clock clock, EdgeNodeMetrics metrics, Runnable rebootstrapHook,
                             Runnable terminalAction, boolean acceptFiltered, Credential authCredential) {
+        this(endpoints, edgeId, prefixes, tlsManager, backoffBaseMs, silenceFactor, clock, metrics,
+                rebootstrapHook, terminalAction, acceptFiltered, authCredential, null);
+    }
+
+    /**
+     * @param proactiveRefresh optional lead-time token refresh (Gate 5): renew a re-presentable credential
+     *                         ahead of its expiry via {@code REFRESH_AUTH}, so a long-lived stream is not
+     *                         cut off at the server's hard-expiry close. {@code null} (a static token /
+     *                         cert / no-auth edge) sends no proactive {@code REFRESH_AUTH} - byte-identical.
+     */
+    public EdgeStreamClient(List<InetSocketAddress> endpoints, String edgeId,
+                            List<String> prefixes, TlsManager tlsManager,
+                            long backoffBaseMs, int silenceFactor,
+                            Clock clock, EdgeNodeMetrics metrics, Runnable rebootstrapHook,
+                            Runnable terminalAction, boolean acceptFiltered, Credential authCredential,
+                            ProactiveRefresh proactiveRefresh) {
         this.authCredential = authCredential;
+        this.proactiveRefresh = proactiveRefresh;
+        this.tokenExpiresAtMillis =
+                (proactiveRefresh != null) ? proactiveRefresh.initialExpiresAtMillis() : NO_EXPIRY;
         this.endpoints = List.copyOf(Objects.requireNonNull(endpoints, "endpoints"));
         if (this.endpoints.isEmpty()) {
             throw new IllegalArgumentException("at least one endpoint is required");
@@ -389,6 +422,7 @@ public final class EdgeStreamClient implements AutoCloseable {
             long now = clock.currentTimeMillis();
             core.tick(now);
             metrics.syncFromCore(core, rebootstrapHook);
+            maybeProactiveRefresh(conn, now);
 
             // The core's recovery policy: resubscribe directives (heartbeat silence,
             // fatal ERROR_CLOSE, gap/DISCONNECTED/poison retries) end the connection
@@ -461,6 +495,78 @@ public final class EdgeStreamClient implements AutoCloseable {
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
         }
+    }
+
+    /**
+     * Sends a proactive {@code REFRESH_AUTH} once the current credential enters its lead-time window, then
+     * advances the tracked expiry from the fresh credential - so the server re-arms its expiry and a
+     * long-lived stream is never cut off at hard-expiry. Dormant (a no-op) unless a {@link ProactiveRefresh}
+     * was supplied and the credential carries an absolute expiry; a cert edge never enters here (a cert
+     * reconnects, it does not refresh in-band). Runs on the session thread (the core's single writer).
+     */
+    private void maybeProactiveRefresh(Connection conn, long now) {
+        if (proactiveRefresh == null
+                || !shouldRefreshNow(now, tokenExpiresAtMillis, proactiveRefresh.lifetimeMillis(),
+                        proactiveRefresh.policy())) {
+            return;
+        }
+        TokenRefresher.Refreshed refreshed = proactiveRefresh.refresher().refresh();
+        if (refreshed == null || refreshed.credential() == null) {
+            return; // the IdP round-trip failed this tick; retry on the next (still ahead of hard-expiry)
+        }
+        // REFRESH_AUTH rides the version-pin-exempt 0x04 auth wire, exactly like the connect-time AUTH.
+        byte[] frame = EdgeFrameCodec.encode(
+                new EdgeFrame.RefreshAuth(refreshed.credential()), EdgeFrameCodec.EDGE_WIRE_VERSION_V4);
+        if (conn.offerEncoded(frame)) {
+            // Advance our own expiry so we do not re-send until the NEW credential nears its expiry. If the
+            // offer was refused (queue full / disconnected) we retry next tick, still within the window.
+            tokenExpiresAtMillis = refreshed.expiresAtMillis();
+        }
+    }
+
+    /**
+     * Whether the credential has entered its lead-time refresh window: {@code now >= expiresAt - W}, where
+     * {@code W} is the token window for the credential's lifetime. Pure and side-effect-free (unit-tested);
+     * a {@link #NO_EXPIRY} expiry never refreshes.
+     */
+    static boolean shouldRefreshNow(long now, long expiresAtMillis, long lifetimeMillis,
+                                    CredentialExpiryPolicy policy) {
+        if (expiresAtMillis == NO_EXPIRY) {
+            return false;
+        }
+        long window = policy.tokenRefreshWindowMs(lifetimeMillis);
+        return now >= expiresAtMillis - window;
+    }
+
+    /**
+     * The lead-time token-refresh bundle: how to renew a re-presentable credential ahead of its expiry, and
+     * the window model that sizes "how far ahead". Supplied only for a refreshable token that carries an
+     * absolute expiry (Gate 6); otherwise the edge sends no proactive {@code REFRESH_AUTH}.
+     *
+     * @param refresher            produces a fresh credential + its new expiry, ahead of the current expiry
+     * @param initialExpiresAtMillis the connect-time credential's absolute expiry (ms since epoch)
+     * @param lifetimeMillis       the credential's total lifetime (ms), for window sizing
+     * @param policy               the lead-time window model (token fraction/floor/ceil)
+     */
+    public record ProactiveRefresh(TokenRefresher refresher, long initialExpiresAtMillis,
+                                   long lifetimeMillis, CredentialExpiryPolicy policy) {
+        public ProactiveRefresh {
+            Objects.requireNonNull(refresher, "refresher");
+            Objects.requireNonNull(policy, "policy");
+            if (lifetimeMillis <= 0) {
+                throw new IllegalArgumentException("lifetimeMillis must be > 0: " + lifetimeMillis);
+            }
+        }
+    }
+
+    /** Produces a fresh re-presentable credential + its new absolute expiry, ahead of the current one's expiry. */
+    @FunctionalInterface
+    public interface TokenRefresher {
+        /** @return a fresh credential + its new absolute expiry (ms), or {@code null} if renewal failed this tick. */
+        Refreshed refresh();
+
+        /** A refreshed credential and its new absolute expiry (ms since epoch). */
+        record Refreshed(Credential credential, long expiresAtMillis) { }
     }
 
     // ---- Connect + subscribe (bounded) ----
@@ -602,6 +708,15 @@ public final class EdgeStreamClient implements AutoCloseable {
                 return false;
             }
             return outbound.offer(encoded);
+        }
+
+        /**
+         * Non-blocking offer of ALREADY-encoded wire bytes (the version-pin-exempt 0x04 auth frames, which
+         * must not be re-stamped with the connection's business version). A full queue returns
+         * {@code false}; the caller retries on the next tick.
+         */
+        boolean offerEncoded(byte[] encoded) {
+            return alive.get() && outbound.offer(encoded);
         }
 
         private void readerLoop() {

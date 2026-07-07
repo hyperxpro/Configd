@@ -168,9 +168,17 @@ public final class FanOutServer implements FanOutEndpoint {
     private final EdgeAuthConfig edgeAuth;
 
     /**
-     * The one-shot token-TTL expiry scheduler, shared by all token connections; {@code null} when
-     * token auth is off (no allocation on the byte-identical path). A fired task closes the socket, so
-     * the blocking reader unwinds into the teardown path.
+     * The edge client-cert validity gate ({@link EdgeCertGate#OFF} = no online revocation + no active cert
+     * expiry, byte-identical). Applied at admission on BOTH the mTLS-only path and the token-edge cert path.
+     * Never constructed for the Raft interior, so the {@code exemptInterNode} invariant holds by construction.
+     */
+    private final EdgeCertGate certGate;
+
+    /**
+     * The one-shot credential-expiry scheduler, shared by all connections that arm an expiry (token TTL, or
+     * mTLS cert {@code notAfter} when {@link EdgeCertGate#enforcesCertExpiry()}); {@code null} when neither
+     * is in play (no allocation on the byte-identical path). A fired task closes the socket, so the blocking
+     * reader unwinds into the teardown path.
      */
     private final ScheduledExecutorService authExpiryScheduler;
 
@@ -251,7 +259,8 @@ public final class FanOutServer implements FanOutEndpoint {
         this(Map.of(0, java.util.Objects.requireNonNull(source, "source")),
                 Map.of(0, java.util.Objects.requireNonNull(replaySource, "replaySource")),
                 new int[]{0}, SINGLE_SHARD, WatchCursor.INITIAL_TOPOLOGY_EPOCH, bindAddress, tlsManager,
-                config, transportQueueFrames, maxSessions, governor, metrics, clock, authorizer, null);
+                config, transportQueueFrames, maxSessions, governor, metrics, clock, authorizer, null,
+                EdgeCertGate.OFF);
     }
 
     /**
@@ -277,7 +286,8 @@ public final class FanOutServer implements FanOutEndpoint {
                         RegistryFanOutSessionMetrics metrics,
                         Clock clock,
                         WatchAuthorizer authorizer,
-                        EdgeAuthConfig edgeAuth) {
+                        EdgeAuthConfig edgeAuth,
+                        EdgeCertGate certGate) {
         this.shardSources = Map.copyOf(java.util.Objects.requireNonNull(shardSources, "shardSources"));
         this.shardReplaySources =
                 Map.copyOf(java.util.Objects.requireNonNull(shardReplaySources, "shardReplaySources"));
@@ -304,7 +314,10 @@ public final class FanOutServer implements FanOutEndpoint {
         this.clock = java.util.Objects.requireNonNull(clock, "clock");
         this.authorizer = authorizer; // nullable => no watch capability => driver fails closed
         this.edgeAuth = edgeAuth; // nullable => mTLS-only / plaintext => byte-identical to the pre-token edge
-        this.authExpiryScheduler = (edgeAuth != null)
+        this.certGate = java.util.Objects.requireNonNullElse(certGate, EdgeCertGate.OFF);
+        // Allocate the expiry scheduler only when something can arm an expiry: token auth, or mTLS cert
+        // notAfter enforcement. Neither in play => null => no thread => byte-identical.
+        this.authExpiryScheduler = (edgeAuth != null || this.certGate.enforcesCertExpiry())
                 ? Executors.newSingleThreadScheduledExecutor(r -> {
                     Thread t = new Thread(r, "edge-jdk-auth-expiry");
                     t.setDaemon(true);
@@ -390,6 +403,7 @@ public final class FanOutServer implements FanOutEndpoint {
     private void handleConnection(Socket socket) {
         String edgeIdentity;
         boolean authGated;
+        long certCloseDeadline = AuthState.NO_EXPIRY;
         try {
             if (socket instanceof SSLSocket ssl) {
                 // Bounded handshake (no deadline-less blocking).
@@ -405,21 +419,35 @@ public final class FanOutServer implements FanOutEndpoint {
                 List<X509Certificate> chain = verifiedPeerChain(socket);
                 if (chain != null) {
                     AuthResult result = edgeAuth.authenticateClientCertificate(chain);
-                    if (result instanceof AuthResult.Authenticated a) {
-                        edgeIdentity = a.principal().id();
-                        authGated = false;
-                    } else {
+                    if (!(result instanceof AuthResult.Authenticated a)) {
                         LOG.fine(() -> "FanOutServer client certificate rejected");
                         metrics.onSessionClosed(ErrorCode.AUTH_FAIL.name());
                         return;
                     }
+                    if (!certGate.admit(chain)) {
+                        LOG.fine(() -> "FanOutServer client certificate revoked/unverifiable");
+                        metrics.onSessionClosed(ErrorCode.AUTH_FAIL.name());
+                        return;
+                    }
+                    edgeIdentity = a.principal().id();
+                    authGated = false;
+                    certCloseDeadline = certGate.certCloseDeadlineMillis(chain);
                 } else {
                     edgeIdentity = null; // established by the AUTH frame the reader awaits
                     authGated = true;
                 }
             } else {
+                // mTLS-only / plaintext: revocation + cert-notAfter enforcement apply to the client cert
+                // (if any); a plaintext connection has no chain, so both are no-ops (byte-identical).
+                List<X509Certificate> chain = verifiedPeerChain(socket);
+                if (chain != null && !certGate.admit(chain)) {
+                    LOG.fine(() -> "FanOutServer client certificate revoked/unverifiable");
+                    metrics.onSessionClosed(ErrorCode.AUTH_FAIL.name());
+                    return;
+                }
                 edgeIdentity = resolveEdgeIdentity(socket); // throws over mTLS if no verifiable cert
                 authGated = false;
+                certCloseDeadline = certGate.certCloseDeadlineMillis(chain);
             }
         } catch (IOException e) {
             // A failed/rejected mTLS handshake (no cert, wrong CA) lands here. AUTH_FAIL.
@@ -428,7 +456,7 @@ public final class FanOutServer implements FanOutEndpoint {
             return;
         }
 
-        Connection conn = new Connection(socket, edgeIdentity, authGated);
+        Connection conn = new Connection(socket, edgeIdentity, authGated, certCloseDeadline);
         conn.run();
     }
 
@@ -553,6 +581,12 @@ public final class FanOutServer implements FanOutEndpoint {
          * is byte-identical to the pre-token reader.
          */
         private final boolean authGated;
+        /**
+         * The wall-clock close deadline for an mTLS cert connection's {@code notAfter} enforcement, or
+         * {@link AuthState#NO_EXPIRY} when disabled (byte-identical). Armed once, eagerly, in {@link #run()}
+         * for a cert connection (the token path arms its own deadline on the AUTH frame instead).
+         */
+        private final long certCloseDeadlineMillis;
         private final ArrayBlockingQueue<byte[]> outbound;
         private final AtomicBoolean alive = new AtomicBoolean(true);
 
@@ -596,10 +630,11 @@ public final class FanOutServer implements FanOutEndpoint {
         /** Reader-thread-only: whether the connection-type-deciding first inbound frame has been routed. */
         private boolean firstFrameRouted;
 
-        Connection(Socket socket, String edgeIdentity, boolean authGated) {
+        Connection(Socket socket, String edgeIdentity, boolean authGated, long certCloseDeadlineMillis) {
             this.socket = socket;
             this.edgeIdentity = edgeIdentity;
             this.authGated = authGated;
+            this.certCloseDeadlineMillis = certCloseDeadlineMillis;
             this.outbound = new ArrayBlockingQueue<>(transportQueueFrames);
         }
 
@@ -609,6 +644,7 @@ public final class FanOutServer implements FanOutEndpoint {
                     // Cert / non-token: identity known at the handshake; start eagerly with empty roles
                     // (the ACL resolves the DN's config-bound roles internally) - byte-identical.
                     startSessionThreads(edgeIdentity, Set.of());
+                    armCertExpiry(); // mTLS cert notAfter enforcement (NO_EXPIRY = off = no-op)
                 }
                 // A token-gated connection starts its session lazily when its AUTH frame authenticates.
                 readerLoop(); // runs on the accept-submitted virtual thread
@@ -740,7 +776,7 @@ public final class FanOutServer implements FanOutEndpoint {
                 if (result instanceof AuthResult.Authenticated a) {
                     Principal principal = a.principal();
                     authState = AuthState.authenticated(principal,
-                            clock.currentTimeMillis() + edgeAuth.tokenTtlMs());
+                            edgeAuth.staticTokenCloseDeadlineMillis(clock.currentTimeMillis()));
                     startSessionThreads(principal.id(), principal.roles());
                     armExpiry();
                 } else {
@@ -777,7 +813,7 @@ public final class FanOutServer implements FanOutEndpoint {
                         return;
                     }
                     authState = AuthState.authenticated(a.principal(),
-                            clock.currentTimeMillis() + edgeAuth.tokenTtlMs());
+                            edgeAuth.staticTokenCloseDeadlineMillis(clock.currentTimeMillis()));
                     armExpiry();
                 } else {
                     teardown(ErrorCode.CREDENTIAL_EXPIRED, "credential refresh rejected");
@@ -789,14 +825,35 @@ public final class FanOutServer implements FanOutEndpoint {
         }
 
         /**
-         * Arms (or re-arms) the token-TTL expiry one-shot: a fired task tears the connection down with
-         * the on-wire {@code CREDENTIAL_EXPIRED}, which closes the socket and unwinds the blocking reader.
+         * Arms (or re-arms) the token-expiry one-shot from the connection's {@link AuthState} close
+         * deadline: a fired task tears the connection down with the on-wire {@code CREDENTIAL_EXPIRED},
+         * which closes the socket and unwinds the blocking reader. The delay is
+         * {@code max(0, deadline - now)}; a {@link AuthState#NO_EXPIRY} deadline arms nothing.
          */
         private void armExpiry() {
             cancelExpiry();
+            if (!(authState instanceof AuthState.Authenticated a) || a.expiresAtMillis() == AuthState.NO_EXPIRY) {
+                return;
+            }
+            long delay = Math.max(0L, a.expiresAtMillis() - clock.currentTimeMillis());
             expiryTask = authExpiryScheduler.schedule(
                     () -> teardown(ErrorCode.CREDENTIAL_EXPIRED, "token credential expired"),
-                    edgeAuth.tokenTtlMs(), TimeUnit.MILLISECONDS);
+                    delay, TimeUnit.MILLISECONDS);
+        }
+
+        /**
+         * Arms the mTLS cert-{@code notAfter} expiry one-shot for a cert connection: a fired task tears the
+         * connection down {@code CREDENTIAL_EXPIRED} (a reconnect signal - a cert cannot refresh in-band).
+         * {@link AuthState#NO_EXPIRY} (enforcement off) arms nothing - byte-identical to Gate 3.
+         */
+        private void armCertExpiry() {
+            if (certCloseDeadlineMillis == AuthState.NO_EXPIRY) {
+                return;
+            }
+            long delay = Math.max(0L, certCloseDeadlineMillis - clock.currentTimeMillis());
+            expiryTask = authExpiryScheduler.schedule(
+                    () -> teardown(ErrorCode.CREDENTIAL_EXPIRED, EdgeCertGate.CERT_EXPIRED_MESSAGE),
+                    delay, TimeUnit.MILLISECONDS);
         }
 
         private void cancelExpiry() {

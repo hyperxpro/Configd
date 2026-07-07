@@ -17,7 +17,10 @@ public sealed interface AuthState permits AuthState.Unauthenticated, AuthState.A
     /** No credential accepted yet: only an {@code AUTH} frame may be admitted; a pre-auth frame ceiling is in force. */
     AuthState UNAUTHENTICATED = new Unauthenticated();
 
-    /** {@code expiresAtMillis} sentinel for a credential with no active expiry (the mTLS path in Gate 3). */
+    /**
+     * {@code expiresAtMillis} sentinel for a connection with no active expiry (a cert connection when
+     * {@code enforceCertNotAfter} is off - the byte-identical Gate-3 path). No expiry one-shot is armed.
+     */
     long NO_EXPIRY = Long.MAX_VALUE;
 
     static AuthState authenticated(Principal principal, long expiresAtMillis) {
@@ -33,7 +36,10 @@ public sealed interface AuthState permits AuthState.Unauthenticated, AuthState.A
 
     /**
      * @param principal      the verified caller identity (never carries the credential)
-     * @param expiresAtMillis wall-clock expiry, or {@link #NO_EXPIRY} for none
+     * @param expiresAtMillis the wall-clock time (ms since epoch) at which the server closes this
+     *                        connection for credential expiry, or {@link #NO_EXPIRY} for none. For a
+     *                        static token this is {@code now + defaultTokenTtlMs} (server clock, no
+     *                        leeway); for an enforced cert it is {@code notAfter + leeway}.
      */
     record Authenticated(Principal principal, long expiresAtMillis) implements AuthState {
     }

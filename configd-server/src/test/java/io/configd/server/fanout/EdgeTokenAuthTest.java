@@ -409,11 +409,11 @@ class EdgeTokenAuthTest {
                 ? new NettyFanOutServer(sources, replays, new int[]{0}, SINGLE_SHARD,
                         WatchCursor.INITIAL_TOPOLOGY_EPOCH, bind, null, config,
                         FanOutServer.DEFAULT_TRANSPORT_QUEUE_FRAMES, FanOutServer.DEFAULT_MAX_SESSIONS,
-                        governor, metrics, clock, authorizer, edgeAuth)
+                        governor, metrics, clock, authorizer, edgeAuth, EdgeCertGate.OFF)
                 : new FanOutServer(sources, replays, new int[]{0}, SINGLE_SHARD,
                         WatchCursor.INITIAL_TOPOLOGY_EPOCH, bind, null, config,
                         FanOutServer.DEFAULT_TRANSPORT_QUEUE_FRAMES, FanOutServer.DEFAULT_MAX_SESSIONS,
-                        governor, metrics, clock, authorizer, edgeAuth);
+                        governor, metrics, clock, authorizer, edgeAuth, EdgeCertGate.OFF);
         server.start();
         return server.localPort();
     }

@@ -26,17 +26,27 @@ import java.util.Set;
  * identity-only principal (roles resolved downstream by the {@code AclService} from the Subject DN),
  * so the token frame is purely additive and mTLS clients stay byte-identical.
  *
- * @param chain               the shared authenticator chain (bearer/basic) for {@code AUTH} frames
+ * <h2>Token expiry (Gate 5)</h2>
+ * A static bearer/basic token carries no authority-issued {@code exp} today, so its expiry is a
+ * server-computed session-lifetime cap: the connection closes at {@code now + defaultTokenTtlMs},
+ * measured on this server's own clock (no clock-skew leeway - the leeway is for a credential whose
+ * absolute expiry was issued by an external authority). This is byte-identical to the pre-Gate-5 fixed
+ * TTL. When Gate 6 feeds an OIDC {@code exp} the token path will instead close at {@code exp + leeway}.
+ * A {@code REFRESH_AUTH} re-arms the cap. Certificate expiry ({@code notAfter}) and online revocation are
+ * a separate, token-independent concern owned by {@link EdgeCertGate}.
+ *
+ * @param chain                the shared authenticator chain (bearer/basic) for {@code AUTH} frames
  * @param preAuthMaxFrameBytes the declared-length ceiling enforced by the frame decoder while a token
  *                             connection is unauthenticated ({@code configd.edge.preAuthMaxFrameBytes})
  * @param maxAuthTokenBytes    the receive-side cap on a bearer token's UTF-8 length, enforced by the
  *                             gate before the (possibly expensive) credential verification runs
  *                             ({@code configd.edge.maxAuthTokenBytes})
- * @param tokenTtlMs           the placeholder session lifetime armed on a successful token auth. Gate 5
- *                             replaces this fixed TTL with the real credential-lead-time model
+ * @param defaultTokenTtlMs    the session lifetime armed on a static token auth (a bearer/basic credential
+ *                             with no authority-issued expiry); {@code now + defaultTokenTtlMs} is the close
+ *                             deadline, on the server clock, no skew leeway
  */
 public record EdgeAuthConfig(AuthenticatorChain chain, int preAuthMaxFrameBytes,
-                             int maxAuthTokenBytes, long tokenTtlMs) {
+                             int maxAuthTokenBytes, long defaultTokenTtlMs) {
 
     /** Fixed cap on a Basic username's UTF-8 length (a policy bound, not a wire constant). */
     static final int MAX_BASIC_USERNAME_BYTES = 256;
@@ -59,8 +69,8 @@ public record EdgeAuthConfig(AuthenticatorChain chain, int preAuthMaxFrameBytes,
         if (maxAuthTokenBytes <= 0) {
             throw new IllegalArgumentException("maxAuthTokenBytes must be positive: " + maxAuthTokenBytes);
         }
-        if (tokenTtlMs <= 0) {
-            throw new IllegalArgumentException("tokenTtlMs must be positive: " + tokenTtlMs);
+        if (defaultTokenTtlMs <= 0) {
+            throw new IllegalArgumentException("defaultTokenTtlMs must be positive: " + defaultTokenTtlMs);
         }
     }
 
@@ -72,6 +82,16 @@ public record EdgeAuthConfig(AuthenticatorChain chain, int preAuthMaxFrameBytes,
     /** Authenticates an already-verified peer certificate chain to its identity-only principal. */
     AuthResult authenticateClientCertificate(List<X509Certificate> verifiedChain) {
         return EDGE_MTLS.authenticate(new Credential.ClientCertificate(verifiedChain));
+    }
+
+    /**
+     * The wall-clock time at which a static token connection is closed for credential expiry:
+     * {@code nowMillis + defaultTokenTtlMs}. Measured on the server clock (no skew leeway), so it is
+     * byte-identical to the pre-Gate-5 fixed TTL. A {@code REFRESH_AUTH} re-computes it from the new
+     * {@code now}.
+     */
+    long staticTokenCloseDeadlineMillis(long nowMillis) {
+        return nowMillis + defaultTokenTtlMs;
     }
 
     /**

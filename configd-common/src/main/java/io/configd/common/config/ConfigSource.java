@@ -68,6 +68,28 @@ public interface ConfigSource {
     }
 
     /**
+     * As {@link #getInt} but for a finite double (used for the fractional lead-time window knobs). A
+     * present but non-numeric, NaN, or infinite value is a {@link ConfigException} (fail-closed): a typo
+     * in a fractional knob must fail the boot, not silently fall back to the default.
+     */
+    default double getDouble(String key, double defaultValue) {
+        Optional<String> v = getString(key);
+        if (v.isEmpty()) {
+            return defaultValue;
+        }
+        String s = v.get().trim();
+        try {
+            double d = Double.parseDouble(s);
+            if (!Double.isFinite(d)) {
+                throw new ConfigException("configuration key '" + key + "' must be a finite number, got: '" + s + "'");
+            }
+            return d;
+        } catch (NumberFormatException e) {
+            throw new ConfigException("configuration key '" + key + "' must be a number, got: '" + s + "'", e);
+        }
+    }
+
+    /**
      * The value for {@code key} as a boolean ({@code true}/{@code false}, case-insensitive), or
      * {@code defaultValue} if absent. A present value that is neither is a {@link ConfigException} - this
      * accessor is STRICT so a garbage boolean fails the boot. Flags whose historical semantics accept any

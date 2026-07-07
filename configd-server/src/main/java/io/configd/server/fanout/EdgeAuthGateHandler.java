@@ -57,7 +57,11 @@ import java.util.concurrent.TimeUnit;
  */
 final class EdgeAuthGateHandler extends ChannelInboundHandlerAdapter {
 
+    /** CREDENTIAL_EXPIRED close reason for a token whose lifetime elapsed (re-authenticate to resume). */
+    private static final String TOKEN_EXPIRED_MESSAGE = "token credential expired";
+
     private final EdgeAuthConfig auth;
+    private final EdgeCertGate certGate;
     private final RegistryFanOutSessionMetrics metrics;
     private final Clock clock;
     private final int firstFrameDeadlineMs;
@@ -69,8 +73,10 @@ final class EdgeAuthGateHandler extends ChannelInboundHandlerAdapter {
     /** Event-loop-only: whether an {@link EdgeAuthenticated} has been fired (post-auth teardown routing). */
     private boolean authenticated;
 
-    EdgeAuthGateHandler(EdgeAuthConfig auth, RegistryFanOutSessionMetrics metrics, Clock clock) {
+    EdgeAuthGateHandler(EdgeAuthConfig auth, EdgeCertGate certGate,
+                        RegistryFanOutSessionMetrics metrics, Clock clock) {
         this.auth = auth;
+        this.certGate = certGate;
         this.metrics = metrics;
         this.clock = clock;
         this.firstFrameDeadlineMs = FanOutServer.firstFrameDeadlineMs();
@@ -130,7 +136,7 @@ final class EdgeAuthGateHandler extends ChannelInboundHandlerAdapter {
     @Override
     public void exceptionCaught(ChannelHandlerContext ctx, Throwable cause) {
         AuthState state = ctx.channel().attr(ByteToEdgeFrameDecoder.AUTH_STATE).get();
-        EdgeFrameCodec.CodecException ce = asCodecException(cause);
+        EdgeFrameCodec.CodecException ce = CodecExceptions.unwrap(cause);
         if (ce != null && (state == null || !state.isAuthenticated())) {
             // A pre-auth decode failure (e.g. the decoder's pre-auth frame ceiling, which the decoder
             // wraps in a Netty DecoderException) - close with a clean ERROR_CLOSE bye + the sessions_closed
@@ -143,27 +149,28 @@ final class EdgeAuthGateHandler extends ChannelInboundHandlerAdapter {
         ctx.fireExceptionCaught(cause); // post-auth (or non-codec): FanOutConnection owns teardown
     }
 
-    /** Unwraps a {@link EdgeFrameCodec.CodecException} from the cause chain (Netty wraps it in a DecoderException). */
-    private static EdgeFrameCodec.CodecException asCodecException(Throwable t) {
-        for (Throwable c = t; c != null && c != c.getCause(); c = c.getCause()) {
-            if (c instanceof EdgeFrameCodec.CodecException ce) {
-                return ce;
-            }
-        }
-        return null;
-    }
-
     // -----------------------------------------------------------------------
     // handshake certificate path (byte-identical identity to the pre-token edge)
     // -----------------------------------------------------------------------
 
     private void authenticateCertificate(ChannelHandlerContext ctx, List<X509Certificate> chain) {
         AuthResult result = auth.authenticateClientCertificate(chain);
-        if (result instanceof AuthResult.Authenticated a) {
-            install(ctx, a.principal(), AuthState.NO_EXPIRY); // no active expiry for the cert path
-        } else {
+        if (!(result instanceof AuthResult.Authenticated a)) {
             closePreAuth(ctx, ErrorCode.AUTH_FAIL, "edge client certificate rejected");
+            return;
         }
+        if (!certGate.admit(chain)) {
+            // Online revocation rejected the edge client cert (revoked, or unreachable-under-strict). This
+            // is the edge/client plane only; the Raft interior is never checked (RevocationPolicy invariant).
+            closePreAuth(ctx, ErrorCode.AUTH_FAIL, "edge client certificate revoked or unverifiable");
+            return;
+        }
+        // Mid-connection cert-expiry: NO_EXPIRY (enforcement off) is byte-identical to Gate 3; otherwise a
+        // close at notAfter + leeway. A cert cannot refresh in-band, so the CREDENTIAL_EXPIRED close is a
+        // reconnect signal - the client re-handshakes with its rotated cert.
+        long certDeadline = certGate.certCloseDeadlineMillis(chain);
+        install(ctx, a.principal(), certDeadline,
+                certDeadline == AuthState.NO_EXPIRY ? null : EdgeCertGate.CERT_EXPIRED_MESSAGE);
     }
 
     /** The verified peer certificate chain, or {@code null} if the peer presented none (certless). */
@@ -200,8 +207,8 @@ final class EdgeAuthGateHandler extends ChannelInboundHandlerAdapter {
             }
             AuthResult result = auth.resolveFrameCredential(credential);
             if (result instanceof AuthResult.Authenticated a) {
-                install(ctx, a.principal(), clock.currentTimeMillis() + auth.tokenTtlMs());
-                armExpiry(ctx);
+                install(ctx, a.principal(),
+                        auth.staticTokenCloseDeadlineMillis(clock.currentTimeMillis()), TOKEN_EXPIRED_MESSAGE);
             } else {
                 closePreAuth(ctx, ErrorCode.AUTH_FAIL, "authentication failed");
             }
@@ -237,8 +244,8 @@ final class EdgeAuthGateHandler extends ChannelInboundHandlerAdapter {
                     // Re-arm the session lifetime; the identity is NOT re-bound in v1.
                     ctx.channel().attr(ByteToEdgeFrameDecoder.AUTH_STATE)
                             .set(AuthState.authenticated(a.principal(),
-                                    clock.currentTimeMillis() + auth.tokenTtlMs()));
-                    armExpiry(ctx);
+                                    auth.staticTokenCloseDeadlineMillis(clock.currentTimeMillis())));
+                    armExpiry(ctx, TOKEN_EXPIRED_MESSAGE);
                 } else {
                     closePostAuth(ctx, ErrorCode.CREDENTIAL_EXPIRED, "credential refresh rejected");
                 }
@@ -249,12 +256,20 @@ final class EdgeAuthGateHandler extends ChannelInboundHandlerAdapter {
         }
     }
 
-    /** Installs the authenticated state and fires the session-start event exactly once. */
-    private void install(ChannelHandlerContext ctx, Principal principal, long expiresAtMillis) {
+    /**
+     * Installs the authenticated state, arms the expiry one-shot (unless {@code expiresAtMillis} is
+     * {@link AuthState#NO_EXPIRY}), and fires the session-start event exactly once.
+     *
+     * @param expiryReason the CREDENTIAL_EXPIRED close reason to use if the expiry fires (ignored when
+     *                     {@code expiresAtMillis == NO_EXPIRY})
+     */
+    private void install(ChannelHandlerContext ctx, Principal principal, long expiresAtMillis,
+                         String expiryReason) {
         cancelPreAuthDeadline();
         ctx.channel().attr(ByteToEdgeFrameDecoder.AUTH_STATE)
                 .set(AuthState.authenticated(principal, expiresAtMillis));
         authenticated = true;
+        armExpiry(ctx, expiryReason);
         ctx.fireUserEventTriggered(new EdgeAuthenticated(principal));
     }
 
@@ -262,13 +277,24 @@ final class EdgeAuthGateHandler extends ChannelInboundHandlerAdapter {
     // expiry + pre-auth deadline (event-loop scheduled)
     // -----------------------------------------------------------------------
 
-    private void armExpiry(ChannelHandlerContext ctx) {
+    /**
+     * Arms (or re-arms) the credential-expiry one-shot from the connection's {@link AuthState} close
+     * deadline. A {@link AuthState#NO_EXPIRY} deadline (a cert connection with {@code enforceCertNotAfter}
+     * off) arms nothing - byte-identical to Gate 3. The delay is {@code max(0, deadline - now)}, so a
+     * clock already past the deadline fires promptly rather than scheduling a negative delay.
+     */
+    private void armExpiry(ChannelHandlerContext ctx, String reason) {
         cancelExpiry();
+        AuthState state = ctx.channel().attr(ByteToEdgeFrameDecoder.AUTH_STATE).get();
+        if (!(state instanceof AuthState.Authenticated a) || a.expiresAtMillis() == AuthState.NO_EXPIRY) {
+            return;
+        }
+        long delay = Math.max(0L, a.expiresAtMillis() - clock.currentTimeMillis());
         expiry = ctx.executor().schedule(() -> {
             if (ctx.channel().isActive()) {
-                closePostAuth(ctx, ErrorCode.CREDENTIAL_EXPIRED, "token credential expired");
+                closePostAuth(ctx, ErrorCode.CREDENTIAL_EXPIRED, reason);
             }
-        }, auth.tokenTtlMs(), TimeUnit.MILLISECONDS);
+        }, delay, TimeUnit.MILLISECONDS);
     }
 
     private void cancelExpiry() {

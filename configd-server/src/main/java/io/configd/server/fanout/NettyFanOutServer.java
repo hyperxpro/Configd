@@ -36,6 +36,10 @@ import javax.net.ssl.SSLContext;
 import javax.net.ssl.SSLEngine;
 import java.io.IOException;
 import java.net.InetSocketAddress;
+import java.security.cert.Certificate;
+import java.security.cert.X509Certificate;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
@@ -129,6 +133,13 @@ public final class NettyFanOutServer implements FanOutEndpoint {
      */
     private final EdgeAuthConfig edgeAuth;
 
+    /**
+     * The edge client-cert validity gate ({@link EdgeCertGate#OFF} = no online revocation + no active cert
+     * expiry, byte-identical). Applied at admission on BOTH the mTLS-only path and the token-edge cert path.
+     * Never constructed for the Raft interior, so the {@code exemptInterNode} invariant holds by construction.
+     */
+    private final EdgeCertGate certGate;
+
     private final NettyTransport.Selection transport;
     private final AtomicBoolean running = new AtomicBoolean(false);
     /** Live connections INCLUDING mid-handshake (the bound is applied before the handshake). */
@@ -199,7 +210,8 @@ public final class NettyFanOutServer implements FanOutEndpoint {
         this(Map.of(0, Objects.requireNonNull(source, "source")),
                 Map.of(0, Objects.requireNonNull(replaySource, "replaySource")),
                 new int[]{0}, SINGLE_SHARD, WatchCursor.INITIAL_TOPOLOGY_EPOCH, bindAddress, tlsManager,
-                config, transportQueueFrames, maxSessions, governor, metrics, clock, authorizer, null);
+                config, transportQueueFrames, maxSessions, governor, metrics, clock, authorizer, null,
+                EdgeCertGate.OFF);
     }
 
     /**
@@ -226,7 +238,8 @@ public final class NettyFanOutServer implements FanOutEndpoint {
                              RegistryFanOutSessionMetrics metrics,
                              Clock clock,
                              WatchAuthorizer authorizer,
-                             EdgeAuthConfig edgeAuth) {
+                             EdgeAuthConfig edgeAuth,
+                             EdgeCertGate certGate) {
         this.shardSources = Map.copyOf(Objects.requireNonNull(shardSources, "shardSources"));
         this.shardReplaySources = Map.copyOf(Objects.requireNonNull(shardReplaySources, "shardReplaySources"));
         this.allGids = Objects.requireNonNull(allGids, "allGids").clone();
@@ -255,6 +268,7 @@ public final class NettyFanOutServer implements FanOutEndpoint {
         this.transport = NettyTransport.select();
         this.authorizer = authorizer; // nullable => no watch capability => driver fails closed
         this.edgeAuth = edgeAuth; // nullable => mTLS-only / plaintext => byte-identical to the pre-token edge
+        this.certGate = Objects.requireNonNullElse(certGate, EdgeCertGate.OFF);
     }
 
     @Override
@@ -301,7 +315,7 @@ public final class NettyFanOutServer implements FanOutEndpoint {
                                 : new ByteToEdgeFrameDecoder());
                         ch.pipeline().addLast(new EdgeFrameToByteEncoder(() -> conn.wireVersion));
                         if (edgeAuth != null) {
-                            ch.pipeline().addLast(new EdgeAuthGateHandler(edgeAuth, metrics, clock));
+                            ch.pipeline().addLast(new EdgeAuthGateHandler(edgeAuth, certGate, metrics, clock));
                         }
                         ch.pipeline().addLast(conn);
                     }
@@ -408,6 +422,15 @@ public final class NettyFanOutServer implements FanOutEndpoint {
          */
         private ScheduledFuture<?> firstFrameDeadline;
 
+        /**
+         * The mTLS-only cert-{@code notAfter} expiry one-shot, armed post-handshake when
+         * {@code enforceCertNotAfter} is on (the token-edge cert path is instead handled by the
+         * {@code EdgeAuthGateHandler}). Event-loop-only. A fired task closes the connection
+         * {@code CREDENTIAL_EXPIRED} (a reconnect signal). Null when enforcement is off (byte-identical).
+         * Volatile: armed on the event loop, cancelled by {@link #teardown} which may run on the session thread.
+         */
+        private volatile ScheduledFuture<?> certExpiry;
+
         @Override
         public void channelActive(ChannelHandlerContext ctx) {
             this.channel = ctx.channel();
@@ -444,12 +467,19 @@ public final class NettyFanOutServer implements FanOutEndpoint {
             if (evt instanceof SslHandshakeCompletionEvent handshake) {
                 if (handshake.isSuccess()) {
                     String identity = resolveCertIdentity(ctx);
+                    List<X509Certificate> chain = verifiedPeerChain(ctx);
                     if (identity == null) {
                         rejectHandshake(ctx); // handshake "succeeded" but no verifiable peer cert
+                    } else if (!certGate.admit(chain)) {
+                        // Edge client cert revoked (or unreachable-under-strict): reject at admission. Edge
+                        // plane only; the Raft interior never consults a responder (exemptInterNode).
+                        rejectHandshake(ctx);
                     } else {
                         // Legacy mTLS: roles stay empty (the ACL resolves the DN's config-bound roles
-                        // internally) - byte-identical to before.
+                        // internally) - byte-identical to before. When cert-notAfter enforcement is on, arm
+                        // a mid-connection close at notAfter + leeway (NO_EXPIRY otherwise = byte-identical).
                         startSession(ctx, identity, Set.of());
+                        armCertExpiry(ctx, certGate.certCloseDeadlineMillis(chain));
                     }
                 } else {
                     // No cert / untrusted CA / expired / version-downgrade -> the handshake failed.
@@ -469,6 +499,26 @@ public final class NettyFanOutServer implements FanOutEndpoint {
                 return ssl.engine().getSession().getPeerPrincipal().getName();
             } catch (Exception e) {
                 return null; // no verifiable client certificate (fail-closed)
+            }
+        }
+
+        /** The verified peer certificate chain (leaf-first), or an empty list if the peer presented none. */
+        private List<X509Certificate> verifiedPeerChain(ChannelHandlerContext ctx) {
+            SslHandler ssl = ctx.pipeline().get(SslHandler.class);
+            if (ssl == null) {
+                return List.of();
+            }
+            try {
+                Certificate[] certs = ssl.engine().getSession().getPeerCertificates();
+                List<X509Certificate> chain = new ArrayList<>(certs.length);
+                for (Certificate c : certs) {
+                    if (c instanceof X509Certificate x) {
+                        chain.add(x);
+                    }
+                }
+                return chain;
+            } catch (Exception e) {
+                return List.of(); // no verifiable client certificate (revocation gate treats as nothing-to-check)
             }
         }
 
@@ -505,6 +555,22 @@ public final class NettyFanOutServer implements FanOutEndpoint {
                 metrics.onFirstFrameTimeout();
                 teardown(ErrorCode.PROTOCOL_VIOLATION, "pre-SUBSCRIBE first-frame deadline elapsed");
             }
+        }
+
+        /**
+         * Arms the mTLS-only cert-{@code notAfter} expiry one-shot on the event loop. A
+         * {@link AuthState#NO_EXPIRY} deadline (enforcement off) arms nothing - byte-identical to Gate 3.
+         * The delay is {@code max(0, deadline - now)} so a clock already past {@code notAfter} fires
+         * promptly rather than scheduling a negative delay.
+         */
+        private void armCertExpiry(ChannelHandlerContext ctx, long deadlineMillis) {
+            if (deadlineMillis == AuthState.NO_EXPIRY || !alive.get()) {
+                return;
+            }
+            long delay = Math.max(0L, deadlineMillis - clock.currentTimeMillis());
+            certExpiry = ctx.executor().schedule(
+                    () -> teardown(ErrorCode.CREDENTIAL_EXPIRED, EdgeCertGate.CERT_EXPIRED_MESSAGE),
+                    delay, TimeUnit.MILLISECONDS);
         }
 
         @Override
@@ -551,7 +617,16 @@ public final class NettyFanOutServer implements FanOutEndpoint {
 
         @Override
         public void exceptionCaught(ChannelHandlerContext ctx, Throwable cause) {
-            if (cause instanceof EdgeFrameCodec.CodecException ce) {
+            // A decode failure reaches here wrapped: the decoder throws a CodecException (a
+            // RuntimeException), which Netty's ByteToMessageDecoder re-throws inside a DecoderException, so
+            // the real ErrorCode is one link down the cause chain. Unwrap it (matching the JDK reader,
+            // which catches the CodecException directly) so a corrupt/oversize/bad-version frame closes
+            // with its true code (FRAME_CORRUPT / FRAME_TOO_LARGE / BAD_WIRE_VERSION) rather than the
+            // catch-all SERVER_SHUTDOWN. Wire-behavior change on the mTLS/plaintext edge: a post-admission
+            // decode error that previously (buggily) closed SERVER_SHUTDOWN now closes with the frame's
+            // real code, matching the JDK transport; no correct client depends on the old catch-all code.
+            EdgeFrameCodec.CodecException ce = CodecExceptions.unwrap(cause);
+            if (ce != null) {
                 teardown(ce.code(), "decode error: " + ce.getMessage());
             } else {
                 if (alive.get()) {
@@ -590,6 +665,10 @@ public final class NettyFanOutServer implements FanOutEndpoint {
         private void teardown(ErrorCode code, String message) {
             if (!alive.compareAndSet(true, false)) {
                 return; // already torn down
+            }
+            ScheduledFuture<?> ce = certExpiry;
+            if (ce != null) {
+                ce.cancel(false); // a fired task is a teardown no-op, but cancel avoids retaining ctx to notAfter
             }
             Channel ch = channel;
             FanOutConnectionDriver d = driver;

@@ -1203,13 +1203,21 @@ public final class ConfigdServer {
                 if (edgeProviderTypes.contains("bearer") || edgeProviderTypes.contains("basic")) {
                     int preAuthMaxFrameBytes = cfg.getInt("configd.edge.preAuthMaxFrameBytes", 16_384);
                     int maxAuthTokenBytes = cfg.getInt("configd.edge.maxAuthTokenBytes", 8_192);
-                    // Placeholder session lifetime; Gate 5 replaces this fixed TTL with the real
-                    // credential lead-time model (token exp / cert notAfter minus a refresh window).
-                    long authTtlMs = cfg.getLong("configd.edge.authTtlMs", 3_600_000L);
+                    // The static-token session lifetime (a bearer/basic credential carries no exp today).
+                    // Gate 5: this IS the real model for a static token - the connection closes at
+                    // now + defaultTokenTtlMs on the server clock. A future OIDC exp (Gate 6) closes at
+                    // exp + leeway instead. A REFRESH_AUTH re-arms it.
+                    long defaultTokenTtlMs = cfg.getLong("configd.edge.authTtlMs", 3_600_000L);
                     edgeAuth = new io.configd.server.fanout.EdgeAuthConfig(
-                            authChain, preAuthMaxFrameBytes, maxAuthTokenBytes, authTtlMs);
+                            authChain, preAuthMaxFrameBytes, maxAuthTokenBytes, defaultTokenTtlMs);
                 }
             }
+            // Gate 5: the edge client-cert validity gate (online revocation + mid-connection notAfter
+            // enforcement). Defaults reproduce today: revocation OFF, enforceCertNotAfter false ->
+            // EdgeCertGate.OFF is byte-identical to before. This gate is wired ONLY to the edge plane; the
+            // Raft interior never constructs one, so the exemptInterNode invariant holds by construction.
+            io.configd.server.fanout.EdgeCertGate edgeCertGate =
+                    buildEdgeCertGate(cfg);
             fanOutServer = new io.configd.server.fanout.NettyFanOutServer(
                     edgeShardSources, edgeShardReplaySources, edgeAllGids, edgeShardResolver,
                     shardMap.epoch(),
@@ -1218,7 +1226,7 @@ public final class ConfigdServer {
                     fanOutConfig,
                     io.configd.server.fanout.FanOutServer.DEFAULT_TRANSPORT_QUEUE_FRAMES,
                     io.configd.server.fanout.FanOutServer.DEFAULT_MAX_SESSIONS,
-                    slowConsumerGovernor, fanOutMetrics, clock, watchAuthorizer, edgeAuth);
+                    slowConsumerGovernor, fanOutMetrics, clock, watchAuthorizer, edgeAuth, edgeCertGate);
             // Fail-closed: if TLS is enabled on the CLI but the edge endpoint did not receive a
             // TlsManager, refuse to start (no plaintext edge traffic in a TLS deployment).
             if (config.tlsEnabled() && tlsManager == null) {
@@ -1750,6 +1758,65 @@ public final class ConfigdServer {
                             + " the deployment (changing it requires a manual reshard).");
         }
         return shardCount;
+    }
+
+    /**
+     * Builds the Gate-5 edge client-cert validity gate from config, fail-closed, emitting the loud
+     * operator warnings the finding requires. Defaults reproduce today's behavior: revocation OFF +
+     * {@code enforceCertNotAfter} false yields {@link io.configd.server.fanout.EdgeCertGate#OFF}, which is
+     * byte-identical (no online lookup, no active cert expiry). This gate is threaded ONLY into the edge
+     * fan-out transport; the Raft interior never receives one, so the {@code exemptInterNode} invariant
+     * holds by construction regardless of this method's result.
+     *
+     * <p>No built-in OCSP/CRL responder ships in v1: the {@code RevocationChecker} seam is left null, so a
+     * lookup returns {@code UNKNOWN} and the mode decides (lax fails open + alarms; strict fails closed).
+     * A real responder plugs into that seam as a follow-on.
+     */
+    private static io.configd.server.fanout.EdgeCertGate buildEdgeCertGate(ConfigSource cfg) {
+        io.configd.common.auth.RevocationPolicy revocationPolicy =
+                io.configd.common.auth.RevocationPolicy.fromConfig(cfg);
+        if (!revocationPolicy.exemptInterNode()) {
+            // Setting this false re-arms the CockroachDB strict-lockout foot-gun. The Raft interior is
+            // NEVER revocation-checked in v1 (by construction), so the flag has no effect today beyond
+            // signalling intent - but a down responder must never be able to gate consensus, so warn loudly.
+            System.err.println("WARNING: ************************************************************");
+            System.err.println("WARNING: configd.auth.revocation.exemptInterNode=false re-arms the");
+            System.err.println("WARNING: strict-lockout foot-gun. The Raft inter-node plane and the");
+            System.err.println("WARNING: break-glass admin credential are validated by chain + notAfter");
+            System.err.println("WARNING: ONLY and must never consult a revocation responder - a down");
+            System.err.println("WARNING: responder must never be able to brick the cluster interior.");
+            System.err.println("WARNING: ************************************************************");
+        }
+        boolean enforceCertNotAfter = cfg.getBoolean("configd.auth.expiry.enforceCertNotAfter", false);
+        io.configd.common.auth.CredentialExpiryPolicy expiryPolicy =
+                io.configd.common.auth.CredentialExpiryPolicy.fromConfig(cfg);
+        // The functional default responder is a CRL file (configd.auth.revocation.crlFile); a live OCSP
+        // responder stays a pluggable RevocationChecker the operator supplies. When a mode is enabled with
+        // NO responder wired, the checker is null -> every lookup is UNKNOWN, so warn (strict would then
+        // REJECT every new edge cert connection - the documented foot-gun).
+        io.configd.common.auth.RevocationChecker revocationChecker = null;
+        if (revocationPolicy.enabled()) {
+            java.util.Optional<String> crlFile =
+                    cfg.getString("configd.auth.revocation.crlFile").filter(s -> !s.isBlank());
+            if (crlFile.isPresent()) {
+                revocationChecker = new io.configd.common.auth.CrlFileRevocationChecker(
+                        java.nio.file.Path.of(crlFile.get().trim()));
+                System.out.println("  Revocation   : mode=" + revocationPolicy.mode()
+                        + " CRL=" + crlFile.get().trim());
+            } else {
+                System.err.println("WARNING: configd.auth.revocation.mode=" + revocationPolicy.mode()
+                        + " but no responder is configured (set configd.auth.revocation.crlFile, or plug an"
+                        + " OCSP RevocationChecker); edge client-cert lookups return UNKNOWN"
+                        + (revocationPolicy.mode() == io.configd.common.auth.RevocationMode.STRICT
+                                ? " -> STRICT will REJECT every new edge cert connection until a responder is wired."
+                                : " -> LAX will fail-open + raise the responder-unreachable alarm on every cert."));
+            }
+        }
+        if (!revocationPolicy.enabled() && !enforceCertNotAfter) {
+            return io.configd.server.fanout.EdgeCertGate.OFF; // byte-identical
+        }
+        return new io.configd.server.fanout.EdgeCertGate(
+                revocationPolicy, revocationChecker, expiryPolicy, enforceCertNotAfter);
     }
 
     /**
