@@ -34,12 +34,12 @@ planes**, with different transports, auth, and capabilities:
 | | **HTTP control plane** | **Binary edge plane** |
 |---|---|---|
 | Operations | `get` / `put` / `delete` (unary) | `watch` / fan-out / streaming read — **NO writes** |
-| Authentication | **bearer token** (`Authorization: Bearer`, over TLS) | **mTLS** (client certificate) |
-| Transport | HTTP over TLS, the `/v1/` path | length-framed binary over **TLSv1.3** (mTLS) |
+| Authentication | **bearer / Basic** (`Authorization:`, over TLS) | **mTLS** (client cert) **and/or** a token/basic **`AUTH` frame** (§06 §6A) |
+| Transport | HTTP over TLS, the `/v1/` path | length-framed binary over **TLSv1.3** (mTLS; `wantClientAuth` on a token edge) |
 | Scope | scope-typed but **GLOBAL-only** in the deployed topology | scope-typed (per-shard) |
 | Cursor | write `seq` (body) / read version (`X-Config-Version` header) | the **per-shard cursor vector** |
 | Spec | **§04** (data) · **§05** (routing) · **§07** (errors) | **§06** (framing) · **§02** (watches) · **§07** (errors) |
-| Auth spec | **§03** (bearer) | **§03** (mTLS) |
+| Auth spec | **§03** (bearer / Basic) | **§03** (mTLS / token `AUTH` frame) |
 | Address/authz | **§01** (paths, capabilities) | **§01** (paths, watch-authz) — the **watch (`0x02`) surface only**; the legacy fan-out / streaming-read (`0x01`) is **NOT** per-key authorized (OV6-1) |
 
 **OV2-1 (writes are HTTP-only).** All mutations (`put`/`delete`) happen on the **HTTP** plane. The binary edge
@@ -64,10 +64,10 @@ cannot write over the edge.
 | **§00** | Overview, Architecture & Conformance | `OV` | this map; the two planes; conformance profiles; the deployment-security note |
 | **[§01](01-paths-and-access.md)** | Paths and Access Control | `A` | the `(scope, path)` address, path grammar, the capability/authorization model, the watch-authz contract |
 | **[§02](02-watches.md)** | The Watch Protocol | `W` | the watch model, the per-shard cursor vector, the `0x0A`–`0x12` watch frames, delivery/ordering guarantees |
-| **[§03](03-authentication.md)** | Authentication | `AU` | how to present a credential (bearer / mTLS); the `401` boundary; the pluggable-but-stable contract |
+| **[§03](03-authentication.md)** | Authentication | `AU` | how to present a credential (mTLS / bearer / Basic; the token/basic edge `AUTH` frame + expiry/refresh); the `401` boundary; the pluggable-but-stable contract |
 | **[§04](04-data-plane.md)** | The Core Data Plane | `D` | `GET`/`PUT`/`DELETE`; the two cursors; consistency / strong-read; `?scope=`; `Content-Type` reality |
 | **[§05](05-routing.md)** | Routing, Leader-Following & Topology | `R` | `X-Leader-Hint`; the `NodeId→address` map; leader-following (REQUIRED at N=1); retry/idempotency |
-| **[§06](06-wire-framing.md)** | Wire Framing & Transport | `F` | the EdgeFrame envelope + the `0x01`–`0x09` payloads + nested blobs, byte-for-byte; first-frame pin; TLS; caps |
+| **[§06](06-wire-framing.md)** | Wire Framing & Transport | `F` | the EdgeFrame envelope + the `0x01`–`0x09` payloads + the `0x04` auth frames (§6A) + nested blobs, byte-for-byte; first-frame pin + auth pin-exemption; TLS; caps |
 | **[§07](07-errors.md)** | Unified Error & Status Taxonomy | `E` | every HTTP status + every streaming `ErrorCode`, each with the required driver reaction (single source) |
 
 **OV3-1 (recommended read order).** A driver-writer **SHOULD** read **§00 → §01 → §03** (the shared model and
@@ -84,9 +84,13 @@ composed document.
 - **HTTP control plane:** versioned **solely by the `/v1/` path prefix** — **no** `Accept`/`Content-Type`
   version negotiation, **no** version header, **no** capabilities exchange (§04 D1). A future revision is a new
   path prefix (`/v2/…`).
-- **Binary edge plane:** versioned by a **1-byte version stamp on every frame** (`0x01` | `0x02`), **pinned by
-  the first frame** of the connection (§06 F4). There is **no** hello/capabilities frame and **no** downgrade.
-  A future revision bumps the version byte (`0x03`+).
+- **Binary edge plane:** versioned by a **1-byte version stamp on every frame**. The **business** versions are
+  `0x01` (built) / `0x02` (watch) / `0x03` (filtered fan-out), **pinned by the first business frame** of the
+  connection (§06 F4); the dedicated **auth-phase `0x04`** version (the `AUTH`/`REFRESH_AUTH` frames, §06 §6A) is
+  **version-pin-exempt** and additive. There is **no** hello/capabilities frame and **no** downgrade. A future
+  revision bumps the version byte; the auth-phase `0x04` frames are the worked example of an **additive**
+  version-byte extension — an mTLS-only client that never sends `0x04` is byte-identical to a pre-auth-arc
+  client.
 
 **OV4-2 (correcting "negotiation").** Earlier drafts described the version as "negotiated at connection setup."
 That is **aspirational and inaccurate** — there is **no** negotiation round-trip on either plane. The HTTP
@@ -175,14 +179,37 @@ and **MUST NOT** downgrade to plaintext in production.
 
 **OV7-2 (the boundaries).** The `NodeId→address` map a driver follows redirects through is a **trust boundary**
 (same-trust-domain nodes only — §05 §8); **strong-read** is a **freshness** guarantee, **not** confidentiality
-(values are plaintext at rest in v1 — §04 D3-5b); the optional **replay guard** is **passive-replay-only**,
-not request integrity (§04 D11-3). A driver **MUST NOT** over-rely on any of these.
+(at-rest confidentiality is a **server-side deployment choice** the driver cannot observe: **at-rest encryption
+is available** — opt-in AES-256-GCM, **off by default** — so a driver **MUST NOT** rely on values being
+encrypted at rest on the strength of the protocol — §04 D3-5b); the optional **replay guard** is
+**passive-replay-only**, not request integrity (§04 D11-3). A driver **MUST NOT** over-rely on any of these.
 
 **OV7-3 (fail closed on unknown — normative, all surfaces).** A driver **MUST** fail closed on anything it
 does not recognize: an unknown HTTP status / header / `?scope=` value; an unknown edge wire version, frame
 type, `ErrorCode`, capability identifier, or trailing frame byte; an unknown authentication mechanism. It
 **MUST NOT** treat an unknown as a forward-compatible extension (the wire is fixed-positional and fail-closed —
 §06 F11; the one TLV-extensible exception is the nested snapshot trailer, §06 F7-2).
+
+**OV7-4 (the upgrade contract, driver-facing part — normative).** The client-visible format-compatibility
+contract has three rules a conforming SDK relies on:
+
+1. **The edge first-frame version pin IS the negotiation.** A driver **proposes** its wire version by stamping
+   its **first business frame**; the server **pins** the connection to it (§06 F4). There is **no**
+   hello/capabilities exchange — the *client* chooses. A later business frame stamped with a **different**
+   version is **`BAD_WIRE_VERSION`**, as is a version the server does not support. The auth-phase `0x04` frames
+   are **pin-exempt** and interleave without affecting the business pin (§06 F6A-4).
+2. **Fail closed on unknown — never a weaker interpretation.** A conforming SDK **MUST** reject an unknown wire
+   **version**, frame **type**, illegal-type-for-version, trailing frame byte, or unknown **`ErrorCode`** as a
+   clean, **mapped** rejection (`BAD_WIRE_VERSION` / `FRAME_CORRUPT`, or a driver-side hard error for an unknown
+   error-code byte) — **never** a silent misparse and **never** a downgrade to a weaker reading (OV7-3, §06 F11).
+3. **The auth surface is additive.** The `AUTH`/`REFRESH_AUTH` frames and `ErrorCode 13 CREDENTIAL_EXPIRED` were
+   added on the new `0x04` wire version and a new code value **without touching** any `0x01`/`0x02`/`0x03` byte,
+   so an **mTLS-only client that never sends a `0x04` frame is byte-identical to a pre-auth-arc client**, and an
+   older driver that fails closed on the unknown `0x04` / code-13 keeps working.
+
+The **whole-system** format contract — including the **internal** Raft (node↔node) and at-rest formats a driver
+never sees — is `docs/design/group-b/07-upgrade-capability-as-built.md` (contract clauses C0–C9). The
+**driver-facing** part is rules 1–3 above, plus §06 F4 / F6A / F11 / §13 and §07.
 
 ---
 
@@ -195,10 +222,13 @@ driver-writer can build a conforming driver today; drivers are **deferrable** (p
 **OV8-2 (named v1 omissions — a driver MUST fail closed on these).** Not in v1, do **not** assume: a **`list`
 / enumeration endpoint** (the semantic model is §1 §4.2; no wire — §04 D9); a **topology / shard-map discovery
 endpoint** (the `NodeId→address` map is operator config — §05 R3-2); **multi-shard watches** (N > 1 watch is a
-v2 item — §02); a **token-bearing edge auth frame** (§03 AU7-3); **at-rest encryption** (RR-098, v2 — §04
-D3-5b); **conditional writes / `If-Match`** and **batch multi-key writes** (§04 D11-4); a **structured-JSON**
-response body (§04 D2-5). Each is a **named forward extension**; a driver that fails closed on the unrecognized
-(OV7-3) keeps working when they arrive.
+v2 item — §02); **conditional writes / `If-Match`** and **batch multi-key writes** (§04 D11-4); a
+**structured-JSON** response body (§04 D2-5). Each is a **named forward extension**; a driver that fails closed
+on the unrecognized (OV7-3) keeps working when they arrive.
+
+> **Now BUILT (no longer omitted):** the **token-bearing edge `AUTH`/`REFRESH_AUTH` frame** is v1 (§03 AU3-3, §06
+> §6A) — a certificate-less edge client authenticates by presenting a bearer/basic credential. It is **additive**
+> (an mTLS-only client is byte-identical), so an older driver that never sends a `0x04` frame is unaffected.
 
 ---
 

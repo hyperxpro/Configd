@@ -185,9 +185,13 @@ fail-close). Therefore a driver relying on fail-closed freshness for a kill-swit
 
 **D3-5b (what strong-read guarantees — freshness, not confidentiality).** A strong-read `200` guarantees the
 value reflects a **linearization point confirmed at the current leader** (ADR-0030 INV-1): it is not a
-bounded-stale local copy. The guarantee is **freshness, not confidentiality** — strong-read / `secure/` values
-are stored **plaintext at rest** (integrity-checked only; at-rest encryption is a v2 item). A driver **MUST
-NOT** treat `secure/` as encrypted and **MUST NOT** store secrets expecting confidentiality. The contract is:
+bounded-stale local copy. The guarantee is **freshness, not confidentiality** — strong-read is orthogonal to
+encryption. Whether a value is **encrypted at rest is a server-side deployment choice** the driver cannot
+observe or negotiate: **at-rest encryption is available** — opt-in **AES-256-GCM** at the node's
+integrity-envelope seam (KMS-custodied), **off by default** (records are integrity-checked but not encrypted).
+Because the driver cannot tell which posture a server runs, it **MUST NOT** treat `secure/` (or any key) as
+encrypted **on the strength of the protocol** and **MUST NOT** store secrets expecting the *wire/read protocol*
+to confer confidentiality — at-rest protection depends entirely on the operator enabling it. The contract is:
 *for a classified strong-read key you either get a leader-confirmed-fresh value, or a `503` — never a stale
 one.*
 

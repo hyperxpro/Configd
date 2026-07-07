@@ -2,11 +2,13 @@
 
 **Status: DRAFT (2026-06-30). Docs-only; normative; BYTE-LEVEL.** Sixth section of the Configd driver-protocol
 RFC. This section specifies the **binary edge wire** to the byte: the **EdgeFrame envelope**, the **nine v1
-frame payloads** (`0x01`–`0x09`), the **nested blobs** the watch section deferred (the `CommandCodec` batch
+frame payloads** (`0x01`–`0x09`), the **two auth-phase frames** (`0x13` AUTH / `0x14` REFRESH_AUTH, under the
+auth-phase wire version `0x04`; §6A), the **nested blobs** the watch section deferred (the `CommandCodec` batch
 inside `NOTIFY`, the ADR-0028 snapshot body inside `*_SNAPSHOT_CHUNK`), the shared **cursor-vector** codec, the
-**first-frame version pin** (the real "negotiation"), the **`u64 < 2^63`** field constraint, the **TLS
-profile**, the **connection lifecycle, flow-control, and caps**, and the **fail-closed forward-compatibility**
-rules. A driver implementing this section produces and consumes bytes **identical** to the deployed codec.
+**first-frame version pin** (the real "negotiation") and the **version-pin exemption** of the auth frames, the
+**`u64 < 2^63`** field constraint, the **TLS profile**, the **connection lifecycle, flow-control, and caps**,
+and the **fail-closed forward-compatibility** rules. A driver implementing this section produces and consumes
+bytes **identical** to the deployed codec.
 
 **This section is validated byte-for-byte against the implementation and its golden fixtures.** The authority
 is [`EdgeFrameCodec.java`](../../../configd-distribution-service/src/main/java/io/configd/distribution/wire/EdgeFrameCodec.java)
@@ -31,8 +33,11 @@ ADR) claim disagree, **the code wins**. This section is **normative**; it **comp
 - [`03-authentication.md`](03-authentication.md) — the **mTLS** handshake is the edge authentication (AU3-2);
   §06 F9 gives its concrete TLS profile.
 - [`07-errors.md`](07-errors.md) — the `ErrorCode` taxonomy carried in `ERROR_CLOSE`
-  (`0x09`) and `WATCH_CANCELED` (`0x0F`). §06 specifies the *byte* (a `u8` code 1–12); §07 will own the
-  *meaning* and the driver reaction.
+  (`0x09`) and `WATCH_CANCELED` (`0x0F`). §06 specifies the *byte* (a `u8` code 1–13, incl. `13
+  CREDENTIAL_EXPIRED`); §07 will own the *meaning* and the driver reaction.
+- [`03-authentication.md`](03-authentication.md) — the **edge connection-level auth lifecycle** (mTLS at the
+  handshake, and the token/basic `AUTH`/`REFRESH_AUTH` frames §6A carries): §06 owns the auth-frame *bytes* and
+  the version-pin exemption; §03 owns *when* a driver authenticates, refreshes, and handles an expiry-close.
 - [`00-overview.md`](00-overview.md) — the two-plane architecture.
 
 Clauses are referenced as **`F<n>-<m>`** (the framing-section clause prefix; parallel to §1 `A`, §2 `W`, §3
@@ -57,10 +62,13 @@ connection after the handshake.
 
 ### 1.3 Versioning — first-frame pin, not negotiation
 
-The edge wire is versioned by a **1-byte version stamp on every frame** (`0x01`, `0x02`, or `0x03`), **pinned
-by the first frame of the connection** (F4). There is **no** hello/capabilities frame and **no** negotiation
-round-trip. This **corrects the aspirational "negotiated at connection setup" language** of §02 (W1-2 / W1-3,
-and W5-11 "Wire version and negotiation"): the real mechanism is **first-frame-wins + pin + fail-closed** (F4).
+The edge wire is versioned by a **1-byte version stamp on every frame** (`0x01`, `0x02`, `0x03`, or the
+auth-phase `0x04`), and the **business** version is **pinned by the first business frame of the connection**
+(F4). There is **no** hello/capabilities frame and **no** negotiation round-trip. This **corrects the
+aspirational "negotiated at connection setup" language** of §02 (W1-2 / W1-3, and W5-11 "Wire version and
+negotiation"): the real mechanism is **first-frame-wins + pin + fail-closed** (F4). The decoder accepts a
+version byte of **`0x01`, `0x02`, `0x03`, or `0x04`**; any other value is `BAD_WIRE_VERSION`
+(`EdgeFrameCodec.decode` :711–718).
 
 `0x03` is the **filtered-fan-out** version (ADR-0045): it carries a server-side-filtered SUBSCRIBE stream.
 Under `0x03`, `SUBSCRIBE` gains a trailing `acceptsFiltered` opt-in byte and `SUBSCRIBE_OK` a trailing
@@ -68,6 +76,14 @@ Under `0x03`, `SUBSCRIBE` gains a trailing `acceptsFiltered` opt-in byte and `SU
 version byte, and the `0x0A`–`0x12` watch frames are **not** legal under `0x03` (they remain `0x02`-only). A
 `0x03` SUBSCRIBE to a server that only speaks `0x01`/`0x02` **fails closed** with `BAD_WIRE_VERSION` (no silent
 misparse); an old edge to a new server sends `0x01` and gets the unfiltered legacy stream.
+
+`0x04` is the **auth-phase** version (`EDGE_WIRE_VERSION_V4`, `EdgeFrameCodec` :102–113): it carries **only**
+the `0x13` `AUTH` and `0x14` `REFRESH_AUTH` frames (§6A), the client-to-server token/basic credential frames. It
+is **not** a business version and it does **not** participate in the first-frame pin: a `0x04` auth frame is
+**version-pin-exempt** — it may interleave on a connection whose business version is pinned to `0x01`, `0x02`,
+or `0x03` (F6A-4). Conversely a **business/watch type stamped `0x04`, or an `AUTH`/`REFRESH_AUTH` type stamped
+`0x01`/`0x02`/`0x03`, is `FRAME_CORRUPT`** (F6A-3). The auth frames are **purely additive**: a driver that
+authenticates only by mTLS (never sending a `0x04` frame) is **byte-identical to a pre-auth-arc client**.
 
 ---
 
@@ -79,8 +95,8 @@ misparse); an old edge to a new server sends `0x01` and gets the unfiltered lega
 ```
  offset  size  field        notes
  0       4     Length  u32  BIG-ENDIAN; covers the WHOLE frame (Length + Version + Type + Payload + CRC)
- 4       1     Version u8   0x01 (built) | 0x02 (watch-capable) | 0x03 (filtered fan-out, ADR-0045)
- 5       1     Type    u8   FrameType code (F6 / §02)
+ 4       1     Version u8   0x01 (built) | 0x02 (watch-capable) | 0x03 (filtered fan-out, ADR-0045) | 0x04 (auth-phase, §6A)
+ 5       1     Type    u8   FrameType code (F6 / §6A / §02)
  6       L-10  Payload      type-specific (F6, §02)
  L-4     4     CRC32C  u32  BIG-ENDIAN; Castagnoli (CRC-32C) over bytes [0, L-4) — i.e. Length..end-of-payload
 ```
@@ -127,10 +143,16 @@ and **MUST NOT** accept frames on an unauthenticated transport in production on 
 4. **CRC32C over `[0, Length-4)` == trailer** (else **`FRAME_CORRUPT`**). **The CRC is verified BEFORE the
    version and type bytes are interpreted** — so a flipped version/type byte reads as corruption, never as a
    misleading `BAD_WIRE_VERSION`.
-5. `Version ∈ {0x01, 0x02, 0x03}` (else **`BAD_WIRE_VERSION`**); **and** if the connection is pinned (F4),
-   `Version` == the pinned version (else **`BAD_WIRE_VERSION`**).
-6. `Type` resolves to a known `FrameType` (else **`FRAME_CORRUPT`**); a `0x0A`–`0x12` watch type on a `0x01`
-   or `0x03` frame ⇒ **`FRAME_CORRUPT`** (a watch frame is legal only under `0x02`).
+5. `Version ∈ {0x01, 0x02, 0x03, 0x04}` (else **`BAD_WIRE_VERSION`**); **and** if the frame is a **business**
+   frame (`Version ∈ {0x01,0x02,0x03}`) and the connection is pinned (F4), `Version` == the pinned version (else
+   **`BAD_WIRE_VERSION`**). A **`0x04` auth frame is exempt from the pin** (F6A-4): it is decoded under `0x04`
+   regardless of the connection's business version and never establishes or violates the pin.
+6. `Type` resolves to a known `FrameType` (else **`FRAME_CORRUPT`**); and the **type↔version legality** holds
+   (else **`FRAME_CORRUPT`**, `EdgeFrameCodec.decode` :739–755): a `0x0A`–`0x12` watch type is legal only under
+   `0x02`; the `0x13`/`0x14` auth types are legal **only** under `0x04`; **no** business/watch type is legal
+   under `0x04`; and **no** auth type is legal under `0x01`/`0x02`/`0x03` (F6A-3). Because the CRC is already
+   verified (step 4), a legality violation is a deliberately-constructed frame and surfaces as `FRAME_CORRUPT`,
+   never a misleading `BAD_WIRE_VERSION`.
 7. decode the payload `[6, Length-4)`; **any** underflow / malformed field / out-of-range value ⇒
    **`FRAME_CORRUPT`**; **any trailing byte left after the payload ⇒ `FRAME_CORRUPT`** (F11).
 
@@ -145,9 +167,10 @@ A value being "validated non-negative" (F5) is **not** an upper bound — the dr
 
 ## 4. The first-frame version pin (the real "negotiation")
 
-**F4-1 (first-frame-wins, then pinned for life).** There is **no** hello/capabilities frame and **no**
-negotiation handshake (`ByteToEdgeFrameDecoder` :56–63). The connection's wire **version** is decided by the
-**first frame's version byte** (offset 4), in practice:
+**F4-1 (first-business-frame-wins, then pinned for life).** There is **no** hello/capabilities frame and **no**
+negotiation handshake (`ByteToEdgeFrameDecoder` :46–108). The connection's wire **business version** is decided
+by the **first business frame's version byte** (offset 4) — a `0x04` `AUTH`/`REFRESH_AUTH` frame, which may
+precede it on a token edge, is pin-exempt and does **not** set the pin (F4-3). In practice:
 
 - a first **`SUBSCRIBE`** (**type `0x01`**) stamped **`0x01`** ⇒ the connection is pinned to **version `0x01`**
   (byte-identical to the legacy pre-watch path);
@@ -160,14 +183,29 @@ negotiation handshake (`ByteToEdgeFrameDecoder` :56–63). The connection's wire
 > `SUBSCRIBE_OK`). The pin keys on the first frame's **version byte**; the SUBSCRIBE/WATCH_CREATE split above is
 > the conformant case, and F4-2 ("stamp one version on every frame") is the binding rule.
 
-The first frame is decoded accepting **either** version (after CRC validation); its stamped version then
-**pins** the connection. **Every subsequent frame MUST carry the pinned version**; a frame stamped with the
-other accepted version (a `0x02` frame on a `0x01`-pinned connection, or vice-versa) **fails closed** with
-**`BAD_WIRE_VERSION`**. There is **no downgrade** and no mid-connection re-pin.
+The first **business** frame is decoded accepting **any** business version (after CRC validation); its stamped
+version then **pins** the connection. **Every subsequent business frame MUST carry the pinned version**; a
+business frame stamped with another accepted business version (a `0x02` frame on a `0x01`-pinned connection, or
+vice-versa) **fails closed** with **`BAD_WIRE_VERSION`**. There is **no downgrade** and no mid-connection
+re-pin. A `0x04` auth frame is exempt and may interleave regardless of the business pin (F4-3).
 
-**F4-2 (driver rule).** A driver **MUST** pick its wire version by its **first** frame and stamp **that same
-version on every frame** for the connection's life. To use a different version it **MUST** open a new
-connection. A driver **MUST NOT** mix `0x01` and `0x02` frames on one connection.
+**F4-2 (driver rule).** A driver **MUST** pick its wire **business** version by its **first business** frame
+(`SUBSCRIBE`/`WATCH_CREATE`) and stamp **that same version on every business frame** for the connection's life.
+To use a different business version it **MUST** open a new connection. A driver **MUST NOT** mix `0x01`, `0x02`,
+and `0x03` business frames on one connection. The **sole exception** is a `0x04` `AUTH`/`REFRESH_AUTH` frame,
+which is version-pin-exempt (F4-3) and does **not** count as a business frame for the pin.
+
+**F4-3 (the auth-phase pin exemption — normative).** A `0x04` `AUTH`/`REFRESH_AUTH` frame (§6A) is **exempt from
+the first-frame pin**: it neither establishes nor is checked against the connection's business version
+(`ByteToEdgeFrameDecoder.decode` :95–108 / `FanOutServer.readFrame` :921–935 decode a `0x04` frame under `0x04`
+and never touch the business pin). Consequently:
+
+- A driver on a token/basic-authenticated edge sends its `AUTH` frame stamped **`0x04`** (regardless of which
+  business version it will subsequently pin), then its first business frame stamps and pins the business version
+  as usual (F4-1). A later `REFRESH_AUTH` is likewise stamped `0x04` and interleaves without disturbing the pin.
+- A **business/watch type stamped `0x04`**, or an **`AUTH`/`REFRESH_AUTH` type stamped `0x01`/`0x02`/`0x03`**, is
+  **`FRAME_CORRUPT`** (F6A-3) — a driver **MUST** stamp `0x04` on **exactly** the auth frames and never on a
+  business frame, and **MUST NOT** stamp a business version on an auth frame.
 
 ---
 
@@ -379,14 +417,15 @@ detected server-side and healed by a re-snapshot).
 **F6-9 `ERROR_CLOSE` (`0x09`)** — *server→client* terminal; golden `error_*.bin` (codes 1–10):
 
 ```
-[1 u8 ] code              (ErrorCode 1..12; §07 owns the meaning — the byte is the taxonomy value)
+[1 u8 ] code              (ErrorCode 1..13; §07 owns the meaning — the byte is the taxonomy value)
 [4 u32] msgLen
 [msgLen] message          (UTF-8; UNTRUSTED DIAGNOSTIC — see below)
 ```
 
-> The taxonomy is **codes 1..12** (`ErrorCode.java` :14–107): `1 BAD_WIRE_VERSION` … `11 NOT_AUTHORIZED`,
-> `12 STALE_TOPOLOGY` (the v2-only frozen-format A4 code — F5-3 / §07). An unknown code byte decodes as
-> `FRAME_CORRUPT`. `error_bad_wire_version.bin` … `error_protocol_violation.bin` pin codes 1–10;
+> The taxonomy is **codes 1..13** (`ErrorCode.java` :14–116): `1 BAD_WIRE_VERSION` … `11 NOT_AUTHORIZED`,
+> `12 STALE_TOPOLOGY` (the v2-only frozen-format A4 code — F5-3 / §07), `13 CREDENTIAL_EXPIRED` (the token-TTL /
+> cert-`notAfter` / refresh-reject expiry close on a token-auth edge — §6A / §07). An unknown code byte decodes
+> as `FRAME_CORRUPT`. `error_bad_wire_version.bin` … `error_protocol_violation.bin` pin codes 1–10;
 > `error_not_authorized.bin` pins code 11 (carried here as an `ERROR_CLOSE` in the v2 fixture so the byte value
 > is pinned) — **but the
 > live protocol carrier for the `NOT_AUTHORIZED` per-watch authz reject is `WATCH_CANCELED` (`0x0F`), not
@@ -394,6 +433,94 @@ detected server-side and healed by a re-snapshot).
 > compromised/malicious server it may contain control characters, newlines, or ANSI escapes. A driver **MUST
 > NOT** use it for control flow (branch on the numeric `code`), **MUST NOT** machine-parse it, and **MUST**
 > sanitize/escape it before logging or display (log-forging / terminal-injection).
+
+---
+
+## 6A. The auth-phase frames (`0x13` AUTH / `0x14` REFRESH_AUTH — wire version `0x04`)
+
+The token/basic edge-authentication surface. These two **client→server** frames ride the dedicated auth-phase
+wire version **`0x04`** (`EDGE_WIRE_VERSION_V4`) and are the driver-visible mechanism by which a
+**certificate-less** edge client presents (and later renews) a bearer or HTTP-Basic credential. The
+connection-level auth **lifecycle** — when a driver sends them, the single-attempt rule, the pre-auth deadline,
+the expiry-close and proactive refresh — is normative in [`03-authentication.md`](03-authentication.md) §3–§5;
+this section owns the **bytes** and the **version rules**.
+
+**F6A-1 (the two frame types).** Under version `0x04` there are exactly two legal types
+(`FrameType` :51–55, `EdgeFrame.Auth`/`EdgeFrame.RefreshAuth` :393–437):
+
+| Type | Name | Direction | Meaning |
+|---|---|---|---|
+| `0x13` | `AUTH` | client→server | present a bearer/basic credential to authenticate the connection |
+| `0x14` | `REFRESH_AUTH` | client→server | present a fresh credential to **extend** an already-authenticated connection (renews the **same** identity's session; §03 AU4-6) |
+
+Both carry the **identical payload shape** (F6A-2); the distinct type makes the intent self-describing on the
+wire. A client certificate is an **mTLS handshake artifact and is NEVER carried in a frame** (`EdgeFrame`
+:439–448, `encodeAuthCredentialInto` :360–362 rejects it); a cert-authenticating edge sends **no** `0x04`
+frame at all.
+
+**F6A-2 (the AUTH / REFRESH_AUTH payload — byte-for-byte).** The payload (the bytes at offset 6, between the
+Type byte and the CRC) is a **1-byte scheme tag** then length-prefixed credential fields
+(`encodeAuthCredentialInto` :347–368 / `decodeAuthCredential` :806–814), big-endian:
+
+```
+[1  u8 ] scheme            (1 = BEARER | 2 = BASIC; any other value ⇒ FRAME_CORRUPT — "unknown auth scheme")
+
+ scheme = 1 (BEARER):
+   [4  u32] tokenLen
+   [tokenLen] token        (UTF-8; the opaque bearer/OIDC token — §03 AU2-2)
+
+ scheme = 2 (BASIC):
+   [4  u32] userLen
+   [userLen] username      (UTF-8)
+   [4  u32] passLen
+   [passLen] password      (UTF-8)
+```
+
+Golden fixtures (`EdgeFrameGoldenBytes.v4()`, pinned by `EdgeFrameCodecV4GoldenFixtureTest`):
+
+- **`auth_bearer.bin`** = `0000001e` (L = 30) · `04` (v4) · `13` (`AUTH`) · `01` (BEARER) · `0000000f` (tokenLen
+  = 15) · `676f6c64656e2d746f6b656e2d3432` (`"golden-token-42"`) · `d1a2e2f1` (CRC32C).
+- **`auth_basic.bin`** = `0000001e` (L = 30) · `04` · `13` · `02` (BASIC) · `00000005` (userLen = 5) ·
+  `616c696365` (`"alice"`) · `00000006` (passLen = 6) · `733363726574` (`"s3cret"`) · `c4c94315` (CRC32C).
+- **`refresh_auth_bearer.bin`** = `0000001f` (L = 31) · `04` · `14` (`REFRESH_AUTH`) · `01` (BEARER) ·
+  `00000010` (tokenLen = 16) · `726566726573682d746f6b656e2d3939` (`"refresh-token-99"`) · `739ee8e1` (CRC32C).
+
+The envelope (F2), decode order (F3), CRC-before-interpret, bounds-before-allocation, and **strict-end**
+(trailing bytes ⇒ `FRAME_CORRUPT`) rules apply **identically** to a `0x04` frame. A driver **MUST** length-bound
+`tokenLen`/`userLen`/`passLen` against the remaining payload before allocating (F3-2), and **MUST** treat the
+token as **opaque** (§03 AU2-2). Error messages on the server never echo a token/password byte (redaction),
+only the scheme number and lengths.
+
+**F6A-3 (type↔version legality — a `FRAME_CORRUPT` tripwire).** The `0x13`/`0x14` auth types are legal **only**
+under version `0x04`, and **no** business/watch type is legal under `0x04` (`EdgeFrameCodec` encode :275–293 /
+decode :739–755). Every combination outside the matrix is `FRAME_CORRUPT` (the CRC is verified first, so a
+violation is a constructed frame, never a `BAD_WIRE_VERSION`):
+
+| Version | Legal types | Illegal (⇒ `FRAME_CORRUPT`) |
+|---|---|---|
+| `0x01` | `0x01`–`0x09` (business) | `0x0A`–`0x12` (watch), **`0x13`/`0x14` (auth)** |
+| `0x02` | `0x01`–`0x09`, `0x0A`–`0x12` (watch) | **`0x13`/`0x14` (auth)** |
+| `0x03` | `0x01`–`0x09` (business; +filtered opt-in bytes) | `0x0A`–`0x12` (watch), **`0x13`/`0x14` (auth)** |
+| `0x04` | **`0x13` `AUTH`, `0x14` `REFRESH_AUTH` only** | **every** `0x01`–`0x12` business/watch type |
+
+**F6A-4 (the version-pin exemption + additivity — normative).** A `0x04` auth frame is **version-pin-exempt**
+(F4-3): it does **not** establish or violate the connection's business version pin, so it may interleave on a
+connection pinned to any of `0x01`/`0x02`/`0x03`. A driver **MUST** stamp `0x04` on **exactly** its `AUTH`/
+`REFRESH_AUTH` frames and a business version on **exactly** its business frames; crossing the two
+(`0x04` on a business frame, or `0x01`/`0x02`/`0x03` on an auth frame) is `FRAME_CORRUPT` (F6A-3). Because the
+auth frames live on their own version, the surface is **purely additive**: an **mTLS-only driver that never
+sends a `0x04` frame is byte-identical to a pre-auth-arc client**, and every `0x01`/`0x02`/`0x03` golden image
+is unchanged.
+
+**F6A-5 (receive-side credential caps — server policy, not fixed wire constants).** While a token connection is
+**unauthenticated**, the decoder caps the declared frame length at a small **pre-auth ceiling**
+(`configd.edge.preAuthMaxFrameBytes`, default **16384**) — a larger declared length ⇒ `FRAME_TOO_LARGE`
+**before** any frame buffer is allocated (`ByteToEdgeFrameDecoder` :83–89 / `FanOutServer.readFrame` :906–910).
+The credential itself is size-policed **before** verification: a bearer token > `configd.edge.maxAuthTokenBytes`
+(default **8192** UTF-8 bytes), a Basic username > 256 UTF-8 bytes, or a Basic password > 1024 chars is rejected
+(`EdgeAuthConfig.credentialWithinCaps` :137–146). These are **deployment policy bounds** (not frozen golden
+wire constants like `MAX_EDGE_FRAME_SIZE`); a conformant driver keeps its credential well within them and treats
+an over-cap rejection as `AUTH_FAIL` (pre-auth) / `CREDENTIAL_EXPIRED` (on a `REFRESH_AUTH`; §07).
 
 ---
 
@@ -483,11 +610,16 @@ bytes.)
 
 ## 9. The TLS profile
 
-**F9-1 (mTLS REQUIRED).** When TLS is enabled, the edge endpoint **requires a client certificate** —
-`setNeedClientAuth(true)` (`FanOutServer`/`NettyFanOutServer`). Plaintext is permitted **only** for
-single-node/test (matching the Raft transport policy). A **production** driver **MUST** require TLS and **MUST
-NOT** silently fall back to plaintext (a downgrade footgun on an untrusted network). A driver **MUST** present
-a client certificate during the TLS handshake (this is the edge **authentication**, §03 AU3-2).
+**F9-1 (mTLS REQUIRED — or, on a token edge, WANTED).** When TLS is enabled, the edge endpoint in the
+**mTLS-only posture requires a client certificate** — `setNeedClientAuth(true)` (`FanOutServer`
+:531 / `NettyFanOutServer`). When **token/basic auth is configured** (§6A) the edge **relaxes to
+`setWantClientAuth(true)`** (`FanOutServer` :528–531) so a **certificate-less** token client can connect and
+authenticate with an `AUTH` frame — a **presented** certificate is still verified and remains the authoritative
+identity (§03 AU3-2). Plaintext is permitted **only** for single-node/test (matching the Raft transport policy).
+A **production** driver **MUST** require TLS and **MUST NOT** silently fall back to plaintext (a downgrade
+footgun on an untrusted network). A driver on an mTLS edge **MUST** present a client certificate during the TLS
+handshake (this is the edge **authentication**, §03 AU3-2); a driver on a token/basic edge instead authenticates
+with an `AUTH` frame (§6A / §03 AU4-4).
 
 **F9-2 (TLSv1.3-only; cipher suites).** The profile is **TLSv1.3-only** (`TlsManager`:
 `SSLContext.getInstance("TLSv1.3")`) with cipher suites **`TLS_AES_256_GCM_SHA384`** and
@@ -513,11 +645,13 @@ accepted, enabling a man-in-the-middle. A driver **MUST NOT** disable hostname/S
 
 ## 10. Connection lifecycle, flow-control, and caps
 
-**F10-1 (lifecycle).** `connect (TCP)` → **TLS/mTLS handshake** (F9; authentication completes before any
-application frame, §03 AU4-1) → **first frame decides type + version** (F4) → **operate** (stream
-`NOTIFY`/`WATCH_EVENT`/`SNAPSHOT_*`/`HEARTBEAT`; client sends `CURSOR_ACK`/`WATCH_CANCEL`) → on disconnect,
-**resume by re-creating** the subscription/watch on a **new** connection with a **resume cursor** (F8). There
-is **no** mid-connection re-pin and **no** server-side session resumption token.
+**F10-1 (lifecycle).** `connect (TCP)` → **TLS/mTLS handshake** (F9) → **authenticate before any business
+frame** (§03 AU4-1: the **mTLS** handshake is the auth on a cert edge; a **token/basic** edge instead sends one
+`AUTH` frame here, F10-1e) → **first business frame decides type + version** (F4) → **operate** (stream
+`NOTIFY`/`WATCH_EVENT`/`SNAPSHOT_*`/`HEARTBEAT`; client sends `CURSOR_ACK`/`WATCH_CANCEL`, and MAY send
+`REFRESH_AUTH` on a token edge) → on disconnect, **resume by re-creating** the subscription/watch on a **new**
+connection with a **resume cursor** (F8). There is **no** mid-connection re-pin and **no** server-side session
+resumption token.
 
 **F10-1a (what a reconnect keeps vs. loses).** A reconnect is a **fresh** connection with **fresh** per-
 connection state. A driver **keeps only its persisted cursor**; it **loses** all `watch_id`s (and the lifetime
@@ -557,6 +691,19 @@ within 10 s, so this never trips it.
 > driver **MUST** send its first `SUBSCRIBE`/`WATCH_CREATE` promptly after the handshake (do not idle a
 > just-opened connection), and **SHOULD** still close connections it is no longer using so it does not hold a
 > session slot (F10-2).
+
+**F10-1e (token-auth admission — the `AUTH` frame precedes the first business frame).** On a **token/basic**
+edge (the server has token auth configured; §03 AU3-3), a **certificate-less** driver's connection-level
+authentication is an **`AUTH` frame (`0x04`), not the handshake**: the driver **MUST** send exactly one `AUTH`
+frame (F6A) as its **first routed frame**, before any `SUBSCRIBE`/`WATCH_CREATE`, and only then send the
+business frame that pins the business version (F4-1). The lifecycle rules are wire-visible here: the **pre-auth
+frame ceiling** (F6A-5) caps the declared length until authenticated; a **single pre-auth `AUTH` attempt** is
+allowed (a rejected `AUTH` closes the connection `AUTH_FAIL` — a retry costs a fresh connection); and the
+**pre-SUBSCRIBE first-frame deadline** (F10-1d) covers the `AUTH` frame, so a connection that authenticates then
+idles without subscribing is still reaped. A driver that authenticates by **mTLS** (a verified client
+certificate at the handshake) sends **no** `AUTH` frame and is byte-identical to F10-1 (F6A-4). The full
+lifecycle — misuse ⇒ `PROTOCOL_VIOLATION`, `REFRESH_AUTH` renews the same identity, expiry-close ⇒
+`CREDENTIAL_EXPIRED` — is normative in §03 AU4/AU5.
 
 **F10-2 (caps).** Deployed limits (`FanOutServer`, `FanOutConnectionDriver`):
 
@@ -606,15 +753,19 @@ positional layout — NOT TLV**. Consequently, at the **frame** level:
 
 - an **unknown `Type`** ⇒ **`FRAME_CORRUPT`** (F3);
 - an **unknown / future `Version`** ⇒ **`BAD_WIRE_VERSION`** (F3);
+- a **known type on an illegal version** (a watch type off `0x02`, an auth type off `0x04`, or any business/
+  watch type on `0x04`) ⇒ **`FRAME_CORRUPT`** (F3 step 6 / F6A-3);
 - **trailing bytes** after a known payload ⇒ **`FRAME_CORRUPT`** (F3 step 7);
 - the **CRC is verified before** version/type (F3 step 4).
 
 **A future field CANNOT be appended to an existing frame and silently ignored** — the trailing-bytes check
 rejects it. This is the **deliberate asymmetry vs. HTTP** (§04), which ignores unknown query params/headers.
-To evolve the edge wire a deployment **MUST bump the version byte** (a new frame type or field rides a
-`0x03`+ version); older drivers then fail closed on the unknown version rather than mis-parsing. A driver
-**MUST** treat any unknown version/type/trailing-byte as a hard error, never as a forward-compatible
-extension.
+To evolve the edge wire a deployment **MUST bump the version byte** (a new frame type or field rides a new
+version); older drivers then fail closed on the unknown version rather than mis-parsing. **The auth-phase `0x04`
+frames (§6A) are the worked example of an additive version-byte extension**: they added two new frame types on
+a new version without touching any `0x01`/`0x02`/`0x03` byte, so a pre-auth-arc driver is byte-identical and a
+driver that does not speak `0x04` simply never emits it. A driver **MUST** treat any unknown
+version/type/illegal-type-for-version/trailing-byte as a hard error, never as a forward-compatible extension.
 
 **F11-2 (the exception is the nested snapshot trailer).** The **only** TLV-extensible region is the ADR-0028
 snapshot body's trailer (F7-2): a reader **MUST** skip unknown TLV tags there. A driver **MUST** keep these
@@ -636,8 +787,14 @@ F6-1…F6-9; a watch driver additionally needs §02 + F7.
       type → payload → **trailing bytes ⇒ `FRAME_CORRUPT`**; **bounds-check every length/count (incl.
       server-set snapshot sizes) before allocating** (F3).
 - [ ] **First-frame pin** on the **version byte** — `SUBSCRIBE` (type `0x01`)⇒version `0x01`, `WATCH_CREATE`
-      (type `0x0A`)⇒version `0x02`; stamp that version on **every** frame; a mismatch ⇒ `BAD_WIRE_VERSION`;
-      **no** hello frame, **no** downgrade (F4).
+      (type `0x0A`)⇒version `0x02`; stamp that version on **every business** frame; a mismatch ⇒
+      `BAD_WIRE_VERSION`; **no** hello frame, **no** downgrade (F4). The decoder accepts a version byte of
+      `0x01`–`0x04`; anything else ⇒ `BAD_WIRE_VERSION`.
+- [ ] **Auth-phase frames** (token/basic edge only): send `AUTH`/`REFRESH_AUTH` on version **`0x04`** with the
+      `[scheme u8][len-prefixed fields]` payload (bearer=1 / basic=2; §6A); `0x04` is **version-pin-exempt**
+      (interleaves on any business pin), auth types are legal **only** under `0x04`, business/watch types are
+      **never** legal under `0x04`, and crossing the two ⇒ `FRAME_CORRUPT` (F6A-3/F6A-4). An mTLS-only driver
+      sends **no** `0x04` frame and is byte-identical to a pre-auth-arc client. Lifecycle/expiry ⇒ §03.
 - [ ] Keep **sequence/timestamp `u64` fields in `[0, 2^63)`** (incl. the client-emitted `CURSOR_ACK.seq` and
       `SUBSCRIBE.resumeCursor`) — high bit ⇒ `FRAME_CORRUPT`; `failoverResumeCursor`'s only legal high-bit value
       is the `0xFFFF…FF` "none" sentinel; only `SUBSCRIBE_OK`/`HEARTBEAT` `latestSeq` and `watch_id`/`gid` are
