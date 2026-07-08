@@ -249,6 +249,22 @@
                     <version>3.4.2</version>
                 </plugin>
                 <!--
+                  Pin maven-clean-plugin for the same reproducibility reason as
+                  maven-jar-plugin above (F-0056). Unpinned it resolved to whatever
+                  the local Maven default was, so the main `clean install` did not
+                  fetch a fixed version into the dependency cache and the OFFLINE
+                  gate jobs (gate-2 / phase-0 build the jcstress uber-jar with
+                  `-o clean package`) could not resolve it whenever a pom change
+                  invalidated the cache. 3.2.0 is the version those gates already
+                  request; pinning it makes the online build cache it so the
+                  offline gates find it, and keeps the build reproducible.
+                -->
+                <plugin>
+                    <groupId>org.apache.maven.plugins</groupId>
+                    <artifactId>maven-clean-plugin</artifactId>
+                    <version>3.2.0</version>
+                </plugin>
+                <!--
                   F-0020 fix: SpotBugs static analysis plugin registered in
                   pluginManagement so every module inherits the configuration.
                   Bound to the `verify` phase; runs only when invoked via
