@@ -49,7 +49,10 @@ is **normative**.
 ## 2. HTTP control-plane status codes
 
 **E2-1.** The complete set of statuses the HTTP data plane returns (`AdminApiHandler`), with the required
-reaction:
+reaction. (The conditional leadership-transfer control route — `POST /v1/admin/groups/…/transfer-leadership`,
+§04 D2-2a — reuses these same status **codes** with route-specific meanings: a `200` is an **asynchronous
+transfer-initiated**, not "moved"; a `409` is a **precondition** failure; a hintless `503` is a **timeout with
+an unknown outcome**, distinct from the `409`. See §04 D2-2a for that route's per-status contract.)
 
 | Status | When (code site) | Distinguishing headers / body | Driver reaction |
 |---|---|---|---|

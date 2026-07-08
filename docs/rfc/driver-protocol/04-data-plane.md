@@ -76,9 +76,42 @@ is the **percent-decoded** path (`URI.getPath()`, :131) and **is** the storage k
 strong-read classification, D3-5).
 
 **D2-2 (routing).** Routing is **exact-match** for the three fixed endpoints (`/health/live`,
-`/health/ready`, `/metrics`) and **prefix-match** for `/v1/config/` (:132–143). Any other path returns
-**`404` `Not Found`** (:144). A suffix variant of a fixed endpoint (e.g. `/metricsZ`) does **not** match and
-returns `404`.
+`/health/ready`, `/metrics`), **prefix-match** for `/v1/config/`, and — **when the leadership-admin seam is
+wired** — **prefix-match** for **`/v1/admin/groups/`** (the leadership-transfer control route, D2-2a). Any
+**other** path returns **`404` `Not Found`**. A suffix variant of a fixed endpoint (e.g. `/metricsZ`) does
+**not** match and returns `404`. **When the leadership-admin seam is not wired, `/v1/admin/groups/` is unrouted
+and also `404`s** — byte-identical to a build without it, so a driver **MUST** treat that route as
+**optional/deployment-conditional** and fail closed (`404`) when absent.
+
+**D2-2a (the leadership-transfer control route — conditional, admin).** A fifth route exists **only when the
+server's leadership-admin seam is wired** (the multi-Raft leadership transfer/auto-balance capability; absent ⇒
+the path `404`s): **`POST /v1/admin/groups/{groupId}/transfer-leadership?target=<nodeId>`**
+(`AdminApiHandler.transferLeadership`). It is a **leadership-control** operation — **not** a `/v1/config` write
+and **not** a topology/membership **discovery** endpoint (§05 R3-2 still holds: it discloses nothing about
+membership) — **ADMIN-gated, stricter than config** (it authorizes against `_system/raft/groups/{gid}/leadership`
+and is **refused outright when auth is OFF**), and **replay-guarded** when the replay guard is enabled. Its
+status taxonomy:
+
+| Status | Meaning | Driver reaction |
+|---|---|---|
+| **200** | transfer **initiated** — **asynchronous** (a `TimeoutNow` was sent); **NOT** "leadership has moved" | success-of-request only; confirm the move via a **follow-up leader read / `X-Leader-Hint`**, do **not** assume it moved |
+| **503** + `X-Leader-Hint` | not the group leader | retry against the **hinted** group leader (§05 R4-3) |
+| **409** | **precondition** failure — target is self / not a voter / a config change is pending | **permanent for that target** — do not retry unchanged |
+| **503** **without** hint | leadership-transfer **timeout** — outcome **unknown** | **safe to retry** (distinct from the `409` precondition failure) |
+| **400** | malformed `{groupId}` / missing-or-non-integer `target` / unknown group | **permanent** — fix the request (checked **after** the ADMIN gate, so an unauthorized caller cannot probe group existence) |
+| **401 / 403** | the ADMIN gate (refused when auth is OFF) | (re)authenticate / forbidden — as §03 / A7-2 |
+| **405** | non-`POST` method | fix the method |
+| **404** | unknown sub-resource under `/v1/admin/groups/`, **or the seam unwired** | the route is absent/deployment-conditional |
+
+A driver **MUST** distinguish the **`409`** precondition failure (permanent for that target) from the
+**hintless-`503`** timeout (unknown outcome, retryable), and **MUST NOT** read a `200` as "leadership moved."
+
+**The `409` here is operation-scoped and MUST NOT be conflated with the config-mutation `409`.** A `409` on a
+config `PUT`/`DELETE` is a **replayed-nonce** reject (retry with a **fresh** timestamp+nonce — §07 E2-1 / D11-3);
+a `409` on this **transfer-leadership** route is a **precondition conflict** (terminal — do not retry unchanged).
+A driver keys the reaction on the **operation it invoked** (which request it made — a config mutation vs a
+leadership transfer), **never** on the response body (§07 E6). This is the HTTP analogue of the edge's
+"(code, carrier)" rule: the status alone is insufficient; the reaction is `(status, operation)`.
 
 **D2-3 (methods).** On `/v1/config/{key}`: **`GET`** reads, **`PUT`** writes, **`DELETE`** deletes; any other
 method returns **`405` `Method Not Allowed`** (:188–193). The fixed endpoints are **`GET`-only** (`405`
