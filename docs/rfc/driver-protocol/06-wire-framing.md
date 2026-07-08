@@ -522,6 +522,23 @@ The credential itself is size-policed **before** verification: a bearer token > 
 wire constants like `MAX_EDGE_FRAME_SIZE`); a conformant driver keeps its credential well within them and treats
 an over-cap rejection as `AUTH_FAIL` (pre-auth) / `CREDENTIAL_EXPIRED` (on a `REFRESH_AUTH`; §07).
 
+**F6A-6 (pipelining a business frame behind `AUTH` — the invariant is ordering, not a round-trip).** The `AUTH`
+frame is **not acknowledged** — there is **no `AUTH-OK` frame** — so a certificate-less driver **MAY pipeline**
+its first business frame(s) (`SUBSCRIBE` / `WATCH_CREATE`) **immediately behind** its single `AUTH`, without
+waiting for a round-trip. While the **first** authentication is still resolving (credential verification runs
+off the accept path), the server **buffers** up to **`MAX_PENDING_PREAUTH_FRAMES` = 8** such pipelined non-`AUTH`
+frames — each already bounded by the pre-auth frame ceiling (F6A-5) — and **replays them into the session once
+authentication succeeds**; if authentication **fails**, the buffered frames are **discarded** with the
+`AUTH_FAIL` close (`EdgeAuthGateHandler.channelRead` / `bufferPendingFrame` / `replayPendingFrames`). What is a
+`PROTOCOL_VIOLATION` (§07 code 10) is therefore an **ordering** fault, **not** the pipelining itself: a frame
+sent **before** the `AUTH` (i.e. `AUTH` is not the first routed frame), a **second `AUTH`** (while the first is
+resolving or after it has succeeded), or **more than 8** frames pipelined behind the `AUTH` before it resolves.
+A driver **MUST** make `AUTH` its **first** routed frame and **MUST NOT** pipeline more than a small handful of
+frames behind it before authentication completes; it **MAY** rely on this buffer to avoid an auth round-trip.
+This **refines §03 AU4-5 / AU4-7**: "no business frame **before** `AUTH`" is the invariant — a business frame
+**pipelined behind** `AUTH` is buffered-and-replayed, not a violation. (An **mTLS** edge has no `AUTH` frame and
+no pre-auth window at all; this clause is the token/basic path only.)
+
 ---
 
 ## 7. The nested blobs (`CommandCodec` and the ADR-0028 snapshot body)
