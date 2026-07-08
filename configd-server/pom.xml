@@ -28,6 +28,32 @@
         <!-- Config-as-SPI (Group B): YAML parser for the operator-facing config file. Confined to
              configd-server (the YamlConfigSource lives here) so it never enters the lower modules. -->
         <dependency><groupId>org.yaml</groupId><artifactId>snakeyaml</artifactId></dependency>
+
+        <!-- Group B §4 live E2E ONLY (EncryptedClusterVaultKmsIT): puts the optional Vault KMS module
+             (its VaultKmsProviderFactory + META-INF/services entry) and a real Vault container on the
+             TEST classpath so a full ConfigdServer cluster can seal/unseal its at-rest keyring through a
+             real Vault Transit. TEST SCOPE: the core still never compile-depends on configd-kms-vault, so
+             this changes nothing about the production classpath or the "no Vault client in core" property -
+             it only lets the end-to-end test exercise the ServiceLoader boot path the provider unit test
+             cannot. Testcontainers versions pinned locally, matching configd-kms-vault's own Vault IT. -->
+        <dependency>
+            <groupId>io.configd</groupId>
+            <artifactId>configd-kms-vault</artifactId>
+            <version>${project.version}</version>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.testcontainers</groupId>
+            <artifactId>testcontainers</artifactId>
+            <version>1.20.4</version>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.testcontainers</groupId>
+            <artifactId>vault</artifactId>
+            <version>1.20.4</version>
+            <scope>test</scope>
+        </dependency>
     </dependencies>
 
     <build>
