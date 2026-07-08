@@ -242,7 +242,19 @@ public final class NettyHttpApiServer {
                         ch.pipeline().addLast(new AdminHandler());
                     }
                 });
-        serverChannel = b.bind(new InetSocketAddress(port)).sync().channel();
+        boolean bound = false;
+        try {
+            serverChannel = b.bind(new InetSocketAddress(port)).sync().channel();
+            bound = true;
+        } finally {
+            if (!bound) {
+                // A mid-start failure (bind refused / port already in use) must not leak the non-daemon
+                // boss/worker event loops - or the blocking executor - just created. stop() shuts them all
+                // (it is idempotent and null-guarded), so a failed start() leaves nothing running for an
+                // embedder or test; the original failure propagates.
+                stop();
+            }
+        }
     }
 
     /** The actual bound port (resolves an ephemeral port 0 after {@link #start()}). */

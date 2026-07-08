@@ -187,7 +187,10 @@ class LeaderBalanceLoopTest {
             clock.set(0);
             loop.runOnce();
             assertEquals(0, cluster.transfersApplied, "a refused transfer must not move leadership");
-            assertEquals(1, metrics.transfersInitiated);
+            assertEquals(0, metrics.transfersInitiated,
+                    "a refused transfer is NOT an initiation: transfers_initiated counts only drives the "
+                            + "primitive accepted, so the success series is not inflated (attempts = "
+                            + "initiated + refused)");
             assertEquals(1, metrics.transfersRefused);
 
             clock.set(30_000L); // inside cooldown - no retry storm against a change-pending group

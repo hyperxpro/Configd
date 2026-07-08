@@ -161,7 +161,11 @@ class EdgeTokenAuthMtlsTest {
     // fixtures
     // -----------------------------------------------------------------------
 
-    private static AuthenticatorChain bearerChain() {
+    private static AuthenticatorChain mtlsAndBearerChain() {
+        // A MIXED edge chain: it accepts BOTH a handshake client certificate (mtls) AND a token (bearer).
+        // The cert path is authenticated only when 'mtls' is in the chain (a token-only edge must not
+        // auto-authenticate a trust-store cert), so this test - which exercises the cert path - configures
+        // the mixed chain an operator running a cert-or-token edge would use.
         Map<String, String> m = Map.of(
                 "configd.auth.bearer.token", "unused-on-the-cert-path",
                 "configd.auth.bearer.principal", "token-principal");
@@ -173,7 +177,7 @@ class EdgeTokenAuthMtlsTest {
                 return m.keySet().stream().filter(k -> k.startsWith(prefix)).collect(Collectors.toSet());
             }
         };
-        return AuthenticatorChain.build(List.of("bearer"), cfg);
+        return AuthenticatorChain.build(List.of("mtls", "bearer"), cfg);
     }
 
     private int startTlsTokenServer(boolean netty, long ttlMs) throws Exception {
@@ -186,7 +190,7 @@ class EdgeTokenAuthMtlsTest {
         buffer = new FanOutBuffer(10_000);
         SlowConsumerGovernor governor =
                 new SlowConsumerGovernor(SlowConsumerPolicyConfig.defaults(), metrics);
-        EdgeAuthConfig edgeAuth = new EdgeAuthConfig(bearerChain(), 16_384, 8_192, ttlMs);
+        EdgeAuthConfig edgeAuth = new EdgeAuthConfig(mtlsAndBearerChain(), 16_384, 8_192, ttlMs);
         InetSocketAddress bind = new InetSocketAddress("127.0.0.1", 0);
         Map<Integer, CommitNotificationSource> sources = Map.of(0, buffer);
         Map<Integer, ReplaySource> replays = Map.of(0, new SnapshotReplaySource(replayState::get));

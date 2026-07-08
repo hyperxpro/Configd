@@ -63,6 +63,16 @@ final class EdgeAuthGateHandler extends ChannelInboundHandlerAdapter {
     /** CREDENTIAL_EXPIRED close reason for a token whose lifetime elapsed (re-authenticate to resume). */
     private static final String TOKEN_EXPIRED_MESSAGE = "token credential expired";
 
+    /**
+     * The most frames a client may pipeline behind its {@code AUTH} before authentication resolves. A driver
+     * legitimately sends its {@code SUBSCRIBE} right behind the {@code AUTH} without waiting for an ack (there
+     * is no AUTH-OK frame), so one is the norm; a small margin tolerates a client that pipelines a couple
+     * more. Beyond this a pre-auth connection is flooding frames behind a deliberately slow credential
+     * verification, so it is closed. Each buffered frame is already bounded by the decoder's pre-auth frame
+     * ceiling, so the buffer is bounded in both count and per-frame size.
+     */
+    private static final int MAX_PENDING_PREAUTH_FRAMES = 8;
+
     private final EdgeAuthConfig auth;
     private final EdgeCertGate certGate;
     private final RegistryFanOutSessionMetrics metrics;
@@ -89,6 +99,14 @@ final class EdgeAuthGateHandler extends ChannelInboundHandlerAdapter {
      * REFRESH_AUTH spam can amplify verification work.
      */
     private boolean resolving;
+    /**
+     * Event-loop-only: business frames that arrived while the FIRST authentication was still resolving off
+     * the event loop. A driver pipelines its {@code SUBSCRIBE} right behind its {@code AUTH} without waiting
+     * for an ack, so those frames are held here and replayed into the session once authentication succeeds -
+     * rejecting them as pre-auth violations would break that legitimate pipelining. Bounded by
+     * {@link #MAX_PENDING_PREAUTH_FRAMES}; null until the first frame is buffered.
+     */
+    private List<EdgeFrame> pendingPreAuthFrames;
 
     EdgeAuthGateHandler(EdgeAuthConfig auth, EdgeCertGate certGate,
                         RegistryFanOutSessionMetrics metrics, Clock clock, Executor authWorker) {
@@ -219,12 +237,19 @@ final class EdgeAuthGateHandler extends ChannelInboundHandlerAdapter {
 
     private void onUnauthenticatedFrame(ChannelHandlerContext ctx, EdgeFrame frame) {
         if (resolving) {
-            // A credential resolution is already in flight for this connection (the single pre-auth
-            // attempt is being verified off the event loop). A second pre-auth frame before it completes
-            // is anomalous and would dispatch a second PBKDF2 - fail closed, preserving the
-            // one-attempt-per-handshake bound.
-            closePreAuth(ctx, ErrorCode.PROTOCOL_VIOLATION,
-                    "a pre-auth frame arrived while authentication was in progress");
+            if (frame instanceof EdgeFrame.Auth) {
+                // A SECOND AUTH frame while the first is still being verified off the event loop: a genuine
+                // double pre-auth attempt. Fail closed - one credential resolution per handshake (a retry
+                // costs a fresh handshake), so neither a stray nor a hostile second AUTH amplifies PBKDF2.
+                closePreAuth(ctx, ErrorCode.PROTOCOL_VIOLATION,
+                        "a second AUTH frame arrived while the first was being verified");
+                return;
+            }
+            // A business frame pipelined right behind the AUTH (the driver does not wait for an ack before
+            // sending its SUBSCRIBE - there is no AUTH-OK frame). Hold it until authentication resolves, then
+            // replay it into the started session - rejecting it as a pre-auth violation would break the
+            // legitimate AUTH-then-SUBSCRIBE pipelining the driver relies on.
+            bufferPendingFrame(ctx, frame);
             return;
         }
         cancelPreAuthDeadline(); // the first routed frame has arrived; the pre-auth budget is spent
@@ -248,10 +273,47 @@ final class EdgeAuthGateHandler extends ChannelInboundHandlerAdapter {
                 } else {
                     closePreAuth(ctx, ErrorCode.AUTH_FAIL, "authentication failed");
                 }
-            });
+            }, () -> closePreAuthReason(ctx, ErrorCode.AUTH_FAIL, "AUTH_UNAVAILABLE",
+                    "authentication temporarily unavailable (server busy)"));
         } else {
             closePreAuth(ctx, ErrorCode.PROTOCOL_VIOLATION,
                     "expected an AUTH frame before authenticating, got " + frame.type());
+        }
+    }
+
+    /**
+     * Buffers a business frame pipelined behind an {@code AUTH} while the first authentication resolves off
+     * the event loop. Bounded by {@link #MAX_PENDING_PREAUTH_FRAMES}: beyond it the connection is flooding
+     * frames behind a slow credential verification, so it is closed rather than buffered without bound.
+     */
+    private void bufferPendingFrame(ChannelHandlerContext ctx, EdgeFrame frame) {
+        if (pendingPreAuthFrames != null && pendingPreAuthFrames.size() >= MAX_PENDING_PREAUTH_FRAMES) {
+            closePreAuth(ctx, ErrorCode.PROTOCOL_VIOLATION,
+                    "too many frames pipelined before authentication completed");
+            return;
+        }
+        if (pendingPreAuthFrames == null) {
+            pendingPreAuthFrames = new ArrayList<>(4);
+        }
+        pendingPreAuthFrames.add(frame);
+    }
+
+    /**
+     * Re-dispatches the frames pipelined behind the {@code AUTH}, in arrival order, once authentication has
+     * succeeded (called from {@link #install} after the {@link EdgeAuthenticated} event so the session
+     * exists). Each frame is fed back through {@link #channelRead} - NOT forwarded straight downstream - so
+     * it takes the exact same post-auth admission path a frame arriving now would: a pipelined
+     * {@code REFRESH_AUTH} is handled by this gate (re-resolved), a {@code SUBSCRIBE} passes through to the
+     * session. This makes a pipelined connection behave identically to one where resolution was synchronous.
+     */
+    private void replayPendingFrames(ChannelHandlerContext ctx) {
+        if (pendingPreAuthFrames == null) {
+            return;
+        }
+        List<EdgeFrame> pending = pendingPreAuthFrames;
+        pendingPreAuthFrames = null;
+        for (EdgeFrame f : pending) {
+            channelRead(ctx, f);
         }
     }
 
@@ -292,6 +354,10 @@ final class EdgeAuthGateHandler extends ChannelInboundHandlerAdapter {
                     } else {
                         closePostAuth(ctx, ErrorCode.CREDENTIAL_EXPIRED, "credential refresh rejected");
                     }
+                }, () -> {
+                    // Overloaded (the worker queue is saturated): drop this refresh rather than close. The
+                    // session stays valid until its CURRENT expiry, so a shed refresh under load is not fatal
+                    // - the client re-sends REFRESH_AUTH before the deadline.
                 });
             }
             case EdgeFrame.Auth ignored -> closePostAuth(ctx, ErrorCode.PROTOCOL_VIOLATION,
@@ -306,10 +372,11 @@ final class EdgeAuthGateHandler extends ChannelInboundHandlerAdapter {
      * expensive PBKDF2 (~50-150ms); running it inline would stall every other connection sharing this
      * Netty worker. Sets the {@link #resolving} single-flight guard for the dispatch window so a second
      * credential frame cannot spawn a concurrent PBKDF2 on the same connection. All state transitions
-     * in {@code resume} run on the event loop.
+     * in {@code resume} run on the event loop; {@code onOverload} runs on the event loop when the bounded
+     * worker queue is saturated (so the credential is never resolved inline, which would re-stall the loop).
      */
     private void resolveOffLoop(ChannelHandlerContext ctx, Credential credential,
-                               Consumer<AuthResult> resume) {
+                               Consumer<AuthResult> resume, Runnable onOverload) {
         if (authWorker == null) {
             resume.accept(safeResolve(credential)); // safety net: no pool => inline (we are on the EL)
             return;
@@ -317,6 +384,15 @@ final class EdgeAuthGateHandler extends ChannelInboundHandlerAdapter {
         resolving = true;
         try {
             authWorker.execute(() -> {
+                if (!ctx.channel().isActive()) {
+                    // The connection died while this task waited in the worker queue - the signature of a
+                    // connect -> AUTH -> RST churn flood. Skip the (deliberately expensive) PBKDF2 for a
+                    // connection that is already gone, so queued verifications for dead connections can never
+                    // become the drain bottleneck; just clear the guard back on the event loop.
+                    credential.wipeSecret();
+                    ctx.executor().execute(() -> resolving = false);
+                    return;
+                }
                 AuthResult result = safeResolve(credential);
                 ctx.executor().execute(() -> {
                     resolving = false;
@@ -326,10 +402,14 @@ final class EdgeAuthGateHandler extends ChannelInboundHandlerAdapter {
                 });
             });
         } catch (RejectedExecutionException rejected) {
-            // The pool is shutting down (server close) or saturated beyond its queue: resolve inline on
-            // the event loop rather than leave the connection hung. Rare; not the hot path.
+            // The bounded worker queue is saturated (a credential-verification flood) or the pool is shutting
+            // down. Do NOT fall back to resolving inline on the event loop - that is exactly the stall this
+            // off-load exists to prevent, and a flood would re-stall the shared worker. Fail closed and let
+            // the caller decide (a pre-auth connection closes; an authenticated refresh is dropped, its
+            // session still valid).
             resolving = false;
-            resume.accept(safeResolve(credential));
+            credential.wipeSecret();
+            onOverload.run();
         }
     }
 
@@ -359,6 +439,9 @@ final class EdgeAuthGateHandler extends ChannelInboundHandlerAdapter {
         authenticated = true;
         armExpiry(ctx, expiryReason);
         ctx.fireUserEventTriggered(new EdgeAuthenticated(principal));
+        // Any frames the client pipelined behind its AUTH (its SUBSCRIBE) now flow into the started session,
+        // in arrival order - the connection behaves as it did when resolution was synchronous.
+        replayPendingFrames(ctx);
     }
 
     // -----------------------------------------------------------------------
@@ -413,6 +496,7 @@ final class EdgeAuthGateHandler extends ChannelInboundHandlerAdapter {
     public void handlerRemoved(ChannelHandlerContext ctx) {
         cancelPreAuthDeadline();
         cancelExpiry();
+        pendingPreAuthFrames = null; // drop any un-replayed pipelined frames (the connection is gone)
     }
 
     // -----------------------------------------------------------------------

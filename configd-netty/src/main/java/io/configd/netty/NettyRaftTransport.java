@@ -237,15 +237,27 @@ public final class NettyRaftTransport implements RaftTransportEndpoint {
                         ch.pipeline().addLast(new InboundHandler());
                     }
                 });
+        boolean bound = false;
         try {
-            serverChannel = b.bind(bindAddress).sync().channel();
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-            throw new IOException("interrupted binding NettyRaftTransport", e);
+            try {
+                serverChannel = b.bind(bindAddress).sync().channel();
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                throw new IOException("interrupted binding NettyRaftTransport", e);
+            }
+            warnIfPeerIdentityUnconfigured();
+            LOG.info(() -> "NettyRaftTransport listening on " + serverChannel.localAddress()
+                    + (tlsManager != null ? " (mTLS)" : " (PLAINTEXT)") + " [tier=" + transport.tier() + "]");
+            bound = true;
+        } finally {
+            if (!bound) {
+                // A mid-start failure (bind refused / port in use, including a BindException sneak-thrown by
+                // sync()) must not leak the non-daemon boss/worker event loops just created. close() resets
+                // running and shuts them (it is idempotent, and serverChannel is null-guarded), so a failed
+                // start() leaves nothing behind; the original failure propagates.
+                close();
+            }
         }
-        warnIfPeerIdentityUnconfigured();
-        LOG.info(() -> "NettyRaftTransport listening on " + serverChannel.localAddress()
-                + (tlsManager != null ? " (mTLS)" : " (PLAINTEXT)") + " [tier=" + transport.tier() + "]");
     }
 
     /**

@@ -333,30 +333,63 @@ public final class NettyFanOutServer implements FanOutEndpoint {
                         ch.pipeline().addLast(conn);
                     }
                 });
+        boolean bound = false;
         try {
-            serverChannel = b.bind(bindAddress).sync().channel();
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-            throw new IOException("interrupted binding NettyFanOutServer", e);
+            try {
+                serverChannel = b.bind(bindAddress).sync().channel();
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                throw new IOException("interrupted binding NettyFanOutServer", e);
+            }
+            LOG.info(() -> "NettyFanOutServer listening on " + serverChannel.localAddress()
+                    + (tlsManager != null ? " (mTLS)" : " (PLAINTEXT)") + " [tier=" + transport.tier() + "]");
+            bound = true;
+        } finally {
+            if (!bound) {
+                // A mid-start failure (bind refused / port in use, including a BindException sneak-thrown by
+                // sync()) must not leak the non-daemon boss/worker event loops or the auth-worker pool just
+                // created. close() resets running and shuts them all (idempotent, serverChannel null-guarded),
+                // so a failed start() leaves nothing behind; the original failure propagates.
+                close();
+            }
         }
-        LOG.info(() -> "NettyFanOutServer listening on " + serverChannel.localAddress()
-                + (tlsManager != null ? " (mTLS)" : " (PLAINTEXT)") + " [tier=" + transport.tier() + "]");
     }
 
     /**
      * The bounded off-loop credential-resolution pool. Sized to the CPU count (PBKDF2 is CPU-bound, so
      * more threads than cores only thrashes), overridable via {@code configd.edge.authWorkerThreads}, and
      * floored at 1. Daemon threads so they never hold the JVM up.
+     *
+     * <p>The pending-verification QUEUE is bounded too ({@code configd.edge.authWorkerQueueDepth}, default a
+     * small multiple of the pool): a credential-verification flood (many connections each sending an AUTH
+     * behind a deliberately slow PBKDF2) must not grow the backlog without bound and exhaust the heap. A
+     * saturated queue makes {@code execute()} throw {@link java.util.concurrent.RejectedExecutionException},
+     * which {@link EdgeAuthGateHandler} turns into a fail-closed close (pre-auth) or a dropped refresh -
+     * never an inline event-loop resolution. Combined with the gate skipping the PBKDF2 for a connection that
+     * is already dead, this bounds both the queue depth and the wasted work under a churn/AUTH flood.
+     *
+     * <p>All credential types share this one pool, so a sustained flood of the EXPENSIVE type (Basic PBKDF2)
+     * saturates the queue and legitimate token clients are shed fail-closed ({@code AUTH_UNAVAILABLE}) rather
+     * than the server exhausting the heap or stalling the event loop. That graceful shedding is the deliberate
+     * behaviour: bounding the total verification work per node is a correctness requirement, and per-IP /
+     * per-tenant admission control against an auth flood is an ingress-layer concern (load balancer / WAF /
+     * rate limiter), as it is for etcd, Vault, and Keycloak - none run an unbounded KDF in the verifier.
      */
     private static java.util.concurrent.ExecutorService newAuthWorkerPool() {
         int threads = Math.max(1, Integer.getInteger(
                 "configd.edge.authWorkerThreads", Runtime.getRuntime().availableProcessors()));
+        int queueDepth = Math.max(1, Integer.getInteger(
+                "configd.edge.authWorkerQueueDepth", threads * 8));
         java.util.concurrent.atomic.AtomicInteger seq = new java.util.concurrent.atomic.AtomicInteger();
-        return java.util.concurrent.Executors.newFixedThreadPool(threads, r -> {
-            Thread t = new Thread(r, "configd-edge-auth-" + seq.incrementAndGet());
-            t.setDaemon(true);
-            return t;
-        });
+        return new java.util.concurrent.ThreadPoolExecutor(
+                threads, threads, 0L, java.util.concurrent.TimeUnit.MILLISECONDS,
+                new java.util.concurrent.ArrayBlockingQueue<>(queueDepth),
+                r -> {
+                    Thread t = new Thread(r, "configd-edge-auth-" + seq.incrementAndGet());
+                    t.setDaemon(true);
+                    return t;
+                },
+                new java.util.concurrent.ThreadPoolExecutor.AbortPolicy());
     }
 
     /** Builds the server-mode mTLS {@link SslHandler} - the SAME SSLContext/protocols/ciphers as the JDK server. */
