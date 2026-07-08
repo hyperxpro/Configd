@@ -125,6 +125,26 @@ public final class Configd implements AutoCloseable {
             return this;
         }
 
+        public Builder epochStore(EpochStore epochStore) {
+            delegate.epochStore(epochStore);
+            return this;
+        }
+
+        public Builder dataDir(java.nio.file.Path dataDir) {
+            delegate.dataDir(dataDir);
+            return this;
+        }
+
+        public Builder verifyWith(java.security.PublicKey leaderPublicKey) {
+            delegate.verifyWith(leaderPublicKey);
+            return this;
+        }
+
+        public Builder trustUnverified() {
+            delegate.trustUnverified();
+            return this;
+        }
+
         public Builder allowPlaintext(boolean allowPlaintext) {
             delegate.allowPlaintext(allowPlaintext);
             return this;

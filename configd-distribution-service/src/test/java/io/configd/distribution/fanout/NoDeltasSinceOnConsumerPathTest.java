@@ -52,7 +52,9 @@ class NoDeltasSinceOnConsumerPathTest {
      * reason a reviewer can audit; the tripwire fails on stale entries.
      */
     private static final Map<String, String> EXEMPT_MODULES = Map.of(
-            // (no exemptions - see javadoc; keep the reason format "module: why")
+            // A test-only module (the protocol conformance suite) has no src/main/java to scan - it
+            // carries only src/test/java that drives a live server. Nothing to guard on a main path.
+            "configd-conformance", "test-only module (conformance suite); no src/main/java to scan"
     );
 
     /**

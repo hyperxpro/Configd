@@ -38,4 +38,15 @@ public interface InboundFrameHandler {
     /** A connection-fatal terminal, delivered just before the connection closes. */
     default void onTerminal(ConfigdException terminal) {
     }
+
+    /**
+     * Whether the handler currently wants more frames read from the socket. Returning {@code false} parks the
+     * reader (reactive backpressure) until the handler regains demand and calls
+     * {@link io.configd.client.edge.session.EdgeConnection#wakeReader()}. The default always wants frames (no
+     * backpressure) — the Gate-1 auth path and any drain-promptly consumer.
+     */
+    default boolean wantsMoreFrames() {
+        return true;
+    }
 }
+

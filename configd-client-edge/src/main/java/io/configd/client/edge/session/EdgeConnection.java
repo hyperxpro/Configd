@@ -64,6 +64,11 @@ public final class EdgeConnection {
     /** Whether a HEARTBEAT-silence read-idle timeout is fatal; disarmed until streaming begins (Gate 2). */
     private volatile boolean idleDeadlineArmed;
 
+    /** Gate that lets the handler pause reads (reactive backpressure): the reader parks when it has no demand. */
+    private final java.util.concurrent.locks.ReentrantLock readGate =
+            new java.util.concurrent.locks.ReentrantLock();
+    private final java.util.concurrent.locks.Condition readable = readGate.newCondition();
+
     public EdgeConnection(ServerAddress address, ClientTls tls, HostileServerLimits limits,
                           InboundFrameHandler handler, String readerThreadName) {
         this.address = address;
@@ -170,11 +175,27 @@ public final class EdgeConnection {
         return r != null && r.isAlive();
     }
 
+    /** Tears the connection down with a classified terminal error (the handler's fail-closed / re-bootstrap path). */
+    public void fail(ConfigdException error) {
+        deliverTerminal(error);
+    }
+
+    /** Wakes a reader parked for backpressure (the handler regained demand, or the connection is closing). */
+    public void wakeReader() {
+        readGate.lock();
+        try {
+            readable.signalAll();
+        } finally {
+            readGate.unlock();
+        }
+    }
+
     /** Closes the socket and stops the reader thread (bounded join). Idempotent. */
     public void close() {
         closing = true;
         state = EdgeConnectionState.CLOSING;
         closeSocketQuietly(); // unblocks the reader's blocking read promptly
+        wakeReader();         // unblock a reader parked for backpressure
         Thread r = reader;
         if (r != null && r != Thread.currentThread()) {
             try {
@@ -200,6 +221,23 @@ public final class EdgeConnection {
 
     private void runReader() {
         while (!closing) {
+            // Reactive backpressure: if the handler has no demand for more frames, park until it regains some
+            // (or the connection closes). This stops draining the socket, so the server sees the outbound
+            // queue back up and demotes a genuinely slow consumer (§06 F10-3), without us buffering unbounded.
+            if (!handler.wantsMoreFrames()) {
+                readGate.lock();
+                try {
+                    if (!closing && !handler.wantsMoreFrames()) {
+                        readable.await(200, java.util.concurrent.TimeUnit.MILLISECONDS);
+                    }
+                } catch (InterruptedException ie) {
+                    Thread.currentThread().interrupt();
+                    return;
+                } finally {
+                    readGate.unlock();
+                }
+                continue;
+            }
             EdgeFrame frame;
             try {
                 frame = EdgeFrameReader.readFrame(in, pinnedVersion, limits.maxFrameBytes());

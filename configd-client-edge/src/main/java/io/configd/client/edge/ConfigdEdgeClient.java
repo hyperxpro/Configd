@@ -4,13 +4,17 @@ import io.configd.client.AuthFailedException;
 import io.configd.client.ConfigdClientConfig;
 import io.configd.client.ConfigdException;
 import io.configd.client.CredentialExpiredException;
+import io.configd.client.GapUnrecoverableException;
 import io.configd.client.ProtocolViolationException;
 import io.configd.client.QuarantinedException;
 import io.configd.client.ServerAddress;
+import io.configd.client.StaleTopologyException;
 import io.configd.client.UnavailableException;
 import io.configd.client.edge.session.AuthLifecycle;
 import io.configd.client.edge.session.EdgeConnection;
 import io.configd.client.edge.session.EdgeConnectionState;
+import io.configd.client.edge.session.SignedChainVerifier;
+import io.configd.client.edge.session.SnapshotReassembler;
 import io.configd.distribution.wire.EdgeFrame;
 import io.configd.distribution.wire.ErrorCode;
 
@@ -58,7 +62,6 @@ public final class ConfigdEdgeClient implements AutoCloseable {
     private final ScheduledExecutorService scheduler;
     private final boolean ownsScheduler;
     private final AuthMode mode;
-    private final InboundFrameHandler userHandler;
 
     private final AtomicBoolean closed = new AtomicBoolean(false);
     private final AtomicInteger readerSeq = new AtomicInteger();
@@ -66,6 +69,13 @@ public final class ConfigdEdgeClient implements AutoCloseable {
     private final AtomicInteger reconnects = new AtomicInteger();
     private final AtomicInteger endpointCursor = new AtomicInteger();
     private final CompletableFuture<Void> terminal = new CompletableFuture<>();
+
+    /** The active inbound handler — the Gate-1 user handler, or a Gate-2 {@link Subscription} once subscribed. */
+    private volatile InboundFrameHandler activeHandler;
+    /** Run after each successful (re)authentication — a {@link Subscription} hooks it to (re)send its SUBSCRIBE. */
+    private volatile java.util.function.Consumer<EdgeConnection> onAuthenticated = c -> {
+    };
+    private volatile Subscription activeSubscription;
 
     private volatile EdgeConnection connection;
     private volatile AuthLifecycle lifecycle;
@@ -76,8 +86,15 @@ public final class ConfigdEdgeClient implements AutoCloseable {
         this.scheduler = scheduler;
         this.ownsScheduler = ownsScheduler;
         this.mode = AuthMode.of(config);
-        this.userHandler = userHandler == null ? new InboundFrameHandler() {
+        this.activeHandler = userHandler == null ? new InboundFrameHandler() {
         } : userHandler;
+        // On permanent give-up, tell an active subscription so its reactive stream / hydration errors out.
+        terminal.whenComplete((v, ex) -> {
+            Subscription sub = activeSubscription;
+            if (ex != null && sub != null) {
+                sub.onClientGaveUp(toConfigdException(ex));
+            }
+        });
     }
 
     /** Opens a standalone edge client that owns its own scheduler (closed with the client). */
@@ -201,6 +218,64 @@ public final class ConfigdEdgeClient implements AutoCloseable {
         } catch (IOException io) {
             throw new UnavailableException("failed to present credential: " + io.getMessage(), io);
         }
+        onAuthenticated.accept(conn); // a Subscription (re)sends its SUBSCRIBE at the persisted cursor here
+    }
+
+    // -----------------------------------------------------------------------
+    // Gate 2: subscribe / hydrate
+    // -----------------------------------------------------------------------
+
+    /** Subscribes to the whole store and hydrates a verified {@link LocalConfigView}. */
+    public Subscription subscribeFullStore(SubscribeOptions options) {
+        return subscribe(true, java.util.List.of(), options);
+    }
+
+    /** Subscribes to a set of key prefixes (server-side or client-side storage-filtered). */
+    public Subscription subscribePrefixes(java.util.List<String> prefixes, SubscribeOptions options) {
+        return subscribe(false, prefixes, options);
+    }
+
+    private Subscription subscribe(boolean fullStore, java.util.List<String> prefixes, SubscribeOptions options) {
+        if (activeSubscription != null) {
+            throw new IllegalStateException(
+                    "this edge client already has a subscription (multi-subscription fan-in is Gate 3)");
+        }
+        SignedChainVerifier verifier = buildVerifier();
+        LocalConfigView view = fullStore
+                ? new LocalConfigView()
+                : new LocalConfigView(key -> prefixes.stream().anyMatch(key::startsWith));
+        SnapshotReassembler reassembler = new SnapshotReassembler(config.limits());
+        Subscription sub = Subscription.create(
+                options, fullStore, prefixes, verifier, reassembler, view, config.cursorStore());
+        this.activeSubscription = sub;
+        this.activeHandler = sub;
+        this.onAuthenticated = sub::onConnected;
+        // Drive the connection; an initial connect/auth failure terminates the subscription (no established
+        // connection was ever dropped, so the reconnect path does not apply — the caller sees it via awaitHydrated).
+        connectAndAuthenticate().whenComplete((v, ex) -> {
+            if (ex != null) {
+                sub.onClientGaveUp(toConfigdException(ex));
+            }
+        });
+        return sub;
+    }
+
+    private SignedChainVerifier buildVerifier() {
+        if (config.leaderVerifyKey().isPresent()) {
+            return SignedChainVerifier.verifying(config.leaderVerifyKey().get(), config.epochStore());
+        }
+        if (config.trustUnverified()) {
+            return SignedChainVerifier.trustUnverified();
+        }
+        throw new IllegalStateException("a subscribe requires a verification mode: configure verifyWith("
+                + "leaderKey) for VERIFY, or trustUnverified() to opt out explicitly");
+    }
+
+    private static ConfigdException toConfigdException(Throwable ex) {
+        Throwable cause = ex instanceof java.util.concurrent.CompletionException && ex.getCause() != null
+                ? ex.getCause() : ex;
+        return cause instanceof ConfigdException ce
+                ? ce : new UnavailableException("edge client failed: " + cause.getMessage(), cause);
     }
 
     private ServerAddress nextEndpoint() {
@@ -231,15 +306,20 @@ public final class ConfigdEdgeClient implements AutoCloseable {
         // (it may be a transient authenticator outage indistinguishable on the wire from a bad credential),
         // §07 E4-2. The single pre-auth AUTH is never hot-looped on one connection — each retry is a fresh
         // connection after a jittered backoff, capped by RetryPolicy.maxAttempts.
+        // A chain gap / truncated snapshot (GapUnrecoverable) and a superseded cursor generation
+        // (StaleTopology) are recovered by reconnecting and re-SUBSCRIBEing from scratch (re-bootstrap); the
+        // Subscription sets its force-rebootstrap flag before failing, so the resume uses cursor 0.
         if (error instanceof AuthFailedException
                 || error instanceof CredentialExpiredException
                 || error instanceof UnavailableException
-                || error instanceof QuarantinedException) {
+                || error instanceof QuarantinedException
+                || error instanceof GapUnrecoverableException
+                || error instanceof StaleTopologyException) {
             return true;
         }
         // A transient FRAME_CORRUPT gets a bounded reconnect (§07 E7); a persistent one exhausts the budget.
-        // A bare ProtocolViolation without FRAME_CORRUPT (e.g. a driver-side framing bug) is terminal, as is a
-        // ForbiddenException (NOT_AUTHORIZED — forbidden for this principal/target).
+        // A bare ProtocolViolation without FRAME_CORRUPT (e.g. a driver-side framing bug) is terminal, as are a
+        // ForbiddenException (NOT_AUTHORIZED) and a ChainVerificationException (fail-closed security event).
         return error instanceof ProtocolViolationException pve
                 && pve.edgeCode().orElse(null) == ErrorCode.FRAME_CORRUPT;
     }
@@ -307,39 +387,44 @@ public final class ConfigdEdgeClient implements AutoCloseable {
         });
     }
 
-    /** Wraps the user's inbound handler, intercepting the terminal callback for the reconnect decision. */
+    /** Wraps the active inbound handler, intercepting the terminal callback for the reconnect decision. */
     private final class TerminalInterceptingHandler implements InboundFrameHandler {
         @Override
         public void onHeartbeat(EdgeFrame.Heartbeat heartbeat) {
             markHealthy(); // a positive server frame confirms the connection is up (not just optimistically authed)
-            userHandler.onHeartbeat(heartbeat);
+            activeHandler.onHeartbeat(heartbeat);
         }
 
         @Override
         public void onFrame(EdgeFrame frame) {
             markHealthy();
-            userHandler.onFrame(frame);
+            activeHandler.onFrame(frame);
         }
 
         @Override
         public void onCatchUp() {
-            userHandler.onCatchUp();
+            activeHandler.onCatchUp();
         }
 
         @Override
         public void onPerWatch(ConfigdException watchError) {
-            userHandler.onPerWatch(watchError);
+            activeHandler.onPerWatch(watchError);
         }
 
         @Override
         public void onCancelAck() {
-            userHandler.onCancelAck();
+            activeHandler.onCancelAck();
         }
 
         @Override
         public void onTerminal(ConfigdException terminalError) {
-            userHandler.onTerminal(terminalError);
+            activeHandler.onTerminal(terminalError);
             handleTerminal(terminalError);
+        }
+
+        @Override
+        public boolean wantsMoreFrames() {
+            return activeHandler.wantsMoreFrames();
         }
     }
 }

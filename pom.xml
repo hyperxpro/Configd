@@ -29,6 +29,7 @@
         <module>configd-linz</module>
         <module>configd-client-core</module>
         <module>configd-client-edge</module>
+        <module>configd-conformance</module>
         <module>configd-jcstress</module>
     </modules>
 

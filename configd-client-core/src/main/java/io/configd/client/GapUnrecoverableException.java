@@ -18,4 +18,13 @@ public final class GapUnrecoverableException extends ConfigdException {
     public GapUnrecoverableException(String message, ErrorCode edgeCode, String sanitizedServerMessage) {
         super(message, null, edgeCode, sanitizedServerMessage);
     }
+
+    /**
+     * A client-detected chain gap or truncated / mismatched hydration snapshot: the local state cannot be
+     * continued from what arrived, so the client re-bootstraps from a fresh snapshot rather than applying a
+     * partial state. Same §07 reaction (re-bootstrap), no server {@link ErrorCode}.
+     */
+    public GapUnrecoverableException(String message) {
+        super(message);
+    }
 }

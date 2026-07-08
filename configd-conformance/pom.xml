@@ -1,0 +1,60 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <parent>
+        <groupId>io.configd</groupId>
+        <artifactId>configd</artifactId>
+        <version>0.1.0-SNAPSHOT</version>
+    </parent>
+
+    <artifactId>configd-conformance</artifactId>
+
+    <!--
+      The conformance / real-server E2E module: it is the one place that sees BOTH the thin reference client
+      (configd-client-*) and the real server (configd-server + the fan-out data plane), so it drives the client
+      against a live FanOutServer. This keeps the thin client's own test scope free of the server (the
+      thin-client thesis) while still proving real interop. Seeded in Gate 2 for the subscribe/hydrate + Gate-1
+      auth interop; it grows into the full two-runner conformance suite (client-conforms / server-obeys-RFC) at
+      Gate 5. Deps are compile-scope so the (test-only) sources see both sides.
+    -->
+    <dependencies>
+        <dependency>
+            <groupId>io.configd</groupId>
+            <artifactId>configd-client-edge</artifactId>
+            <version>${project.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>io.configd</groupId>
+            <artifactId>configd-client-core</artifactId>
+            <version>${project.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>io.configd</groupId>
+            <artifactId>configd-server</artifactId>
+            <version>${project.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>io.configd</groupId>
+            <artifactId>configd-distribution-service</artifactId>
+            <version>${project.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>io.configd</groupId>
+            <artifactId>configd-observability</artifactId>
+            <version>${project.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>io.configd</groupId>
+            <artifactId>configd-common</artifactId>
+            <version>${project.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>io.configd</groupId>
+            <artifactId>configd-wire</artifactId>
+            <version>${project.version}</version>
+        </dependency>
+    </dependencies>
+</project>
