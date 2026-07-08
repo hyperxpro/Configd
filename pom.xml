@@ -27,6 +27,8 @@
         <module>configd-server</module>
         <module>configd-edge-node</module>
         <module>configd-linz</module>
+        <module>configd-client-core</module>
+        <module>configd-client-edge</module>
         <module>configd-jcstress</module>
     </modules>
 
