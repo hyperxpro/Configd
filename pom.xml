@@ -11,6 +11,7 @@
 
     <modules>
         <module>configd-common</module>
+        <module>configd-wire</module>
         <module>configd-transport</module>
         <module>configd-netty</module>
         <module>configd-consensus-core</module>
