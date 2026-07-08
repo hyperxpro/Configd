@@ -160,6 +160,12 @@ else
   $MVN -q -o -pl configd-config-store,configd-distribution-service,configd-transport -am \
     install -Dmaven.test.skip=true >"$LOGDIR/jcstress-install.txt" 2>&1 \
     || { tail -20 "$LOGDIR/jcstress-install.txt"; fail jcstress "jcstress dep install failed"; }
+  # Prime maven-clean-plugin online: the offline build below runs `clean`, but the
+  # runner's system-Maven resolves that plugin outside the wrapper's cached repo,
+  # so a fresh CI dependency cache can lack it. Fetch it once (pinned 3.2.0) so the
+  # -o build finds it; best-effort (the offline build still fails loudly if absent).
+  $MVN -q -N org.apache.maven.plugins:maven-clean-plugin:3.2.0:clean \
+    >"$LOGDIR/jcstress-clean-prime.txt" 2>&1 || true
   $MVN -q -o -pl configd-jcstress clean package -Dmaven.test.skip=true >"$LOGDIR/jcstress-build.txt" 2>&1 \
     || { tail -20 "$LOGDIR/jcstress-build.txt"; fail jcstress "jcstress uber-jar build failed"; }
   [ -f "$ROOT/configd-jcstress/target/jcstress.jar" ] || fail jcstress "uber-jar not produced"
