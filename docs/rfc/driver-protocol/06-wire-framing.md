@@ -392,6 +392,24 @@ fixture pinned by `goldenCrc()`):
 mismatched snapshot — it **MUST NOT** apply a partial snapshot as complete (silent store divergence). Chunk
 `index` is sequential and frames arrive in order over TCP, but a driver **SHOULD** order by `index` defensively.
 
+**F6-6a (the hydration snapshot is transport-authenticated, not signed — a normative trust boundary).** The
+reassembled snapshot body (F7-2) carries **no per-snapshot signature or MAC** — unlike the `NOTIFY` delta chain,
+whose per-delta Ed25519 signatures (F6-3) are end-to-end authenticity **above** the transport. A driver
+hydrating from a snapshot therefore **trusts the server's base-state bytes on the strength of the authenticated
+transport** (the mTLS server identity, F9) plus the frame CRC (transport integrity, F2-2) — **not** a
+cryptographic signature. The signed delta chain is the tamper-evidence on every **increment** applied over that
+trusted base. Three consequences a conforming driver **MUST** internalize:
+
+1. Signature verification (`full_chain_verify` / a configured verifier) applies to the **delta chain**, **not**
+   the snapshot: a verifying driver verifies deltas and **trusts** the snapshot base — this is **correct and
+   deliberate**, not an unverified-input gap.
+2. The snapshot's authenticity is **only as strong as the transport**. A driver **MUST NOT** accept and rely on
+   a hydration snapshot over an unauthenticated / plaintext transport (F9, OV7-1) — nothing else binds the base
+   state to the real leader.
+3. A driver **MUST** still bound the snapshot **structurally** (exactly `chunkCount` chunks, reassembled length
+   == `totalBytes`, and its own accumulation ceilings) so a hostile or buggy server cannot amplify allocation —
+   even though it cannot **forge** the base state without also defeating mTLS.
+
 **F6-7 `CURSOR_ACK` (`0x07`)** — *client→server*; golden `cursor_ack.bin`: `[8 u64] seq` (`[0,2^63)` — F5-1;
 **client-emitted**). This is **mandatory flow-control**, not optional progress: see F10-3.
 
