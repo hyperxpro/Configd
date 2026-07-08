@@ -65,8 +65,8 @@ public final class ConfigdEdgeClient implements AutoCloseable {
 
     /**
      * Opens an edge client over a caller-supplied {@code scheduler} (which the client does <b>not</b> own or
-     * shut down). This is how the {@link io.configd.client.Configd} facade shares one scheduler across the
-     * plane clients it vends; advanced callers may also bring their own.
+     * shut down). This is how the {@code Configd} facade (the configd-client aggregator) shares one scheduler
+     * across the plane clients it vends; advanced callers may also bring their own.
      */
     public static ConfigdEdgeClient open(ConfigdClientConfig config, InboundFrameHandler handler,
                                          ScheduledExecutorService scheduler) {

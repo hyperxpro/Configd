@@ -18,6 +18,11 @@ public final class ForbiddenException extends ConfigdException {
         super(message);
     }
 
+    /** An HTTP {@code 403} carrying the server's sanitized (diagnostic-only) reason. */
+    public ForbiddenException(String message, String sanitizedServerMessage) {
+        super(message, null, null, sanitizedServerMessage);
+    }
+
     public ForbiddenException(String message, ErrorCode edgeCode, String sanitizedServerMessage) {
         super(message, null, edgeCode, sanitizedServerMessage);
     }

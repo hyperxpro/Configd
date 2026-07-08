@@ -118,6 +118,30 @@ public final class ClientTls {
         }
     }
 
+    /**
+     * The underlying {@link SSLContext} for a transport that manages its own sockets — notably the HTTP plane's
+     * JDK {@code HttpClient}, which takes an {@code SSLContext} + {@link SSLParameters} rather than an
+     * {@code SSLSocket}. The context carries the same trust material (and, for an mTLS client, the client
+     * key manager) as {@link #connect}; pair it with {@link #httpsParameters()} to keep the F9 profile.
+     */
+    public SSLContext sslContext() {
+        return context;
+    }
+
+    /**
+     * The frozen F9 TLS parameters for the HTTP plane: TLSv1.3 only, with {@code HTTPS} endpoint identification
+     * (hostname/SAN verification against the request host). A fresh instance per call — {@link SSLParameters} is
+     * mutable and must not be shared. The JDK {@code HttpClient} derives SNI from the request URI host, so
+     * server names are not set here (unlike {@link #connect}, which owns the socket and sets SNI explicitly).
+     */
+    public SSLParameters httpsParameters() {
+        SSLParameters params = new SSLParameters();
+        params.setProtocols(PROTOCOLS);
+        params.setCipherSuites(CIPHERS);
+        params.setEndpointIdentificationAlgorithm("HTTPS");
+        return params;
+    }
+
     /** The client certificate's {@code notAfter}, when this is an mTLS client — for the cert lead-time reconnect. */
     public Optional<Instant> clientCertNotAfter() {
         return Optional.ofNullable(clientCertNotAfter);
