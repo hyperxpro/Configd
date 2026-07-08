@@ -278,7 +278,8 @@ public final class EdgeConnection {
                 return react(ErrorClassifier.classify(ec.code(), Carrier.ERROR_CLOSE, ec.message()));
             }
             case EdgeFrame.WatchCanceled wc -> {
-                return react(ErrorClassifier.classify(wc.code(), Carrier.WATCH_CANCELED, wc.message()));
+                // Carry the watch_id so a multiplexed handler can terminate only this watch (W6-4).
+                return reactWatch(wc.watchId(), ErrorClassifier.classify(wc.code(), Carrier.WATCH_CANCELED, wc.message()));
             }
             case EdgeFrame.Heartbeat hb -> handler.onHeartbeat(hb);
             case EdgeFrame.Auth ignored -> {
@@ -308,6 +309,20 @@ public final class EdgeConnection {
             case Reaction.PerWatch p -> handler.onPerWatch(p.exception());
             case Reaction.CatchUp c -> handler.onCatchUp();
             case Reaction.CancelAck c -> handler.onCancelAck();
+        }
+        return true;
+    }
+
+    /** As {@link #react} but for a {@code WATCH_CANCELED}: routes the per-watch reaction with its {@code watch_id}. */
+    private boolean reactWatch(long watchId, Reaction reaction) {
+        switch (reaction) {
+            case Reaction.Fatal f -> {
+                deliverTerminal(f.exception());
+                return false;
+            }
+            case Reaction.PerWatch p -> handler.onPerWatch(watchId, p.exception());
+            case Reaction.CatchUp c -> handler.onCatchUp();
+            case Reaction.CancelAck c -> handler.onCancelAck(watchId);
         }
         return true;
     }

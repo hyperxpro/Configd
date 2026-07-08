@@ -31,8 +31,22 @@ public interface InboundFrameHandler {
     default void onPerWatch(ConfigdException watchError) {
     }
 
+    /**
+     * A per-watch terminal carrying the {@code watch_id}, so a connection multiplexing several watches can
+     * terminate <b>only</b> that watch and keep its siblings streaming (§06 W6-4). The default routes to the
+     * {@code watch_id}-agnostic {@link #onPerWatch(ConfigdException)}, so a single-watch handler is unaffected.
+     */
+    default void onPerWatch(long watchId, ConfigdException watchError) {
+        onPerWatch(watchError);
+    }
+
     /** {@code SERVER_SHUTDOWN} (9) on a {@code WATCH_CANCELED}: the expected cancel-ack — not an error. */
     default void onCancelAck() {
+    }
+
+    /** The {@code watch_id}-carrying cancel-ack, for a multiplexed connection. Defaults to {@link #onCancelAck()}. */
+    default void onCancelAck(long watchId) {
+        onCancelAck();
     }
 
     /** A connection-fatal terminal, delivered just before the connection closes. */

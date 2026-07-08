@@ -80,6 +80,24 @@ final class StreamFixtures {
         return frames;
     }
 
+    /** Builds the per-(watch_id,gid) {@code WATCH_SNAPSHOT_BEGIN → CHUNK* → END} catch-up substream. */
+    static List<EdgeFrame> watchSnapshotFrames(long watchId, int gid, long seq, Map<String, String> entries,
+                                               int chunkBytes) {
+        HamtMap<String, VersionedValue> data = HamtMap.empty();
+        for (Map.Entry<String, String> e : entries.entrySet()) {
+            data = data.put(e.getKey(), new VersionedValue(e.getValue().getBytes(StandardCharsets.UTF_8), seq, 0L));
+        }
+        byte[] body = EdgeSnapshotCodec.serialize(new ConfigSnapshot(data, seq, 0L));
+        List<EdgeFrame.SnapshotChunk> chunks = EdgeSnapshotCodec.chunk(body, chunkBytes);
+        List<EdgeFrame> frames = new ArrayList<>();
+        frames.add(new EdgeFrame.WatchSnapshotBegin(watchId, gid, seq, chunks.size(), body.length));
+        for (EdgeFrame.SnapshotChunk c : chunks) {
+            frames.add(new EdgeFrame.WatchSnapshotChunk(watchId, gid, c.index(), c.bytes()));
+        }
+        frames.add(new EdgeFrame.WatchSnapshotEnd(watchId, gid, seq));
+        return frames;
+    }
+
     static Map<String, String> entries(String... kv) {
         Map<String, String> m = new LinkedHashMap<>();
         for (int i = 0; i < kv.length; i += 2) {

@@ -161,6 +161,12 @@ final class MockEdgeServer implements AutoCloseable {
             out.flush();
         }
 
+        /** Sends a frame stamped with a specific wire version (0x02 for a watch connection, etc.). */
+        void send(EdgeFrame frame, byte version) throws IOException {
+            out.write(EdgeFrameCodec.encode(frame, version));
+            out.flush();
+        }
+
         void sendRaw(byte[] bytes) throws IOException {
             out.write(bytes);
             out.flush();
