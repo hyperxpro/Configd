@@ -91,6 +91,7 @@ class EncryptedMultiShardClusterCompositionTest {
             "configd.raft.electionTimeoutMaxMs",
             "configd.raft.heartbeatIntervalMs",
             "configd.raft.netty.workerThreads",
+            "configd.raft.autobalance.enabled",
     };
     private final Map<String, String> saved = new HashMap<>();
 
@@ -111,6 +112,11 @@ class EncryptedMultiShardClusterCompositionTest {
         System.setProperty("configd.raft.electionTimeoutMaxMs", "3000");
         System.setProperty("configd.raft.heartbeatIntervalMs", "100");
         System.setProperty("configd.raft.netty.workerThreads", "1");
+        // This test asserts a stable, fixed leader per shard (including across a kill/restart) on a
+        // multi-node multi-shard cluster - exactly the regime the leadership auto-balance loop acts in.
+        // Pin the loop off so its 30s-cadence shed cannot race the leadership-stability assertions on a
+        // slow box; this is an opt-out for a determinism-sensitive test, not a behavior regression.
+        System.setProperty("configd.raft.autobalance.enabled", "false");
     }
 
     @AfterEach

@@ -11,7 +11,7 @@ Every code is **validated against the deployed implementation**: the HTTP codes 
 [`AdminApiHandler.java`](../../../configd-server/src/main/java/io/configd/server/AdminApiHandler.java), the
 streaming codes against
 [`ErrorCode.java`](../../../configd-distribution-service/src/main/java/io/configd/distribution/wire/ErrorCode.java)
-(:14–107) and the fan-out close paths. Where this section and a prior RFC claim disagree, **the code wins**.
+(:14–116) and the fan-out close paths. Where this section and a prior RFC claim disagree, **the code wins**.
 This section is **normative**; it **composes with**:
 
 - [`04-data-plane.md`](04-data-plane.md) — produces the HTTP codes; §07 is the consolidated reaction table.
@@ -82,18 +82,18 @@ disambiguate:
 
 ---
 
-## 3. Binary edge streaming `ErrorCode`s (the 12)
+## 3. Binary edge streaming `ErrorCode`s (the 13)
 
-**E3-1.** The closed `ErrorCode` taxonomy (`ErrorCode.java` :14–107). The numeric `code()` (**1..12**) is the
+**E3-1.** The closed `ErrorCode` taxonomy (`ErrorCode.java` :14–116). The numeric `code()` (**1..13**) is the
 `u8` byte on the wire; a driver **MUST** branch on the **numeric code** (never the message, E6) **together with
 the carrier frame** (E3-3), because several codes are scope-overloaded:
 
 | Code | Name | When | Scope (carrier) | Driver reaction |
 |---|---|---|---|---|
-| **1** | `BAD_WIRE_VERSION` | version byte ∉ {0x01,0x02,0x03}, or wrong **pinned** version (§06 F4) | connection-fatal (`ERROR_CLOSE`) | a wire-version bug — fix the version pin; don't reconnect with the same mistake |
+| **1** | `BAD_WIRE_VERSION` | version byte ∉ {0x01,0x02,0x03,0x04}, or wrong **pinned business** version (§06 F4; a `0x04` auth frame is pin-exempt — §06 F6A-4) | connection-fatal (`ERROR_CLOSE`) | a wire-version bug — fix the version pin; don't reconnect with the same mistake |
 | **2** | `FRAME_TOO_LARGE` | declared length > 2 MiB (§06 F2) | connection-fatal (`ERROR_CLOSE`) | a producer bug — a conforming driver should never elicit it |
 | **3** | `FRAME_CORRUPT` | CRC mismatch, malformed payload, unknown type, **trailing bytes**, bad cursor (§06 F3/F11) | connection-fatal (`ERROR_CLOSE`) | corruption / framing mistake — reconnect once; if persistent, a codec bug |
-| **4** | `AUTH_FAIL` | mTLS identity rejected at the **connection** boundary (the **401-class**) | **TLS-layer — NOT framed** (server-side metric/close-reason; the driver sees a **TLS handshake failure / reset**, not an `ERROR_CLOSE(4)`) | **(re)authenticate** — check/fix the client cert; do not hot-loop |
+| **4** | `AUTH_FAIL` | the **401-class** authentication reject at the **connection** boundary: an mTLS identity rejected, **or** (token/basic edge, §06 §6A) a presented **`AUTH`-frame credential rejected** / an edge **client cert rejected or revoked** / a credential over the size caps / a `REFRESH_AUTH` that resolves to a **different identity** | **carrier-dependent** — an **mTLS handshake rejection** is **TLS-layer, NOT framed** (the driver sees a **handshake failure / reset**, not an `ERROR_CLOSE(4)`); a **token/basic `AUTH`-frame reject** is a **framed `ERROR_CLOSE(4)`** on the established TLS connection (`EdgeAuthGateHandler.closePreAuth` / `FanOutServer.admitPreAuth`) | **(re)authenticate** — fix the client cert **or** present a valid token/basic credential; a rejected pre-auth `AUTH` closes the connection, so retry costs a **fresh connection** (do not hot-loop) |
 | **5** | `BAD_SUBSCRIBE` | (a) malformed subscription spec/cursor; **or** (b) a per-connection **resource cap** (§06 F10-2) | reject frame | **(a)** permanent — fix the `SUBSCRIBE`/cursor; **(b)** live-watch cap (1024) ⇒ `WATCH_CANCEL` a slot then retry; `watch_id` budget (16384) ⇒ **reconnect** (a fresh connection resets it, §06 F10-1a) |
 | **6** | `GAP_UNRECOVERABLE` | the replay source no longer has the requested range (cursor too old / history truncated) | **carrier-dependent** — per-watch (`WATCH_CANCELED`, siblings survive) on the `0x02` plane; connection-fatal (`ERROR_CLOSE`) on the legacy plane (§02 W6-4) | **re-bootstrap from a snapshot** (`with_initial_snapshot`, §02) — the affected watch, or the whole connection on the legacy plane; do **not** keep retrying the same cursor |
 | **7** | `DEMOTED_TO_CATCHUP` | session overflow / ack-lag: streaming → catch-up (snapshot) mode | **NON-FATAL notice** (rides `ERROR_CLOSE` `0x09` but does **not** close — E3-2) | **drain your socket promptly and ack (`CURSOR_ACK`) more promptly** (§06 F10-3); ingest the ensuing snapshot; the stream is **not** closed |
@@ -102,6 +102,7 @@ the carrier frame** (E3-3), because several codes are scope-overloaded:
 | **10** | `PROTOCOL_VIOLATION` | an unexpected frame for the current session state | connection-fatal (`ERROR_CLOSE`) | a driver **state-machine bug** — fix the frame sequence; reconnect |
 | **11** | `NOT_AUTHORIZED` | authenticated but lacks `READ ∧ WATCH` over the watch target (over-broad target, non-root `full_chain_verify`/`FULL`, intersecting `DENY`) — the **403-class** | **per-watch** (`WATCH_CANCELED`; connection survives) | **forbidden** for that target — **do not** retry the same target; request a **narrower** one (§01 §6, §02 W7-5). At **subscription** zero data frames precede it (§02 W7-5); it MAY **also** arrive **mid-stream** as a bounded **revocation** after data has flowed (§02 W7-7) — same reaction (drop the watch) |
 | **12** | `STALE_TOPOLOGY` | the resume token's bound `topologyEpoch` (§06 F5-3 / F8) does **not** match the server's current `ShardMap.epoch()` — the whole topology generation the cursor/`SUBSCRIBE` belongs to is **superseded**. Distinct from `GAP_UNRECOVERABLE` (6): that is "data fell off retention, resume from an earlier position"; `STALE_TOPOLOGY` is "the cursor generation is invalid, drop it entirely" (the etcd `ErrCompacted` model). **At v1 static-N (one deploy-time epoch = `1`) it NEVER fires** — a v2-only code | **carrier-dependent** — per-watch (`WATCH_CANCELED`) for a watch; connection-fatal (`ERROR_CLOSE`) for a legacy `SUBSCRIBE` (§06 F5-3) | **drop the cursor entirely and fully re-hydrate from scratch** (a fresh `WATCH_CREATE`/`SUBSCRIBE` with a **from-now** or `with_initial_snapshot` bootstrap) — **do NOT** re-send the stale cursor, and do **not** merely resume from an earlier `S` (that is the `GAP_UNRECOVERABLE` reaction) |
+| **13** | `CREDENTIAL_EXPIRED` | (token/basic edge, §06 §6A) the connection's **authenticated credential has aged out**: a static token's server-side TTL elapsed with no `REFRESH_AUTH`; an **OIDC/JWT token's `exp`** was reached (the server closes at `exp + leeway`); an edge **client cert's `notAfter`** was reached under enforcement (a **reconnect** signal — a cert cannot refresh in-band); **or** a `REFRESH_AUTH` presented an **unacceptable / over-cap** fresh credential. Distinct from `AUTH_FAIL` (4): the credential **was** valid and the **session** expired, vs. "never valid" | connection-fatal (framed `ERROR_CLOSE`) | **re-authenticate on a fresh connection** (a token client presents a fresh credential in a new `AUTH`; a cert client **reconnects with its rotated certificate**). It is **not** a codec bug and **not** a permanent forbid — proactively **`REFRESH_AUTH` before expiry** (§03 AU5-6) to avoid it |
 
 **E3-2 (the catch-up ladder — a driver MUST handle, not just close).** `DEMOTED_TO_CATCHUP` (7) is **not** a
 close — it rides an `ERROR_CLOSE` (`0x09`) frame but leaves the session **open** (catch-up mode). A slow
@@ -114,14 +115,20 @@ will needlessly drop a recoverable stream (7) and hot-loop a quarantine (8).
 the **carrier** names the **scope**. A driver **MUST** combine them:
 
 - **`ERROR_CLOSE` (`0x09`)** is **connection-scope** and terminal for every code **except**
-  `DEMOTED_TO_CATCHUP` (7), the sole non-fatal code that rides it (E3-2).
+  `DEMOTED_TO_CATCHUP` (7), the sole non-fatal code that rides it (E3-2). It also carries `CREDENTIAL_EXPIRED`
+  (13) and, on a **token/basic** edge, `AUTH_FAIL` (4) — both connection-fatal framed closes (§06 §6A).
 - **`WATCH_CANCELED` (`0x0F`)** is **per-watch-scope** (the connection and sibling watches survive); it carries
   `NOT_AUTHORIZED` (11), `GAP_UNRECOVERABLE` (6) on the `0x02` plane, `STALE_TOPOLOGY` (12) for a watch, and
   `SERVER_SHUTDOWN` (9) as a `WATCH_CANCEL` ack.
 - **`STALE_TOPOLOGY` (12)** is **carrier-dependent** like `GAP_UNRECOVERABLE`: per-watch (`WATCH_CANCELED`) for
   a watch, connection-fatal (`ERROR_CLOSE`) for a legacy `SUBSCRIBE`. It is a **v2-only** code (never emitted at
   v1 static-N).
-- **`AUTH_FAIL` (4)** is **not framed at all** — it is the TLS-layer handshake rejection (E3-1 row 4).
+- **`AUTH_FAIL` (4)** is **carrier-dependent**: an **mTLS handshake rejection** is **not framed** (a TLS-layer
+  failure/reset — E3-1 row 4), whereas a **token/basic `AUTH`-frame reject** is a **framed `ERROR_CLOSE(4)`** on
+  the established connection (§06 §6A). Both mean "(re)authenticate".
+- **`CREDENTIAL_EXPIRED` (13)** is **always a framed `ERROR_CLOSE`** and connection-fatal — an aged-out session,
+  distinct from `AUTH_FAIL` (E3-1 row 13). Only ever seen on a token/basic edge (an mTLS-only edge with no
+  cert-`notAfter` enforcement never emits it).
 
 So a pure code-byte switch is insufficient for codes **4, 6, 7, 9, 11, 12**; a driver **MUST** key its reaction
 on **(code, carrier frame)**.
@@ -134,7 +141,8 @@ on **(code, carrier frame)**.
 
 | Logical failure | HTTP | Streaming (edge) |
 |---|---|---|
-| **Authentication** (no/invalid credential) | **401** + `WWW-Authenticate: Bearer` | **`AUTH_FAIL`** (4) — a **TLS handshake rejection**, not a wire frame (E3-1) |
+| **Authentication** (no/invalid credential) | **401** + `WWW-Authenticate: Bearer` | **`AUTH_FAIL`** (4) — an **mTLS handshake rejection** (not framed), **or** a **framed `ERROR_CLOSE(4)`** for a rejected token/basic `AUTH` frame (E3-1 / §06 §6A) |
+| **Session expired** (credential aged out — re-authenticate) | **401** (re-present the credential) | **`CREDENTIAL_EXPIRED`** (13) — a framed `ERROR_CLOSE` on a token/basic edge; re-auth on a fresh connection (cert ⇒ reconnect rotated) (E3-1 / §03 AU5-6) |
 | **Authorization** (authenticated, not permitted) | **403** | **`NOT_AUTHORIZED`** (11) — a `WATCH_CANCELED` per-watch reject |
 | malformed request / bad input | **400** | **`BAD_SUBSCRIBE`** (5, malformed) / `FRAME_CORRUPT` (3) |
 
@@ -180,8 +188,11 @@ carry control/escape bytes — sanitize before logging). A driver **MUST** branc
   **a transport timeout / dropped connection on a mutation**, and **any other `5xx` (other than `503`/`504`,
   which have their own buckets) on a mutation** (§05 R6-1).
   The write **MAY** have committed; a negative re-read is **not** proof.
-- **Retry only after modifying the request:** **`401`** (until the credential changes; `AUTH_FAIL` (4) likewise
-  needs a fixed cert) and **`409`** (resend with a **fresh** timestamp+nonce — §04 D11-3 / §05 R6-4).
+- **Retry only after modifying the request / re-authenticating:** **`401`** (until the credential changes;
+  `AUTH_FAIL` (4) likewise needs a fixed cert **or** a valid token/basic credential), **`CREDENTIAL_EXPIRED`
+  (13)** (the session aged out — re-authenticate on a **fresh** connection: a token client presents a fresh
+  credential, a cert client reconnects with its rotated cert; proactively `REFRESH_AUTH` before expiry to avoid
+  it — §03 AU5-6), and **`409`** (resend with a **fresh** timestamp+nonce — §04 D11-3 / §05 R6-4).
 - **Recover by a watch/connection action (streaming):** `BAD_SUBSCRIBE` (5) **resource-cap** ⇒ `WATCH_CANCEL`
   (live-watch cap) or **reconnect** (`watch_id` budget); `GAP_UNRECOVERABLE` (6) ⇒ **re-bootstrap from
   snapshot** (the watch, or the connection on the legacy plane); `STALE_TOPOLOGY` (12) ⇒ **drop the cursor and
@@ -201,13 +212,14 @@ carry control/escape bytes — sanitize before logging). A driver **MUST** branc
       mutation timeout / other mutation `5xx` ⇒ indeterminate, retry-to-definite, no RMW** (E2, E7).
 - [ ] Treat a **pre-handshake connection refusal** as a capacity condition (retry/backoff), **not** a protocol
       error (§06 F10-2).
-- [ ] Streaming: handle all **12** `ErrorCode`s with **scope = (code, carrier)** — the **catch-up ladder**
+- [ ] Streaming: handle all **13** `ErrorCode`s with **scope = (code, carrier)** — the **catch-up ladder**
       `DEMOTED_TO_CATCHUP` (7, non-fatal on `0x09` — keep streaming, ack/drain promptly) → `QUARANTINED` (8,
       own backoff + identity cooldown); `GAP_UNRECOVERABLE` (6, re-bootstrap from snapshot, carrier-dependent
       scope); `STALE_TOPOLOGY` (12, v2-only — drop the cursor and fully re-hydrate, carrier-dependent scope);
       `BAD_SUBSCRIBE` (5) resource-cap ⇒ `WATCH_CANCEL`/reconnect; `SERVER_SHUTDOWN` (9) in
-      `WATCH_CANCELED` = expected cancel-ack, don't reconnect; `AUTH_FAIL` (4) = a TLS handshake failure, not a
-      frame (E3).
+      `WATCH_CANCELED` = expected cancel-ack, don't reconnect; `AUTH_FAIL` (4) = an mTLS handshake failure
+      **or** a framed token/basic `AUTH` reject; **`CREDENTIAL_EXPIRED` (13) = a framed session-aged-out close
+      on a token/basic edge ⇒ re-authenticate on a fresh connection** (§06 §6A / §03 AU5-6).
 - [ ] Treat the **401/403 split identically on both planes** — `AUTH_FAIL`(4)/`401` ⇒ re-auth;
       `NOT_AUTHORIZED`(11)/`403` ⇒ forbidden, narrow the target (which MAY also arrive **mid-stream** as a
       revocation — §02 W7-7) (E4).

@@ -1,5 +1,6 @@
 package io.configd.server.fanout;
 
+import io.configd.common.auth.Credential;
 import io.configd.distribution.wire.EdgeFrame;
 import io.configd.distribution.wire.EdgeFrameCodec;
 
@@ -42,6 +43,18 @@ final class EdgeProtocolClient implements AutoCloseable {
 
     void cursorAck(long seq) throws IOException {
         send(new EdgeFrame.CursorAck(seq));
+    }
+
+    /** Presents a bearer token in an AUTH frame (0x04, version-pin exempt) - the token-auth handshake. */
+    void authenticateBearer(String token) throws IOException {
+        sendRaw(EdgeFrameCodec.encode(
+                new EdgeFrame.Auth(new Credential.BearerToken(token)), EdgeFrameCodec.EDGE_WIRE_VERSION_V4));
+    }
+
+    /** Presents a bearer token in a REFRESH_AUTH frame (0x04) to extend an authenticated session. */
+    void refreshBearer(String token) throws IOException {
+        sendRaw(EdgeFrameCodec.encode(
+                new EdgeFrame.RefreshAuth(new Credential.BearerToken(token)), EdgeFrameCodec.EDGE_WIRE_VERSION_V4));
     }
 
     void send(EdgeFrame frame) throws IOException {

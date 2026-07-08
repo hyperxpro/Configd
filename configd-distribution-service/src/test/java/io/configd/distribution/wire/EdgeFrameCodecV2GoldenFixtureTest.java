@@ -183,10 +183,10 @@ class EdgeFrameCodecV2GoldenFixtureTest {
                 () -> EdgeFrameCodec.decode(v1Frame, V2));
         assertEquals(ErrorCode.BAD_WIRE_VERSION, b.code());
 
-        // An unsupported negotiated version is a caller/programming error (0x03 is now the
-        // valid filtered-fan-out version, so use 0x04 for the genuinely-unsupported case).
+        // An unsupported negotiated version is a caller/programming error (0x04 is now the valid
+        // auth-phase version, so use 0x05 for the genuinely-unsupported case).
         assertThrows(IllegalArgumentException.class,
-                () -> EdgeFrameCodec.decode(v1Frame, (byte) 0x04));
+                () -> EdgeFrameCodec.decode(v1Frame, (byte) 0x05));
     }
 
     /**

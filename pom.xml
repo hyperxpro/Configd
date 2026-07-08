@@ -20,6 +20,8 @@
         <module>configd-replication-engine</module>
         <module>configd-distribution-service</module>
         <module>configd-control-plane-api</module>
+        <module>configd-authn-oidc</module>
+        <module>configd-kms-vault</module>
         <module>configd-testkit</module>
         <module>configd-server</module>
         <module>configd-edge-node</module>
@@ -57,6 +59,15 @@
           Pinned for reproducibility. API + 3-tier selector: docs/netty-migration/netty42-api.md.
         -->
         <netty.version>4.2.15.Final</netty.version>
+        <!-- Config-as-SPI (Group B): the YAML parser for the operator-facing config file. Loaded
+             SAFELY (SafeConstructor + resource-exhaustion limits); only configd-server depends on it,
+             so the parser never leaks into the lower zero-heavy-dep modules. Pinned for reproducibility. -->
+        <snakeyaml.version>2.4</snakeyaml.version>
+        <!-- OAuth2/OIDC resource-server (Group B): the JOSE/JWT validation library. Only the optional
+             configd-authn-oidc module depends on it, so the JWT SDK never leaks into the core modules.
+             Nimbus 10.x is self-contained (its BouncyCastle/Tink deps are optional and unused for the
+             RS256/ES256 JDK verification path). Pinned for reproducibility. -->
+        <nimbus-jose-jwt.version>10.9</nimbus-jose-jwt.version>
     </properties>
 
     <dependencyManagement>
@@ -161,6 +172,16 @@
                 <version>${netty.version}</version>
                 <classifier>linux-x86_64</classifier>
             </dependency>
+            <dependency>
+                <groupId>org.yaml</groupId>
+                <artifactId>snakeyaml</artifactId>
+                <version>${snakeyaml.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.nimbusds</groupId>
+                <artifactId>nimbus-jose-jwt</artifactId>
+                <version>${nimbus-jose-jwt.version}</version>
+            </dependency>
         </dependencies>
     </dependencyManagement>
 
@@ -226,6 +247,22 @@
                     <groupId>org.apache.maven.plugins</groupId>
                     <artifactId>maven-jar-plugin</artifactId>
                     <version>3.4.2</version>
+                </plugin>
+                <!--
+                  Pin maven-clean-plugin for the same reproducibility reason as
+                  maven-jar-plugin above (F-0056). Unpinned it resolved to whatever
+                  the local Maven default was, so the main `clean install` did not
+                  fetch a fixed version into the dependency cache and the OFFLINE
+                  gate jobs (gate-2 / phase-0 build the jcstress uber-jar with
+                  `-o clean package`) could not resolve it whenever a pom change
+                  invalidated the cache. 3.2.0 is the version those gates already
+                  request; pinning it makes the online build cache it so the
+                  offline gates find it, and keeps the build reproducible.
+                -->
+                <plugin>
+                    <groupId>org.apache.maven.plugins</groupId>
+                    <artifactId>maven-clean-plugin</artifactId>
+                    <version>3.2.0</version>
                 </plugin>
                 <!--
                   F-0020 fix: SpotBugs static analysis plugin registered in

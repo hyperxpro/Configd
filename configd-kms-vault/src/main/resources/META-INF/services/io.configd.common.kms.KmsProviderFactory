@@ -1,0 +1,3 @@
+# Registers the Vault Transit KMS provider for ServiceLoader discovery. Selected via
+# configd.raft.encryption.kms.provider=vault-transit when this module is on the runtime classpath.
+io.configd.kms.vault.VaultKmsProviderFactory

@@ -36,8 +36,13 @@ import javax.net.ssl.SSLContext;
 import javax.net.ssl.SSLEngine;
 import java.io.IOException;
 import java.net.InetSocketAddress;
+import java.security.cert.Certificate;
+import java.security.cert.X509Certificate;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -120,6 +125,21 @@ public final class NettyFanOutServer implements FanOutEndpoint {
      */
     private final WatchAuthorizer authorizer;
 
+    /**
+     * The edge token-authentication posture, or {@code null} when only mTLS / plaintext is configured.
+     * When non-null the pipeline installs the {@link EdgeAuthGateHandler}, the decoder enforces the
+     * pre-auth frame ceiling, and the edge TLS is {@code wantClientAuth} (a certificate-less token
+     * client may connect). When {@code null} the endpoint is byte-identical to the pre-token edge.
+     */
+    private final EdgeAuthConfig edgeAuth;
+
+    /**
+     * The edge client-cert validity gate ({@link EdgeCertGate#OFF} = no online revocation + no active cert
+     * expiry, byte-identical). Applied at admission on BOTH the mTLS-only path and the token-edge cert path.
+     * Never constructed for the Raft interior, so the {@code exemptInterNode} invariant holds by construction.
+     */
+    private final EdgeCertGate certGate;
+
     private final NettyTransport.Selection transport;
     private final AtomicBoolean running = new AtomicBoolean(false);
     /** Live connections INCLUDING mid-handshake (the bound is applied before the handshake). */
@@ -128,6 +148,15 @@ public final class NettyFanOutServer implements FanOutEndpoint {
     private volatile EventLoopGroup boss;
     private volatile EventLoopGroup worker;
     private volatile Channel serverChannel;
+    /**
+     * Bounded worker pool for OFF-event-loop credential resolution. Basic verification is a deliberately
+     * expensive PBKDF2 (~50-150ms); running it inline on a shared Netty worker would stall every other
+     * connection on that loop (an unauthenticated event-loop-stall DoS, amplified by REFRESH_AUTH spam).
+     * Bounded (not virtual-thread-per-task) because the work is CPU-bound: more concurrent PBKDF2 than
+     * cores only thrashes, so the pool caps total verification CPU. Null when token auth is not configured
+     * (byte-identical mTLS-only / plaintext edge).
+     */
+    private volatile java.util.concurrent.ExecutorService authWorker;
 
     public NettyFanOutServer(InetSocketAddress bindAddress,
                              TlsManager tlsManager,
@@ -190,7 +219,8 @@ public final class NettyFanOutServer implements FanOutEndpoint {
         this(Map.of(0, Objects.requireNonNull(source, "source")),
                 Map.of(0, Objects.requireNonNull(replaySource, "replaySource")),
                 new int[]{0}, SINGLE_SHARD, WatchCursor.INITIAL_TOPOLOGY_EPOCH, bindAddress, tlsManager,
-                config, transportQueueFrames, maxSessions, governor, metrics, clock, authorizer);
+                config, transportQueueFrames, maxSessions, governor, metrics, clock, authorizer, null,
+                EdgeCertGate.OFF);
     }
 
     /**
@@ -198,6 +228,10 @@ public final class NettyFanOutServer implements FanOutEndpoint {
      * resolver the fan-out/fan-in coordinator fans a watch across. At {@code N = 1} the single-source
      * constructors delegate here with single-entry maps and the single-shard resolver, so one core is
      * the single-shard drain (byte-identical). {@code ConfigdServer} threads the real per-shard maps.
+     *
+     * @param edgeAuth the edge token-authentication posture, or {@code null} for the mTLS-only /
+     *                 plaintext posture (byte-identical to the pre-token edge: no gate, no pre-auth
+     *                 ceiling, {@code needClientAuth})
      */
     public NettyFanOutServer(Map<Integer, CommitNotificationSource> shardSources,
                              Map<Integer, ReplaySource> shardReplaySources,
@@ -212,7 +246,9 @@ public final class NettyFanOutServer implements FanOutEndpoint {
                              SlowConsumerGovernor governor,
                              RegistryFanOutSessionMetrics metrics,
                              Clock clock,
-                             WatchAuthorizer authorizer) {
+                             WatchAuthorizer authorizer,
+                             EdgeAuthConfig edgeAuth,
+                             EdgeCertGate certGate) {
         this.shardSources = Map.copyOf(Objects.requireNonNull(shardSources, "shardSources"));
         this.shardReplaySources = Map.copyOf(Objects.requireNonNull(shardReplaySources, "shardReplaySources"));
         this.allGids = Objects.requireNonNull(allGids, "allGids").clone();
@@ -240,6 +276,8 @@ public final class NettyFanOutServer implements FanOutEndpoint {
                 Math.max(2, Runtime.getRuntime().availableProcessors()));
         this.transport = NettyTransport.select();
         this.authorizer = authorizer; // nullable => no watch capability => driver fails closed
+        this.edgeAuth = edgeAuth; // nullable => mTLS-only / plaintext => byte-identical to the pre-token edge
+        this.certGate = Objects.requireNonNullElse(certGate, EdgeCertGate.OFF);
     }
 
     @Override
@@ -260,6 +298,9 @@ public final class NettyFanOutServer implements FanOutEndpoint {
         IoHandlerFactory ioFactory = transport.ioHandlerFactory();
         boss = new MultiThreadIoEventLoopGroup(1, ioFactory);
         worker = new MultiThreadIoEventLoopGroup(workerThreads, ioFactory);
+        if (edgeAuth != null) {
+            authWorker = newAuthWorkerPool();
+        }
         ServerBootstrap b = new ServerBootstrap()
                 .group(boss, worker)
                 .channel(transport.serverChannelClass())
@@ -277,19 +318,78 @@ public final class NettyFanOutServer implements FanOutEndpoint {
                         if (tlsManager != null) {
                             ch.pipeline().addLast(newSslHandler());
                         }
-                        ch.pipeline().addLast(new ByteToEdgeFrameDecoder());
+                        // Token-auth: the decoder enforces the pre-auth ceiling while UNAUTHENTICATED,
+                        // and the gate (after the encoder, before the connection) admits exactly one
+                        // authentication before any business frame reaches the session. Without it the
+                        // pipeline is byte-identical to the pre-token edge.
+                        ch.pipeline().addLast(edgeAuth != null
+                                ? new ByteToEdgeFrameDecoder(true, edgeAuth.preAuthMaxFrameBytes())
+                                : new ByteToEdgeFrameDecoder());
                         ch.pipeline().addLast(new EdgeFrameToByteEncoder(() -> conn.wireVersion));
+                        if (edgeAuth != null) {
+                            ch.pipeline().addLast(
+                                    new EdgeAuthGateHandler(edgeAuth, certGate, metrics, clock, authWorker));
+                        }
                         ch.pipeline().addLast(conn);
                     }
                 });
+        boolean bound = false;
         try {
-            serverChannel = b.bind(bindAddress).sync().channel();
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-            throw new IOException("interrupted binding NettyFanOutServer", e);
+            try {
+                serverChannel = b.bind(bindAddress).sync().channel();
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                throw new IOException("interrupted binding NettyFanOutServer", e);
+            }
+            LOG.info(() -> "NettyFanOutServer listening on " + serverChannel.localAddress()
+                    + (tlsManager != null ? " (mTLS)" : " (PLAINTEXT)") + " [tier=" + transport.tier() + "]");
+            bound = true;
+        } finally {
+            if (!bound) {
+                // A mid-start failure (bind refused / port in use, including a BindException sneak-thrown by
+                // sync()) must not leak the non-daemon boss/worker event loops or the auth-worker pool just
+                // created. close() resets running and shuts them all (idempotent, serverChannel null-guarded),
+                // so a failed start() leaves nothing behind; the original failure propagates.
+                close();
+            }
         }
-        LOG.info(() -> "NettyFanOutServer listening on " + serverChannel.localAddress()
-                + (tlsManager != null ? " (mTLS)" : " (PLAINTEXT)") + " [tier=" + transport.tier() + "]");
+    }
+
+    /**
+     * The bounded off-loop credential-resolution pool. Sized to the CPU count (PBKDF2 is CPU-bound, so
+     * more threads than cores only thrashes), overridable via {@code configd.edge.authWorkerThreads}, and
+     * floored at 1. Daemon threads so they never hold the JVM up.
+     *
+     * <p>The pending-verification QUEUE is bounded too ({@code configd.edge.authWorkerQueueDepth}, default a
+     * small multiple of the pool): a credential-verification flood (many connections each sending an AUTH
+     * behind a deliberately slow PBKDF2) must not grow the backlog without bound and exhaust the heap. A
+     * saturated queue makes {@code execute()} throw {@link java.util.concurrent.RejectedExecutionException},
+     * which {@link EdgeAuthGateHandler} turns into a fail-closed close (pre-auth) or a dropped refresh -
+     * never an inline event-loop resolution. Combined with the gate skipping the PBKDF2 for a connection that
+     * is already dead, this bounds both the queue depth and the wasted work under a churn/AUTH flood.
+     *
+     * <p>All credential types share this one pool, so a sustained flood of the EXPENSIVE type (Basic PBKDF2)
+     * saturates the queue and legitimate token clients are shed fail-closed ({@code AUTH_UNAVAILABLE}) rather
+     * than the server exhausting the heap or stalling the event loop. That graceful shedding is the deliberate
+     * behaviour: bounding the total verification work per node is a correctness requirement, and per-IP /
+     * per-tenant admission control against an auth flood is an ingress-layer concern (load balancer / WAF /
+     * rate limiter), as it is for etcd, Vault, and Keycloak - none run an unbounded KDF in the verifier.
+     */
+    private static java.util.concurrent.ExecutorService newAuthWorkerPool() {
+        int threads = Math.max(1, Integer.getInteger(
+                "configd.edge.authWorkerThreads", Runtime.getRuntime().availableProcessors()));
+        int queueDepth = Math.max(1, Integer.getInteger(
+                "configd.edge.authWorkerQueueDepth", threads * 8));
+        java.util.concurrent.atomic.AtomicInteger seq = new java.util.concurrent.atomic.AtomicInteger();
+        return new java.util.concurrent.ThreadPoolExecutor(
+                threads, threads, 0L, java.util.concurrent.TimeUnit.MILLISECONDS,
+                new java.util.concurrent.ArrayBlockingQueue<>(queueDepth),
+                r -> {
+                    Thread t = new Thread(r, "configd-edge-auth-" + seq.incrementAndGet());
+                    t.setDaemon(true);
+                    return t;
+                },
+                new java.util.concurrent.ThreadPoolExecutor.AbortPolicy());
     }
 
     /** Builds the server-mode mTLS {@link SslHandler} - the SAME SSLContext/protocols/ciphers as the JDK server. */
@@ -297,7 +397,14 @@ public final class NettyFanOutServer implements FanOutEndpoint {
         SSLContext sslContext = tlsManager.currentContext();
         SSLEngine engine = sslContext.createSSLEngine();
         engine.setUseClientMode(false);
-        engine.setNeedClientAuth(true); // mTLS REQUIRED: the edge endpoint always demands a client cert
+        if (edgeAuth != null) {
+            // Token auth is configured: a certificate-less token client must be able to connect, so the
+            // client cert becomes WANTED not REQUIRED. A presented cert is still validated against the
+            // trust store (a bad cert fails the handshake); a certless client proceeds to its AUTH frame.
+            engine.setWantClientAuth(true);
+        } else {
+            engine.setNeedClientAuth(true); // mTLS REQUIRED: the edge endpoint always demands a client cert
+        }
         TlsConfig tlsConfig = tlsManager.config();
         if (tlsConfig != null) {
             if (!tlsConfig.protocols().isEmpty()) {
@@ -330,6 +437,10 @@ public final class NettyFanOutServer implements FanOutEndpoint {
         }
         if (worker != null) {
             worker.shutdownGracefully(0, 2, TimeUnit.SECONDS);
+        }
+        java.util.concurrent.ExecutorService aw = authWorker;
+        if (aw != null) {
+            aw.shutdownNow();
         }
     }
 
@@ -377,6 +488,15 @@ public final class NettyFanOutServer implements FanOutEndpoint {
          */
         private ScheduledFuture<?> firstFrameDeadline;
 
+        /**
+         * The mTLS-only cert-{@code notAfter} expiry one-shot, armed post-handshake when
+         * {@code enforceCertNotAfter} is on (the token-edge cert path is instead handled by the
+         * {@code EdgeAuthGateHandler}). Event-loop-only. A fired task closes the connection
+         * {@code CREDENTIAL_EXPIRED} (a reconnect signal). Null when enforcement is off (byte-identical).
+         * Volatile: armed on the event loop, cancelled by {@link #teardown} which may run on the session thread.
+         */
+        private volatile ScheduledFuture<?> certExpiry;
+
         @Override
         public void channelActive(ChannelHandlerContext ctx) {
             this.channel = ctx.channel();
@@ -389,21 +509,43 @@ public final class NettyFanOutServer implements FanOutEndpoint {
                 ctx.close();
                 return;
             }
-            if (tlsManager == null) {
-                startSession(ctx, "plaintext"); // plaintext: no handshake to await
+            if (tlsManager == null && edgeAuth == null) {
+                startSession(ctx, "plaintext", Set.of()); // plaintext: no handshake to await
             }
+            // With token auth on, the session start is deferred to the gate's EdgeAuthenticated event -
+            // even in plaintext, where the connection's first frame must be an AUTH.
             ctx.fireChannelActive();
         }
 
         @Override
         public void userEventTriggered(ChannelHandlerContext ctx, Object evt) {
+            if (edgeAuth != null) {
+                // Token auth: the gate owns authentication and fires EdgeAuthenticated (from a verified
+                // client cert at the handshake, or from an accepted AUTH frame). The raw
+                // SslHandshakeCompletionEvent is consumed by the gate and never reaches here, so the
+                // session starts only once identity is established.
+                if (evt instanceof EdgeAuthenticated authenticated) {
+                    startSession(ctx, authenticated.principal().id(), authenticated.principal().roles());
+                }
+                ctx.fireUserEventTriggered(evt);
+                return;
+            }
             if (evt instanceof SslHandshakeCompletionEvent handshake) {
                 if (handshake.isSuccess()) {
                     String identity = resolveCertIdentity(ctx);
+                    List<X509Certificate> chain = verifiedPeerChain(ctx);
                     if (identity == null) {
                         rejectHandshake(ctx); // handshake "succeeded" but no verifiable peer cert
+                    } else if (!certGate.admit(chain)) {
+                        // Edge client cert revoked (or unreachable-under-strict): reject at admission. Edge
+                        // plane only; the Raft interior never consults a responder (exemptInterNode).
+                        rejectHandshake(ctx);
                     } else {
-                        startSession(ctx, identity);
+                        // Legacy mTLS: roles stay empty (the ACL resolves the DN's config-bound roles
+                        // internally) - byte-identical to before. When cert-notAfter enforcement is on, arm
+                        // a mid-connection close at notAfter + leeway (NO_EXPIRY otherwise = byte-identical).
+                        startSession(ctx, identity, Set.of());
+                        armCertExpiry(ctx, certGate.certCloseDeadlineMillis(chain));
                     }
                 } else {
                     // No cert / untrusted CA / expired / version-downgrade -> the handshake failed.
@@ -426,6 +568,26 @@ public final class NettyFanOutServer implements FanOutEndpoint {
             }
         }
 
+        /** The verified peer certificate chain (leaf-first), or an empty list if the peer presented none. */
+        private List<X509Certificate> verifiedPeerChain(ChannelHandlerContext ctx) {
+            SslHandler ssl = ctx.pipeline().get(SslHandler.class);
+            if (ssl == null) {
+                return List.of();
+            }
+            try {
+                Certificate[] certs = ssl.engine().getSession().getPeerCertificates();
+                List<X509Certificate> chain = new ArrayList<>(certs.length);
+                for (Certificate c : certs) {
+                    if (c instanceof X509Certificate x) {
+                        chain.add(x);
+                    }
+                }
+                return chain;
+            } catch (Exception e) {
+                return List.of(); // no verifiable client certificate (revocation gate treats as nothing-to-check)
+            }
+        }
+
         private void rejectHandshake(ChannelHandlerContext ctx) {
             if (alive.compareAndSet(true, false)) {
                 metrics.onSessionClosed(ErrorCode.AUTH_FAIL.name());
@@ -433,13 +595,13 @@ public final class NettyFanOutServer implements FanOutEndpoint {
             ctx.close();
         }
 
-        private void startSession(ChannelHandlerContext ctx, String identity) {
+        private void startSession(ChannelHandlerContext ctx, String identity, Set<String> roles) {
             if (started || !alive.get()) {
                 return;
             }
             started = true;
             this.driver = new FanOutConnectionDriver(shardSources, shardReplaySources, allGids,
-                    shardResolver, topologyEpoch, this, config, metrics, clock, governor, identity,
+                    shardResolver, topologyEpoch, this, config, metrics, clock, governor, identity, roles,
                     this::teardown, authorizer);
             metrics.onSubscriberConnected();
             connectedCounted = true;
@@ -459,6 +621,22 @@ public final class NettyFanOutServer implements FanOutEndpoint {
                 metrics.onFirstFrameTimeout();
                 teardown(ErrorCode.PROTOCOL_VIOLATION, "pre-SUBSCRIBE first-frame deadline elapsed");
             }
+        }
+
+        /**
+         * Arms the mTLS-only cert-{@code notAfter} expiry one-shot on the event loop. A
+         * {@link AuthState#NO_EXPIRY} deadline (enforcement off) arms nothing - byte-identical to Gate 3.
+         * The delay is {@code max(0, deadline - now)} so a clock already past {@code notAfter} fires
+         * promptly rather than scheduling a negative delay.
+         */
+        private void armCertExpiry(ChannelHandlerContext ctx, long deadlineMillis) {
+            if (deadlineMillis == AuthState.NO_EXPIRY || !alive.get()) {
+                return;
+            }
+            long delay = Math.max(0L, deadlineMillis - clock.currentTimeMillis());
+            certExpiry = ctx.executor().schedule(
+                    () -> teardown(ErrorCode.CREDENTIAL_EXPIRED, EdgeCertGate.CERT_EXPIRED_MESSAGE),
+                    delay, TimeUnit.MILLISECONDS);
         }
 
         @Override
@@ -505,7 +683,16 @@ public final class NettyFanOutServer implements FanOutEndpoint {
 
         @Override
         public void exceptionCaught(ChannelHandlerContext ctx, Throwable cause) {
-            if (cause instanceof EdgeFrameCodec.CodecException ce) {
+            // A decode failure reaches here wrapped: the decoder throws a CodecException (a
+            // RuntimeException), which Netty's ByteToMessageDecoder re-throws inside a DecoderException, so
+            // the real ErrorCode is one link down the cause chain. Unwrap it (matching the JDK reader,
+            // which catches the CodecException directly) so a corrupt/oversize/bad-version frame closes
+            // with its true code (FRAME_CORRUPT / FRAME_TOO_LARGE / BAD_WIRE_VERSION) rather than the
+            // catch-all SERVER_SHUTDOWN. Wire-behavior change on the mTLS/plaintext edge: a post-admission
+            // decode error that previously (buggily) closed SERVER_SHUTDOWN now closes with the frame's
+            // real code, matching the JDK transport; no correct client depends on the old catch-all code.
+            EdgeFrameCodec.CodecException ce = CodecExceptions.unwrap(cause);
+            if (ce != null) {
                 teardown(ce.code(), "decode error: " + ce.getMessage());
             } else {
                 if (alive.get()) {
@@ -544,6 +731,20 @@ public final class NettyFanOutServer implements FanOutEndpoint {
         private void teardown(ErrorCode code, String message) {
             if (!alive.compareAndSet(true, false)) {
                 return; // already torn down
+            }
+            ScheduledFuture<?> ce = certExpiry;
+            if (ce != null) {
+                ce.cancel(false); // a fired task is a teardown no-op, but cancel avoids retaining ctx to notAfter
+            }
+            // Cancel the pre-SUBSCRIBE first-frame reaper if it is still pending (a connection torn down
+            // before it sent its first routed frame - a RST during the pre-SUBSCRIBE window). channelRead0
+            // cancels it on the first frame; without this cancel, connect/RST churn retains ~rate x 10s
+            // scheduled tasks on the event loop until they individually fire (mirrors the gate cancelling
+            // its preAuthDeadline in handlerRemoved).
+            ScheduledFuture<?> ff = firstFrameDeadline;
+            if (ff != null) {
+                ff.cancel(false);
+                firstFrameDeadline = null;
             }
             Channel ch = channel;
             FanOutConnectionDriver d = driver;

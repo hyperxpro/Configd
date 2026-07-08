@@ -136,6 +136,68 @@ class PolicySerializerTest {
         assertTrue(p.roles().get("empty").rules().isEmpty());
     }
 
+    // ---------------- _acl/format version sentinel (absent ⇒ v1; unsupported ⇒ fail closed) ------------
+
+    @Test
+    void absentFormatKeyIsVersionOneAndByteIdentical() {
+        // No _acl/format key: the historical, byte-identical path. A policy parses exactly as before - this
+        // is why every existing deployment is unaffected by the sentinel.
+        ConfigPolicy p = PolicySerializer.parse(subtree("_acl/roles/reader", "allow READ app."));
+        assertEquals("app.", onlyRule(p, "reader").prefix());
+    }
+
+    @Test
+    void explicitSupportedFormatIsAcceptedAndContributesNothing() {
+        // _acl/format=1 is metadata: accepted, but adds no role/binding.
+        ConfigPolicy p = PolicySerializer.parse(subtree(
+                "_acl/format", "1",
+                "_acl/roles/reader", "allow READ app.",
+                "_acl/bindings/alice", "reader"));
+        assertEquals(Set.of("reader"), p.roles().keySet());
+        assertEquals(Set.of("reader"), p.bindings().get("alice"));
+    }
+
+    @Test
+    void formatKeyAloneIsAnEmptyPolicy() {
+        ConfigPolicy p = PolicySerializer.parse(subtree("_acl/format", "1"));
+        assertTrue(p.roles().isEmpty());
+        assertTrue(p.bindings().isEmpty());
+    }
+
+    @Test
+    void supportedFormatToleratesSurroundingWhitespace() {
+        // A trailing newline / surrounding whitespace is tolerated (line-oriented text format).
+        assertTrue(PolicySerializer.parse(subtree("_acl/format", "1\n")).roles().isEmpty());
+        assertTrue(PolicySerializer.parse(subtree("_acl/format", "  1  ")).roles().isEmpty());
+    }
+
+    @Test
+    void unsupportedFormatVersionFailsClosed() {
+        // A newer node wrote _acl/format=2: an old reader MUST reject the whole load (never misparse).
+        assertThrows(PolicyParseException.class,
+                () -> PolicySerializer.parse(subtree("_acl/format", "2")));
+        assertThrows(PolicyParseException.class,
+                () -> PolicySerializer.parse(subtree("_acl/format", "0")));
+    }
+
+    @Test
+    void malformedFormatValueFailsClosed() {
+        assertThrows(PolicyParseException.class,
+                () -> PolicySerializer.parse(subtree("_acl/format", "")));       // blank present value
+        assertThrows(PolicyParseException.class,
+                () -> PolicySerializer.parse(subtree("_acl/format", "one")));    // non-integer
+        assertThrows(PolicyParseException.class,
+                () -> PolicySerializer.parse(subtree("_acl/format", "1.0")));    // not an int
+    }
+
+    @Test
+    void unsupportedFormatRejectsTheWholeSubtree() {
+        // An unsupported version rejects EVEN a subtree that also carries a valid role (all-or-nothing).
+        assertThrows(PolicyParseException.class, () -> PolicySerializer.parse(subtree(
+                "_acl/format", "2",
+                "_acl/roles/reader", "allow READ app.")));
+    }
+
     // ---------------- reject matrix (fail-closed: any malformed input -> PolicyParseException) ----------------
 
     @Test

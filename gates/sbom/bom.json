@@ -1955,12 +1955,165 @@
     },
     {
       "type" : "library",
+      "bom-ref" : "pkg:maven/io.configd/configd-authn-oidc@0.1.0-SNAPSHOT?type=jar",
+      "group" : "io.configd",
+      "name" : "configd-authn-oidc",
+      "version" : "0.1.0-SNAPSHOT",
+      "licenses" : [ ],
+      "purl" : "pkg:maven/io.configd/configd-authn-oidc@0.1.0-SNAPSHOT?type=jar"
+    },
+    {
+      "type" : "library",
+      "bom-ref" : "pkg:maven/com.nimbusds/nimbus-jose-jwt@10.9?type=jar",
+      "publisher" : "Connect2id Ltd.",
+      "group" : "com.nimbusds",
+      "name" : "nimbus-jose-jwt",
+      "version" : "10.9",
+      "description" : "Java library for Javascript Object Signing and Encryption (JOSE) and JSON Web Tokens (JWT)",
+      "scope" : "required",
+      "hashes" : [
+        {
+          "alg" : "MD5",
+          "content" : "5982206678d76d60ec3744d907de7f31"
+        },
+        {
+          "alg" : "SHA-1",
+          "content" : "59fa8df26e59665566d9795036e005d149d1fcf3"
+        },
+        {
+          "alg" : "SHA-256",
+          "content" : "64d613d91140bad0dab8f0c41960f919ec8705a9ced9418146598b4b3ae71349"
+        },
+        {
+          "alg" : "SHA-512",
+          "content" : "da670966aeb3c1413a425f6856756c40bcab38a8e65927d115543d9c8b1c9a5ff9897510d29727582728259236421a5e8c60d796f1b71c6453581277e9310aa7"
+        },
+        {
+          "alg" : "SHA-384",
+          "content" : "a6afedef07c724327a21571fd1da8137857494be216763086d79dec4d16932cc5bc9066f9f673aa35d38bd5a79f7694d"
+        },
+        {
+          "alg" : "SHA3-384",
+          "content" : "545e24068e9b805a82915a6009d1316ed5f291ac9fad79f7f425ef58d0777cf732cfd0e609271ea781cecce591a94276"
+        },
+        {
+          "alg" : "SHA3-256",
+          "content" : "d954694ccd716ed8c4ea24933a76fb31e30861e37ca198dfb4d007996b9801f6"
+        },
+        {
+          "alg" : "SHA3-512",
+          "content" : "37ef2eb4ebbdfc6cb400e376c36de141fc5dc9a6d83c259866d336c2ed97c1ffd0dbf005b293ebf53ce70a9aca7ea4329de26df9be3ed30eefd79b9c74f8e854"
+        }
+      ],
+      "licenses" : [
+        {
+          "license" : {
+            "id" : "Apache-2.0"
+          }
+        }
+      ],
+      "purl" : "pkg:maven/com.nimbusds/nimbus-jose-jwt@10.9?type=jar",
+      "externalReferences" : [
+        {
+          "type" : "website",
+          "url" : "https://bitbucket.org/connect2id/nimbus-jose-jwt"
+        },
+        {
+          "type" : "distribution-intake",
+          "url" : "https://oss.sonatype.org/service/local/staging/deploy/maven2/"
+        },
+        {
+          "type" : "vcs",
+          "url" : "https://bitbucket.org/connect2id/nimbus-jose-jwt"
+        }
+      ]
+    },
+    {
+      "type" : "library",
+      "bom-ref" : "pkg:maven/io.configd/configd-kms-vault@0.1.0-SNAPSHOT?type=jar",
+      "group" : "io.configd",
+      "name" : "configd-kms-vault",
+      "version" : "0.1.0-SNAPSHOT",
+      "licenses" : [ ],
+      "purl" : "pkg:maven/io.configd/configd-kms-vault@0.1.0-SNAPSHOT?type=jar"
+    },
+    {
+      "type" : "library",
       "bom-ref" : "pkg:maven/io.configd/configd-server@0.1.0-SNAPSHOT?type=jar",
       "group" : "io.configd",
       "name" : "configd-server",
       "version" : "0.1.0-SNAPSHOT",
       "licenses" : [ ],
       "purl" : "pkg:maven/io.configd/configd-server@0.1.0-SNAPSHOT?type=jar"
+    },
+    {
+      "type" : "library",
+      "bom-ref" : "pkg:maven/org.yaml/snakeyaml@2.4?type=jar",
+      "group" : "org.yaml",
+      "name" : "snakeyaml",
+      "version" : "2.4",
+      "description" : "YAML 1.1 parser and emitter for Java",
+      "scope" : "required",
+      "hashes" : [
+        {
+          "alg" : "MD5",
+          "content" : "29410ee3a987e3bff7b847933c591972"
+        },
+        {
+          "alg" : "SHA-1",
+          "content" : "e0666b825b796f85521f02360e77f4c92c5a7a07"
+        },
+        {
+          "alg" : "SHA-256",
+          "content" : "ef779af5d29a9dde8cc70ce0341f5c6f7735e23edff9685ceaa9d35359b7bb7f"
+        },
+        {
+          "alg" : "SHA-512",
+          "content" : "1573717e2c47868515cbed5265a6f77ebec23a0b5c6376ac18b9f5c2335beb65d4c68d2073d50143d59a60141980be8db1e493a85d7c78106cdb94a52e8361d2"
+        },
+        {
+          "alg" : "SHA-384",
+          "content" : "d53aa94bc612897f76bb456d0aca4a5edf029fdda00f628a6953072033236877b4138206a2ff23bd802217f667531211"
+        },
+        {
+          "alg" : "SHA3-384",
+          "content" : "deb4d1b236697d6bc9b2b05c65c8f741e7c1d7c9984d1900cc68c3bac5fa24d6443682d91f8b91818953f029228a06fd"
+        },
+        {
+          "alg" : "SHA3-256",
+          "content" : "90b378b7280540ec9f57d60ec9154be01a73e80cecb13580338a8f3dd1098216"
+        },
+        {
+          "alg" : "SHA3-512",
+          "content" : "c6927f9b923f055336a44c4025251e2f8c8eec52c816506874ada97999ccae0b435c8014f219ea310065862f822be09e4d22bf88a967b5ac76a149a74b123965"
+        }
+      ],
+      "licenses" : [
+        {
+          "license" : {
+            "id" : "Apache-2.0"
+          }
+        }
+      ],
+      "purl" : "pkg:maven/org.yaml/snakeyaml@2.4?type=jar",
+      "externalReferences" : [
+        {
+          "type" : "website",
+          "url" : "https://bitbucket.org/snakeyaml/snakeyaml"
+        },
+        {
+          "type" : "distribution-intake",
+          "url" : "https://oss.sonatype.org/service/local/staging/deploy/maven2/"
+        },
+        {
+          "type" : "issue-tracker",
+          "url" : "https://bitbucket.org/snakeyaml/snakeyaml/issues"
+        },
+        {
+          "type" : "vcs",
+          "url" : "https://bitbucket.org/snakeyaml/snakeyaml/src"
+        }
+      ]
     },
     {
       "type" : "library",
@@ -2749,6 +2902,8 @@
         "pkg:maven/io.configd/configd-edge-cache@0.1.0-SNAPSHOT?type=jar",
         "pkg:maven/io.configd/configd-replication-engine@0.1.0-SNAPSHOT?type=jar",
         "pkg:maven/io.configd/configd-control-plane-api@0.1.0-SNAPSHOT?type=jar",
+        "pkg:maven/io.configd/configd-authn-oidc@0.1.0-SNAPSHOT?type=jar",
+        "pkg:maven/io.configd/configd-kms-vault@0.1.0-SNAPSHOT?type=jar",
         "pkg:maven/io.configd/configd-server@0.1.0-SNAPSHOT?type=jar",
         "pkg:maven/io.configd/configd-edge-node@0.1.0-SNAPSHOT?type=jar",
         "pkg:maven/io.configd/configd-testkit@0.1.0-SNAPSHOT?type=jar",
@@ -2992,6 +3147,23 @@
       ]
     },
     {
+      "ref" : "pkg:maven/io.configd/configd-authn-oidc@0.1.0-SNAPSHOT?type=jar",
+      "dependsOn" : [
+        "pkg:maven/io.configd/configd-common@0.1.0-SNAPSHOT?type=jar",
+        "pkg:maven/com.nimbusds/nimbus-jose-jwt@10.9?type=jar"
+      ]
+    },
+    {
+      "ref" : "pkg:maven/com.nimbusds/nimbus-jose-jwt@10.9?type=jar",
+      "dependsOn" : [ ]
+    },
+    {
+      "ref" : "pkg:maven/io.configd/configd-kms-vault@0.1.0-SNAPSHOT?type=jar",
+      "dependsOn" : [
+        "pkg:maven/io.configd/configd-common@0.1.0-SNAPSHOT?type=jar"
+      ]
+    },
+    {
       "ref" : "pkg:maven/io.configd/configd-server@0.1.0-SNAPSHOT?type=jar",
       "dependsOn" : [
         "pkg:maven/io.configd/configd-common@0.1.0-SNAPSHOT?type=jar",
@@ -3003,8 +3175,13 @@
         "pkg:maven/io.configd/configd-control-plane-api@0.1.0-SNAPSHOT?type=jar",
         "pkg:maven/io.configd/configd-edge-cache@0.1.0-SNAPSHOT?type=jar",
         "pkg:maven/io.configd/configd-observability@0.1.0-SNAPSHOT?type=jar",
-        "pkg:maven/io.configd/configd-netty@0.1.0-SNAPSHOT?type=jar"
+        "pkg:maven/io.configd/configd-netty@0.1.0-SNAPSHOT?type=jar",
+        "pkg:maven/org.yaml/snakeyaml@2.4?type=jar"
       ]
+    },
+    {
+      "ref" : "pkg:maven/org.yaml/snakeyaml@2.4?type=jar",
+      "dependsOn" : [ ]
     },
     {
       "ref" : "pkg:maven/io.configd/configd-edge-node@0.1.0-SNAPSHOT?type=jar",
@@ -3024,6 +3201,7 @@
         "pkg:maven/io.configd/configd-common@0.1.0-SNAPSHOT?type=jar",
         "pkg:maven/io.configd/configd-consensus-core@0.1.0-SNAPSHOT?type=jar",
         "pkg:maven/io.configd/configd-config-store@0.1.0-SNAPSHOT?type=jar",
+        "pkg:maven/io.configd/configd-replication-engine@0.1.0-SNAPSHOT?type=jar",
         "pkg:maven/io.configd/configd-edge-cache@0.1.0-SNAPSHOT?type=jar",
         "pkg:maven/io.configd/configd-distribution-service@0.1.0-SNAPSHOT?type=jar",
         "pkg:maven/io.configd/configd-edge-node@0.1.0-SNAPSHOT?type=jar",

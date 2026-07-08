@@ -1,10 +1,15 @@
 package io.configd.transport;
 
 import io.configd.common.NodeId;
+import io.configd.common.config.ConfigSource;
 
 import org.junit.jupiter.api.Test;
 
+import java.security.cert.X509Certificate;
+import java.util.HashMap;
 import java.util.Map;
+import java.util.Optional;
+import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -119,5 +124,114 @@ class PeerIdentityPolicyTest {
         } else {
             System.setProperty(key, value);
         }
+    }
+
+    // ---- fromConfig(ConfigSource): the Gate-1 config path (parity with fromSystemProperties) ----
+
+    @Test
+    void fromConfigParsesAllowListAndMarker() {
+        PeerIdentityPolicy policy = PeerIdentityPolicy.fromConfig(config(Map.of(
+                PeerIdentityPolicy.ALLOWED_NODES_PROP, "node-1=1, node-2=2 ,node-3=3",
+                PeerIdentityPolicy.MARKER_PROP, "CN")));
+        assertTrue(policy.enforced());
+        assertEquals(PeerIdentityPolicy.MarkerMode.RDN, policy.markerMode());
+        assertEquals(NodeId.of(1), policy.resolve("CN=node-1"));
+        assertEquals(NodeId.of(3), policy.resolve("CN=node-3"));
+    }
+
+    @Test
+    void fromConfigUnsetAllowListIsUnenforced() {
+        assertFalse(PeerIdentityPolicy.fromConfig(config(Map.of())).enforced(),
+                "an unset allow-list keeps the legacy unenforced (CA-chain-only + warning) posture");
+    }
+
+    @Test
+    void fromConfigSeparatorOnlySpecFailsClosed() {
+        assertThrows(IllegalArgumentException.class,
+                () -> PeerIdentityPolicy.fromConfig(config(Map.of(PeerIdentityPolicy.ALLOWED_NODES_PROP, ",,"))),
+                "a non-blank allow-list that declares no nodes is a misconfig, not 'unenforced'");
+    }
+
+    @Test
+    void fromConfigMalformedEntryFailsClosed() {
+        assertThrows(IllegalArgumentException.class,
+                () -> PeerIdentityPolicy.fromConfig(config(
+                        Map.of(PeerIdentityPolicy.ALLOWED_NODES_PROP, "node-1=notAnInt"))),
+                "a fat-fingered allow-list must fail closed at boot");
+    }
+
+    @Test
+    void fromConfigUnknownMarkerTypeFailsClosed() {
+        assertThrows(IllegalArgumentException.class,
+                () -> PeerIdentityPolicy.fromConfig(config(Map.of(
+                        PeerIdentityPolicy.ALLOWED_NODES_PROP, "node-1=1",
+                        PeerIdentityPolicy.MARKER_TYPE_PROP, "bogus"))),
+                "an unknown markerType must fail closed, never silently fall back to RDN");
+    }
+
+    @Test
+    void fromConfigSanUriModeSelectsSanMarker() {
+        PeerIdentityPolicy policy = PeerIdentityPolicy.fromConfig(config(Map.of(
+                PeerIdentityPolicy.MARKER_TYPE_PROP, "san-uri",
+                PeerIdentityPolicy.ALLOWED_NODES_PROP, "spiffe://configd/node-1=1,spiffe://configd/node-2=2")));
+        assertTrue(policy.enforced());
+        assertTrue(policy.usesSanUriMarker());
+        assertEquals(PeerIdentityPolicy.MarkerMode.SAN_URI, policy.markerMode());
+        // In SAN-URI mode the DN path is not the marker source; resolution is by SAN URI (proven
+        // end-to-end over a real handshake in the transport binding tests).
+        assertNull(policy.resolveFromSanUris((X509Certificate) null),
+                "a null cert is never an authorized peer (fail closed)");
+    }
+
+    // ---- requireEnforcedUnderAuth: the Group-B fail-closed default (finding T6) ----
+
+    @Test
+    void bootGateThrowsWhenAuthAndTlsButNoAllowList() {
+        // (auth enabled + TLS on + empty allow-list) is the exact hole the node-join gate closes: a
+        // CA-valid client cert could forge a peer's senderId. Refuse to boot.
+        assertThrows(IllegalStateException.class,
+                () -> PeerIdentityPolicy.unenforced().requireEnforcedUnderAuth(true, true),
+                "an authenticated TLS cluster with no peer allow-list must refuse to start");
+    }
+
+    @Test
+    void bootGateAllowsAuthDisabledEmptyAllowList() {
+        // The auth-DISABLED loud-warning escape stays byte-identical (dev/test/shared-cert fleets).
+        PeerIdentityPolicy.unenforced().requireEnforcedUnderAuth(false, true);
+    }
+
+    @Test
+    void bootGateAllowsPlaintextInteriorEmptyAllowList() {
+        // Plaintext interior (no TLS) never trips the gate - enforced()+plaintext already fails start().
+        PeerIdentityPolicy.unenforced().requireEnforcedUnderAuth(true, false);
+    }
+
+    @Test
+    void bootGateAllowsAuthAndTlsWithAllowList() {
+        // The intended production posture: auth + TLS + an enumerated allow-list boots cleanly.
+        PeerIdentityPolicy enforced = PeerIdentityPolicy.of("CN", Map.of("node-1", NodeId.of(1)));
+        enforced.requireEnforcedUnderAuth(true, true);
+    }
+
+    @Test
+    void sanUriResolveFailsClosedWhenUnenforced() {
+        assertNull(PeerIdentityPolicy.unenforced().resolveFromSanUris((X509Certificate) null),
+                "an unenforced policy authorizes nothing, even by SAN URI");
+    }
+
+    /** A minimal in-memory {@link ConfigSource} over a fixed key/value map (no layering, no env). */
+    private static ConfigSource config(Map<String, String> values) {
+        Map<String, String> copy = new HashMap<>(values);
+        return new ConfigSource() {
+            @Override
+            public Optional<String> getString(String key) {
+                return Optional.ofNullable(copy.get(key));
+            }
+
+            @Override
+            public Set<String> keysWithPrefix(String prefix) {
+                return Set.of();
+            }
+        };
     }
 }

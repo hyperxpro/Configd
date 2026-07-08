@@ -5,7 +5,7 @@ package io.configd.distribution.wire;
  * the numeric codes are pinned by the {@code EdgeFrameCodecGoldenFixtureTest} golden fixture;
  * no free-form error strings ride the wire as a structured cause.
  *
- * <p>The numeric {@link #code()} (1..12) is the byte that goes on the wire in an
+ * <p>The numeric {@link #code()} (1..13) is the byte that goes on the wire in an
  * {@link EdgeFrame.ErrorClose} payload (and a {@link EdgeFrame.WatchCanceled} per-watch
  * terminal); the human-readable {@code message} field of the frame is diagnostic only.
  * Changing any code value is a wire-format change and MUST bump
@@ -73,7 +73,17 @@ public enum ErrorCode {
      * for a legacy SUBSCRIBE. At v1 static-N (one deploy-time epoch) it never fires - byte-identical
      * behavior.
      */
-    STALE_TOPOLOGY(12);
+    STALE_TOPOLOGY(12),
+
+    /**
+     * The connection's authenticated credential has expired (the token's lifetime elapsed and no
+     * {@link EdgeFrame.RefreshAuth} extended it, or a {@code REFRESH_AUTH} presented an unacceptable
+     * fresh credential). Distinct from {@link #AUTH_FAIL} (the 401-class first-credential failure) so a
+     * client can tell "your session aged out, re-authenticate" from "your credential was never valid".
+     * Delivered as an {@link EdgeFrame.ErrorClose}. (Gate 3 arms expiry only on the token path via a
+     * default TTL; certificate {@code notAfter} enforcement is the unified-expiry gate's deliverable.)
+     */
+    CREDENTIAL_EXPIRED(13);
 
     private final int code;
 
@@ -81,7 +91,7 @@ public enum ErrorCode {
         this.code = code;
     }
 
-    /** The on-wire numeric code (1..12). */
+    /** The on-wire numeric code (1..13). */
     public int code() {
         return code;
     }

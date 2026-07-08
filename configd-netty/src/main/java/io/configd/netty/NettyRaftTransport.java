@@ -39,6 +39,8 @@ import javax.net.ssl.SSLEngine;
 import javax.net.ssl.SSLParameters;
 import java.io.IOException;
 import java.net.InetSocketAddress;
+import java.security.cert.Certificate;
+import java.security.cert.X509Certificate;
 import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.ArrayBlockingQueue;
@@ -235,15 +237,27 @@ public final class NettyRaftTransport implements RaftTransportEndpoint {
                         ch.pipeline().addLast(new InboundHandler());
                     }
                 });
+        boolean bound = false;
         try {
-            serverChannel = b.bind(bindAddress).sync().channel();
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-            throw new IOException("interrupted binding NettyRaftTransport", e);
+            try {
+                serverChannel = b.bind(bindAddress).sync().channel();
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                throw new IOException("interrupted binding NettyRaftTransport", e);
+            }
+            warnIfPeerIdentityUnconfigured();
+            LOG.info(() -> "NettyRaftTransport listening on " + serverChannel.localAddress()
+                    + (tlsManager != null ? " (mTLS)" : " (PLAINTEXT)") + " [tier=" + transport.tier() + "]");
+            bound = true;
+        } finally {
+            if (!bound) {
+                // A mid-start failure (bind refused / port in use, including a BindException sneak-thrown by
+                // sync()) must not leak the non-daemon boss/worker event loops just created. close() resets
+                // running and shuts them (it is idempotent, and serverChannel is null-guarded), so a failed
+                // start() leaves nothing behind; the original failure propagates.
+                close();
+            }
         }
-        warnIfPeerIdentityUnconfigured();
-        LOG.info(() -> "NettyRaftTransport listening on " + serverChannel.localAddress()
-                + (tlsManager != null ? " (mTLS)" : " (PLAINTEXT)") + " [tier=" + transport.tier() + "]");
     }
 
     /**
@@ -370,7 +384,9 @@ public final class NettyRaftTransport implements RaftTransportEndpoint {
 
     /** Server-mode mTLS handler. Package-private for the handshake-timeout regression test. */
     SslHandler newServerSslHandler() {
-        SSLContext ctx = tlsManager.currentContext();
+        // peerContext(): the Raft interior may use a SEPARATE peer trust anchor. Identical to
+        // currentContext() unless configd.raft.peerIdentity.trustStore is set (byte-identical then).
+        SSLContext ctx = tlsManager.peerContext();
         SSLEngine engine = ctx.createSSLEngine();
         engine.setUseClientMode(false);
         engine.setNeedClientAuth(true); // mTLS REQUIRED: a peer with no/expired/untrusted cert is rejected
@@ -385,7 +401,8 @@ public final class NettyRaftTransport implements RaftTransportEndpoint {
      * accepted, defeating peer pinning.
      */
     SslHandler newClientSslHandler(InetSocketAddress peer) {
-        SSLContext ctx = tlsManager.currentContext();
+        // peerContext(): the Raft interior may use a SEPARATE peer trust anchor (see newServerSslHandler).
+        SSLContext ctx = tlsManager.peerContext();
         SSLEngine engine = ctx.createSSLEngine(peer.getHostString(), peer.getPort());
         engine.setUseClientMode(true);
         applyTlsConfig(engine);
@@ -474,7 +491,7 @@ public final class NettyRaftTransport implements RaftTransportEndpoint {
                 // plaintext leaves no pinned attribute and the read path unchanged (legacy behaviour).
                 // A FAILED handshake needs no action here: the SslHandler closes the channel itself.
                 if (handshake.isSuccess() && peerIdentityPolicy.enforced()) {
-                    NodeId pinned = peerIdentityPolicy.resolve(resolveCertIdentity(ctx));
+                    NodeId pinned = resolvePinnedIdentity(ctx);
                     if (pinned == null) {
                         transportMetrics.onPeerIdentityRejected();
                         ctx.close();
@@ -484,6 +501,18 @@ public final class NettyRaftTransport implements RaftTransportEndpoint {
                 }
             }
             ctx.fireUserEventTriggered(evt);
+        }
+
+        /**
+         * Resolves the peer's authorized {@link NodeId} from its verified certificate, per the policy's
+         * marker mode. RDN mode (default) reads the Subject-DN marker - the same call as before, so an
+         * RDN deployment is byte-identical. SAN-URI mode reads the peer cert's SAN URI entries.
+         */
+        private NodeId resolvePinnedIdentity(ChannelHandlerContext ctx) {
+            if (peerIdentityPolicy.usesSanUriMarker()) {
+                return peerIdentityPolicy.resolveFromSanUris(resolvePeerCertificate(ctx));
+            }
+            return peerIdentityPolicy.resolve(resolveCertIdentity(ctx));
         }
 
         /**
@@ -498,6 +527,23 @@ public final class NettyRaftTransport implements RaftTransportEndpoint {
             }
             try {
                 return ssl.engine().getSession().getPeerPrincipal().getName();
+            } catch (Exception e) {
+                return null; // no verifiable peer certificate
+            }
+        }
+
+        /**
+         * The verified peer end-entity {@link X509Certificate} on this channel's {@link SslHandler}, or
+         * {@code null} if none is present (fail-closed). Used only for SAN-URI marker resolution.
+         */
+        private X509Certificate resolvePeerCertificate(ChannelHandlerContext ctx) {
+            SslHandler ssl = ctx.pipeline().get(SslHandler.class);
+            if (ssl == null) {
+                return null;
+            }
+            try {
+                Certificate[] chain = ssl.engine().getSession().getPeerCertificates();
+                return (chain != null && chain.length > 0 && chain[0] instanceof X509Certificate x) ? x : null;
             } catch (Exception e) {
                 return null; // no verifiable peer certificate
             }

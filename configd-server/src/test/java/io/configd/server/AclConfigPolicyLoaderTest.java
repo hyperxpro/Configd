@@ -174,6 +174,45 @@ class AclConfigPolicyLoaderTest {
         assertTrue(acl.isAllowed("alice", "app.x", AclService.Permission.READ), "last-good preserved");
     }
 
+    // ---------------- ACL format-version sentinel (fail-closed on a newer grammar) ----------------
+
+    @Test
+    void supportedFormatKeyLoadsNormally() {
+        AclService acl = new AclService();
+        VersionedConfigStore store = new VersionedConfigStore();
+        MetricsRegistry reg = new MetricsRegistry();
+        put(store, "_acl/format", "1");
+        put(store, "_acl/roles/reader", "allow READ app.");
+        put(store, "_acl/bindings/alice", "reader");
+
+        loader(acl, store, reg).rebuild();
+
+        assertTrue(acl.isAllowed("alice", "app.x", AclService.Permission.READ));
+        assertEquals(1L, metric(reg, AclConfigPolicyLoader.NAME_POLICY_RELOAD));
+        assertEquals(0L, metric(reg, AclConfigPolicyLoader.NAME_POLICY_LOAD_FAILED));
+    }
+
+    @Test
+    void unsupportedFormatReloadKeepsLastGood() {
+        AclService acl = new AclService();
+        VersionedConfigStore store = new VersionedConfigStore();
+        MetricsRegistry reg = new MetricsRegistry();
+        put(store, "_acl/roles/reader", "allow READ app.");
+        put(store, "_acl/bindings/alice", "reader");
+        AclConfigPolicyLoader l = loader(acl, store, reg);
+        l.rebuild(); // last-good: alice READ app.
+        assertTrue(acl.isAllowed("alice", "app.x", AclService.Permission.READ));
+
+        // A newer node wrote a newer grammar version. An old node MUST fail closed to last-good, not misparse.
+        put(store, "_acl/format", "2");
+        l.onConfigChange(put("_acl/format"), 42L);
+
+        assertEquals(1L, metric(reg, AclConfigPolicyLoader.NAME_POLICY_LOAD_FAILED), "one rejected load");
+        assertEquals(1L, metric(reg, AclConfigPolicyLoader.NAME_POLICY_RELOAD), "no new successful load");
+        assertTrue(acl.isAllowed("alice", "app.x", AclService.Permission.READ), "last-good preserved");
+        assertFalse(acl.isAllowed("bob", "app.x", AclService.Permission.READ), "not allow-all");
+    }
+
     // ---------------- reserved-name validation (the "admin"/root carve neutralization) ----------------
 
     @Test

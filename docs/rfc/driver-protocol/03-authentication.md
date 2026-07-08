@@ -70,8 +70,25 @@ token's internal structure (a static secret and a JWT are indistinguishable to t
 
 **AU2-3 (the credential is presented, not minted).** v1 defines **no Configd-issued session token**: a driver
 **re-presents** its credential per the lifecycle in AU4 (the certificate is bound for the connection; a bearer
-token accompanies each unary request). A driver **MUST NOT** assume a server-issued token/cookie it can replay;
+token accompanies each unary HTTP request, or is presented once per edge connection in an `AUTH` frame and
+renewed with `REFRESH_AUTH` — AU4-4). A driver **MUST NOT** assume a server-issued token/cookie it can replay;
 a Configd auth-session mechanism is a named forward extension (AU7-3), not v1.
+
+**AU2-4 (the four authentication modes — both planes, one shared chain).** A deployment authenticates through
+**one pluggable authenticator chain shared by both planes** (the same chain resolves an HTTP `Authorization`
+header and an edge `AUTH` frame — AU6-1). The modes a driver may present:
+
+| Mode | HTTP control plane | Binary edge plane | Driver-visible credential |
+|---|---|---|---|
+| **mTLS** | client cert at the TLS handshake | client cert at the TLS handshake (AU3-2) | an X.509 client certificate |
+| **HTTP Basic** (RFC 7617) | `Authorization: Basic <base64(user:pass)>` | an `AUTH` frame, scheme = BASIC (§06 §6A) | a username + password |
+| **Bearer / OAuth2-OIDC** | `Authorization: Bearer <token>` (AU3-1) | an `AUTH` frame, scheme = BEARER (§06 §6A) | an **opaque** bearer token (a static secret **or** a JWT/OIDC access token — indistinguishable to the driver, AU2-1) |
+| **No-Auth** | none (authentication disabled) | none (authentication disabled) | none — a deployment posture (AU4-3) |
+
+**OAuth2/OIDC is a server-side verification of the bearer shape, not a distinct wire mechanism:** an OIDC/JWT
+access token rides the **same** `Bearer` HTTP header / BEARER `AUTH`-frame scheme as a static token, and the
+driver neither knows nor cares which the server runs (AU2-1). A driver **MUST** present whichever mode(s) its
+deployment configures and **MUST NOT** hard-code an assumption about which the server verifies (AU7-2).
 
 ---
 
@@ -82,23 +99,52 @@ a bearer token in the **`Authorization: Bearer <token>`** request header (RFC 67
 exactly there ([`built-reality.md`](../../archive/design/auth-spi/built-reality.md) §1.1). A driver **MUST NOT** place
 the token in a URL query parameter or log it (AU5-3).
 
-**AU3-2 (binary edge protocol — mTLS at handshake).** On the binary edge (fan-out / watch) protocol,
-authentication in v1 is the **mTLS handshake**: the driver **MUST** present a client certificate, and the
-server requires one (`setNeedClientAuth(true)` —
-[`built-reality.md`](../../archive/design/auth-spi/built-reality.md) §1.2). The verified certificate identity is
-**authoritative**; any identity field the driver also places in a frame (e.g. an `edgeId`) is **advisory** and
-the server **MUST** override it with the certificate identity over mTLS
-([`built-reality.md`](../../archive/design/auth-spi/built-reality.md) §1.2). A driver **MUST NOT** rely on a
-self-asserted identity frame being trusted.
+**AU3-2 (binary edge protocol — mTLS at handshake).** On the binary edge (fan-out / watch) protocol, one v1
+authentication is the **mTLS handshake**: the driver presents a client certificate at the handshake, and the
+verified certificate identity is **authoritative**. In the **mTLS-only posture** the edge **requires** a client
+certificate (`setNeedClientAuth(true)`); when **token/basic auth is also configured** the edge **relaxes to
+`setWantClientAuth(true)`** so a **certificate-less** client can connect and authenticate with an `AUTH` frame
+(AU3-3) — a **presented** certificate is still verified and remains the authoritative identity
+([`built-reality.md`](../../archive/design/auth-spi/built-reality.md) §1.2). Any identity field the driver also
+places in a frame (e.g. an `edgeId`) is **advisory** and the server **MUST** override it with the certificate
+identity over mTLS. A driver **MUST NOT** rely on a self-asserted identity frame being trusted.
 
-**AU3-3 (a bearer token on the binary protocol — forward slot).** v1 of the binary protocol authenticates by
-mTLS only (AU3-2). A **token-bearing authentication frame** on the binary protocol (so a bearer/OIDC token can
-be presented to the edge, not only a certificate) is a **named forward extension** (AU7-3); a driver **MUST**
-fail closed if it does not negotiate this capability rather than assuming it.
+**AU3-3 (the token-bearing edge `AUTH` frame — BUILT, v1 normative).** The binary edge protocol authenticates
+by mTLS (AU3-2) **and/or** by a **token/basic `AUTH` frame**. This **supersedes** the earlier draft that listed
+this frame as a forward extension: it is now **built and normative**. A **certificate-less** driver presents a
+bearer or Basic credential in an **`AUTH` frame** (wire type `0x13`, wire version `0x04`) and renews it with a
+**`REFRESH_AUTH` frame** (`0x14`); the byte layout — a `[scheme u8]` tag (1 = BEARER, 2 = BASIC) then
+length-prefixed fields — is **normative in [`06-wire-framing.md`](06-wire-framing.md) §6A** (golden fixtures
+`auth_bearer.bin` / `auth_basic.bin` / `refresh_auth_bearer.bin`). The two edge auth paths **compose**:
 
-**AU3-4 (transport security is REQUIRED for a bearer token).** A driver **MUST** present a bearer token only
-over a TLS-secured transport. A driver **MUST NOT** send a bearer token over plaintext. (mTLS already implies
-TLS; a bearer token over the HTTP API requires HTTPS.)
+- a **verified client certificate** authenticates at the **TLS handshake** — **no `AUTH` frame**, byte-identical
+  to a pre-auth-arc mTLS driver (AU2-4 mTLS row); the cert Subject DN is the authoritative identity (AU3-2);
+- a **certificate-less** driver **MUST** authenticate with an `AUTH` frame **before any business frame** (the
+  connection-level lifecycle is AU4-4…AU4-7).
+
+A driver **MUST** treat the bearer token as **opaque** (AU2-2), **MUST NOT** send an `AUTH`/`REFRESH_AUTH` frame
+on a plaintext (non-TLS) connection (AU3-4), and **MUST** stamp wire version `0x04` on **exactly** its auth
+frames (a business version on an auth frame, or `0x04` on a business frame, is `FRAME_CORRUPT` — §06 F6A-3/-4).
+
+**AU3-4 (transport security is REQUIRED for a bearer/basic credential).** A driver **MUST** present a bearer
+token or Basic credential only over a TLS-secured transport. A driver **MUST NOT** send one over plaintext.
+(mTLS already implies TLS; a bearer/Basic credential over the HTTP API requires HTTPS, and an edge `AUTH` frame
+requires the TLS-secured edge transport.)
+
+## 3A. The cluster interior (node ↔ node) — mTLS-only (non-driver)
+
+**AU3-5 (the interior is mTLS-only; a driver never joins it).** The Raft consensus interior (node ↔ node) is a
+**non-driver** surface (§06 §13): a configd **driver** never opens a Raft connection. Stated for model
+completeness — and because the auth arc strengthened it — the interior authenticates by **mTLS only**
+(`setNeedClientAuth(true)` on both interior transports); there is **no** token / `AUTH`-frame path to consensus
+(the interior message set carries **no** credential-bearing frame). A node's membership identity is a
+**certificate marker**: by default the Subject-DN **CN** (RDN mode; the RDN is configurable via
+`configd.raft.peerIdentity.marker`), or optionally a **SAN-URI / SPIFFE** id (`markerType=san-uri`), matched
+against a per-node allow-list (`configd.raft.peerIdentity.allowedNodes`). Token-based node markers (an OIDC
+node-claim, a Basic node account) are **dormant, fail-closed forward extensions** — unreachable by construction
+today because no interior frame carries a token (a client credential can therefore **never** confer interior
+standing). **None of this is a driver concern**; the authoritative spec is
+`docs/design/group-b/04-node-join-gate-as-built.md`.
 
 ---
 
@@ -127,6 +173,37 @@ choice that prints a loud server-side warning —
 present a credential and **MUST** treat a `401` (AU5) as "authentication is required here" even if a prior
 connection to a different deployment did not require one. A driver **MUST NOT** infer "auth is off" and stop
 presenting a credential.
+
+### 4A. The edge connection-level auth lifecycle (token/basic path)
+
+These clauses are the **connection-level** contract for a **certificate-less** edge driver (the token/basic
+path of AU3-3). An **mTLS** edge driver authenticates at the handshake (AU4-1) and skips them entirely — it is
+byte-identical to a pre-auth-arc client. The wire bytes are §06 §6A; these are the **rules**.
+
+**AU4-4 (authenticate first — a single pre-auth `AUTH`).** On a token/basic edge, a certificate-less driver
+**MUST** send **exactly one** `AUTH` frame as its **first routed frame**, before any
+`SUBSCRIBE`/`WATCH_CREATE`/`CURSOR_ACK`. The server admits a **single pre-auth attempt**: a rejected `AUTH` (an
+invalid or over-cap credential) closes the connection with **`AUTH_FAIL`** (§07 code 4), so a retry costs a
+**fresh connection** — a driver **MUST NOT** hot-loop `AUTH` frames on one connection.
+
+**AU4-5 (the pre-auth window — frame ceiling + first-frame deadline).** While unauthenticated, the connection is
+held under a **pre-auth frame-size ceiling** (§06 F6A-5) and the **pre-SUBSCRIBE first-frame deadline** (§06
+F10-1d, default **10 s**), which covers the `AUTH` frame: a driver that connects then never sends `AUTH` is
+**reaped**. Any frame **other than `AUTH`** before authentication is a **`PROTOCOL_VIOLATION`** close (§07 code
+10). A driver **MUST** send its `AUTH` frame promptly after the connection is established.
+
+**AU4-6 (`REFRESH_AUTH` renews the SAME identity, only when authenticated).** After authentication a driver
+**MAY** send a **`REFRESH_AUTH`** frame (§06 §6A) to **extend the session lifetime**. `REFRESH_AUTH` is valid
+**only** on an already-authenticated connection and renews the **same** identity: the driver's identity is
+**fixed at first authentication** and is **not re-bound** in v1. Consequently a `REFRESH_AUTH` whose credential
+resolves to a **different identity** is **`AUTH_FAIL`**; an over-cap or otherwise-rejected refresh credential is
+**`CREDENTIAL_EXPIRED`** (§07 code 13); and a stray **`AUTH` on an already-authenticated connection** is a
+**`PROTOCOL_VIOLATION`**. A driver **MUST NOT** attempt to switch identity by `REFRESH_AUTH` — it opens a new
+connection instead.
+
+**AU4-7 (business frames only after auth).** A driver **MUST NOT** send a business frame
+(`SUBSCRIBE`/`WATCH_CREATE`/`CURSOR_ACK`/…) before its `AUTH` frame is accepted (certificate-less path) or the
+handshake completes (mTLS path). A business frame presented pre-auth is a **`PROTOCOL_VIOLATION`**.
 
 ---
 
@@ -166,6 +243,27 @@ credential in a tight loop.
 server audits them; a driver needs no action beyond AU5-4. (Successful reads are not audited per-event — a DoS
 concern, §1 [A7-2](01-paths-and-access.md#7-error-taxonomy).)
 
+**AU5-6 (credential expiry, lead-time, and proactive refresh — normative).** A long-lived **authenticated edge**
+connection is closed when its credential **expires**. The server closes at **`expiry + a small clock-skew
+leeway`** (default **60 s**) with **`CREDENTIAL_EXPIRED`** (§07 code 13), **never before** — the leeway absorbs
+skew between the issuing authority (IdP / CA) and the server. By credential kind:
+
+- a **static** bearer/basic token has a server-side **session-lifetime cap** (default **1 h**, on the server
+  clock, **no** leeway). A driver **SHOULD** send a `REFRESH_AUTH` before it lapses.
+- an **OIDC/JWT** token expires at its **`exp`**; the server closes at **`exp + leeway`**. A driver **SHOULD**
+  refresh within a **lead-time window `W` before `exp`** (server default `W = clamp(0.20·lifetime, 30 s, 5 m)`)
+  by sending a `REFRESH_AUTH` carrying a **freshly-minted** token — a refresh inside the window is never cut off.
+- an **mTLS client certificate** (when `notAfter` enforcement is enabled) closes at **`notAfter + leeway`**. A
+  certificate **cannot** refresh in-band, so `CREDENTIAL_EXPIRED` here is a **reconnect** signal: the driver
+  **reconnects with its rotated certificate** (lead-time window default `clamp(0.10·lifetime, 5 m, 1 h)`).
+
+Online certificate **revocation** (an off / lax / strict posture) may **additionally** reject an edge client
+certificate at admission with **`AUTH_FAIL`** (a revoked cert, or — under strict — an unreachable responder).
+A driver **MUST** treat `CREDENTIAL_EXPIRED` as **"re-authenticate / reconnect"** — distinct from a codec bug
+and from a permanent `403` — and **SHOULD** refresh **proactively** rather than waiting for the close. (These
+windows/leeway are **server policy defaults**, informative here; the driver-visible contract is the
+`CREDENTIAL_EXPIRED` close and the proactive-refresh recommendation.)
+
 ---
 
 ## 6. The authenticated principal feeds authorization (the seam, driver-visible consequences)
@@ -203,14 +301,17 @@ change server-side authenticators (e.g. validate the existing bearer token as OI
 or add an LDAP/Kubernetes authenticator) **without any driver change**. A driver **MUST NOT** encode an
 assumption that ties it to a specific server authenticator.
 
-**AU7-3 (named forward extensions).** The following are **named** forward extensions; a driver **MUST** fail
-closed if it has not negotiated them rather than assuming them: a **token-bearing auth frame on the binary
-protocol** (AU3-3, so a bearer/OIDC token reaches the edge); a **Configd-issued auth session/token** (AU2-3); a
-**multi-leg mutual-challenge** mechanism beyond the single-shot present-a-credential model — **Kerberos/SPNEGO,
-SCRAM/SASL, RADIUS, WebAuthn, SAML redirect** (these need a back-and-forth the v1 contract does not define;
-[`../../archive/design/auth-spi/authenticator-spi.md`](../../archive/design/auth-spi/authenticator-spi.md) §3, §10). New
-`Principal` attributes/claims the server may attach are **additive** — a driver **MUST** ignore attributes it
-does not recognize (it does not consume them anyway, AU6-3).
+**AU7-3 (named forward extensions).** The token-bearing edge `AUTH`/`REFRESH_AUTH` frame is **now BUILT**
+(AU3-3 / §06 §6A) and is **no longer** a forward extension. The following **remain** named forward extensions; a
+driver **MUST** fail closed if it has not negotiated them rather than assuming them: a **Configd-issued auth
+session/token** (AU2-3); a **multi-leg mutual-challenge** mechanism beyond the single-shot present-a-credential
+model — **Kerberos/SPNEGO, SCRAM/SASL, RADIUS, WebAuthn, SAML redirect** (these need a back-and-forth the v1
+contract does not define;
+[`../../archive/design/auth-spi/authenticator-spi.md`](../../archive/design/auth-spi/authenticator-spi.md) §3, §10);
+and a **token-bearing interior (node-join) auth frame** (AU3-5 — the cluster interior is mTLS-only today, and a
+token node marker is dormant/fail-closed). New `Principal` attributes/claims the server may attach are
+**additive** — a driver **MUST** ignore attributes it does not recognize (it does not consume them anyway,
+AU6-3).
 
 ---
 
@@ -245,14 +346,19 @@ bearer; a driver on the binary protocol authenticates by mTLS.
 
 ## 9. Summary of normative requirements (driver checklist)
 
-- [ ] Present the credential you have — mTLS cert and/or bearer token — and read the outcome; **do not depend
-      on how the server verifies it** (AU2-1, AU2-2).
-- [ ] Treat a bearer token as **opaque**; never parse it; never assume a server-issued replayable session
-      (AU2-2, AU2-3).
-- [ ] Bearer in `Authorization: Bearer` over TLS only; mTLS cert at the handshake; self-asserted identity
-      frames are advisory (AU3-1…AU3-4).
-- [ ] **Authenticate before any data/subscribe frame**; on the watch path, authn (handshake) and authz
-      (subscription) both precede the first data byte (AU4-1, AU8-2).
+- [ ] Present the credential you have — mTLS cert, bearer token, and/or HTTP Basic — and read the outcome;
+      **do not depend on how the server verifies it** (the **four modes** are one shared chain, AU2-1, AU2-4).
+- [ ] Treat a bearer token as **opaque** (a static secret and an OIDC/JWT are indistinguishable); never parse
+      it; never assume a server-issued replayable session (AU2-2, AU2-3, AU2-4).
+- [ ] HTTP: bearer/Basic in `Authorization:` over TLS only. Edge: mTLS cert at the handshake **or** (certless) a
+      token/basic **`AUTH` frame** (`0x13`, wire version `0x04`; §06 §6A) — stamp `0x04` on **exactly** the auth
+      frames; self-asserted identity frames (`edgeId`) are advisory (AU3-1…AU3-4).
+- [ ] Edge token/basic lifecycle: send **one** pre-auth `AUTH` first (a reject ⇒ `AUTH_FAIL`, new connection —
+      no hot-loop); no business frame before auth (⇒ `PROTOCOL_VIOLATION`); **`REFRESH_AUTH`** renews the **same**
+      identity; on **`CREDENTIAL_EXPIRED`** re-authenticate/reconnect and **refresh proactively** before expiry
+      (AU4-4…AU4-7, AU5-6).
+- [ ] **Authenticate before any data/subscribe frame**; on the watch path, authn (handshake/`AUTH`) and authz
+      (subscription) both precede the first data byte (AU4-1, AU4-7, AU8-2).
 - [ ] Be prepared to authenticate even against an auth-disabled deployment; treat `401` as "auth required"
       (AU4-3).
 - [ ] **401** = (re)authenticate (the credential); **403** = permanently forbidden (the principal) — do not

@@ -223,6 +223,13 @@ step_jcstress() {
   # needs the upstream MAIN artifacts. (Sessions run many agents on one branch.)
   $MVN -q -o -pl configd-config-store,configd-distribution-service,configd-transport -am \
     install -Dmaven.test.skip=true 2>&1 | tee "$LOGDIR/jcstress-install.log" | tail -3
+  # The offline uber-jar build below runs `clean`, but the runner's system-Maven
+  # resolves maven-clean-plugin outside the wrapper's cached repository, so a fresh
+  # CI dependency cache can lack it and the -o build cannot resolve it. Prime it
+  # online once (pinned 3.2.0) into the wrapper's repo so the offline build finds
+  # it. Best-effort: if the prime cannot run, the offline build still fails loudly.
+  $MVN -q -N org.apache.maven.plugins:maven-clean-plugin:3.2.0:clean \
+    >"$LOGDIR/jcstress-clean-prime.log" 2>&1 || true
   $MVN -q -o -pl configd-jcstress clean package -Dmaven.test.skip=true \
     2>&1 | tee "$LOGDIR/jcstress-build.log" | tail -3
   if [ ! -f "$ROOT/configd-jcstress/target/jcstress.jar" ]; then

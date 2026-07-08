@@ -1,0 +1,49 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <parent>
+        <groupId>io.configd</groupId>
+        <artifactId>configd</artifactId>
+        <version>0.1.0-SNAPSHOT</version>
+    </parent>
+
+    <artifactId>configd-kms-vault</artifactId>
+
+    <!--
+      OPTIONAL KMS provider module: HashiCorp Vault Transit as a root-key SEAL CUSTODIAN. It is discovered by
+      ServiceLoader (META-INF/services/io.configd.common.kms.KmsProviderFactory) when it is on the runtime
+      classpath and configd.raft.encryption.kms.provider=vault-transit is selected. The core (configd-server)
+      never compile-depends on this module, so no Vault client leaks into core - and there is none to leak: the
+      runtime surface is two HTTP endpoints (AppRole login + transit/decrypt), hand-rolled on the JDK
+      java.net.http client, so this module adds NO runtime dependency beyond configd-common. Vault holds the
+      KEK and only ever hands back a small wrapped blob; Configd derives all data keys locally, so there is no
+      per-record Vault round-trip (KmsProvider R1).
+    -->
+    <dependencies>
+        <dependency>
+            <groupId>io.configd</groupId>
+            <artifactId>configd-common</artifactId>
+            <version>${project.version}</version>
+        </dependency>
+
+        <!-- Real-Vault Testcontainers integration test (transit engine + AppRole proof). Test-scope, and the
+             IT itself is guarded on -Dconfigd.it.containers=true so it does NOT run in the normal reactor - it
+             needs a Docker daemon and pulls the hashicorp/vault image. Versions pinned locally to this module,
+             matching the Keycloak IT's testcontainers 1.20.4. -->
+        <dependency>
+            <groupId>org.testcontainers</groupId>
+            <artifactId>testcontainers</artifactId>
+            <version>1.20.4</version>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.testcontainers</groupId>
+            <artifactId>vault</artifactId>
+            <version>1.20.4</version>
+            <scope>test</scope>
+        </dependency>
+    </dependencies>
+</project>

@@ -25,8 +25,25 @@ import java.util.Set;
  * <ul>
  *   <li>{@code _acl/roles/<roleName>}     - value lists the role's rules, one per line.</li>
  *   <li>{@code _acl/bindings/<principal>} - value lists the principal's role names, one per line.</li>
+ *   <li>{@code _acl/format}               - reserved metadata: the ACL grammar version (see below).</li>
  * </ul>
  * The {@code <roleName>} / {@code <principal>} is the verbatim key suffix.
+ *
+ * <h2>Format version (the frozen-grammar interlock)</h2>
+ * The reserved {@code _acl/format} key names the grammar version; its value must be the integer {@link
+ * #SUPPORTED_ACL_FORMAT}. Its <b>absence means version {@code 1}</b> - so every deployment that predates this
+ * key parses byte-identically. A present value that is not the supported version fails closed (rejects the
+ * WHOLE load) exactly as any binary codec rejects an unknown version byte, rather than silently misparsing
+ * newer bytes under the old grammar. This matters because a role line's {@code prefix} and a binding line are
+ * taken VERBATIM (below), so a future grammar that appended a positional field to an existing line would
+ * otherwise be silently absorbed by an old reader - and since {@code _acl/} is cluster-replicated and parsed
+ * on every node, that silent divergence would be an authorization split-brain in a mixed-version window.
+ * <p>
+ * <b>Compatibility rule (format {@code 1} is FROZEN):</b> a future grammar change MUST bump {@code _acl/format}
+ * (an old node then fails closed on the whole subtree and keeps its last-good policy) and MUST NOT extend an
+ * existing role/binding line's positional grammar without that bump. New capability MAY instead ride a new
+ * {@code _acl/<shape>/…} key or a new effect/capability keyword, both of which an old reader already fail-
+ * closes on (an unrecognized key shape / effect / capability - below).
  *
  * <h2>Value grammar</h2>
  * UTF-8 text split on {@code '\n'}; a single trailing {@code '\r'} per line is stripped; a {@link
@@ -64,6 +81,22 @@ public final class PolicySerializer {
     private static final String ROLES_PREFIX = ACL_PREFIX + "roles/";
     private static final String BINDINGS_PREFIX = ACL_PREFIX + "bindings/";
 
+    /**
+     * Reserved metadata key naming the ACL grammar version. Absent ⇒ version {@link #SUPPORTED_ACL_FORMAT}
+     * (byte-identical to every deployment that predates this key). A present value that is not the supported
+     * version fails closed. This is a KEY, not a byte prefix, so it never touches the frozen serialized form
+     * of an existing {@code _acl/roles/…}/{@code _acl/bindings/…} value.
+     */
+    private static final String FORMAT_KEY = ACL_PREFIX + "format";
+
+    /**
+     * The only ACL grammar version this build parses. Format {@code 1} is FROZEN: a future grammar change
+     * MUST bump this sentinel (an old node then whole-subtree-rejects the newer policy and keeps last-good)
+     * and MUST NOT extend an existing role/binding line's positional grammar without that bump. See the
+     * class javadoc's "Format version" section for the full compatibility rule.
+     */
+    public static final int SUPPORTED_ACL_FORMAT = 1;
+
     private PolicySerializer() {
     }
 
@@ -88,7 +121,12 @@ public final class PolicySerializer {
             }
             String text = new String(value, StandardCharsets.UTF_8);
 
-            if (key.startsWith(ROLES_PREFIX)) {
+            if (key.equals(FORMAT_KEY)) {
+                // Validate the grammar version first, then drop it: it is metadata, not a role/binding, so it
+                // contributes nothing to roles/bindings. An unsupported version fails closed here (whole-load
+                // reject), which is what lets an old node refuse a newer policy instead of misparsing it.
+                parseFormatVersion(text);
+            } else if (key.startsWith(ROLES_PREFIX)) {
                 String roleName = key.substring(ROLES_PREFIX.length());
                 if (roleName.isEmpty()) {
                     throw new PolicyParseException("empty role name in key '" + key + "'");
@@ -108,6 +146,26 @@ public final class PolicySerializer {
             }
         }
         return new ConfigPolicy(roles, bindings);
+    }
+
+    /**
+     * Parses and validates the {@code _acl/format} value: the supported grammar version, or fail closed. The
+     * value is stripped (a trailing newline / surrounding whitespace is tolerated, consistent with the line-
+     * oriented text format); a blank, non-integer, or unsupported value throws so the whole load is rejected.
+     */
+    private static void parseFormatVersion(String text) {
+        String token = text.strip();
+        int format;
+        try {
+            format = Integer.parseInt(token);
+        } catch (NumberFormatException e) {
+            throw new PolicyParseException("malformed " + FORMAT_KEY + " value '" + text
+                    + "' (expected the integer ACL grammar version " + SUPPORTED_ACL_FORMAT + ")");
+        }
+        if (format != SUPPORTED_ACL_FORMAT) {
+            throw new PolicyParseException("unsupported ACL policy format " + format + " (this build parses "
+                    + SUPPORTED_ACL_FORMAT + ") - failing closed; a newer node wrote a newer policy grammar");
+        }
     }
 
     private static List<PolicyRule> parseRoleRules(String roleName, String text) {

@@ -1,6 +1,7 @@
 package io.configd.server;
 
 import io.configd.api.AclService;
+import io.configd.api.AdminService;
 import io.configd.api.AuditLog;
 import io.configd.api.AuthInterceptor;
 import io.configd.api.ConfigReadService;
@@ -14,6 +15,12 @@ import io.configd.common.IntegrityEnvelope;
 import io.configd.common.NodeId;
 import io.configd.common.SegmentKeyManager;
 import io.configd.common.Storage;
+import io.configd.common.auth.AuthenticatorChain;
+import io.configd.common.config.ConfigException;
+import io.configd.common.config.ConfigSource;
+import io.configd.common.config.EnvConfigSource;
+import io.configd.common.config.LayeredConfigSource;
+import io.configd.common.config.SystemPropertyConfigSource;
 import io.configd.common.kms.RootKey;
 import io.configd.distribution.CommitNotification;
 import io.configd.distribution.CommitNotificationSource;
@@ -53,6 +60,10 @@ import io.configd.replication.CrossShardWriteGuard;
 import io.configd.replication.MultiRaftDriver;
 import io.configd.replication.OwnerExecutorPool;
 import io.configd.replication.StaticShardMap;
+import io.configd.server.balance.LeaderBalanceConfig;
+import io.configd.server.balance.LeaderBalanceLoop;
+import io.configd.server.balance.LeaderBalanceMetrics;
+import io.configd.server.balance.LeaderView;
 import io.configd.store.Compactor;
 import io.configd.store.ConfigDelta;
 import io.configd.store.ConfigSigner;
@@ -204,6 +215,9 @@ public final class ConfigdServer {
     /** The live /metrics exporter - exposed via {@link #scrapeMetrics()} so a contract
      *  test can assert the running server emits the SLO series with real data (not zero). */
     private final io.configd.observability.PrometheusExporter prometheusExporter;
+    /** The decentralized leadership auto-balance loop; {@code null} at N=1 / single-node / when the kill
+     *  switch is off (see the wiring gate). Owns its own dedicated executor; closed on shutdown. */
+    private final LeaderBalanceLoop leaderBalanceLoop;
 
     private ConfigdServer(ServerConfig config, MultiRaftDriver driver,
                           ConfigStateMachine stateMachine,
@@ -224,7 +238,8 @@ public final class ConfigdServer {
                           HyParViewOverlay hyParViewOverlay,
                           SubscriptionManager subscriptionManager,
                           RolloutController rolloutController,
-                          io.configd.observability.PrometheusExporter prometheusExporter) {
+                          io.configd.observability.PrometheusExporter prometheusExporter,
+                          LeaderBalanceLoop leaderBalanceLoop) {
         this.config = config;
         this.driver = driver;
         this.stateMachine = stateMachine;
@@ -246,15 +261,55 @@ public final class ConfigdServer {
         this.subscriptionManager = subscriptionManager;
         this.rolloutController = rolloutController;
         this.prometheusExporter = prometheusExporter;
+        this.leaderBalanceLoop = leaderBalanceLoop;
     }
 
     /**
-     * Creates and starts a Configd server from the given configuration.
+     * Creates and starts a Configd server from the given configuration, resolving config against the
+     * ambient system-property + environment source (no YAML file). This is the historical entry point;
+     * with no YAML layer it reads {@code -D} properties and env vars exactly as before, so every existing
+     * caller is byte-identical. {@link #main} uses the {@code ConfigSource}-taking overload to add the
+     * optional {@code --config} YAML layer.
      *
      * @param config the server configuration
      * @return the running server instance
      */
     public static ConfigdServer start(ServerConfig config) {
+        return start(config, ConfigSource.system());
+    }
+
+    /**
+     * Creates and starts a Configd server, resolving all configuration through the supplied
+     * {@link ConfigSource}. The source layers system properties over the environment over an optional
+     * YAML file (see {@link #loadBootConfig}); with no YAML layer it is byte-identical to the ambient
+     * {@link ConfigSource#system()}.
+     *
+     * @param config the server configuration
+     * @param cfg    the resolved configuration source (highest-precedence first internally)
+     * @return the running server instance
+     */
+    public static ConfigdServer start(ServerConfig config, ConfigSource cfg) {
+        // A fail-closed boot must not leave a half-started process alive. Long-lived resources (the
+        // Netty consensus/API/edge transports, whose event loops are NON-daemon, plus the owner pool
+        // and helper executors) register a teardown action as they come up; if any later step throws
+        // (an OIDC discovery failure while building the auth chain, a missing provider module, a
+        // port-in-use, a TLS-without-manager refusal), the resources are closed in reverse creation
+        // order before the failure propagates, so no live event loop or bound port outlives the failed
+        // boot. main() turns the propagated failure into a non-zero System.exit; embedders/tests see a
+        // clean throw with nothing leaked. On success the accumulator is abandoned and the returned
+        // server's shutdown() owns teardown from that point. Registering is failure-path-only
+        // bookkeeping - the success path's behaviour and wire output are unchanged.
+        java.util.Deque<Runnable> bootTeardown = new java.util.ArrayDeque<>();
+        try {
+            return startInternal(config, cfg, bootTeardown);
+        } catch (RuntimeException | Error failure) {
+            closeBootResources(bootTeardown);
+            throw failure;
+        }
+    }
+
+    private static ConfigdServer startInternal(
+            ServerConfig config, ConfigSource cfg, java.util.Deque<Runnable> bootTeardown) {
         // Ensure data directory exists
         Path dataDir = config.dataDir();
         try {
@@ -276,7 +331,7 @@ public final class ConfigdServer {
         // -Dconfigd.edge.allowPartialShardView; a WATCH is never refused. See the
         // fanOutConfig.withAllowPartialShardView wiring below. At N=1 (one shard is the whole keyspace)
         // the refusal never fires - byte-identical.
-        int shardCount = resolveShardCount();
+        int shardCount = resolveShardCount(cfg);
         // The StaticShardMap is constructed BELOW, after the Raft integrity envelope exists: its
         // epoch() authority is the authenticated topology descriptor, which is read/verified with
         // that same K_integrity envelope (Gate 2b). Building the map here would have to hardcode the
@@ -306,7 +361,7 @@ public final class ConfigdServer {
                     : dataDir.resolve("signing-key.bin");
             SigningKeyStore keyStore = SigningKeyStore.loadOrCreate(keyFile);
             configSigner = new ConfigSigner(keyStore.keyPair());
-            raftIntegrity = deriveRaftIntegrityEnvelope(keyStore, keyFile, dataDir);
+            raftIntegrity = deriveRaftIntegrityEnvelope(keyStore, keyFile, dataDir, cfg);
             auditLogKey = deriveAuditLogKey(keyStore);
         } catch (SecurityException se) {
             // Fail-closed: surface the co-location refusal with its clear, actionable
@@ -373,10 +428,10 @@ public final class ConfigdServer {
         // operator-tunable via system properties (defaults = the documented 150/300/50 ms). The
         // as-built ceiling is leadership-churn / heartbeat starvation under load, not fsync; a longer
         // election timeout and shorter heartbeat give more headroom for tick-thread scheduling jitter.
-        int electionMinMs = Integer.getInteger("configd.raft.electionTimeoutMinMs", 150);
-        int electionMaxMs = Integer.getInteger("configd.raft.electionTimeoutMaxMs", 300);
-        int heartbeatMs = Integer.getInteger("configd.raft.heartbeatIntervalMs", 50);
-        int maxInflight = Integer.getInteger("configd.raft.maxInflightAppends", 10);
+        int electionMinMs = cfg.getInt("configd.raft.electionTimeoutMinMs", 150);
+        int electionMaxMs = cfg.getInt("configd.raft.electionTimeoutMaxMs", 300);
+        int heartbeatMs = cfg.getInt("configd.raft.heartbeatIntervalMs", 50);
+        int maxInflight = cfg.getInt("configd.raft.maxInflightAppends", 10);
         RaftConfig raftConfig = new RaftConfig(config.nodeId(), config.peers(),
                 electionMinMs, electionMaxMs, heartbeatMs, 64, 256 * 1024, 1024, maxInflight,
                 TICK_PERIOD_MS);
@@ -405,7 +460,20 @@ public final class ConfigdServer {
             try {
                 TlsConfig tlsConfig = TlsConfig.mtls(
                         config.tlsCertPath(), config.tlsKeyPath(), config.tlsTrustStorePath());
-                tlsManager = new TlsManager(tlsConfig);
+                // Optional SEPARATE peer trust anchor for the Raft interior (etcd --peer-trusted-ca-file /
+                // ZooKeeper ssl.quorum.trustStore). When set, the Raft transport trusts the peer CA instead
+                // of the shared client/edge CA, so a client certificate that does not chain to the peer CA
+                // cannot complete the peer handshake. Unset -> the shared trust store (byte-identical).
+                String peerTrust = cfg.getString(PeerIdentityPolicy.TRUST_STORE_PROP).orElse("").trim();
+                if (peerTrust.isEmpty()) {
+                    tlsManager = new TlsManager(tlsConfig);
+                } else {
+                    char[] peerTrustPassword = cfg.getString(PeerIdentityPolicy.TRUST_STORE_PASSWORD_PROP)
+                            .map(String::toCharArray).orElse(null);
+                    tlsManager = new TlsManager(tlsConfig, Path.of(peerTrust), peerTrustPassword);
+                    System.out.println("  Raft peer CA : separate peer trust store ("
+                            + PeerIdentityPolicy.TRUST_STORE_PROP + ")");
+                }
                 sslContext = tlsManager.currentContext();
             } catch (Exception e) {
                 throw new RuntimeException("Failed to initialize TLS", e);
@@ -439,7 +507,27 @@ public final class ConfigdServer {
             // warning. The same policy gates the in-body leaderId/candidateId check in the per-group
             // RaftTransportAdapter (via tcpTransport.peerIdentityEnforced()), and both share the
             // ServerRaftTransportMetrics sink so all rejections increment configd_raft_peer_identity_mismatch.
-            PeerIdentityPolicy peerIdentityPolicy = PeerIdentityPolicy.fromSystemProperties();
+            PeerIdentityPolicy peerIdentityPolicy = PeerIdentityPolicy.fromConfig(cfg);
+            // Group B node-join gate: an authenticated cluster with TLS on the Raft interior MUST
+            // enumerate its peers. Without an allow-list, any client cert the CA trusts could forge a
+            // peer's senderId and join consensus, so refuse to boot. Auth-disabled or plaintext-interior
+            // deployments keep today's loud-warning open gate (this returns without throwing).
+            peerIdentityPolicy.requireEnforcedUnderAuth(isAuthEnabled(cfg, config), config.tlsEnabled());
+            // Shared-CA assumption note: with peer-identity enforced under auth + TLS but NO separate peer
+            // trust store, the Raft interior trusts the SAME CA as the client/edge plane. Peer
+            // authorization then rests entirely on the allow-list marker AND on that CA never issuing a
+            // node-marker (or an allow-listed identity) to a client cert - a single-CA operator invariant.
+            // A separate peer trust store removes the assumption (a client cert cannot chain to the peer CA
+            // at all). Recommend it for a hardened deployment.
+            boolean separatePeerTrust =
+                    !cfg.getString(PeerIdentityPolicy.TRUST_STORE_PROP).orElse("").trim().isEmpty();
+            if (peerIdentityPolicy.enforced() && isAuthEnabled(cfg, config) && config.tlsEnabled()
+                    && !separatePeerTrust) {
+                System.out.println("  Raft peer CA : SHARED with the client/edge CA (no "
+                        + PeerIdentityPolicy.TRUST_STORE_PROP + "); peer authorization then relies on the CA "
+                        + "never issuing an allow-listed node identity to a client cert. Recommend a separate "
+                        + "peer trust store for a hardened deployment.");
+            }
             RaftTransportMetrics raftTransportMetrics = new ServerRaftTransportMetrics(configdMetrics);
             tcpTransport = new NettyRaftTransport(
                     config.nodeId(), bindAddr, peerAddresses, tlsManager, null,
@@ -474,7 +562,8 @@ public final class ConfigdServer {
         // `driver.ownerExecutor(gid).execute(...)`. At N=1 a single owner thread does all of it.
         // ---------------------------------------------------------------
         OwnerExecutorPool ownerPool =
-                new OwnerExecutorPool(Integer.getInteger("configd.raft.ownerPoolSize", 1));
+                new OwnerExecutorPool(cfg.getInt("configd.raft.ownerPoolSize", 1));
+        bootTeardown.push(ownerPool::shutdown);
         driver.setOwnerPool(ownerPool);
         System.out.println("  Owner pool   : " + ownerPool.size()
                 + " owner thread(s) [Phase 0 B Stage 1B — R-01 deleted, consensus via ownerExecutor(gid)]");
@@ -503,11 +592,13 @@ public final class ConfigdServer {
             t.setDaemon(true);
             return t;
         });
+        bootTeardown.push(readDispatchExecutor::shutdownNow);
         ScheduledExecutorService tlsReloadExecutor = Executors.newSingleThreadScheduledExecutor(r -> {
             Thread t = new Thread(r, "configd-tls-reload");
             t.setDaemon(true);
             return t;
         });
+        bootTeardown.push(tlsReloadExecutor::shutdownNow);
         // Off-ack-path node-anchor refresh (audit head + shard-liveness digest, §2.5 / A1.6). Its own
         // single thread so a slow/failed refresh never delays an owner tick or a read.
         ScheduledExecutorService nodeAnchorExecutor = Executors.newSingleThreadScheduledExecutor(r -> {
@@ -515,6 +606,7 @@ public final class ConfigdServer {
             t.setDaemon(true);
             return t;
         });
+        bootTeardown.push(nodeAnchorExecutor::shutdownNow);
 
         // ---------------------------------------------------------------
         // Group commit (per group). Each group's coalescing durability flush dispatches onto THAT group's
@@ -528,10 +620,12 @@ public final class ConfigdServer {
         //   -Dconfigd.groupCommit.maxBatch=N     -> cap entries per fsync (default 4096; bounds latency)
         //   -Dconfigd.groupCommit.lingerMicros=T -> linger to grow the batch (default 0 = flush ASAP)
         // ---------------------------------------------------------------
+        // Lenient parse (default "true", any non-"true" is false), preserving the historical
+        // Boolean.parseBoolean semantics exactly; the strict cfg.getBoolean is not used here.
         boolean groupCommitEnabled = Boolean.parseBoolean(
-                System.getProperty("configd.groupCommit.enabled", "true"));
-        int groupCommitMaxBatch = Integer.getInteger("configd.groupCommit.maxBatch", 4096);
-        long groupCommitLingerMicros = Long.getLong("configd.groupCommit.lingerMicros", 0L);
+                cfg.getString("configd.groupCommit.enabled").orElse("true"));
+        int groupCommitMaxBatch = cfg.getInt("configd.groupCommit.maxBatch", 4096);
+        long groupCommitLingerMicros = cfg.getLong("configd.groupCommit.lingerMicros", 0L);
         if (groupCommitEnabled) {
             System.out.println("  Group commit : ENABLED (maxBatch=" + groupCommitMaxBatch
                     + ", lingerMicros=" + groupCommitLingerMicros + ")");
@@ -668,6 +762,16 @@ public final class ConfigdServer {
                 throw new RuntimeException("Failed to start TCP Raft transport on "
                         + config.bindAddress() + ":" + config.bindPort(), e);
             }
+            // The transport's non-daemon Netty event loops (and its bound port) are now live: a
+            // fail-closed throw further down must close them or the JVM cannot exit.
+            final RaftTransportEndpoint startedTransport = tcpTransport;
+            bootTeardown.push(() -> {
+                try {
+                    startedTransport.close();
+                } catch (Exception ignored) {
+                    // best-effort teardown of a failed boot
+                }
+            });
         }
 
         // ---------------------------------------------------------------
@@ -743,16 +847,35 @@ public final class ConfigdServer {
         // Wire security (TLS already initialized above, before the Raft transport).
         // ---------------------------------------------------------------
         AuthInterceptor authInterceptor = null;
+        AuthenticatorChain authChain = null;
         AclService aclService = null;
         AclConfigPolicyLoader aclPolicyLoader = null;
-        if (!config.authEnabled()) {
+
+        // The pluggable authenticator chain (configd.auth.mode / configd.auth.providers). When configured it
+        // is THE auth mechanism (basic / mtls, or a mixed chain) and supersedes the legacy static
+        // --auth-token. When absent, the posture is exactly as before: a static --auth-token, or auth off.
+        java.util.List<String> authProviders = AuthenticatorChain.configuredProviders(cfg);
+        boolean noAuthMode = authProviders.equals(java.util.List.of("none"));
+        if (noAuthMode) {
+            // Explicit auth-disabled mode. It MUST produce the same handler state as the legacy auth-off
+            // branch (no chain, no interceptor, no ACL -> the open gate, which still refuses a
+            // reserved-prefix `_acl/` WRITE). Routing no-auth THROUGH the handler chain would 401 a
+            // credential-less request - denying exactly what this mode exists to allow - so the chain is
+            // deliberately NOT wired. 'none' mixed with real providers is rejected at build time (fail-loud).
             System.err.println("WARNING: ************************************************************");
-            System.err.println("WARNING: Authentication is DISABLED (--auth-token not set).");
+            System.err.println("WARNING: Authentication is DISABLED (configd.auth.mode=none).");
             System.err.println("WARNING: All write/delete/admin endpoints are unauthenticated.");
-            System.err.println("WARNING: DO NOT run in production without --auth-token.");
+            System.err.println("WARNING: Front this deployment with a trusted reverse proxy.");
             System.err.println("WARNING: ************************************************************");
-        }
-        if (config.authEnabled()) {
+        } else if (!authProviders.isEmpty()) {
+            // Fail-loud on an unknown provider / a missing optional module / 'none' mixed with others.
+            authChain = AuthenticatorChain.build(authProviders, cfg);
+            // Authorization stays in-core: the chain yields a Principal; the AclService (seeded from the
+            // replicated `_acl/` policy) decides access on it. No static break-glass root grant here - the
+            // SPI modes are policy-governed (that grant is a property of the legacy --auth-token path).
+            aclService = new AclService();
+            System.out.println("  Auth (SPI)   : providers=" + authChain.providerTypes());
+        } else if (config.authEnabled()) {
             String expectedToken = config.authToken();
             authInterceptor = new AuthInterceptor(token -> {
                 // F-V7-01 fix: Use constant-time comparison to prevent
@@ -770,7 +893,16 @@ public final class ConfigdServer {
             aclService = new AclService();
             // Grant root principal full access to all keys
             aclService.grant("", ROOT_PRINCIPAL, EnumSet.allOf(AclService.Permission.class));
-            // Config-sourced policy under `_acl/`. ADDITIVE on top of the static grant above (no `_acl/`
+        } else {
+            System.err.println("WARNING: ************************************************************");
+            System.err.println("WARNING: Authentication is DISABLED (--auth-token not set).");
+            System.err.println("WARNING: All write/delete/admin endpoints are unauthenticated.");
+            System.err.println("WARNING: DO NOT run in production without --auth-token.");
+            System.err.println("WARNING: ************************************************************");
+        }
+
+        if (aclService != null) {
+            // Config-sourced policy under `_acl/`. ADDITIVE on top of any static grant above (no `_acl/`
             // keys in production = empty snapshot = byte-identical). Registered BEFORE the tick loop so it
             // observes every `_acl/`-touching apply; the snapshot-install hook covers follower catch-up;
             // the boot seed catches a snapshot-restored prefix. Fail-closed-to-last-good on malformed
@@ -964,7 +1096,8 @@ public final class ConfigdServer {
         // subjects to record once there are principals). KEYED HMAC-SHA256 chain under K_audit (derived
         // above), so a file-rewriting attacker cannot forge a consistent chain. Backed by the durable,
         // append+CRC Storage; bounded to AuditLog.DEFAULT_MAX_RECORDS.
-        AuditLog auditLog = (authInterceptor != null) ? new AuditLog(storage, clock, auditLogKey) : null;
+        AuditLog auditLog = (authInterceptor != null || authChain != null)
+                ? new AuditLog(storage, clock, auditLogKey) : null;
         if (auditLog != null) {
             System.out.println("  Audit log    : security-audit (KEYED HMAC-SHA256 chain, append-only, cap "
                     + AuditLog.DEFAULT_MAX_RECORDS + ")");
@@ -1019,7 +1152,7 @@ public final class ConfigdServer {
         // -Dconfigd.replay.enabled=true so no new CLI/ServerConfig surface is added. Defends only
         // against PASSIVE capture-and-replay; a token holder can still mint fresh requests.
         ReplayGuard replayGuard = null;
-        if (Boolean.getBoolean("configd.replay.enabled")) {
+        if (cfg.getBoolean("configd.replay.enabled", false)) {
             replayGuard = new ReplayGuard(clock);
             System.out.println("  Replay guard : ON (window " + ReplayGuard.DEFAULT_WINDOW_MS
                     + "ms, nonce cap " + ReplayGuard.DEFAULT_MAX_NONCES + ")");
@@ -1035,6 +1168,42 @@ public final class ConfigdServer {
         // (otherwise the sharded aggregate collapses toward the single-group plateau with no lever).
         DriverLeadershipAdmin leadershipAdmin = new DriverLeadershipAdmin(driver);
 
+        // Decentralized leadership auto-balance loop (one per node). It sheds - never pulls - at most one
+        // led group per cadence to an under-loaded peer, so post-failover leader drift no longer collapses
+        // the sharded aggregate toward the single-group plateau. It is created ONLY in the horizontal-scale
+        // regime it targets - more than one shard AND at least one peer - and stays off when the operator
+        // flips the kill switch. At N=1 or single-node the distribution is trivially flat (spread 0), so
+        // building the loop would add a daemon thread that could never act; not building it keeps those
+        // deployments byte-identical. Transfers go through the same owner-thread-confined
+        // DriverLeadershipAdmin path the admin endpoint uses. See docs/design/group-b/investigation/
+        // 06-leadership-auto-balance.md.
+        LeaderBalanceConfig balanceConfig = LeaderBalanceConfig.fromConfig(cfg);
+        LeaderBalanceLoop leaderBalanceLoop = null;
+        if (balanceConfig.enabled() && shardCount > 1 && !config.peers().isEmpty()) {
+            LeaderView balanceView = LeaderView.overDriver(driver, config.peers());
+            LeaderBalanceLoop.LeadershipTransfer transferSeam = (gid, target) -> {
+                try {
+                    return leadershipAdmin.transferLeadership(gid, target)
+                            instanceof AdminService.AdminResult.Success;
+                } catch (RuntimeException wedgedOrTimedOut) {
+                    // A wedged/overloaded owner surfaces as the admin path's bounded timeout (its 503
+                    // contract). Treat it as a declined attempt so it folds into the loop's refused +
+                    // cooldown path, never a retry storm.
+                    return false;
+                }
+            };
+            leaderBalanceLoop = new LeaderBalanceLoop(
+                    balanceView, transferSeam, balanceConfig, clock,
+                    new java.util.Random(), LeaderBalanceMetrics.forRegistry(metricsRegistry));
+            System.out.println("  Leader balance: ON (interval " + balanceConfig.intervalMs() + "ms, threshold "
+                    + balanceConfig.imbalanceThreshold() + ", cooldown " + balanceConfig.cooldownMs() + "ms"
+                    + (balanceConfig.dryRun() ? ", DRY-RUN" : "") + ") [auto-balance leadership across boxes]");
+        } else {
+            System.out.println("  Leader balance: OFF ("
+                    + (!balanceConfig.enabled() ? "kill switch"
+                            : shardCount <= 1 ? "single shard" : "single node") + ")");
+        }
+
         NettyHttpApiServer httpApiServer;
         try {
             // The read 503 X-Leader-Hint is SHARD- AND SCOPE-AWARE - resolved for the shard that owns
@@ -1049,11 +1218,12 @@ public final class ConfigdServer {
                         io.configd.raft.RaftNode owner = driver.getGroup(shardMap.shardFor(scope, key));
                         return owner != null ? owner.leaderId() : null;
                     },
-                    auditLog, replayGuard, leadershipAdmin);
+                    auditLog, replayGuard, leadershipAdmin, authChain);
             httpApiServer.start();
         } catch (Exception e) {
             throw new RuntimeException("Failed to start HTTP API server on port " + config.apiPort(), e);
         }
+        bootTeardown.push(httpApiServer::stop);
 
         // ---------------------------------------------------------------
         // Fan-out edge endpoint, optional (--edge-port). Drives the SAME FanOutSessionCore the
@@ -1113,12 +1283,39 @@ public final class ConfigdServer {
             // (or for a full-store / non-opting edge) the drain is byte-identical to the legacy path.
             // allowPartialShardView gates the legacy whole-store SUBSCRIBE plane at N>1 (primary-shard-
             // only); it never affects a multi-shard WATCH and is inert at N=1.
-            boolean allowPartialShardView = Boolean.getBoolean("configd.edge.allowPartialShardView");
+            boolean allowPartialShardView = cfg.getBoolean("configd.edge.allowPartialShardView", false);
             io.configd.distribution.fanout.FanOutConfig fanOutConfig =
                     io.configd.distribution.fanout.FanOutConfig.defaults()
-                            .withServerSidePrefixFilter(resolveEdgeFilterPosture(),
+                            .withServerSidePrefixFilter(resolveEdgeFilterPosture(cfg),
                                     strongReadPolicy.prefixes())
                             .withAllowPartialShardView(allowPartialShardView);
+            // Edge token authentication (Gate 3): when the SHARED auth chain (one chain, both planes)
+            // contains a bearer or basic provider, the edge admits token/basic AUTH frames additively -
+            // mTLS clients stay byte-identical (no AUTH frame, cert-auth at the handshake), a
+            // certificate-less token client presents an AUTH frame. When the chain is mTLS-only or
+            // absent, edgeAuth stays null and the edge is byte-identical to the pre-token endpoint.
+            io.configd.server.fanout.EdgeAuthConfig edgeAuth = null;
+            if (authChain != null) {
+                java.util.List<String> edgeProviderTypes = authChain.providerTypes();
+                if (edgeProviderTypes.contains("bearer") || edgeProviderTypes.contains("basic")) {
+                    int preAuthMaxFrameBytes = cfg.getInt("configd.edge.preAuthMaxFrameBytes", 16_384);
+                    int maxAuthTokenBytes = cfg.getInt("configd.edge.maxAuthTokenBytes", 8_192);
+                    // The static-token session lifetime (a bearer/basic credential carries no exp today).
+                    // Gate 5: this IS the real model for a static token - the connection closes at
+                    // now + defaultTokenTtlMs on the server clock. A future OIDC exp (Gate 6) closes at
+                    // exp + leeway instead. A REFRESH_AUTH re-arms it.
+                    long defaultTokenTtlMs = cfg.getLong("configd.edge.authTtlMs", 3_600_000L);
+                    edgeAuth = new io.configd.server.fanout.EdgeAuthConfig(
+                            authChain, preAuthMaxFrameBytes, maxAuthTokenBytes, defaultTokenTtlMs,
+                            io.configd.common.auth.CredentialExpiryPolicy.fromConfig(cfg));
+                }
+            }
+            // Gate 5: the edge client-cert validity gate (online revocation + mid-connection notAfter
+            // enforcement). Defaults reproduce today: revocation OFF, enforceCertNotAfter false ->
+            // EdgeCertGate.OFF is byte-identical to before. This gate is wired ONLY to the edge plane; the
+            // Raft interior never constructs one, so the exemptInterNode invariant holds by construction.
+            io.configd.server.fanout.EdgeCertGate edgeCertGate =
+                    buildEdgeCertGate(cfg, fanOutMetrics);
             fanOutServer = new io.configd.server.fanout.NettyFanOutServer(
                     edgeShardSources, edgeShardReplaySources, edgeAllGids, edgeShardResolver,
                     shardMap.epoch(),
@@ -1127,7 +1324,7 @@ public final class ConfigdServer {
                     fanOutConfig,
                     io.configd.server.fanout.FanOutServer.DEFAULT_TRANSPORT_QUEUE_FRAMES,
                     io.configd.server.fanout.FanOutServer.DEFAULT_MAX_SESSIONS,
-                    slowConsumerGovernor, fanOutMetrics, clock, watchAuthorizer);
+                    slowConsumerGovernor, fanOutMetrics, clock, watchAuthorizer, edgeAuth, edgeCertGate);
             // Fail-closed: if TLS is enabled on the CLI but the edge endpoint did not receive a
             // TlsManager, refuse to start (no plaintext edge traffic in a TLS deployment).
             if (config.tlsEnabled() && tlsManager == null) {
@@ -1135,8 +1332,10 @@ public final class ConfigdServer {
                         "TLS is enabled but FanOutServer has no TlsManager — refusing to start "
                                 + "to avoid plaintext edge traffic");
             }
+            final io.configd.server.fanout.FanOutEndpoint startedFanOut = fanOutServer;
             try {
                 fanOutServer.start();
+                bootTeardown.push(startedFanOut::close);
                 System.out.println("  Edge port    : " + fanOutServer.localPort()
                         + (tlsManager != null ? " (mTLS)" : " (PLAINTEXT)") + " [C1 fan-out, ADR-0037]");
                 if (shardCount > 1) {
@@ -1160,7 +1359,7 @@ public final class ConfigdServer {
                 anchorWitness,
                 httpApiServer, tcpTransport, fanOutServer, aclPolicyLoader,
                 watchService, fanOutBuffer, compactor, plumtreeNode, hyParViewOverlay,
-                subscriptionManager, rolloutController, prometheusExporter);
+                subscriptionManager, rolloutController, prometheusExporter, leaderBalanceLoop);
 
         // ---------------------------------------------------------------
         // Schedule the off-ack-path node-anchor refresh (audit head + shard-liveness digest). The write
@@ -1169,8 +1368,8 @@ public final class ConfigdServer {
         // sub-T period so the K bound can fire before T. A refresh failure is logged and retried - it is
         // OFF the ack path, not the fail-closed halt the per-shard anchor fsync is.
         // ---------------------------------------------------------------
-        long nodeAnchorIntervalMs = Long.getLong("configd.nodeAnchor.intervalMs", 1000L);
-        int nodeAnchorKRecords = Integer.getInteger("configd.nodeAnchor.auditRecords", 64);
+        long nodeAnchorIntervalMs = cfg.getLong("configd.nodeAnchor.intervalMs", 1000L);
+        int nodeAnchorKRecords = cfg.getInt("configd.nodeAnchor.auditRecords", 64);
         long nodeAnchorPollMs = Math.max(50L, Math.min(nodeAnchorIntervalMs, 250L));
         Runnable nodeAnchorRefresh = NodeAnchorService.newRefresher(
                 nodeAnchor, auditLog,
@@ -1274,6 +1473,15 @@ public final class ConfigdServer {
             }, TLS_RELOAD_INTERVAL_MS, TLS_RELOAD_INTERVAL_MS, TimeUnit.MILLISECONDS);
         }
 
+        // Start the leadership auto-balance loop (only present in the N>1 / multi-node regime; see the
+        // wiring gate above). Its own dedicated executor means its jittered cadence never touches the
+        // consensus tick. Started after the server is fully wired so the first cadence observes a live
+        // driver.
+        if (server.leaderBalanceLoop != null) {
+            server.leaderBalanceLoop.start();
+            bootTeardown.push(server.leaderBalanceLoop::close);
+        }
+
         // Register shutdown hook
         Runtime.getRuntime().addShutdownHook(new Thread(() -> {
             System.out.println("Configd shutting down...");
@@ -1292,6 +1500,12 @@ public final class ConfigdServer {
      * Finally the {@code tlsReloadExecutor} is the slowest to drain and is stopped last.
      */
     public void shutdown() {
+        // Stop the leadership auto-balance loop FIRST so it initiates no new transfers against a driver /
+        // owner pool that is about to be torn down. Its own executor drains independently; a null loop
+        // (N=1 / single-node / kill switch off) is a no-op.
+        if (leaderBalanceLoop != null) {
+            leaderBalanceLoop.close();
+        }
         // Edge endpoint FIRST: it is a pure consumer of the readSince/replay seams, so closing it
         // before the HTTP API / owner pool / Raft teardown lets edge subscribers receive a clean
         // SERVER_SHUTDOWN and stops any new readSince/replay pulls against a store/consensus engine
@@ -1356,14 +1570,21 @@ public final class ConfigdServer {
      */
     // Package-private (not private) so EncryptionAtRestWiringTest can assert the flag -> envelope
     // wiring directly, mirroring how enforceSigningKeyNotColocated is exercised by D1FailClosedTest.
+    // The no-cfg overload resolves against the ambient system-property + environment source, keeping
+    // the historical three-argument signature the tests call byte-identical to before config unified.
     static io.configd.common.IntegrityEnvelope deriveRaftIntegrityEnvelope(
             SigningKeyStore keyStore, Path keyFile, Path dataDir) {
+        return deriveRaftIntegrityEnvelope(keyStore, keyFile, dataDir, ConfigSource.system());
+    }
+
+    static io.configd.common.IntegrityEnvelope deriveRaftIntegrityEnvelope(
+            SigningKeyStore keyStore, Path keyFile, Path dataDir, ConfigSource cfg) {
         // FAIL-CLOSED: refuse to derive the at-rest integrity key from a signing key co-located
         // inside the data dir it protects, BEFORE doing any crypto. Default = refuse to start; the
         // dev/test/single-node opt-out (system property OR env var, the latter for CI / docker-compose
-        // where -D is awkward) downgrades to a loud warning.
-        boolean allowColocated = Boolean.getBoolean("configd.security.allowColocatedSigningKey")
-                || "true".equalsIgnoreCase(System.getenv("CONFIGD_ALLOW_COLOCATED_SIGNING_KEY"));
+        // where -D is awkward) downgrades to a loud warning. anyLayerTrue reproduces the original
+        // "system-property OR env-alias" semantics exactly (EITHER being true enables the opt-out).
+        boolean allowColocated = cfg.anyLayerTrue("configd.security.allowColocatedSigningKey");
         enforceSigningKeyNotColocated(keyFile, dataDir, allowColocated);
         byte[] ikm = keyStore.keyPair().getPrivate().getEncoded();
         java.util.UUID keyId = keyStore.keyId();
@@ -1377,7 +1598,7 @@ public final class ConfigdServer {
             // OFF -> term-versioned HMAC (Layer B). Both derive their at-rest keys from the keyring's
             // independent per-term roots (not the signing key directly), so a term OR signing-key
             // rotation is non-destructive. Keyless is a no-signing-key posture that never reaches here.
-            return buildTermVersionedEnvelope(ikm, salt, keyId, dataDir);
+            return buildTermVersionedEnvelope(ikm, salt, keyId, dataDir, cfg);
         } finally {
             // Zeroize the transient signing-key material now that the keyring's K_keyringMac/KEK
             // (SecretKeySpec, which clones) hold their own copies. Best-effort (JDK-8160206): the raw
@@ -1387,9 +1608,8 @@ public final class ConfigdServer {
     }
 
     /** True if at-rest encryption is enabled (system property, or the CI/docker-friendly env var). */
-    private static boolean encryptionAtRestEnabled() {
-        return Boolean.getBoolean("configd.raft.encryption.enabled")
-                || "true".equalsIgnoreCase(System.getenv("CONFIGD_ENCRYPTION_AT_REST"));
+    private static boolean encryptionAtRestEnabled(ConfigSource cfg) {
+        return cfg.anyLayerTrue("configd.raft.encryption.enabled");
     }
 
     /** System property that sets the edge fan-out server-side prefix-filtering posture (ADR-0045). */
@@ -1403,7 +1623,11 @@ public final class ConfigdServer {
      * the fan-out. This is a two-way door, not a one-way door.
      */
     static boolean resolveEdgeFilterPosture() {
-        String v = System.getProperty(EDGE_FILTER_PROP, "on").trim().toLowerCase();
+        return resolveEdgeFilterPosture(ConfigSource.system());
+    }
+
+    static boolean resolveEdgeFilterPosture(ConfigSource cfg) {
+        String v = cfg.getString(EDGE_FILTER_PROP).orElse("on").trim().toLowerCase();
         return switch (v) {
             case "on", "true" -> true;
             case "off", "false" -> false;
@@ -1439,34 +1663,42 @@ public final class ConfigdServer {
      * @param salt    the signing keyId bytes (HKDF salt)
      * @param keyId   the signing keyId (the loggable KEK reference / node id)
      * @param dataDir the node data directory (where {@code raft-keyring} lives)
+     * @param cfg     the resolved configuration source (encryption enable / requireEncrypted / provider)
      * @return a term-versioned {@link IntegrityEnvelope} (HMAC when encryption off, GCM when on)
      */
     private static io.configd.common.IntegrityEnvelope buildTermVersionedEnvelope(
-            byte[] ikm, byte[] salt, java.util.UUID keyId, Path dataDir) {
-        boolean encrypt = encryptionAtRestEnabled();
-        boolean requireEncrypted = Boolean.getBoolean("configd.raft.encryption.requireEncrypted")
-                || "true".equalsIgnoreCase(System.getenv("CONFIGD_ENCRYPTION_REQUIRE_ENCRYPTED"));
-        if (encrypt) {
-            // The KMS provider governs ENCRYPTION-root custody (local vs a cloud CMK). Only 'local'
-            // ships in v1; naming another is a startup error, never a silent downgrade.
-            String providerName = System.getProperty("configd.raft.encryption.kms.provider",
-                    System.getenv().getOrDefault("CONFIGD_ENCRYPTION_KMS_PROVIDER", "local"));
-            if (!"local".equals(providerName)) {
-                throw new IllegalStateException(
-                        "configd.raft.encryption.kms.provider='" + providerName + "' is not available:"
-                                + " only the built-in 'local' provider (signing-key-wrapped keyring) ships in v1."
-                                + " Refusing to start rather than silently downgrade - a silent downgrade is"
-                                + " how a 'data is encrypted at rest' claim becomes fiction. Add the matching"
-                                + " configd-kms-<provider> module to the classpath, or unset the property.");
-            }
-        }
+            byte[] ikm, byte[] salt, java.util.UUID keyId, Path dataDir, ConfigSource cfg) {
+        boolean encrypt = encryptionAtRestEnabled(cfg);
+        // anyLayerTrue reproduces the original "system-property OR env-alias" semantics for the flag.
+        boolean requireEncrypted = cfg.anyLayerTrue("configd.raft.encryption.requireEncrypted");
+        // Resolve the KEYRING-CUSTODY SECRET: the IKM the two keyring-wrapping keys (K_keyringMac and
+        // KEK_wrap) are HKDF-derived from. For 'local' - and for the encryption-OFF term-versioned HMAC
+        // posture - it IS the signing-key IKM, byte-identical to every prior boot: the raw signing key
+        // never crosses the KMS SPI boundary (secret minimisation), and existing encrypted data still
+        // decrypts because the derivation is unchanged. For an EXTERNAL custodian (vault-transit, a cloud
+        // CMK, ...) it is a per-node secret UNSEALED ONCE through the KmsProvider at boot (R1/R2); an
+        // unreachable custodian FAILS CLOSED (R3) - never a silent downgrade to no encryption or a
+        // different provider. Only encryption-ON with a non-'local' provider takes the SPI branch.
+        String providerName = encrypt
+                ? cfg.getString("configd.raft.encryption.kms.provider").orElse("local").trim()
+                : "local";
+        boolean externalCustody = encrypt && !"local".equals(providerName);
+        byte[] custodySecret = externalCustody
+                ? unsealKeyringCustodySecret(providerName, dataDir, keyId, cfg)
+                : ikm; // ALIAS of the caller's signing-key IKM (zeroed by deriveRaftIntegrityEnvelope)
 
-        // Two signing-key-derived, domain-separated keys authenticate and wrap the keyring (§A2.3):
+        // Two custody-secret-derived, domain-separated keys authenticate and wrap the keyring (§A2.3):
         //   K_keyringMac authenticates the whole keyring file; KEK_wrap AES-GCM-wraps each root.
         // Neither derives the roots (those are independent random material in the keyring) - the whole
         // point of the decoupling that makes both term and signing-key rotation non-destructive.
-        javax.crypto.SecretKey keyringMac = deriveKeyringKey(ikm, salt, KEYRING_MAC_INFO, "HmacSHA256");
-        javax.crypto.SecretKey kek = deriveKeyringKey(ikm, salt, KEYRING_WRAP_INFO, "AES");
+        javax.crypto.SecretKey keyringMac = deriveKeyringKey(custodySecret, salt, KEYRING_MAC_INFO, "HmacSHA256");
+        javax.crypto.SecretKey kek = deriveKeyringKey(custodySecret, salt, KEYRING_WRAP_INFO, "AES");
+        if (externalCustody) {
+            // The two keyring keys have taken their own copies (SecretKeySpec clones); wipe the external
+            // custody secret, a distinct array this method owns. The 'local'/OFF path aliases the caller's
+            // ikm (zeroed by deriveRaftIntegrityEnvelope), so it is deliberately NOT touched here.
+            java.util.Arrays.fill(custodySecret, (byte) 0);
+        }
         byte[] nodeKeyId = keyId.toString().getBytes(java.nio.charset.StandardCharsets.UTF_8);
 
         // The keyring lives in dataDir (production start() already created it; ensure it exists here
@@ -1503,6 +1735,68 @@ public final class ConfigdServer {
                     "At-rest integrity: term-versioned HMAC (keyring terms={0}, activeTerm={1})",
                     new Object[]{roots.size(), keyring.activeTerm()});
             return io.configd.common.IntegrityEnvelope.hmac(keyManager);
+        }
+    }
+
+    /**
+     * Unseals the per-node keyring-custody secret through an EXTERNAL {@link io.configd.common.kms.KmsProvider}
+     * discovered by {@link io.configd.common.kms.KmsProviderFactory} (ServiceLoader). This is the genuine SPI
+     * boot seam for every non-{@code local} custodian.
+     * <p>
+     * Fail-loud: a selected provider whose module is not on the classpath is a startup error (R3 - never a
+     * silent downgrade). First boot / enable-encryption migration mints and seals a fresh secret and persists
+     * its {@link io.configd.common.kms.WrappedKey} beside the keyring (mirroring the keyring's own first-boot
+     * mint); every later boot reads that carrier and performs the ONE {@code unwrap} call. Fail-closed
+     * ({@link io.configd.common.kms.KmsUnavailableException}) if the backend is unreachable at boot - the node
+     * refuses to start. The provider is {@code close()}d (its token dropped) the instant the secret is
+     * recovered (R2), so no live provider handle survives onto the data path.
+     *
+     * @return the freshly-unsealed custody secret; the CALLER owns and zeroes it after deriving the keyring keys
+     */
+    private static byte[] unsealKeyringCustodySecret(
+            String providerName, Path dataDir, java.util.UUID keyId, ConfigSource cfg) {
+        java.util.Map<String, io.configd.common.kms.KmsProviderFactory> factories =
+                io.configd.common.kms.KmsProviderFactory.discover();
+        io.configd.common.kms.KmsProviderFactory factory = factories.get(providerName);
+        if (factory == null) {
+            throw new IllegalStateException(
+                    "configd.raft.encryption.kms.provider='" + providerName + "' is not available: it is not"
+                            + " the built-in 'local' provider and no configd-kms-<provider> module on the"
+                            + " classpath provides it. Refusing to start rather than silently downgrade - a"
+                            + " silent downgrade is how a 'data is encrypted at rest' claim becomes fiction."
+                            + " Add the matching module to the runtime classpath, or unset the property."
+                            + " Known external providers: " + new java.util.TreeSet<>(factories.keySet()));
+        }
+        try {
+            Files.createDirectories(dataDir);
+        } catch (java.io.IOException e) {
+            throw new IllegalStateException("cannot create data directory for the KMS sealed root: " + dataDir, e);
+        }
+        Path sealedRoot = dataDir.resolve(KmsSealedRootStore.FILE_NAME);
+        io.configd.common.kms.KmsBootContext ctx =
+                new io.configd.common.kms.KmsBootContext(keyId.toString());
+        try (io.configd.common.kms.KmsProvider provider = factory.create(cfg, ctx)) {
+            provider.healthCheck(); // pre-flight reachability; unreachable -> KmsUnavailableException -> fail closed
+            io.configd.common.kms.RootKey root;
+            if (KmsSealedRootStore.exists(sealedRoot)) {
+                root = provider.unwrap(KmsSealedRootStore.read(sealedRoot)); // the ONE boot call
+            } else {
+                io.configd.common.kms.KmsProvider.Provisioned provisioned = provider.generateRootKey();
+                KmsSealedRootStore.write(sealedRoot, provisioned.wrapped()); // persist the sealed carrier (fsync)
+                root = provisioned.rootKey();
+            }
+            try {
+                LOG.log(Level.INFO, "At-rest keyring custody unsealed via KMS provider ''{0}'' (keyId={1})",
+                        new Object[]{providerName, root.keyId()});
+                return root.withMaterial(byte[]::clone);
+            } finally {
+                root.destroy(); // the caller now owns the returned bytes; wipe our RootKey handle
+            }
+        } catch (io.configd.common.kms.KmsUnavailableException e) {
+            throw new IllegalStateException(
+                    "at-rest KMS provider '" + providerName + "' is unavailable at boot - refusing to start"
+                            + " (fail closed). The node will NOT fall back to no encryption or a different"
+                            + " provider. Cause: " + e.getMessage(), e);
         }
     }
 
@@ -1635,7 +1929,11 @@ public final class ConfigdServer {
      * @throws IllegalArgumentException if {@code N} is out of range
      */
     static int resolveShardCount() {
-        int shardCount = Integer.getInteger("configd.raft.shardCount", 1);
+        return resolveShardCount(ConfigSource.system());
+    }
+
+    static int resolveShardCount(ConfigSource cfg) {
+        int shardCount = cfg.getInt("configd.raft.shardCount", 1);
         if (shardCount < 1 || shardCount > MAX_SHARD_COUNT) {
             throw new IllegalArgumentException(
                     "configd.raft.shardCount must be in [1, " + MAX_SHARD_COUNT + "], got " + shardCount
@@ -1643,6 +1941,80 @@ public final class ConfigdServer {
                             + " the deployment (changing it requires a manual reshard).");
         }
         return shardCount;
+    }
+
+    /**
+     * Builds the Gate-5 edge client-cert validity gate from config, fail-closed, emitting the loud
+     * operator warnings the finding requires. Defaults reproduce today's behavior: revocation OFF +
+     * {@code enforceCertNotAfter} false yields {@link io.configd.server.fanout.EdgeCertGate#OFF}, which is
+     * byte-identical (no online lookup, no active cert expiry). This gate is threaded ONLY into the edge
+     * fan-out transport; the Raft interior never receives one, so the {@code exemptInterNode} invariant
+     * holds by construction regardless of this method's result.
+     *
+     * <p>No built-in OCSP/CRL responder ships in v1: the {@code RevocationChecker} seam is left null, so a
+     * lookup returns {@code UNKNOWN} and the mode decides (lax fails open + alarms; strict fails closed).
+     * A real responder plugs into that seam as a follow-on.
+     */
+    private static io.configd.server.fanout.EdgeCertGate buildEdgeCertGate(
+            ConfigSource cfg, io.configd.server.fanout.RegistryFanOutSessionMetrics metrics) {
+        io.configd.common.auth.RevocationPolicy revocationPolicy =
+                io.configd.common.auth.RevocationPolicy.fromConfig(cfg);
+        if (!revocationPolicy.exemptInterNode()) {
+            // Setting this false re-arms the CockroachDB strict-lockout foot-gun. The Raft interior is
+            // NEVER revocation-checked in v1 (by construction), so the flag has no effect today beyond
+            // signalling intent - but a down responder must never be able to gate consensus, so warn loudly.
+            System.err.println("WARNING: ************************************************************");
+            System.err.println("WARNING: configd.auth.revocation.exemptInterNode=false re-arms the");
+            System.err.println("WARNING: strict-lockout foot-gun. The Raft inter-node plane and the");
+            System.err.println("WARNING: break-glass admin credential are validated by chain + notAfter");
+            System.err.println("WARNING: ONLY and must never consult a revocation responder - a down");
+            System.err.println("WARNING: responder must never be able to brick the cluster interior.");
+            System.err.println("WARNING: ************************************************************");
+        }
+        boolean enforceCertNotAfter = cfg.getBoolean("configd.auth.expiry.enforceCertNotAfter", false);
+        io.configd.common.auth.CredentialExpiryPolicy expiryPolicy =
+                io.configd.common.auth.CredentialExpiryPolicy.fromConfig(cfg);
+        // The functional default responder is a CRL file (configd.auth.revocation.crlFile); a live OCSP
+        // responder stays a pluggable RevocationChecker the operator supplies. When a mode is enabled with
+        // NO responder wired, the checker is null -> every lookup is UNKNOWN, so warn (strict would then
+        // REJECT every new edge cert connection - the documented foot-gun).
+        io.configd.common.auth.RevocationChecker revocationChecker = null;
+        if (revocationPolicy.enabled()) {
+            java.util.Optional<String> crlFile =
+                    cfg.getString("configd.auth.revocation.crlFile").filter(s -> !s.isBlank());
+            if (crlFile.isPresent()) {
+                revocationChecker = new io.configd.common.auth.CrlFileRevocationChecker(
+                        java.nio.file.Path.of(crlFile.get().trim()));
+                System.out.println("  Revocation   : mode=" + revocationPolicy.mode()
+                        + " CRL=" + crlFile.get().trim());
+            } else {
+                System.err.println("WARNING: configd.auth.revocation.mode=" + revocationPolicy.mode()
+                        + " but no responder is configured (set configd.auth.revocation.crlFile, or plug an"
+                        + " OCSP RevocationChecker); edge client-cert lookups return UNKNOWN"
+                        + (revocationPolicy.mode() == io.configd.common.auth.RevocationMode.STRICT
+                                ? " -> STRICT will REJECT every new edge cert connection until a responder is wired."
+                                : " -> LAX will fail-open + raise the responder-unreachable alarm on every cert."));
+            }
+        }
+        if (!revocationPolicy.enabled() && !enforceCertNotAfter) {
+            return io.configd.server.fanout.EdgeCertGate.OFF; // byte-identical
+        }
+        return new io.configd.server.fanout.EdgeCertGate(
+                revocationPolicy, revocationChecker, expiryPolicy, enforceCertNotAfter,
+                metrics::onRevocationFailOpenAdmit);
+    }
+
+    /**
+     * Whether authentication is enabled for the node-join gate's fail-closed default: the pluggable
+     * {@code configd.auth.*} chain is configured (and is not the explicit auth-disabled {@code none}
+     * posture), OR the legacy static {@code --auth-token} is set. Mirrors the auth-wiring predicate below
+     * ({@code configuredProviders} / {@code authEnabled}) so the boot gate and the request-path auth agree
+     * on what "authenticated" means.
+     */
+    private static boolean isAuthEnabled(ConfigSource cfg, ServerConfig config) {
+        List<String> providers = AuthenticatorChain.configuredProviders(cfg);
+        boolean spiAuthEnabled = !providers.isEmpty() && !providers.equals(List.of("none"));
+        return spiAuthEnabled || config.authEnabled();
     }
 
     /**
@@ -1787,7 +2159,13 @@ public final class ConfigdServer {
      * break failover. Package-private static so the production default is directly testable.
      */
     static boolean witnessStrictEnabled() {
-        return "true".equalsIgnoreCase(System.getProperty("configd.raft.witnessStrict", "false"));
+        return witnessStrictEnabled(ConfigSource.system());
+    }
+
+    static boolean witnessStrictEnabled(ConfigSource cfg) {
+        // Lenient "true"-only test: any other value (including empty) stays fast-vote. NOT the strict
+        // cfg.getBoolean - a typo must not throw and break failover, it must fall to the safe default.
+        return "true".equalsIgnoreCase(cfg.getString("configd.raft.witnessStrict").orElse("false"));
     }
 
     static RaftGroupRuntime buildRaftGroup(
@@ -2323,7 +2701,7 @@ public final class ConfigdServer {
         // starve the periodic heartbeat. Excess is shed as Overloaded (-> 429 + Retry-After) on the HTTP
         // thread BEFORE the proposal reaches the executor. Default 0 = OFF (opt-in via
         // -Dconfigd.write.maxInflightProposals=N); the permit is held only for the bounded wait.
-        int maxInflightProposals = Integer.getInteger("configd.write.maxInflightProposals", 0);
+        int maxInflightProposals = ConfigSource.system().getInt("configd.write.maxInflightProposals", 0);
         java.util.concurrent.Semaphore admission =
                 maxInflightProposals > 0 ? new java.util.concurrent.Semaphore(maxInflightProposals) : null;
         return (scope, keys, command) -> {
@@ -2476,6 +2854,22 @@ public final class ConfigdServer {
     }
 
     /**
+     * Best-effort teardown of the long-lived resources a partial boot created, run in reverse
+     * creation order (LIFO) when {@link #start(ServerConfig, ConfigSource)} fails. Each action
+     * swallows its own failure so one stuck close neither masks the others nor the original boot
+     * failure that triggered the teardown.
+     */
+    private static void closeBootResources(java.util.Deque<Runnable> bootTeardown) {
+        while (!bootTeardown.isEmpty()) {
+            try {
+                bootTeardown.pop().run();
+            } catch (Throwable t) {
+                System.err.println("WARNING: boot-failure cleanup step threw (continuing): " + t);
+            }
+        }
+    }
+
+    /**
      * Returns the multi-raft driver for this server.
      */
     public MultiRaftDriver driver() {
@@ -2622,19 +3016,54 @@ public final class ConfigdServer {
         System.out.println();
     }
 
+    /**
+     * Resolves the optional YAML config file and builds the boot {@link ConfigSource}. The file is named
+     * by {@code --config <path>}, else the {@code configd.config.file} system property, else the
+     * {@code CONFIGD_CONFIG} environment variable. When none names a file the source is
+     * {@link ConfigSource#system()} (system properties over environment, NO YAML layer) - byte-identical
+     * to the behavior before configuration was unified. A named-but-unreadable / malformed file fails the
+     * boot ({@link ConfigException}). The YAML layer always sits BELOW system properties and the
+     * environment, so every {@code -D} and env override still wins.
+     *
+     * @param args the command-line arguments (scanned for {@code --config})
+     * @return the boot configuration source
+     */
+    static ConfigSource loadBootConfig(String[] args) {
+        String path = null;
+        for (int i = 0; i + 1 < args.length; i++) {
+            if ("--config".equals(args[i])) {
+                path = args[i + 1];
+                break;
+            }
+        }
+        if (path == null || path.isBlank()) {
+            path = System.getProperty("configd.config.file");
+        }
+        if (path == null || path.isBlank()) {
+            path = System.getenv("CONFIGD_CONFIG");
+        }
+        if (path == null || path.isBlank()) {
+            return ConfigSource.system();
+        }
+        ConfigSource yaml = io.configd.server.config.YamlConfigSource.fromFile(Path.of(path));
+        return LayeredConfigSource.of(new SystemPropertyConfigSource(), new EnvConfigSource(), yaml);
+    }
+
     public static void main(String[] args) {
         if (args.length == 0) {
             System.err.println("Usage: configd-server --node-id <id> --data-dir <path> --peers <id,id,...>"
                     + " [--bind-address <addr>] [--bind-port <port>] [--api-port <port>]"
                     + " [--tls-cert <path>] [--tls-key <path>] [--tls-trust-store <path>]"
-                    + " [--auth-token <token>]");
+                    + " [--auth-token <token>] [--config <path>]");
             System.exit(1);
         }
 
         ServerConfig config;
+        ConfigSource cfg;
         try {
             config = ServerConfig.parse(args);
-        } catch (IllegalArgumentException e) {
+            cfg = loadBootConfig(args);
+        } catch (IllegalArgumentException | ConfigException e) {
             System.err.println("Configuration error: " + e.getMessage());
             System.exit(1);
             return;
@@ -2642,7 +3071,21 @@ public final class ConfigdServer {
 
         printBanner(config);
 
-        ConfigdServer server = start(config);
+        ConfigdServer server;
+        try {
+            server = start(config, cfg);
+        } catch (RuntimeException | Error e) {
+            // A fail-closed boot (missing auth-provider module, unreachable IdP during auth-chain
+            // build, port already in use, TLS-without-manager) escapes here. start() has already
+            // closed whatever it created, but exit UNCONDITIONALLY with a non-zero code: without
+            // this the main thread dies while non-daemon Netty event loops keep the JVM up, so the
+            // process prints a stack trace and hangs, bound but serving nothing. A clean non-zero
+            // exit lets an orchestrator restart or alert instead.
+            System.err.println("FATAL: Configd server failed to start: " + e.getMessage());
+            e.printStackTrace();
+            System.exit(1);
+            return; // unreachable - System.exit does not return; keeps `server` definitely-assigned
+        }
 
         System.out.println("Configd server started successfully.");
 

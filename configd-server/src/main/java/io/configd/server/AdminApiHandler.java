@@ -12,6 +12,8 @@ import io.configd.api.PolicySerializer;
 import io.configd.api.ReplayGuard;
 import io.configd.common.ConfigScope;
 import io.configd.common.NodeId;
+import io.configd.common.auth.AuthenticatorChain;
+import io.configd.common.auth.Credential;
 import io.configd.observability.PrometheusExporter;
 import io.configd.store.ReadResult;
 import io.configd.store.VersionedConfigStore;
@@ -56,7 +58,11 @@ public final class AdminApiHandler {
     private final VersionedConfigStore configStore;
     private final ConfigWriteService writeService;     // nullable: read-only deployments
     private final ConfigReadService readService;       // nullable: stale-only deployments
-    private final AuthInterceptor authInterceptor;     // nullable: auth disabled
+    private final AuthInterceptor authInterceptor;     // nullable: auth disabled (legacy bearer path)
+    // nullable: the SPI authenticator chain (none/basic/mtls or a mixed chain). When present it SUPERSEDES
+    // authInterceptor for credential resolution and adds the Unavailable -> 503 outcome; when null the
+    // handler is byte-identical to before the SPI (the legacy authInterceptor path).
+    private final AuthenticatorChain chain;
     private final AclService aclService;               // nullable: ACLs disabled
     private final StrongReadPolicy strongReadPolicy;   // non-null
     // KEYED + SCOPED leader hint - resolves the leader of the shard that OWNS
@@ -97,12 +103,30 @@ public final class AdminApiHandler {
                            AuditLog auditLog,
                            ReplayGuard replayGuard,
                            LeadershipAdmin leadershipAdmin) {
+        this(healthService, prometheusExporter, configStore, writeService, readService, authInterceptor,
+                aclService, strongReadPolicy, leaderHintSupplier, auditLog, replayGuard, leadershipAdmin, null);
+    }
+
+    public AdminApiHandler(HealthService healthService,
+                           PrometheusExporter prometheusExporter,
+                           VersionedConfigStore configStore,
+                           ConfigWriteService writeService,
+                           ConfigReadService readService,
+                           AuthInterceptor authInterceptor,
+                           AclService aclService,
+                           StrongReadPolicy strongReadPolicy,
+                           BiFunction<ConfigScope, String, NodeId> leaderHintSupplier,
+                           AuditLog auditLog,
+                           ReplayGuard replayGuard,
+                           LeadershipAdmin leadershipAdmin,
+                           AuthenticatorChain chain) {
         this.healthService = healthService;
         this.prometheusExporter = prometheusExporter;
         this.configStore = configStore;
         this.writeService = writeService;
         this.readService = readService;
         this.authInterceptor = authInterceptor;
+        this.chain = chain;
         this.aclService = aclService;
         this.strongReadPolicy = Objects.requireNonNull(strongReadPolicy, "strongReadPolicy must not be null");
         this.leaderHintSupplier = Objects.requireNonNull(leaderHintSupplier, "leaderHintSupplier must not be null");
@@ -132,6 +156,16 @@ public final class AdminApiHandler {
 
         /** The full request body; only called for an authenticated, replay-cleared PUT. */
         byte[] body() throws IOException;
+
+        /**
+         * The VERIFIED client-certificate chain from the TLS session (leaf first), or empty if the peer
+         * presented none / the connection is plain HTTP. Populated by an adapter only when the admin TLS
+         * requested a client certificate (mTLS mode); it feeds the {@code mtls} authenticator on the HTTP
+         * plane. Default empty so every non-TLS caller and every test request is unaffected.
+         */
+        default java.util.List<java.security.cert.X509Certificate> peerCertificates() {
+            return java.util.List.of();
+        }
     }
 
     /**
@@ -215,9 +249,21 @@ public final class AdminApiHandler {
         if (!"GET".equals(req.method())) {
             return json(405, "Method Not Allowed");
         }
-        // F-0055: enforce bearer-token auth on /metrics when auth is configured. 401 (not 403):
-        // this is authentication, not authorization (no ACL for metrics scraping). Never echo the token.
-        if (authInterceptor != null) {
+        // F-0055: enforce auth on /metrics when auth is configured. 401 (not 403): this is authentication,
+        // not authorization (no ACL for metrics scraping). Never echo the credential.
+        if (chain != null) {
+            Credential cred = credentialFrom(req);
+            io.configd.common.auth.AuthResult r = resolveAndWipe(cred);
+            if (r instanceof io.configd.common.auth.AuthResult.Unavailable) {
+                return json(503, "authentication temporarily unavailable");
+            }
+            if (r instanceof io.configd.common.auth.AuthResult.Denied denied) {
+                Map<String, String> h = jsonHeaders();
+                h.put("WWW-Authenticate", "Bearer");
+                return new AdminResponse(401, h, bytes("Unauthorized: " + denied.detail()));
+            }
+            // Authenticated: /metrics has no ACL, so any authenticated principal may scrape.
+        } else if (authInterceptor != null) {
             AuthInterceptor.AuthResult authResult = authInterceptor.authenticate(bearerToken(req));
             if (authResult instanceof AuthInterceptor.AuthResult.Denied denied) {
                 Map<String, String> h = jsonHeaders();
@@ -608,6 +654,9 @@ public final class AdminApiHandler {
      * </ul>
      */
     private AuthCheck checkAdmin(AdminRequest req, String resourceKey) {
+        if (chain != null) {
+            return checkAdminViaChain(req, resourceKey);
+        }
         if (authInterceptor == null) {
             return AuthCheck.forbidden("-",
                     "Access denied: leadership transfer requires authentication, which is disabled");
@@ -636,7 +685,7 @@ public final class AdminApiHandler {
     // Auth gate (RFC 7235)
     // -----------------------------------------------------------------------
 
-    private enum AuthDecision { OK, UNAUTHENTICATED, FORBIDDEN }
+    private enum AuthDecision { OK, UNAUTHENTICATED, FORBIDDEN, UNAVAILABLE }
 
     private record AuthCheck(AuthDecision decision, String principal, String reason) {
         static AuthCheck ok(String principal) {
@@ -648,11 +697,15 @@ public final class AdminApiHandler {
         static AuthCheck forbidden(String principal, String reason) {
             return new AuthCheck(AuthDecision.FORBIDDEN, principal, reason);
         }
+        static AuthCheck unavailable(String reason) {
+            return new AuthCheck(AuthDecision.UNAVAILABLE, null, reason);
+        }
     }
 
     /**
      * Maps a non-OK {@link AuthCheck} to its HTTP denial: {@code UNAUTHENTICATED} -> 401 +
-     * {@code WWW-Authenticate: Bearer} (RFC 7235 section 3.1); {@code FORBIDDEN} -> 403.
+     * {@code WWW-Authenticate: Bearer} (RFC 7235 section 3.1); {@code FORBIDDEN} -> 403;
+     * {@code UNAVAILABLE} -> 503 (a configured authenticator's backend is down - retryable, fail-closed).
      */
     private AdminResponse authDenial(AuthCheck check) {
         return switch (check.decision()) {
@@ -662,6 +715,7 @@ public final class AdminApiHandler {
                 yield new AdminResponse(401, h, bytes("Unauthorized: " + check.reason()));
             }
             case FORBIDDEN -> json(403, check.reason());
+            case UNAVAILABLE -> json(503, check.reason());
             case OK -> throw new AssertionError("authDenial called for an OK decision");
         };
     }
@@ -695,6 +749,10 @@ public final class AdminApiHandler {
      */
     private AuthCheck checkAuth(AdminRequest req, String key, AclService.Permission permission) {
         boolean reserved = isReserved(key);
+
+        if (chain != null) {
+            return checkAuthViaChain(req, key, permission, reserved);
+        }
 
         if (authInterceptor == null) {
             // Auth disabled: the gate is open EXCEPT a reserved-prefix WRITE, refused to close the
@@ -763,6 +821,119 @@ public final class AdminApiHandler {
             return authHeader.substring("Bearer ".length());
         }
         return null;
+    }
+
+    /**
+     * Builds a {@link Credential} from the request for the SPI chain. An {@code Authorization} header takes
+     * precedence: a Bearer token or HTTP Basic (RFC 7617) user+password. When there is NO usable
+     * Authorization header, a verified client certificate ({@link AdminRequest#peerCertificates()}, mTLS
+     * mode) is used instead. Returns {@code null} when nothing usable is presented (the chain path then
+     * treats it as "no credential" -&gt; 401).
+     */
+    /**
+     * Resolves a credential through the authenticator chain and WIPES its secret material afterward (the
+     * Basic password {@code char[]}), so a verified password does not linger on the heap. A null credential
+     * (no / malformed / unrecognized-scheme Authorization header) maps to the same {@code NO_CREDENTIAL}
+     * Denied the inline sites used. The Basic {@code new String(decoded)} in {@link #credentialFrom} cannot
+     * be wiped in place (Strings are immutable); only its {@code char[]} copy on the credential is.
+     */
+    private io.configd.common.auth.AuthResult resolveAndWipe(Credential cred) {
+        if (cred == null) {
+            return new io.configd.common.auth.AuthResult.Denied(
+                    io.configd.common.auth.DenyReason.NO_CREDENTIAL, "missing auth token");
+        }
+        try {
+            return chain.resolve(cred);
+        } finally {
+            cred.wipeSecret();
+        }
+    }
+
+    private static Credential credentialFrom(AdminRequest req) {
+        String authHeader = req.header("Authorization");
+        if (authHeader != null) {
+            if (authHeader.startsWith("Bearer ")) {
+                return new Credential.BearerToken(authHeader.substring("Bearer ".length()));
+            }
+            if (authHeader.startsWith("Basic ")) {
+                String encoded = authHeader.substring("Basic ".length()).trim();
+                byte[] decoded;
+                try {
+                    decoded = java.util.Base64.getDecoder().decode(encoded);
+                } catch (IllegalArgumentException e) {
+                    return null; // malformed base64: no usable credential
+                }
+                String userPass = new String(decoded, StandardCharsets.UTF_8);
+                int colon = userPass.indexOf(':');
+                if (colon < 0) {
+                    return null; // not user:pass
+                }
+                return new Credential.BasicCredential(userPass.substring(0, colon),
+                        userPass.substring(colon + 1).toCharArray());
+            }
+            return null; // an Authorization header was sent but in an unrecognized scheme
+        }
+        // No Authorization header: fall back to a verified client certificate (mTLS on the HTTP plane).
+        java.util.List<java.security.cert.X509Certificate> certs = req.peerCertificates();
+        if (!certs.isEmpty()) {
+            return new Credential.ClientCertificate(certs);
+        }
+        return null;
+    }
+
+    /**
+     * The SPI-chain analogue of {@link #checkAuth}: resolves the credential through the authenticator chain,
+     * mapping {@code Unavailable} -&gt; 503, {@code Denied} -&gt; 401, and {@code Authenticated} -&gt; the
+     * SAME authorization check ({@code aclService.isAllowed(id, roles, key, permission)}) the legacy path uses.
+     */
+    private AuthCheck checkAuthViaChain(AdminRequest req, String key, AclService.Permission permission, boolean reserved) {
+        Credential cred = credentialFrom(req);
+        io.configd.common.auth.AuthResult r = resolveAndWipe(cred);
+        if (r instanceof io.configd.common.auth.AuthResult.Unavailable) {
+            return AuthCheck.unavailable("authentication temporarily unavailable");
+        }
+        if (r instanceof io.configd.common.auth.AuthResult.Denied denied) {
+            return AuthCheck.unauthenticated("authentication required: " + denied.detail());
+        }
+        io.configd.common.auth.Principal p =
+                ((io.configd.common.auth.AuthResult.Authenticated) r).principal();
+        AclService.Permission required = reserved ? AclService.Permission.ADMIN : permission;
+        if (aclService != null) {
+            if (!aclService.isAllowed(p.id(), p.roles(), key, required)) {
+                return AuthCheck.forbidden(p.id(),
+                        "Access denied: insufficient permissions for key '" + key + "'");
+            }
+            return AuthCheck.ok(p.id());
+        }
+        // No ACL service: an ordinary key is authn-only; a reserved key REQUIRES ADMIN, which cannot be
+        // evaluated without an ACL - fail closed rather than fall through to ok.
+        if (reserved) {
+            return AuthCheck.forbidden(p.id(),
+                    "Access denied: reserved key '" + key + "' requires ADMIN but no ACL is configured");
+        }
+        return AuthCheck.ok(p.id());
+    }
+
+    /** The SPI-chain analogue of {@link #checkAdmin} (ADMIN-gated control op): same stricter fail-closed posture. */
+    private AuthCheck checkAdminViaChain(AdminRequest req, String resourceKey) {
+        Credential cred = credentialFrom(req);
+        io.configd.common.auth.AuthResult r = resolveAndWipe(cred);
+        if (r instanceof io.configd.common.auth.AuthResult.Unavailable) {
+            return AuthCheck.unavailable("authentication temporarily unavailable");
+        }
+        if (r instanceof io.configd.common.auth.AuthResult.Denied denied) {
+            return AuthCheck.unauthenticated("authentication required: " + denied.detail());
+        }
+        io.configd.common.auth.Principal p =
+                ((io.configd.common.auth.AuthResult.Authenticated) r).principal();
+        if (aclService == null) {
+            return AuthCheck.forbidden(p.id(),
+                    "Access denied: leadership transfer requires ADMIN but no ACL is configured");
+        }
+        if (!aclService.isAllowed(p.id(), p.roles(), resourceKey, AclService.Permission.ADMIN)) {
+            return AuthCheck.forbidden(p.id(), "Access denied: ADMIN required for leadership transfer");
+        }
+        return AuthCheck.ok(p.id());
     }
 
     // -----------------------------------------------------------------------

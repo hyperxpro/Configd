@@ -1,5 +1,6 @@
 package io.configd.distribution.wire;
 
+import io.configd.common.auth.Credential;
 import io.configd.distribution.CommitNotification;
 import io.configd.store.ConfigDelta;
 import io.configd.store.ConfigMutation;
@@ -74,11 +75,13 @@ final class EdgeFrameFixtures {
         m.put("cursor_ack.bin", new EdgeFrame.CursorAck(4242L));
         m.put("heartbeat.bin", new EdgeFrame.Heartbeat(9000L, 1_700_000_000_500L));
 
-        // One ERROR_CLOSE per built taxonomy code. NOT_AUTHORIZED (0x02-era, W7-5a) and STALE_TOPOLOGY
-        // (Gate 2b, A4) are newer additions covered as 0x02 fixtures in buildV2(), so the v1 ERROR_CLOSE
-        // golden set stays minimal (each code lives in exactly one golden map).
+        // One ERROR_CLOSE per built taxonomy code. NOT_AUTHORIZED (0x02-era, W7-5a), STALE_TOPOLOGY
+        // (Gate 2b, A4), and CREDENTIAL_EXPIRED (Gate 3, AU3-3) are newer additions covered as 0x02
+        // fixtures in buildV2(), so the v1 ERROR_CLOSE golden set stays minimal AND byte-frozen (each code
+        // lives in exactly one golden map).
         for (ErrorCode ec : ErrorCode.values()) {
-            if (ec == ErrorCode.NOT_AUTHORIZED || ec == ErrorCode.STALE_TOPOLOGY) {
+            if (ec == ErrorCode.NOT_AUTHORIZED || ec == ErrorCode.STALE_TOPOLOGY
+                    || ec == ErrorCode.CREDENTIAL_EXPIRED) {
                 continue;
             }
             m.put("error_" + ec.name().toLowerCase() + ".bin",
@@ -165,8 +168,35 @@ final class EdgeFrameFixtures {
         // coverage tripwire that pins every ErrorCode to a golden fixture.
         m.put("error_stale_topology.bin",
                 new EdgeFrame.ErrorClose(ErrorCode.STALE_TOPOLOGY, ErrorCode.STALE_TOPOLOGY.name()));
+        // ERROR_CLOSE carrying the Gate 3 CREDENTIAL_EXPIRED code (AU3-3): a connection-level auth-expiry
+        // close is a BUSINESS ERROR_CLOSE (stamped at the connection's version), NOT a 0x04 auth frame, so
+        // it is covered here (mirroring NOT_AUTHORIZED/STALE_TOPOLOGY) and satisfies the coverage tripwire.
+        m.put("error_credential_expired.bin",
+                new EdgeFrame.ErrorClose(ErrorCode.CREDENTIAL_EXPIRED, ErrorCode.CREDENTIAL_EXPIRED.name()));
 
         return m;
+    }
+
+    /**
+     * Canonical, deterministic 0x04 ({@link EdgeFrameCodec#EDGE_WIRE_VERSION_V4}) auth-phase fixtures: an
+     * {@link EdgeFrame.Auth} carrying a bearer token, an {@code Auth} carrying a basic user+password, and a
+     * {@link EdgeFrame.RefreshAuth}. These are the ONLY types legal under 0x04. Credentials are fixed
+     * constants so the encoded bytes are stable (their {@code toString} is redacted, so nothing here logs a
+     * secret). Business/watch frames are NEVER encodable under 0x04.
+     */
+    static Map<String, EdgeFrame> buildV4() {
+        Map<String, EdgeFrame> m = new LinkedHashMap<>();
+        m.put("auth_bearer.bin", new EdgeFrame.Auth(new Credential.BearerToken("golden-token-42")));
+        m.put("auth_basic.bin",
+                new EdgeFrame.Auth(new Credential.BasicCredential("alice", "s3cret".toCharArray())));
+        m.put("refresh_auth_bearer.bin",
+                new EdgeFrame.RefreshAuth(new Credential.BearerToken("refresh-token-99")));
+        return m;
+    }
+
+    /** v4 has no oversize (inline-hex-too-large) fixture. */
+    static List<String> oversizeV4FixtureNames() {
+        return new ArrayList<>();
     }
 
     /**
