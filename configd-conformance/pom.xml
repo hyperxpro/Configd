@@ -31,6 +31,14 @@
             <artifactId>configd-client-http</artifactId>
             <version>${project.version}</version>
         </dependency>
+        <!-- Test-only: reuse MockControlPlane for the HTTP client-conforms direction. -->
+        <dependency>
+            <groupId>io.configd</groupId>
+            <artifactId>configd-client-http</artifactId>
+            <version>${project.version}</version>
+            <type>test-jar</type>
+            <scope>test</scope>
+        </dependency>
         <dependency>
             <groupId>io.configd</groupId>
             <artifactId>configd-client-core</artifactId>
@@ -60,6 +68,21 @@
             <groupId>io.configd</groupId>
             <artifactId>configd-wire</artifactId>
             <version>${project.version}</version>
+        </dependency>
+        <!-- Test-only: reuse EdgeFrameGoldenBytes (the pinned wire vectors) as the golden round-trip oracle. -->
+        <dependency>
+            <groupId>io.configd</groupId>
+            <artifactId>configd-wire</artifactId>
+            <version>${project.version}</version>
+            <type>test-jar</type>
+            <scope>test</scope>
+        </dependency>
+        <!-- Test-only: the JUnit Platform Launcher, for the coverage audit to discover clause tags. -->
+        <dependency>
+            <groupId>org.junit.platform</groupId>
+            <artifactId>junit-platform-launcher</artifactId>
+            <version>1.11.4</version>
+            <scope>test</scope>
         </dependency>
     </dependencies>
 </project>

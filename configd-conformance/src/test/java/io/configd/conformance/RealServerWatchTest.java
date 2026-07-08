@@ -32,6 +32,7 @@ import io.configd.store.ConfigSnapshot;
 import io.configd.store.HamtMap;
 import io.configd.store.VersionedValue;
 import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 
@@ -60,7 +61,15 @@ import static org.junit.jupiter.api.Assertions.fail;
  * and CURSOR_ACK) — not a mock. At v1 static-N this is one shard (gid 0), so it exercises the vector-native
  * cursor machinery at its degenerate single-component width.
  */
+// Server-obeys + client-conforms on the 0x02 watch plane: WATCH_CREATE→CREATED→EVENT with a per-shard cursor
+// vector + CURSOR_ACK (from-now tail), the shared-connection multiplex where a sibling survives, and the
+// loud refuse of a cursored share (§06 F10-1b / W8-6a), all against a live FanOutServer.
 @Timeout(60)
+@Tag("clause:W1-2")
+@Tag("clause:W3-4")
+@Tag("clause:W3-7")
+@Tag("clause:W6-4")
+@Tag("clause:W8-6")
 class RealServerWatchTest {
 
     private static final long T0 = 1_700_000_000_000L;

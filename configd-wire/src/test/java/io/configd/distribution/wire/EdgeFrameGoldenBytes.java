@@ -34,12 +34,14 @@ import java.util.Map;
  * That is the one sanctioned exception to the no-drift rule above; every other drift is a
  * regression.
  */
-final class EdgeFrameGoldenBytes {
+public final class EdgeFrameGoldenBytes {
 
     private EdgeFrameGoldenBytes() {
     }
 
-    static Map<String, byte[]> forVersion(int wireVersion) {
+    /** The pinned golden frames for {@code wireVersion} (1..4), keyed by fixture name. Reused by the
+     * conformance suite (via this module's test-jar) as the single-source-of-truth wire oracle. */
+    public static Map<String, byte[]> forVersion(int wireVersion) {
         if (wireVersion == 1) {
             return v1();
         }

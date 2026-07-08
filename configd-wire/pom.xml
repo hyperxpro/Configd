@@ -28,4 +28,25 @@
             <version>${project.version}</version>
         </dependency>
     </dependencies>
+
+    <build>
+        <plugins>
+            <!--
+              Publish a test-jar so the configd-conformance suite reuses EdgeFrameGoldenBytes (the pinned
+              wire vectors) as the SINGLE source of truth for its golden round-trip oracle — no
+              re-declaration, so the conformance vectors can never drift from the wire module's own.
+            -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-jar-plugin</artifactId>
+                <executions>
+                    <execution>
+                        <goals>
+                            <goal>test-jar</goal>
+                        </goals>
+                    </execution>
+                </executions>
+            </plugin>
+        </plugins>
+    </build>
 </project>

@@ -34,6 +34,7 @@ import io.configd.transport.TlsManager;
 import io.configd.distribution.wire.WatchCursor;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeAll;
+import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.api.io.TempDir;
@@ -62,7 +63,15 @@ import static org.junit.jupiter.api.Assertions.fail;
  * {@link RealServerSubscribeHydrateTest}.) Deltas are unsigned here in {@code trustUnverified} mode to isolate
  * the auth path; the signed-chain verify is proven separately.
  */
+// Server-obeys + client-conforms: the real client authenticates against the live EdgeAuthGateHandler in each
+// of the three framed/edge auth postures (mTLS handshake, bearer AUTH frame, basic AUTH frame).
 @Timeout(120)
+@Tag("clause:AU2-1")
+@Tag("clause:AU2-3")
+@Tag("clause:AU2-4")
+@Tag("clause:AU3-1")
+@Tag("clause:AU3-2")
+@Tag("clause:OV6-2")
 class RealServerAuthModesTest {
 
     private static final long T0 = 1_700_000_000_000L;

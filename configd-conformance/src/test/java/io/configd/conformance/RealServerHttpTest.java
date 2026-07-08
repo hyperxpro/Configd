@@ -22,6 +22,7 @@ import io.configd.server.HttpApiServer;
 import io.configd.server.StrongReadPolicy;
 import io.configd.store.VersionedConfigStore;
 import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 
@@ -43,7 +44,23 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * version-from-header), bearer authentication, the reserved-prefix ADMIN gate (403 without ADMIN), and the
  * transfer-leadership route interoperate with the real server.
  */
+// Server-obeys + client-conforms on the HTTP control plane: get (value + X-Config-Version header), put/delete
+// (seq from the body), bearer auth, the reserved-prefix ADMIN gate (403 without ADMIN — authz taxonomy), and
+// the leadership-transfer 5th route, all against a live HttpApiServer + AdminApiHandler.
 @Timeout(60)
+@Tag("clause:D2-1")
+@Tag("clause:D2-3")
+@Tag("clause:D3-1")
+@Tag("clause:D3-2")
+@Tag("clause:D3-7")
+@Tag("clause:D4-1")
+@Tag("clause:D4-2")
+@Tag("clause:D4-7")
+@Tag("clause:D5-1..D5-5")
+@Tag("clause:D6-1..D6-5")
+@Tag("clause:A5-4")
+@Tag("clause:A7-1")
+@Tag("clause:A7-2")
 class RealServerHttpTest {
 
     private HttpApiServer server;
