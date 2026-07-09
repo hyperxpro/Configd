@@ -168,14 +168,16 @@ public final class FanOutConnectionDriver implements WatchMultiplexSink.Coordina
     /**
      * Max simultaneously-live watches per connection - bounds the live registry against a
      * {@code WATCH_CREATE} flood from one authenticated connection (W8-6 abuse control).
+     * Package-private so the boundary test drives the enforcement at the real value.
      */
-    private static final int MAX_LIVE_WATCHES_PER_CONNECTION = 1024;
+    static final int MAX_LIVE_WATCHES_PER_CONNECTION = 1024;
 
     /**
      * Max distinct {@code watch_id}s per connection lifetime - bounds the never-shrinking no-reuse
      * budget ({@code everUsed}; W2-8). A connection that exhausts it must reconnect to reset.
+     * Package-private so the boundary test drives the enforcement at the real value.
      */
-    private static final int MAX_WATCH_IDS_PER_CONNECTION = 16_384;
+    static final int MAX_WATCH_IDS_PER_CONNECTION = 16_384;
 
     /**
      * Cadence (ms) for the governor's time-driven HEALTHY->SLOW evaluation while a session's queue

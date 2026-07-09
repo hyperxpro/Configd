@@ -84,6 +84,35 @@ class ConfigWriteServiceTest {
     }
 
     @Test
+    void putAtExactlyTheValueCapPassesTheApiGate() {
+        // The built-in API-layer value-size gate rejects ABOVE 1 MiB, not AT it: a value at exactly
+        // the cap proceeds past the gate to the proposer and commits.
+        ConfigWriteService service = new ConfigWriteService(
+                proposerReturning(new ProposeCommitResult.Committed(9L)), null, null);
+
+        var result = service.put("my.key", new byte[1_048_576], ConfigScope.GLOBAL);
+        assertInstanceOf(WriteResult.Committed.class, result,
+                "a value at exactly the 1 MiB cap is accepted by the API gate");
+        assertEquals(9L, ((WriteResult.Committed) result).seq());
+    }
+
+    @Test
+    void putOneByteOverTheValueCapIsRejectedByTheRealApiGate() {
+        // Un-stubbed: no fabricating validator (validator == null). The value-size check built into
+        // ConfigWriteService.put is what must reject an oversized value - exercised here for real,
+        // one byte over the cap. (putWithValidationFailure above stubs a validator that fires on a
+        // 1-byte value, which never reaches this gate.)
+        ConfigWriteService service = new ConfigWriteService(
+                proposerReturning(new ProposeCommitResult.Committed(1L)), null, null);
+
+        var result = service.put("my.key", new byte[1_048_577], ConfigScope.GLOBAL);
+        assertInstanceOf(WriteResult.ValidationFailed.class, result);
+        assertEquals("value size exceeds maximum of 1048576 bytes (1 MB)",
+                ((WriteResult.ValidationFailed) result).reason(),
+                "the real API-layer value-size gate rejects one byte over the cap");
+    }
+
+    @Test
     void putWithRateLimiting() {
         RateLimiter limiter = new RateLimiter(
                 io.configd.common.Clock.system(), 0.001, 0.001);
