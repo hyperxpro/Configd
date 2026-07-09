@@ -6,19 +6,21 @@ turnkey control plane, run `configd-server` instead of hand-wiring the consensus
 
 ## Important v1 limitations (read first)
 
-- **Watches: server-side only, no shipped client driver yet.** For change-subscription (watches), the
-  RFC section 2 watch protocol is implemented server-side (N=1) on the edge endpoint, but a conforming
-  client driver is the next deliverable - so until one ships, clients poll (edge reads are in-process
-  and sub-millisecond). Read via `LocalConfigStore.get(...)` (edge) or the control-plane `GET`, and
-  apply deltas from your replication layer (below). N>1 multi-shard watch is v3. See
+- **Watches: server-side plus a Java reference client.** The RFC section 2 watch protocol is implemented
+  server-side (N≥1, including multi-shard via a server-side aggregating endpoint), and a conforming **Java
+  reference client** (`configd-client`) plus a `configd-conformance` suite now ship. Other-language drivers
+  are buildable from the RFC. You may also poll (edge reads are in-process and sub-millisecond) via
+  `LocalConfigStore.get(...)` (edge) or the control-plane `GET`, and apply deltas from your replication layer
+  (below). Ordering is per-shard, never global. See
   [known-limitations section 2](../operations/known-limitations.md) for the watch guarantees, the
   deployment security model (segregate watch clients from the legacy SUBSCRIBE path), and the
   boundaries.
-- **No encryption at rest.** Configd stores values plaintext (integrity-checked only - HMAC, ADR-0042;
-  not encrypted). The `secure/` key prefix is a read-freshness guarantee (always-linearizable,
-  fail-closed for security-critical keys), not confidentiality. Do not store secrets (passwords,
-  tokens, private keys) in Configd - use a dedicated secret manager and keep only non-secret references
-  here. At-rest encryption is a v2 item (RR-098).
+- **At-rest encryption is available, OFF by default.** By default Configd stores values plaintext
+  (integrity-checked only - HMAC, ADR-0042); opt-in node-local AES-256-GCM encryption can be enabled
+  (`-Dconfigd.raft.encryption.enabled=true`, KMS-custodied). The `secure/` key prefix is a read-freshness
+  guarantee (always-linearizable, fail-closed for security-critical keys), not confidentiality, and is
+  orthogonal to encryption. **With encryption OFF (the default), do not store secrets** (passwords, tokens,
+  private keys) in Configd - use a dedicated secret manager and keep only non-secret references here.
 
 See [`../operations/known-limitations.md`](../operations/known-limitations.md) for the complete,
 current list.

@@ -11,9 +11,9 @@ and the **fail-closed forward-compatibility** rules. A driver implementing this 
 bytes **identical** to the deployed codec.
 
 **This section is validated byte-for-byte against the implementation and its golden fixtures.** The authority
-is [`EdgeFrameCodec.java`](../../../configd-distribution-service/src/main/java/io/configd/distribution/wire/EdgeFrameCodec.java)
+is [`EdgeFrameCodec.java`](../../../configd-wire/src/main/java/io/configd/distribution/wire/EdgeFrameCodec.java)
 and the **golden vectors** in
-[`EdgeFrameGoldenBytes.java`](../../../configd-distribution-service/src/test/java/io/configd/distribution/wire/EdgeFrameGoldenBytes.java)
+[`EdgeFrameGoldenBytes.java`](../../../configd-wire/src/test/java/io/configd/distribution/wire/EdgeFrameGoldenBytes.java)
 (CRC-correct frames per type, pinned by `EdgeFrameCodecGoldenFixtureTest` for v1 and
 `EdgeFrameCodecV2GoldenFixtureTest` for v2). **Every layout here MUST match those golden bytes**; the fixture
 name is cited next to each frame so a driver author can use the golden bytes as the cross-language conformance

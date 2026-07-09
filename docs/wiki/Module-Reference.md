@@ -102,7 +102,7 @@ Dependencies: `configd-common`, `configd-config-store`, `configd-distribution-se
 The multi-Raft driver and the static-N sharding seam.
 
 - `MultiRaftDriver` -- routes ticks, messages, and proposals to per-group `RaftNode`s
-- `ShardMap` / `StaticShardMap` -- routing (`shardFor(scope, key)`), membership, and epoch (v1 epoch is 0)
+- `ShardMap` / `StaticShardMap` -- routing (`shardFor(scope, key)`), membership, and topology epoch (v1 static-N epoch is `1`)
 - `OwnerExecutorPool` -- the per-group owner-executor pool (see the threading contract)
 - `FlowController` -- admission / in-flight bounding
 - `ReplicationPipeline`, `SnapshotTransfer`
@@ -119,11 +119,28 @@ The fan-out data plane: committed deltas out to subscribed edges.
 - `SlowConsumerGovernor` / `DemotionEvent` -- the per-identity slow-consumer ladder
 - `CommitNotification` / `CommitNotificationSource` / `ReplaySource` -- the commit-notification boundary
   and catch-up replay
-- `EdgeFrame` / `EdgeFrameCodec` / `EdgeSnapshotCodec` / `FrameType` / `ErrorCode` -- the edge wire
-- `WatchService` / `SubscriptionManager` -- watches and prefix subscriptions
+- the edge wire types (`EdgeFrame` / `EdgeFrameCodec` / `EdgeSnapshotCodec` / `FrameType` / `ErrorCode` /
+  `WatchCursor`) now live in **`configd-wire`** (below); the fan-out service consumes them
+- `WatchService` / `SubscriptionManager` / `FanOutSessionCore` -- watches, prefix subscriptions, and the
+  per-shard aggregating coordinator that serves multi-shard (N>1) watches
 - `FanOutConfig` / `FanOutMetrics`
 
-Dependencies: `configd-common`, `configd-config-store`, `configd-transport`, Agrona, JCTools.
+Dependencies: `configd-common`, `configd-wire`, `configd-config-store`, `configd-transport`, Agrona, JCTools.
+
+### configd-wire
+
+The frozen edge/driver wire codec and shared value types, extracted so a client can depend on the wire
+without the server. This is the byte-authority the driver-protocol RFC validates against (golden fixtures
+`EdgeFrameGoldenBytes`).
+
+- `EdgeFrameCodec` / `EdgeFrame` / `EdgeSnapshotCodec` / `FrameType` / `ErrorCode` -- the edge wire envelope,
+  the `0x01`-`0x14` frame payloads (incl. the `0x13`/`0x14` auth frames), and the 13-code taxonomy
+- `WatchCursor` -- the per-shard `(gid, S)` cursor vector (`INITIAL_TOPOLOGY_EPOCH = 1`, the v1 static-N epoch)
+- `CommandCodec` / `ConfigMutation` / `ConfigDelta` / `ConfigSnapshot` / `VersionedValue` / `HamtMap` --
+  shared store value types
+- `CommitNotification` -- the commit-notification record
+
+Dependencies: `configd-common`.
 
 ### configd-control-plane-api
 
@@ -133,7 +150,8 @@ The control-plane request services and the in-core security model.
 - `AclService` -- in-core RBAC (`{READ, LIST, WRITE, WATCH, ADMIN}`, union-of-ancestors, deny-precedence)
 - `Role` / `Policy` / `PolicyRule` / `ConfigPolicy` / `PolicySerializer` / `PolicyParseException` --
   roles and policy-as-config under `_acl/`
-- `AuthInterceptor` -- authentication (mTLS cert-DN and bearer token)
+- `AuthInterceptor` / `AuthenticatorChain` / `AuthenticatorFactory` -- the pluggable authenticator chain
+  (No-Auth / HTTP Basic / Bearer / mTLS cert-DN), ServiceLoader-discovered, shared by both planes
 - `AuditLog` -- keyed-HMAC audit chain (enabled when auth is enabled)
 - `ReplayGuard` -- opt-in replay protection
 - `RateLimiter` -- unconditional rate limiting
@@ -141,6 +159,38 @@ The control-plane request services and the in-core security model.
 
 Dependencies: `configd-common`, `configd-config-store`, `configd-consensus-core`,
 `configd-replication-engine`, `configd-observability`.
+
+### configd-authn-oidc
+
+An OIDC/JWT bearer-token authenticator, discovered via `ServiceLoader` (`META-INF/services/...AuthenticatorFactory`).
+
+- `OidcAuthenticator` / `OidcAuthenticatorFactory` -- validate a bearer token as an OIDC/JWT access token
+- `OidcDiscovery` / `OidcIssuerValidator` / `OidcIssuerConfig` -- issuer/JWKS discovery and validation
+- `ClaimsRoleMapper` -- map OIDC claims to Configd roles
+
+Dependencies: `configd-common`.
+
+### configd-kms-vault
+
+An external HashiCorp **Vault Transit** KMS provider for off-host key custody, discovered via `ServiceLoader`
+(`META-INF/services/...KmsProviderFactory`; select with `-Dconfigd.raft.encryption.kms.provider=vault-transit`).
+
+- `VaultTransitKmsProvider` / `VaultKmsProviderFactory` -- seal/unseal the per-node keyring-custody secret
+- `VaultTransitClient` / `VaultConfig` -- the Vault Transit HTTP client and configuration
+
+Dependencies: `configd-common`.
+
+### configd-client, configd-client-core, configd-client-http, configd-client-edge
+
+The conforming **Java reference client** for the driver protocol (built from the RFC, validated against the
+golden vectors). `configd-client` is the hybrid public API (Flow.Publisher streams + CompletableFuture
+request/response + a blocking facade); `-core` is the transport-agnostic protocol core; `-http` and `-edge`
+implement the control-plane and edge planes respectively.
+
+### configd-conformance
+
+The driver conformance suite (CI-wired) -- exercises a driver against both planes of a real cluster and the
+golden wire vectors; the executable form of the RFC's per-section driver checklists.
 
 ### configd-observability
 

@@ -46,7 +46,12 @@ the banner.
 | 4 | **Replay protection ON** | `-Dconfigd.replay.enabled=true` (sysprop, **not** a CLI flag) | `Replay guard : ON (window 300000ms, nonce cap 1000000)` . replayed nonce -> **409**, stale/missing -> **401** | **OFF** |
 | 5 | **Signing key NOT co-located** | `--signing-key-file <path outside --data-dir>` | Node **boots** (no `SecurityException`); a co-located key **refuses to start** by default | Fail-closed **ON** |
 | 6 | **Strong reads** | `--strong-read-prefixes secure/,...` (or accept the default) | `Strong reads : [secure/] (fail-closed linearizable, ADR-0030 INV-1)` | **ON** for `secure/` (safe default) |
+| 7 | **No silent public bind** | *(default loopback; `--allow-insecure-public-bind` to opt out)* | non-loopback bind + auth OFF + no override -> **refuses to start** | **ON** (fail-closed footgun-fix) |
+| 8 | **Write admission** | *(tune `-Dconfigd.write.maxInflightProposals=N`)* | sustained flood -> **429 + Retry-After** | **ON** (conservative default) |
+| 9 | **Shard-aware readiness + drain** | *(none)* | lost-quorum shard -> `/health/ready` **NOT-ready**; SIGTERM -> draining first | **ON** (correctness) |
 | -- | **Rate limiting** | *(none -- unconditionally ON)* | `Write rate   : 10000/s (burst 10000)` . sustained flood -> **429** | **ON** (the one control on-by-default) |
+| -- | **Auth modes** (Basic/OIDC/mTLS/node-join) | see Gate 1b | positive+negative probe per configured mode | -- |
+| -- | **Key-material custody (F3)** + **fsync probe (D8)** | deploy-level (`ulimit -c 0`, swap off; run fsync probe) | see sections below | -- (operator) |
 
 Source of truth for the gate set: the readiness review, [section 4](../archive/readiness/v1-go-no-go-2026-07-01.md).
 
@@ -79,7 +84,36 @@ Source of truth for the gate set: the readiness review, [section 4](../archive/r
   (`ConfigdServer.java:713-719`): *"Authentication is DISABLED... All
   write/delete/admin endpoints are unauthenticated... DO NOT run in production."*
   **Every** `PUT`/`DELETE`/admin call and `/metrics` scrape is open to anyone who
-  can reach the port. Config can be silently rewritten by any client.
+  can reach the port. Config can be silently rewritten by any client. **Note:** with auth OFF the default
+  bind is **loopback** (`127.0.0.1`); binding a non-loopback interface with auth OFF is **refused** unless
+  `--allow-insecure-public-bind` is set (Gate 7 below).
+
+## Gate 1b - Authentication modes (No-Auth / Basic / OIDC-Bearer / mTLS)
+
+Authentication resolves through **one pluggable authenticator chain shared by both planes**
+(`AuthenticatorChain`/`AuthenticatorFactory`, ServiceLoader-discovered). A `--auth-token` bearer (Gate 1) is
+the simplest mode (a single `root` identity); the chain also supports:
+
+- **HTTP Basic** (RFC 7617) on the API (`Authorization: Basic ...`) and on the edge via a token/basic `AUTH`
+  frame; usernames map to Configd roles via `_acl/` policy.
+- **Bearer / OAuth2-OIDC.** Configure the OIDC authenticator (`configd-authn-oidc`, ServiceLoader) with the
+  issuer + JWKS; a bearer token is validated as an OIDC/JWT access token and its claims mapped to roles
+  (`ClaimsRoleMapper`). **Fail-closed:** if the issuer/JWKS is unreachable the request is rejected (`401`/`503`),
+  never downgraded to anonymous. A `503`-class outcome is retryable.
+- **mTLS.** On the edge and Raft-peer surfaces the verified client-cert DN is the authoritative identity
+  (Gate 2). The edge accepts an mTLS cert **and/or** a token/basic `AUTH` frame; credentials carry
+  **expiry/revocation** (`CREDENTIAL_EXPIRED` close, proactive `REFRESH_AUTH`).
+- **Node-join (Raft interior) is mTLS-only.** A node's membership identity is a certificate marker (default
+  Subject-DN CN; optionally SAN-URI/SPIFFE via `configd.raft.peerIdentity.markerType`), matched against a
+  per-node allow-list `configd.raft.peerIdentity.allowedNodes`. There is **no** token path to consensus.
+- **KMS unseal (when encryption ON).** With `-Dconfigd.raft.encryption.kms.provider=vault-transit`, the
+  per-node keyring-custody secret is unsealed from Vault Transit at boot (fail-closed: a KMS outage refuses
+  to start rather than downgrade). Selecting an unavailable provider is a fail-loud startup refusal.
+
+**Verify:** exercise the mode(s) your deployment configures with a positive and a negative probe (a valid
+credential → `200`; a missing/invalid one → `401`; an unauthorized-but-authenticated principal → `403`). For
+OIDC, additionally confirm a token from the **wrong issuer/audience** is rejected. See
+[`../design/group-b/`](../design/group-b/) for the as-built auth surface.
 
 ## Gate 2 - mTLS ON (Raft peer + edge fan-out)
 
@@ -234,6 +268,56 @@ Source of truth for the gate set: the readiness review, [section 4](../archive/r
   reserved-prefix gate, `:332-338` `validateAclWrite`, `isReserved` `:537-538`).
   This is active whenever auth is on and needs no configuration.
 
+## Gate 7 - No silent unauthenticated public bind (default loopback)
+
+- **What to set:** nothing, if you run with auth ON (Gate 1) — bind whatever interface you need. The default
+  bind is **loopback (`127.0.0.1`)**. To bind a **non-loopback** interface with **auth OFF**, you must pass
+  `--allow-insecure-public-bind` (sysprop `configd.security.allowInsecurePublicBind=true`), which logs a loud
+  warning and continues. This is a **footgun-fix, not "auth required by default"** — a deliberate no-auth
+  public deployment stays possible via the flag.
+- **How to VERIFY:** a non-loopback bind with auth OFF and no override **refuses to start**; with the override
+  it starts and prints the insecure-public-bind warning. An auth-ON public bind needs no override.
+- **Failure mode if mis-set:** setting the override in production with auth OFF exposes an unauthenticated
+  store publicly — segregate the port at the network boundary and only use the flag knowingly.
+
+## Gate 8 - Write-admission control (ON by default)
+
+- **What to set:** nothing — `configd.write.maxInflightProposals` is **ON by default** with a conservative
+  tuned value; tune with `-Dconfigd.write.maxInflightProposals=N` (`0` disables).
+- **How to VERIFY:** a sustained write flood is shed with **HTTP 429 + `Retry-After`** (a pre-commit reject),
+  bounding leader memory; watch `configd_write_rejected_overloaded_total`.
+- **Failure mode if disabled:** an unbounded write burst can grow leader in-flight memory before the always-on
+  rate limiter alone catches it.
+
+## Gate 9 - Readiness is shard-aware and drains on SIGTERM
+
+- **What to set:** nothing — `/health/ready` reflects **every** shard this node should serve (a node that lost
+  quorum on any hosted shard reports NOT-ready), and SIGTERM flips readiness to draining **before** closing.
+- **How to VERIFY:** point the orchestrator readiness probe at `/health/ready`; on SIGTERM the node reports
+  NOT-ready first so the LB stops routing and in-flight work drains. At N>1, kill a shard's quorum and confirm
+  the node reports NOT-ready (it no longer lies via a group-0-only check).
+
+## Deploy-level key-material custody (F3) - core dumps and swap
+
+- **What to set (the server cannot enforce this):** JVM zeroization of key material is platform-bounded, so
+  belt-and-braces custody is deploy-level. Set **`ulimit -c 0`** (or systemd `LimitCORE=0`) for the Configd
+  unit; keep **`-XX:-HeapDumpOnOutOfMemoryError`** (heap dumps expose config values —
+  [`security-heap-dump-policy.md`](security-heap-dump-policy.md)); run with **swap off** (`swapoff -a`) or
+  encrypted swap on nodes that hold the signing key or an encrypted data dir.
+- **Why:** a core dump or a swapped-out page can persist raw key/root bytes to disk, defeating the at-rest and
+  audit integrity guarantees (threat A2/T3). Treat these as part of the signing-key custody procedure alongside
+  the Gate-5 co-location guard. This is a **tested boundary**, not an in-JVM guarantee.
+
+## Verify fsync on the target hardware (D8)
+
+- **What to run (on the target storage, before production):** a `pg_test_fsync`-equivalent probe to confirm the
+  WAL device's fsync method and latency (`fdatasync`/`O_DSYNC`), and that fsync actually reaches durable media
+  (no lying write cache). A reference wrapper is [`../../ops/scripts/fsync-probe.sh`](../../ops/scripts/fsync-probe.sh);
+  the durability runbook is [`../../ops/runbooks/disk-full-fsync.md`](../../ops/runbooks/disk-full-fsync.md).
+- **Why:** Configd acknowledges a write only after a durable majority fsync; a device that buffers or reorders
+  fsync silently weakens the 0-loss durability contract. **Run this on the actual production storage** — do not
+  assume the CI/dev environment's characteristics.
+
 ---
 
 ## Edge fan-out prefix filtering (ADR-0045) - a posture, not a gate
@@ -266,13 +350,16 @@ Source of truth for the gate set: the readiness review, [section 4](../archive/r
 
 ## Sign-off
 
-A cluster is **not** production-ready until Gates 1-6 are each **verified by their
-behavioral probe** (not merely by a config flag being present) and the always-on
-controls show their startup lines. Record the verifying command output per gate.
+A cluster is **not** production-ready until Gates 1-9 are each **verified by their
+behavioral probe** (not merely by a config flag being present), the always-on
+controls show their startup lines, the configured **auth modes** (Gate 1b) pass a positive+negative probe,
+and the deploy-level **key-material custody (F3)** and **fsync probe (D8)** steps have been run on the target
+hardware. Record the verifying command output per gate.
 
-Then read [`deployer-must-know.md`](deployer-must-know.md) -- six system-boundary
-requirements (secrets, edge-hydration root-READ grant, single-scope, snapshot cap,
-leadership placement, cross-identity policy alignment); most are conditions the
+Then read [`deployer-must-know.md`](deployer-must-know.md) -- ten system-boundary
+requirements (secrets, edge-hydration root-READ grant, single-scope, upgrade-ordering,
+monitor-leadership-distribution, cross-identity policy alignment, no-silent-public-bind, write-admission
+default, shard-aware readiness, key-material core-dump/swap); most are conditions the
 server does **not** enforce for you (the edge-hydration grant it now does gate at
 admission).
 

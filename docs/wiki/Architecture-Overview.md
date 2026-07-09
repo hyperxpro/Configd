@@ -60,8 +60,10 @@ via Raft ReadIndex, failing closed (HTTP 503) if leadership is unconfirmed.
 The server side of the RFC 2 watch protocol is implemented on the edge endpoint: per-shard cursor
 vectors, whole-target authorization (fail-closed), filtered delivery, and bounded revocation.
 Guarantees: per-key and per-shard order (never cross-shard), at-least-once with `(gid, seq)` dedup.
-Watches are N=1 in v1; cross-shard watches are v3. No conforming client driver ships yet -- the
-protocol is stand-alone implementable from [`../rfc/driver-protocol/`](../rfc/driver-protocol/).
+**Multi-shard (N>1) watches ship** (a server-side aggregating endpoint, one session per covered shard);
+ordering stays per-shard, a globally-ordered cross-shard watch is out of scope by design. A conforming
+**Java reference client** (`configd-client`) and a `configd-conformance` suite ship; other-language drivers
+are stand-alone implementable from [`../rfc/driver-protocol/`](../rfc/driver-protocol/).
 
 ## Module layering
 

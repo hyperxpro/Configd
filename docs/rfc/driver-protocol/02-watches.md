@@ -928,7 +928,8 @@ item.
 
 Every ADDS row above is **delivered server-side** (the multiplex/filter veneer + the server-side multi-shard
 aggregating coordinator, at N ≥ 1) on the `--edge-port` endpoint; a **conforming client driver** consuming
-them is the next deliverable and is **not** yet shipped (W9-3, §11).
+them now **ships** — a Java reference client (`configd-client` + `-edge`) plus a CI-wired `configd-conformance`
+suite (W9-3, §11). Additional-language drivers remain buildable on demand from this RFC.
 
 **W9-3 (multi-shard watches are v1-delivered by the aggregating endpoint; only the disjoint sharded-edge
 topology is v2).** The built per-shard `FanOutBuffer` and the **server-side aggregating endpoint** (W4-5)

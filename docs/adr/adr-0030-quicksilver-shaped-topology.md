@@ -34,8 +34,10 @@
 >   cutover; sub-second region failover deferred to the `adr-0024` v0.2 cross-DC bridge).
 > - **Naming honesty (cross-ref RR-098).** Amendment A1 / INV-1's `GLOBAL`/security key class (default
 >   prefix `secure/`) is a **read-freshness** guarantee (always-linearizable, fail-closed, never served
->   stale) for security-*critical* decisions - it is **NOT** at-rest confidentiality/encryption. Configd
->   does not encrypt data at rest in v1; see `docs/known-limitations.md` and `docs/consistency-contract.md section 9`.
+>   stale) for security-*critical* decisions - it is **NOT** at-rest confidentiality/encryption, and the two
+>   are orthogonal. At-rest encryption is now available (opt-in AES-256-GCM, OFF by default); with it OFF the
+>   default posture is plaintext-with-integrity, so `secure/` still does not imply confidentiality. See
+>   `docs/operations/known-limitations.md` §1 and `docs/operations/consistency-contract.md` §9.
 >
 > **Open residuals (unchanged, honest):** full-region write availability is not five-nines (A2 covers
 > single-AZ loss automatically; full-region failover deferred to `adr-0024` v0.2); data residency deferred

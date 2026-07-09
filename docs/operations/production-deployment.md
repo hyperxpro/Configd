@@ -48,6 +48,24 @@ java --enable-preview \
 | `--auth-token` | No | - | Bearer token required for write and admin API calls |
 | `--signing-key-file` | No | `<data-dir>/signing-key.bin` | Cluster signing key; must live outside `--data-dir` or the server fails closed (see [adr-0044](../adr/adr-0044-signing-key-management.md)) |
 | `--strong-read-prefixes` | No | `secure/` | Key prefixes served as fail-closed linearizable reads |
+| `--bind-address` | No | **`127.0.0.1`** | Default is **loopback**; a non-loopback bind while auth is OFF is refused (see `--allow-insecure-public-bind`) |
+| `--allow-insecure-public-bind` | No | (unset) | Explicit acknowledgement to bind a non-loopback interface with auth OFF (loudly warned); footgun-fix, not "auth required" |
+
+**Key system properties (`-D...`)** — not CLI flags:
+
+| Property | Default | Description |
+|----------|---------|-------------|
+| `configd.raft.shardCount` | `1` | Number of Raft shard groups (N); N=1 is byte-identical to non-sharded |
+| `configd.raft.autobalance.enabled` | `true` | Decentralized leadership auto-balance loop (N>1); `dryRun`/`intervalMs`/`jitterPct` also under `configd.raft.autobalance.*` |
+| `configd.write.maxInflightProposals` | ON (conservative) | Write-admission bound (429 + Retry-After when exceeded); `0` disables |
+| `configd.replay.enabled` | `false` | Opt-in replay guard (`X-Configd-Timestamp` + `X-Configd-Nonce`) |
+| `configd.raft.encryption.enabled` | `false` | Opt-in at-rest AES-256-GCM (`algId=2`); one-way door |
+| `configd.raft.encryption.kms.provider` | `local` | KMS provider (`local` HKDF-from-signing-key, or `vault-transit`) |
+| `configd.raft.encryption.requireEncrypted` | `false` | Refuse legacy `algId=0/1` records once the plaintext prefix is compacted away |
+| `configd.raft.maxReassembledSnapshotBytes` | `512 MiB` | Fail-closed cap on chunked-snapshot reassembly (heap-bound) |
+
+Authentication modes (No-Auth / HTTP Basic / OIDC-Bearer / mTLS) and node-join identity policy
+(`configd.raft.peerIdentity.*`) are documented in the [operator runsheet](operator-runsheet.md).
 
 ## API Endpoints
 
@@ -59,6 +77,7 @@ java --enable-preview \
 | `PUT` | `/v1/config/{key}` | Yes | Write config value (body = raw bytes) |
 | `GET` | `/v1/config/{key}` | No | Read config value |
 | `DELETE` | `/v1/config/{key}` | Yes | Delete config key |
+| `POST` | `/v1/admin/groups/{groupId}/transfer-leadership?target=<nodeId>` | ADMIN | Initiate an async leadership transfer for a shard group (refused when auth is OFF) |
 
 ## JVM Tuning
 
@@ -122,7 +141,7 @@ keytool -importcert -alias ca -keystore truststore.p12 -storetype PKCS12 \
 2. Replace certificate files on disk
 3. The server re-reads the certificate files from disk automatically, about every 60 seconds - no restart, signal, or endpoint is needed
 4. Connections using the old certificate will drain naturally
-5. See `docs/runbooks/cert-rotation.md` for the full procedure
+5. See [`runbooks/cert-rotation.md`](runbooks/cert-rotation.md) for the full procedure
 
 ## Kubernetes Deployment
 
@@ -152,7 +171,7 @@ Key features of the k8s deployment:
 | Control plane availability | 99.999% | 30d |
 | Edge read availability | 99.9999% | 30d |
 
-Throughput is a capacity figure, not an SLO. Measured: a single Raft group commits about 800 writes/s and a single cluster about 1600 writes/s; the 10,000/s figure is a sharded, multi-machine aggregate target, not a single-cluster baseline (see the [measurement archive](../archive/measurement/)).
+Throughput is a capacity figure, not an SLO. Measured: a single Raft group commits about 800 writes/s, a single box plateaus near 1100 writes/s, and a 3-machine cluster reached about 1600 writes/s (near-linear 2.45x); no literal sustained 10,000/s has been run — the 10,000/s figure is a sharded, multi-machine aggregate target, not a single-cluster baseline (see the [measurement archive](../archive/measurement/)).
 
 ### Burn-Rate Alerts
 

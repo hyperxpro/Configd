@@ -10,7 +10,7 @@ follow a hint? re-authenticate? re-bootstrap?). The scattered taxonomies in §1 
 Every code is **validated against the deployed implementation**: the HTTP codes against
 [`AdminApiHandler.java`](../../../configd-server/src/main/java/io/configd/server/AdminApiHandler.java), the
 streaming codes against
-[`ErrorCode.java`](../../../configd-distribution-service/src/main/java/io/configd/distribution/wire/ErrorCode.java)
+[`ErrorCode.java`](../../../configd-wire/src/main/java/io/configd/distribution/wire/ErrorCode.java)
 (:14–116) and the fan-out close paths. Where this section and a prior RFC claim disagree, **the code wins**.
 This section is **normative**; it **composes with**:
 

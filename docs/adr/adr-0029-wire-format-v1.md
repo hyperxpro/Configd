@@ -256,7 +256,9 @@ payload before allocating:
 - `MAX_ENTRIES_PER_APPEND = 10_000` - caps the entry-count field
   that the decoder uses to size an `ArrayList`.
 - `MAX_COMMAND_LEN = 1 MiB` - caps any single LogEntry command.
-- `MAX_SNAPSHOT_BLOB_LEN = 4 MiB` - per-blob cap on InstallSnapshot
+- `MAX_SNAPSHOT_BLOB_LEN = 4 MiB` - **now a per-CHUNK cap** under chunked InstallSnapshot
+  (`RaftNode.MAX_SNAPSHOT_CHUNK_BYTES`; a large snapshot streams as ordered chunks and the follower
+  reassembles under `configd.raft.maxReassembledSnapshotBytes`), no longer a total-state ceiling. Per-blob;
   data and clusterConfigData. Sized so that two blobs at the cap
   plus the InstallSnapshot fixed header (33 B) plus the FrameCodec
   header+trailer (22 B) totals ~8 MiB, comfortably under

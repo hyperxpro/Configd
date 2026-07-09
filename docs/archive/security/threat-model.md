@@ -139,3 +139,47 @@ attack test is written and currently RED (pre-fix) or not yet written.
 | B-BUILD | no unresolved exploitable high/critical CVE | `-Pcve-scan` profile (dependency-check, fail@CVSS≥7) wired | ⚠ **ENV-BLOCKED** — NVD needs `NVD_API_KEY` + cache; runs in gate-7 nightly (network) → S7.5 manifest |
 | B-BUILD | no secret in repo/history | `.gitleaks.toml` present; local sanity-grep clean | ⚠ **ENV-BLOCKED** — gitleaks not installed locally; wired into CI in Seam 6 → S7.5 manifest |
 ```
+
+---
+
+## 7. Addendum (2026-07-09, Group D/F) — STRIDE rows for the planes added since Session 7
+
+The Session-7 model above predates the at-rest encryption / KMS plane, the config-policy (`_acl/`/`_system/`)
+plane, and the edge trusted-cache tier reaching their as-built shape. This addendum records STRIDE-shaped
+threats and the controls that must hold for each. Two Session-7 fence items are now **built** (no longer
+fenced): **certificate revocation** (an off/lax/strict online-revocation posture; a revoked edge cert is
+refused `AUTH_FAIL` at admission) and **KMS/HSM integration + non-destructive key rotation** (Vault Transit
+provider + `NodeKeyring`).
+
+### 7.1 KMS / encryption-at-rest plane (`NodeKeyring`, `KmsSealedRootStore`, Vault Transit)
+
+| STRIDE | Threat | Control that must hold |
+|---|---|---|
+| **S**poofing | A rogue "KMS" answers unseal and hands back a bogus root | The Vault provider authenticates the server↔Vault channel (token/mTLS) and the sealed root is bound to a config-derived AAD (`nodeId`); an unexpected context fails the authenticated decrypt (fail-closed boot). |
+| **T**ampering | A T3 disk writer edits the sealed-root carrier or a keyring slot | `raft-kms-root` (`RKMS` magic + version) and the dual-slot keyring are integrity-bound (AEAD / keyring MAC); a tampered slot fails to verify and boot **refuses** rather than re-mint (never silently orphans data). |
+| **R**epudiation | — | (Key operations are not the audit surface; the audit-log chain covers config mutations.) |
+| **I**nformation disclosure | Encryption root leaks via a co-located signing key, a core dump, or swap | `local` root fate-shares with the signing key (D-1 co-location guard); Vault custody moves the root off-host; deploy-level `ulimit -c 0` + swap-off (F3) close the core-dump/swap paths. |
+| **D**enial of service | A KMS outage stalls writes/replay | KMS is **boot-unseal-only** — never on the write/replay path — so an outage cannot shrink quorum mid-incident; selecting an unavailable provider is a fail-loud startup refusal, not a silent downgrade. |
+| **E**levation | A downgrade to `algId=NONE`/no-encryption under a key | `IntegrityEnvelope` refuses `algId=NONE` under a key and (with `requireEncrypted`) refuses legacy HMAC records (C2 no-silent-downgrade). |
+
+### 7.2 Config-policy plane (`_acl/`, `_system/` reserved prefixes; `_acl/format`)
+
+| STRIDE | Threat | Control that must hold |
+|---|---|---|
+| **S**poofing | A non-admin principal writes/reads policy | Reserved prefixes require **ADMIN** for **every** method (mutation *and* disclosure), fail-closed, at the HTTP boundary. |
+| **T**ampering | A malformed/poison `_acl/` policy loads and skews authz | Write-time validation (`validateAclWrite`) and the reload path run the **identical** parser; a bad policy is `400` pre-commit or fails closed to **last-good** on reload (never deny-all/allow-all). |
+| **R**epudiation | A policy change leaves no trail | Policy writes are ADMIN-gated mutations captured by the keyed-HMAC audit chain. |
+| **I**nformation disclosure | A non-ADMIN reads policy to map the authz surface | Reserved-prefix reads are ADMIN-gated (closes policy disclosure). |
+| **D**enial of service | A poison key delivered via snapshot/replay freezes all subsequent policy updates | Fails closed to last-good and increments `configd.acl.policy.load.failed`; a stuck-load + non-advancing reload counter is a burn-in rollback trigger (R5). |
+| **E**levation | A future grammar change silently absorbed by an old reader (authz split-brain) | The `_acl/format` version sentinel (C8) — an old node fails closed on the whole subtree on an unknown version; a positional extension without a bump is forbidden. |
+
+### 7.3 Edge trusted-cache tier (fan-out, filtering, hydration)
+
+| STRIDE | Threat | Control that must hold |
+|---|---|---|
+| **S**poofing | An unauthorized cert pulls the whole store via legacy `SUBSCRIBE` | With auth ON, `SUBSCRIBE` is gated at admission on a **whole-store READ cover** (root-prefix READ, no intersecting deny); watch is per-key authorized. With auth OFF but mTLS ON, per-cert trust + network segregation is the only control (documented). |
+| **T**ampering | A relay rewrites a delta or a hydration snapshot | Per-delta **Ed25519** signatures cover the version position (a relay cannot splice); the hydration snapshot is transport-authenticated (mTLS), not signed — a driver MUST NOT accept it over an unauthenticated transport. |
+| **R**epudiation | — | (Edge reads are not per-event audited — a deliberate DoS-avoidance choice.) |
+| **I**nformation disclosure | `secure/` values persist at the edge | Edge keeps `secure/` values **in-memory only**, never on disk. |
+| **D**enial of service | A slow/hostile consumer exhausts fan-out buffers | Bounded per-session queues + the `SlowConsumerGovernor` ladder (SLOW→CATCHUP→QUARANTINED→UNHEALTHY), keyed to the mTLS principal so reconnect storms cannot dodge it. |
+| **E**levation | Server-side prefix filtering (ADR-0045) suppresses a matching delta undetected | A **trusted-domain-only** posture — a well-formed suppression behind a correct covered-S is not edge-detectable; set `configd.edge.fanout.filter=off` when an untrusted relay terminates the fan-out (documented two-way door). |

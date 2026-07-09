@@ -141,7 +141,9 @@ These are what keep a v1 driver **forward-compatible to a sharded (N > 1) cluste
 **OV5-5 (conformance evidence).** The **golden fixtures** (`EdgeFrameGoldenBytes`, §06) are the byte-level
 cross-language test vectors for the edge wire; the per-section **driver checklists** (§01–§07) are the
 behavioral conformance lists. A driver claiming conformance **SHOULD** test its encoder/decoder against the
-goldens and its behavior against the checklists.
+goldens and its behavior against the checklists. The **`configd-conformance` suite** (shipped, CI-wired) is the
+executable form of these checklists — it exercises a driver against both planes of a real cluster and the
+golden vectors; a new-language driver can be validated the same way.
 
 ---
 
@@ -219,16 +221,23 @@ never sees — is `docs/design/group-b/07-upgrade-capability-as-built.md` (contr
 
 ## 8. Status and what is deferred (named, not spec'd)
 
-**OV8-1 (the RFC is implementable now).** §00–§07 are spec-grade and validated against the deployed server. A
-driver-writer can build a conforming driver today; drivers are **deferrable** (post-v1 / on-demand) and are
-**not** on the v1 critical path.
+**OV8-1 (the RFC is implementable now, and a reference driver ships).** §00–§07 are spec-grade and validated
+against the deployed server. A conforming **Java** reference client (`configd-client` + `-core`/`-http`/`-edge`)
+and a `configd-conformance` suite (CI-wired, both planes) now ship as the worked example; a driver-writer can
+build a conforming driver in any language from the doc alone. Additional-language drivers remain **on-demand**
+(post-v1) and are **not** on the v1 critical path.
 
 **OV8-2 (named v1 omissions — a driver MUST fail closed on these).** Not in v1, do **not** assume: a **`list`
 / enumeration endpoint** (the semantic model is §1 §4.2; no wire — §04 D9); a **topology / shard-map discovery
-endpoint** (the `NodeId→address` map is operator config — §05 R3-2); **multi-shard watches** (N > 1 watch is a
-v2 item — §02); **conditional writes / `If-Match`** and **batch multi-key writes** (§04 D11-4); a
-**structured-JSON** response body (§04 D2-5). Each is a **named forward extension**; a driver that fails closed
-on the unrecognized (OV7-3) keeps working when they arrive.
+endpoint** (the `NodeId→address` map is operator config — §05 R3-2); a **globally-ordered / cross-shard watch**
+(watches are per-key/per-shard ordered — no global order, §02 W6-2) and the **disjoint sharded-edge topology**
+(edges serving shard subsets, driver-side merge — §02 W9-3); **conditional writes / `If-Match`** and **batch
+multi-key writes** (§04 D11-4); a **structured-JSON** response body (§04 D2-5). Each is a **named forward
+extension**; a driver that fails closed on the unrecognized (OV7-3) keeps working when they arrive.
+
+> **Now BUILT (no longer omitted):** **multi-shard (N > 1) watches** are v1-delivered by a server-side
+> aggregating endpoint (one `FanOutSessionCore` per covered shard, a per-shard `(gid, S)` cursor vector — §02
+> W4/W9-3). Ordering stays per-shard, never global. A driver **MUST** be vector-native (OV5-4) to consume them.
 
 > **Now BUILT (no longer omitted):** the **token-bearing edge `AUTH`/`REFRESH_AUTH` frame** is v1 (§03 AU3-3, §06
 > §6A) — a certificate-less edge client authenticates by presenting a bearer/basic credential. It is **additive**

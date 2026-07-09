@@ -28,8 +28,10 @@ but does not remove, the exposure.)
   `CONFIGD_ENCRYPTION_AT_REST=true`). This encrypts the WAL, snapshot blob, and durable Raft state with
   **node-local AES-256-GCM** at the ADR-0042 seam (a new `algId=2` envelope; the GCM tag replaces the
   HMAC, the CRC32C corruption layer stays). The default `local` key provider derives the encryption root
-  by HKDF from the cluster signing key (domain-separated from the integrity/audit keys); a KMS-provider
-  SPI exists for off-host key custody but no cloud provider ships in v1. No wire-format change, no
+  by HKDF from the cluster signing key (domain-separated from the integrity/audit keys); an external
+  **Vault Transit** KMS provider (`configd-kms-vault`) also ships for off-host key custody and is discovered
+  via `ServiceLoader` (select with `-Dconfigd.raft.encryption.kms.provider=vault-transit`), with the per-node
+  custody secret sealed in a versioned `raft-kms-root` carrier. No wire-format change, no
   cluster-wide key distribution. See
   [`deployer-must-know.md` section 1](deployer-must-know.md) for the full enabling procedure and the
   operator warnings summarised below.
@@ -40,13 +42,16 @@ but does not remove, the exposure.)
   (`algId=0/1`) records does **not** rewrite them - they stay plaintext until a snapshot/compaction; enable
   from first boot or force a compaction, and use `-Dconfigd.raft.encryption.requireEncrypted=true` to
   refuse legacy records once the plaintext prefix is gone.
-- **Fate-sharing + signing-key rotation.** With `local`, confidentiality fate-shares with the signing key:
-  a signing-key compromise decrypts all at-rest data, and rotating the signing key orphans existing
-  `algId=2` data **permanently and is not an in-place operation** (re-snapshotting under the old key does
-  not rescue it -- that snapshot is still ciphertext under the old root; treat the signing key as permanent
-  for an encrypted data dir, see [`deployer-must-know.md` section 1](deployer-must-know.md)). **Back up the
-  signing key before enabling encryption; losing it means permanent, unrecoverable loss of all encrypted
-  data.** Off-host key custody is a v2 KMS-provider item.
+- **Fate-sharing + key rotation.** With `local`, confidentiality fate-shares with the signing key:
+  a signing-key compromise decrypts all at-rest data. **Key rotation is now non-destructive by
+  construction** (`NodeKeyring`): the persisted, dual-slot keyring holds independent random per-term roots,
+  so a term rotation (`rotateTerm`) or a signing-key rotation (`rewrapForNewSigningKey`, which rewraps every
+  retained root under the new signing key's KEK before the swap) leaves all prior `algId=2` data readable —
+  old-term data still decrypts. The residual is that rotation is **offline/operator-serialized in v1** (no
+  online admin trigger yet, see [`deployer-must-know.md` section 1](deployer-must-know.md)) and that key
+  **loss** is still permanent: **back up the signing key before enabling encryption; losing or destroying it
+  means permanent, unrecoverable loss of all encrypted data.** Off-host key custody is available via the
+  external Vault Transit KMS provider (above).
 - **Not encrypted at rest (v1):** the **audit log stays HMAC-only**, so audit metadata (config key
   **names**, principals) is not confidential. **N>1 note (LOW, inherited):** the GCM AAD binds the
   artifact-type magic but **not** the Raft groupId, and one key manager is shared across all groups -
@@ -59,7 +64,7 @@ but does not remove, the exposure.)
   allocation roughly doubles p99). Single loopback node, so this is the local encrypt-on-write cost only (no
   cross-node replication fsync in the path) - a floor. See `docs/measurement/ec2-drive-to-green-2026-07-02/gate7-final/`.
 
-### 2. Client-facing watches: the RFC section 2 protocol is implemented server-side (N>=1, single- and multi-shard); a client driver is next
+### 2. Client-facing watches: the RFC section 2 protocol is implemented server-side (N>=1, single- and multi-shard); a conforming Java reference client + conformance suite now ship
 
 v1 now implements the **server side of the RFC section 2 driver-protocol watch surface** on the edge endpoint
 (`--edge-port`): the `0x02` edge wire (the `WATCH_*` frames + the per-shard cursor vector), the
@@ -74,10 +79,12 @@ the disjoint sharded-edge topology (edges serving shard subsets, the driver merg
 wire, more connections) - a v2 item. The legacy in-process `WatchService` is unrelated server-internal
 plumbing (register section 4.8).
 
-- **No shipped client driver yet.** The protocol is server-ready, but a **conforming client driver**
-  (RFC sections 1-3) is the **next deliverable** - until one ships, watches are not consumable out-of-the-box.
-  The legacy v1 pull pattern - `GET /v1/config/{key}` (optionally linearizable) + the edge
-  bounded-staleness read path with version cursors - remains the supported read path.
+- **A conforming client driver now ships.** A conforming **Java** reference client (`configd-client` +
+  `-core`/`-http`/`-edge`) and a `configd-conformance` suite (wired into CI, exercising both planes against
+  the golden wire vectors) now ship, so watches are consumable out-of-the-box on the JVM. Drivers in other
+  languages are buildable from the stand-alone RFC (`docs/rfc/driver-protocol/`) and validate against the same
+  goldens. The legacy pull pattern - `GET /v1/config/{key}` (optionally linearizable) + the edge
+  bounded-staleness read path with version cursors - remains a supported read path.
 - **Guarantees (rely on exactly these):** per-key and per-shard order YES (never cross-shard / global NO);
   batch-atomic per shard-commit YES; at-least-once with **`(gid, S)` dedup** (the driver drops
   `S <= cursor[gid]`); bounded-staleness (edge-served, **ordered not linearizable** - use the strong-read
@@ -177,10 +184,11 @@ plumbing (register section 4.8).
   one ack, and one backpressure fate (a slow watch can demote its siblings; per-watch fairness is v2); a
   connection-level catch-up snapshot maps to the drain-owning (first) watch (single-snapshotting-watch).
 - **Deferred:** the disjoint sharded-edge topology (edges serving shard subsets, driver-side merge - v2);
-  the legacy whole-store SUBSCRIBE multi-shard lift (it stays primary-shard-only at N>1); the
-  `GAP_UNRECOVERABLE` per-shard `oldest`-vector population (v1.x, W5-9a); per-watch flow-control (W10-8);
-  the `prev_value` / leader-served / long-poll-gateway named extensions (W10-2/4/7); the reserved-prefix
-  watch-gate hardening; a conforming client driver + a shared conformance suite (the next arc).
+  a globally-ordered cross-shard watch (out of scope by design - no global clock); the legacy whole-store
+  SUBSCRIBE multi-shard lift (it stays primary-shard-only at N>1); the `GAP_UNRECOVERABLE` per-shard
+  `oldest`-vector population (v1.x, W5-9a); per-watch flow-control (W10-8); the `prev_value` / leader-served /
+  long-poll-gateway named extensions (W10-2/4/7); the reserved-prefix watch-gate hardening. (The conforming
+  Java client + shared conformance suite that this list previously named as "the next arc" have **shipped**.)
 
 ### 3. Sharding: v1 ships single-group (N=1); multi-shard is built, server-wired, and metal-proven
 
@@ -194,17 +202,23 @@ longer unmeasured - it was **measured on real hardware** and is **near-linear ~2
 - **Measured v1 write throughput:** the single-group write knee is **~800 writes/s** (register section 9.1,
   m6id.4xlarge; **leadership-churn-bound**, not CPU/disk). This is **below the original 10k/s baseline**.
 - The 10k/s baseline is a **sharded-aggregate** target (~535 w/s per leader-machine cross-machine ->
-  ~17-19 machines), now evidenced as a real near-linear path - **but contingent on the leadership-balancing
-  operability follow-up**: horizontal scale is **operator-managed** (one leader per box, not auto-balanced;
-  see [`deployer-must-know.md` item 5](deployer-must-know.md)). No literal sustained 10k/s
+  ~17-19 machines), now evidenced as a real near-linear path. Leadership placement is now maintained by a
+  built-in **auto-balancer** (below); note the measured 2.45x was captured under **manual** one-leader-per-box
+  placement, so the balancer is built and E2E-tested but **not yet load-measured at scale** (see
+  [`deployer-must-know.md` item 5](deployer-must-know.md)). No literal sustained 10k/s
   has been run (single-cluster max = 1607 w/s).
-- **Manual leadership transfer is now exposed; the auto-balancer is v2.** Post-failover leadership can drift
-  (multiple groups' leaders piling onto one box collapses the aggregate toward the single-group plateau). An
-  operator can now redistribute it manually via the ADMIN-gated
+- **Leadership auto-balance ships (on by default); manual transfer is also exposed.** Post-failover
+  leadership can drift (multiple groups' leaders piling onto one box collapses the aggregate toward the
+  single-group plateau). v1 ships a **decentralized leadership auto-balance loop** (`LeaderBalanceLoop`, one
+  per node, `configd.raft.autobalance.*`, **enabled by default** at N>1; it *sheds* at most one over-owned
+  leader per cycle, never pulls) that re-spreads leadership back toward one-per-box without operator action.
+  An operator can also redistribute manually via the ADMIN-gated
   `POST /v1/admin/groups/{groupId}/transfer-leadership?target=<nodeId>` (refused when auth is off or ADMIN
-  cannot be evaluated; a bad target no longer wedges writes - the Raft section 3.10 transfer-abort resumes
-  writes after the election timeout). An **automatic leadership balancer is still v2** - leadership placement
-  remains an operator responsibility in v1.
+  cannot be evaluated; a bad target no longer wedges writes - the Raft §3.10 transfer-abort resumes writes
+  after the election timeout). The balancer is built and E2E-tested (`LeadershipAutoBalanceE2ETest`) but the
+  2.45x horizontal number predates it (measured under manual placement), so it is not yet proven at scale.
+  What remains v2 is **transfer-on-graceful-shutdown** (SIGTERM flips readiness to draining but does not hand
+  off leadership first).
 
 ### 4. Empirical validation: validated on metal (2026-06-30 / 07-01), with bounded residuals
 
@@ -353,11 +367,12 @@ items rather than pre-GA gates:
   [`deployer-must-know.md` section 4](deployer-must-know.md)).
   **Disk-spilling reassembly** (streaming chunks to disk rather than buffering the whole
   snapshot in heap) is a **v2** item - today reassembly is heap-bound.
-- **Over-cap observability:** the refusal logs `SEVERE` **per occurrence with no
-  dedicated metric** - detection is log-watch only, and per-follower `matchIndex` lag is
-  the proxy alert. A dedicated snapshot-reassembly-drop counter/alert is a documented
-  observability follow-up, tying into the "Encoder-drop observability" item below (both
-  want the same server-transport metric seam).
+- **Over-cap observability (updated - the metrics now exist).** The Gate-2 observability arc shipped the
+  dedicated series this item previously said were missing: `raft_shard_snapshot_reassembly_refused_<gid>`
+  (the over-cap reassembly refusal, per shard), `configd_snapshot_bytes` (snapshot size vs the per-chunk
+  cap), and `raft_shard_replication_lag_max_<gid>` (the real per-follower replication-lag / wedge proxy that
+  replaces the `matchIndex`-lag-by-proxy guidance). The `SEVERE` log line still fires per occurrence; it is
+  now backed by real metrics rather than log-watch alone.
 - **Deploy-ordering requirement (silent corruption risk):** the chunked protocol
   reuses the existing `offset`/`done` fields and there is **no wire-version negotiation**
   for the Raft RPC codec. A **pre-chunking** follower ignores those fields and installs
@@ -392,8 +407,11 @@ items rather than pre-GA gates:
   `sendInstallSnapshot` catch it, log to stderr, skip the
   `inflightCount` increment, and return.
 - This prevents the cluster-wide outage that pass-3 / pass-4
-  identified, but **no metric counter exports drop frequency** -
-  it's stderr only. Operators must scrape logs.
+  identified. **Updated (Gate-2):** drop frequency is now exported via
+  `configd_raft_transport_frames_dropped`, `raft_shard_append_send_rejected_<gid>`,
+  `raft_shard_snapshot_chunk_send_rejected_<gid>`,
+  `configd_raft_transport_inbound_connections_refused`, and
+  `configd_raft_transport_connection_decode_dropped_total` - it is no longer stderr-only.
 - No outbound-drop counter exists today, and none is planned as a
   standalone item: the consensus core (`RaftNode`) has no event-counter
   sink (only an `InvariantChecker`, which throws in test/sim and is

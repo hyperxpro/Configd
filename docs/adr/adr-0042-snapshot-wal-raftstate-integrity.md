@@ -5,6 +5,13 @@
 - **Context finding:** PA-2021 - at-rest integrity absent from snapshot, WAL, and Raft durable state
 - **Supersedes/extends:** the unversioned formats in `DurableRaftState`, `RaftLog.serializeSnapshot`,
   and the WAL entry payload. Composes with RR-003 (durable-prefix) and the torn-write durability work.
+- **Extended by (as-built):** the envelope's `algId` slot now also carries **`algId=2` node-local
+  AES-256-GCM at-rest encryption** (opt-in, `-Dconfigd.raft.encryption.enabled=true`) — the GCM tag replaces
+  the HMAC, the CRC32C corruption layer stays. Roots are custodied by a persisted dual-slot **keyring**
+  (`NodeKeyring`, non-destructive rotation) with a pluggable KMS SPI (`local` HKDF-from-signing-key, or an
+  external Vault Transit provider). This ADR's integrity construction is the seam; the encryption posture and
+  keyring/upgrade contract are recorded in `docs/design/frozen-format-v1-2026-07-03.md` and
+  `docs/design/group-b/07-upgrade-capability-as-built.md` (C7).
 
 ## Problem
 

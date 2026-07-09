@@ -39,11 +39,12 @@ A read of a **GLOBAL/security ("strong-read") key** (a configured key-class, def
 > **Note: `secure/` is a *freshness* guarantee, not a *confidentiality* one.** The strong-read class
 > guarantees a key is always read **fresh** (linearizable, fail-closed) - appropriate for
 > security-critical decisions (ACL/auth revocations, kill-switches, legal gates). It does **NOT**
-> encrypt values or make them confidential at rest: Configd stores all values - including `secure/`
-> keys - as **plaintext** (integrity-checked via HMAC-SHA-256, ADR-0042; at the edge, kept in-memory
-> only). **Configd does not encrypt data at rest in v1.** Do **not** store secret material
-> (passwords, tokens, private keys) in Configd; use a dedicated secret manager. At-rest encryption is a
-> deferred v2 item. See `docs/operations/known-limitations.md`.
+> encrypt values or make them confidential at rest, and it is **orthogonal to** at-rest encryption. **By
+> default** Configd stores all values - including `secure/` keys - as **plaintext** (integrity-checked via
+> HMAC-SHA-256, ADR-0042; at the edge, kept in-memory only). Opt-in node-local **AES-256-GCM** at-rest
+> encryption is available (`-Dconfigd.raft.encryption.enabled=true`), but it is OFF by default. **With
+> encryption OFF (the default), do not store secret material** (passwords, tokens, private keys) in Configd;
+> use a dedicated secret manager. See `docs/operations/known-limitations.md` §1.
 
 ### Explicitly Non-Linearizable Operations
 - **Edge reads** - bounded staleness (see section 2)
@@ -279,7 +280,8 @@ The previously-listed `assert_sequence_monotonic` / `assert_sequence_gap_free` r
 | Version monotonicity | All nodes | Guaranteed | Monotonic sequence numbers |
 
 > **Note: The `secure/` strong-read class is a *freshness* guarantee, not *confidentiality*.** It means
-> "always read fresh, fail-closed" - it does **not** mean encrypted. Configd does **not** encrypt data at
-> rest in v1; all values (including `secure/` keys) are plaintext, integrity-checked only (HMAC, ADR-0042;
-> in-memory only at the edge). Do not store secrets in Configd. At-rest encryption is a v2 item.
-> See `docs/operations/known-limitations.md`, the "No at-rest encryption" section.
+> "always read fresh, fail-closed" - it does **not** mean encrypted, and it is orthogonal to at-rest
+> encryption. By default all values (including `secure/` keys) are plaintext, integrity-checked only (HMAC,
+> ADR-0042; in-memory only at the edge); opt-in AES-256-GCM at-rest encryption is available but OFF by default.
+> With encryption OFF, do not store secrets in Configd.
+> See `docs/operations/known-limitations.md` §1 ("At-rest encryption is available (OFF by default)").
