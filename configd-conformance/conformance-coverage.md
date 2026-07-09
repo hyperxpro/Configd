@@ -41,8 +41,8 @@
 | A2-2 | both | C | NO | SKIP:model (no (model)) |
 | A2-3 | both | C | LIVE | COVERED — scopeDefaultsToGlobalAndIsOmittedOnTheHttpWire() |
 | A2-4_INV-PATH | both | C | NO | SKIP:not-testable-v1 (no (client MUST-NOT; observable only as no-co-location assumption)) |
-| A3-1..A3-3 | both | C | LIVE | COVERED — clientRejectsANonAbsolutePathBeforeTheWireAndEncodesUtf8(), serverRejectsASegCharViolationBeforeAnyDataFrame() |
-| A3-4 | both | C | LIVE | COVERED — serverRejectsNonCanonicalPaths() |
+| A3-1..A3-3 | both | C | LIVE | COVERED — clientRejectsIllegalPathsBeforeTheWire() |
+| A3-4 | both | C | LIVE | COVERED — ServerObeysPathAliasingTest, clientRejectsNonCanonicalPathsBeforeTheWire(), serverIndependentlyEnforcesKeyCanonicalityDefenseInDepth(), serverNeverAliasesTraversalOrEmptySegmentSpellingsToASensitiveKey() |
 | A3-5 | both | C | LIVE | COVERED — clientRejectsAnOversizePathBeforeTheWire() |
 | A3-6 | both | C | NO | SKIP:not-in-v1 (no (ACL/list/watch-target grammar; v1 has no list wire)) |
 | A4-1 | both | C | NO | SKIP:not-testable-v1 (no (server-side)) |
@@ -64,7 +64,7 @@
 | A8-2 | both | C | LIVE | COVERED — scopeDefaultsToGlobalAndIsOmittedOnTheHttpWire(), scopeIsATypedFieldNeverAPathSegment() |
 | A9-1 | both | C | CODEC | COVERED — WireConformanceRatchetTest, everyWireCaseMatchesTheManifest() |
 | A9-2 | both | C | NO | SKIP:model (no (client presentation)) |
-| A9-3 | edge | S | LIVE | COVERED — ServerObeysPathAuthzTest, fullChainVerifyAndFullTargetsRequireRootScope(), interiorReadDenySinksTheWholeSubtreeWatch(), overBroadTargetIsRejectedNotSilentlyNarrowed(), serverFailsClosedOnAnUnrecognizedScopeOrdinal(), serverRejectsASegCharViolationBeforeAnyDataFrame(), serverRejectsNonCanonicalPaths(), unauthorizedSubscriptionIsTerminal403ClassWithZeroDataFrames(), watchOrderingIsPerShardOnlyNeverAssumedCrossShard(), watchRequiresBothReadAndWatchNotEitherAlone() |
+| A9-3 | edge | S | LIVE | COVERED — ServerObeysPathAuthzTest, fullChainVerifyAndFullTargetsRequireRootScope(), interiorReadDenySinksTheWholeSubtreeWatch(), overBroadTargetIsRejectedNotSilentlyNarrowed(), serverFailsClosedOnAnUnrecognizedScopeOrdinal(), serverIndependentlyEnforcesKeyCanonicalityDefenseInDepth(), unauthorizedSubscriptionIsTerminal403ClassWithZeroDataFrames(), watchOrderingIsPerShardOnlyNeverAssumedCrossShard(), watchRequiresBothReadAndWatchNotEitherAlone() |
 | A9-4 | both | C | LIVE | COVERED — clientCannotExpressAnUnrecognizedCapabilityOrTargetIdentifier(), serverFailsClosedOnAnUnrecognizedScopeOrdinal() |
 | W1-1 | edge | C | CODEC | COVERED — WireConformanceRatchetTest, everyWireCaseMatchesTheManifest() |
 | W1-2 | edge | both | LIVE | COVERED — RealServerWatchTest, clientWatchTailsRealFanOutServerAndAdvancesCursor(), cursoredShareIsRefusedW8_6a(), twoFromNowWatchesShareOneRealConnection() |

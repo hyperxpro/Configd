@@ -146,18 +146,19 @@ class EdgeConnectionAuthTest {
     }
 
     @Test
-    void positiveFrameResetsTheReconnectBudget() throws Exception {
-        // A connection that delivers a positive frame (proving health) before it terminals resets the budget,
-        // so a healthy-but-flapping connection is not penalized. With maxAttempts=1, reaching a THIRD
-        // connection is possible ONLY because each connection's HEARTBEAT reset the counter (otherwise the
-        // second terminal would exhaust the one-shot budget and give up).
+    void positiveFrameResetsTheOrdinaryBudgetSoASingleHealthyFlapRecovers() throws Exception {
+        // A connection that delivers a positive frame (a HEARTBEAT) before it terminals resets the ordinary
+        // attempt budget, so ONE healthy-then-expired connection recovers under a one-shot budget: the reconnect
+        // to the healthy second connection is confirmed and the client does not give up. (A server that instead
+        // drops IMMEDIATELY on every connection is bounded by the rapid-failure ceiling — see
+        // EdgeReconnectBudgetBoundTest — so a positive frame is no longer a blank cheque for an unbounded loop.)
         try (MockEdgeServer server = MockEdgeServer.startPlaintext(conn -> {
             conn.readFrame();
             conn.send(new EdgeFrame.Heartbeat(0L, 1L)); // a positive frame confirms health → resets the budget
-            if (conn.index <= 2) {
+            if (conn.index == 1) {
                 conn.send(new EdgeFrame.ErrorClose(ErrorCode.CREDENTIAL_EXPIRED, "expired after a healthy interval"));
             } else {
-                conn.parkUntilClosed();
+                conn.parkUntilClosed(); // the recovery connection stays up — genuinely healthy
             }
         })) {
             RetryPolicy oneShot = new RetryPolicy(Duration.ofMillis(5), Duration.ofMillis(20), 1);
@@ -169,14 +170,11 @@ class EdgeConnectionAuthTest {
                     .build();
             try (ConfigdEdgeClient client = ConfigdEdgeClient.open(config)) {
                 client.connectAndAuthenticate().get(10, TimeUnit.SECONDS);
-                // Await the LAGGING signal — the confirmed-healthy reconnect count — not connectionCount, which
-                // ticks the instant the mock ACCEPTS the socket, before that connection's HEARTBEAT has been read
-                // and markHealthy() has run. Reaching 2 confirmed-healthy reconnects under a one-shot budget is
-                // possible only because each HEARTBEAT reset the counter, and it implies a 3rd connection opened;
-                // asserting reconnectCount right after awaiting connectionCount>=3 races that healthy reset.
-                await("each confirmed-healthy connection reset the one-shot budget",
-                        () -> client.reconnectCount() >= 2);
-                assertTrue(server.connectionCount() >= 3, "reached a 3rd connection via the healthy resets");
+                // Await the LAGGING confirmed-healthy reconnect count (not connectionCount, which ticks the instant
+                // the mock ACCEPTS the socket, before that connection's HEARTBEAT has run markHealthy()).
+                await("the reconnect to the healthy connection reset the one-shot budget",
+                        () -> client.reconnectCount() >= 1);
+                assertTrue(server.connectionCount() >= 2, "reached the recovery connection via the healthy reset");
                 assertFalse(client.terminalFuture().isDone(), "recovered — not a terminal give-up");
             }
         }

@@ -51,6 +51,18 @@ public final class EdgeSession implements AutoCloseable {
     private final AtomicInteger reconnectAttempt = new AtomicInteger();
     private final AtomicInteger reconnects = new AtomicInteger();
     private final AtomicInteger endpointCursor = new AtomicInteger();
+    // Second, markHealthy-independent reconnect bound. The ordinary attempt budget (reconnectAttempt) is reset
+    // by any positive frame (markHealthy), which a healthy-but-flapping server legitimately triggers — but that
+    // same reset lets a HOSTILE server emit one cheap frame (a HEARTBEAT, or the SUBSCRIBE_OK itself) per
+    // connection then drop, pinning the budget at zero and looping the client forever (a self-inflicted DoS;
+    // §07 E4-2 / E7 defeated). The discriminator is stability: a genuinely healthy connection stays up a while;
+    // the hostile pattern drops almost immediately. So a connection torn down before it has been up
+    // MIN_STABLE_MILLIS counts toward rapidFailures, which markHealthy CANNOT reset (only a stable connection
+    // does) — after maxAttempts such rapid failures the client gives up. Genuine flapping (each connection up
+    // >= MIN_STABLE_MILLIS between drops) resets rapidFailures and is still tolerated without bound.
+    private static final long MIN_STABLE_MILLIS = 1000;
+    private volatile long connectedAtNanos;
+    private final AtomicInteger rapidFailures = new AtomicInteger();
     private final CompletableFuture<Void> terminal = new CompletableFuture<>();
 
     private volatile InboundFrameHandler activeHandler;
@@ -163,6 +175,9 @@ public final class EdgeSession implements AutoCloseable {
         if (closed.get()) {
             throw new IllegalStateException("session is closed");
         }
+        // Start the stability clock before the reader can deliver any frame, so markHealthy always sees a real
+        // connect time (an unset 0 would read as "long-stable" and wrongly reset the budget).
+        connectedAtNanos = System.nanoTime();
         ServerAddress addr = nextEndpoint();
         AuthLifecycle lc = new AuthLifecycle(mode, config.credentialSource().orElse(null),
                 config.tls().orElse(null), scheduler, this::proactiveReconnect);
@@ -203,6 +218,18 @@ public final class EdgeSession implements AutoCloseable {
             lc.cancel();
         }
         if (shouldReconnect(error)) {
+            // A connection torn down before it reached stability counts toward a bound markHealthy cannot reset
+            // (see rapidFailures): a healthy connection stays up >= MIN_STABLE_MILLIS and clears the counter,
+            // whereas a hostile server emitting one cheap frame per connection then dropping accrues rapid
+            // failures until the client gives up — closing the unbounded-reconnect hot-loop.
+            if (System.nanoTime() - connectedAtNanos >= TimeUnit.MILLISECONDS.toNanos(MIN_STABLE_MILLIS)) {
+                rapidFailures.set(0);
+            } else if (rapidFailures.incrementAndGet() > config.retryPolicy().maxAttempts()) {
+                terminal.completeExceptionally(new UnavailableException(
+                        "edge reconnect gave up: too many connections dropped before reaching stability ("
+                                + config.retryPolicy().maxAttempts() + ")", error));
+                return;
+            }
             scheduleReconnect(error);
         } else {
             terminal.completeExceptionally(error);

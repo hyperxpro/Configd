@@ -775,9 +775,11 @@ draining are therefore **liveness-critical**, not optional "progress." A driver 
 
 **F10-4 (quarantine is identity-stateful across reconnects).** Quarantine is keyed to the **certificate
 identity (DN)** and persists **across** connections: a reconnect by a quarantined identity is **refused** with
-`QUARANTINED` (the message carries the remaining cooldown). After a `QUARANTINED` teardown a driver **MUST**
-back off the indicated cooldown **before** reconnecting/re-`CREATE`ing — an immediate reconnect-storm is
-refused. ("No resumption token" (F10-1) does **not** mean reconnect is stateless: the quarantine state is.)
+`QUARANTINED`. The terminal message MAY carry a human-readable remaining cooldown, but that text is **advisory
+diagnostic only** — a driver **MUST NOT** machine-parse it (§07 E6, the untrusted-message rule). Instead, after
+a `QUARANTINED` teardown a driver **MUST** back off with its **own bounded backoff** **before** reconnecting/re-
+`CREATE`ing — an immediate reconnect-storm is refused regardless of the advisory value. ("No resumption token"
+(F10-1) does **not** mean reconnect is stateless: the quarantine state is.)
 
 ---
 

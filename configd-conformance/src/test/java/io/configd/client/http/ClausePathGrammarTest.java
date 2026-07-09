@@ -21,15 +21,18 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 /**
  * Runner II — CLIENT-CONFORMS, §01 paths / access (the "A" clauses that bind the client side): the address model
  * ({@code (scope, path)} with {@code scope} a typed field, never a path segment — A2-1/A2-3/A8-2), the path-grammar
- * rejections the reference client performs <b>before</b> any byte reaches the wire (A3-1 absolute, A3-5 ≤ 1024 B),
- * the no-recursive-delete surface (A4-7), and the closed-enum fail-closed posture (A9-4). The HTTP-plane facts are
- * asserted against the scriptable {@link MockControlPlane} (recorded request path/query); the edge-plane
- * client-side validation is asserted against the public {@link WatchTarget} constructor.
+ * rejections the reference client performs <b>before</b> any byte reaches the wire (A3-1 absolute, A3-3 seg-char,
+ * A3-4 canonical, A3-5 ≤ 1024 B — all via the shared {@code io.configd.client.PathGrammar}), the
+ * no-recursive-delete surface (A4-7), and the closed-enum fail-closed posture (A9-4). The HTTP-plane facts are
+ * asserted against the scriptable {@link MockControlPlane} (recorded request path/query; and, for a rejection,
+ * that NOTHING reached the wire); the edge-plane client-side validation is asserted against the public
+ * {@link WatchTarget} constructor.
  *
  * <p>The <b>server-side</b> halves of these clauses — the live edge server rejecting a seg-char / non-canonical
- * path (A3-1..A3-3, A3-4), the watch-authorization contract (A5-2, A6-x, A9-3), and the server fail-closed on an
- * unrecognized scope ordinal (A9-4) — live in {@code io.configd.conformance.ServerObeysPathAuthzTest}. Each clause
- * that binds BOTH sides carries its tag on both tests.
+ * path (A3-1..A3-3, A3-4), the watch-authorization contract (A5-2, A6-x, A9-3), the server fail-closed on an
+ * unrecognized scope ordinal (A9-4), and the non-aliasing lock on the HTTP data plane (A3-4) — live in
+ * {@code io.configd.conformance.ServerObeysPathAuthzTest} / {@code ServerObeysPathAliasingTest}. Each clause that
+ * binds BOTH sides carries its tag on both tests.
  */
 @Timeout(30)
 class ClausePathGrammarTest {
@@ -88,7 +91,7 @@ class ClausePathGrammarTest {
 
     @Test
     @Tag("clause:A3-1..A3-3")
-    void clientRejectsANonAbsolutePathBeforeTheWireAndEncodesUtf8() {
+    void clientRejectsIllegalPathsBeforeTheWire() throws Exception {
         // A3-1: a path MUST be absolute. The edge client validates this in the WatchTarget constructor — a
         // non-absolute (or empty) KEY/PREFIX path is rejected LOCALLY, so no malformed target ever reaches the
         // wire (there is no MockEdgeServer here precisely because the reject is pre-transport).
@@ -98,10 +101,65 @@ class ClausePathGrammarTest {
                 "a non-absolute prefix is rejected client-side (A3-1)");
         assertThrows(IllegalArgumentException.class, () -> WatchTarget.key(""),
                 "an empty KEY path is rejected client-side (A3-2 non-empty segment / A3-1)");
-        // A3-3 (encoding): a well-formed absolute path constructs and is carried as UTF-8 bytes on the wire.
+        // A3-3 (seg-char): a byte outside [A-Za-z0-9._-] is rejected CLIENT-SIDE, before any wire byte —
+        // EDGE plane (absolute path in the WatchTarget ctor): a space, and a tab (a control byte).
+        assertThrows(IllegalArgumentException.class, () -> WatchTarget.key("/app/a b"),
+                "a space is not seg-char — rejected client-side (A3-3)");
+        assertThrows(IllegalArgumentException.class, () -> WatchTarget.key("/app/a\tb"),
+                "a tab (control byte) is not seg-char — rejected client-side (A3-3)");
+        // HTTP plane (flat key) vs the mock: an illegal key throws and NO request reaches the wire.
+        try (MockControlPlane s = new MockControlPlane(); ConfigdHttpClient c = client(s)) {
+            assertThrows(IllegalArgumentException.class, () -> c.blocking().get("a b", GetOptions.defaults()));
+            assertThrows(IllegalArgumentException.class,
+                    () -> c.blocking().put("a:b", "v".getBytes(StandardCharsets.UTF_8), WriteOptions.defaults()));
+            assertThrows(IllegalArgumentException.class, () -> c.blocking().delete("a\tb", WriteOptions.defaults()));
+            assertEquals(0, s.requestCount(),
+                    "an illegal key is rejected client-side — nothing reaches the wire (A3-3)");
+        }
+        // A3-3 (encoding): a seg-char-clean absolute path constructs and is UTF-8 on the wire; a clean flat key
+        // still reaches the server (proving the rejects above are the grammar, not a blanket refusal).
         WatchTarget ok = WatchTarget.key("/app/name");
         assertArrayEquals("/app/name".getBytes(StandardCharsets.UTF_8), ok.pathBytes(),
                 "the path is encoded as UTF-8 bytes on the wire (A3-3)");
+        try (MockControlPlane s = new MockControlPlane(); ConfigdHttpClient c = client(s)) {
+            s.enqueue(Response.value("v", 1));
+            c.blocking().get("app/name", GetOptions.defaults());
+            assertEquals("/v1/config/app/name", s.lastRequest().path(), "a clean key reaches the server (A3-3)");
+        }
+    }
+
+    @Test
+    @Tag("clause:A3-4")
+    void clientRejectsNonCanonicalPathsBeforeTheWire() throws Exception {
+        // A3-4: non-canonical spellings — `.`/`..` traversal and the empty segment `//` — are rejected
+        // CLIENT-SIDE, never silently rewritten, so a driver never puts an ALIASING key on the wire (two
+        // spellings a caller thinks are "the same" must not fragment into distinct server keys).
+        // EDGE plane (absolute):
+        assertThrows(IllegalArgumentException.class, () -> WatchTarget.key("/a/../b"),
+                "a '..' traversal segment is rejected client-side (A3-4)");
+        assertThrows(IllegalArgumentException.class, () -> WatchTarget.key("/a/./b"),
+                "a '.' segment is rejected client-side (A3-4)");
+        assertThrows(IllegalArgumentException.class, () -> WatchTarget.key("/a//b"),
+                "an empty '//' segment is rejected client-side (A3-4)");
+        // The one tolerated non-strict form: a PREFIX subtree target MAY carry a single trailing slash
+        // (`/a/` ≡ `/a/**`), and a canonical concrete path constructs — neither throws.
+        WatchTarget.prefix("/app/");
+        WatchTarget.key("/a/b");
+        // HTTP plane (flat key): each non-canonical key throws before the wire — nothing recorded.
+        try (MockControlPlane s = new MockControlPlane(); ConfigdHttpClient c = client(s)) {
+            assertThrows(IllegalArgumentException.class, () -> c.blocking().get("a/../b", GetOptions.defaults()));
+            assertThrows(IllegalArgumentException.class, () -> c.blocking().get("a//b", GetOptions.defaults()));
+            assertThrows(IllegalArgumentException.class, () -> c.blocking().delete("a/./b", WriteOptions.defaults()));
+            assertEquals(0, s.requestCount(),
+                    "a non-canonical key is rejected client-side — nothing reaches the wire (A3-4)");
+        }
+        // The canonical spelling still reaches the server.
+        try (MockControlPlane s = new MockControlPlane(); ConfigdHttpClient c = client(s)) {
+            s.enqueue(Response.value("v", 1));
+            c.blocking().get("a/b", GetOptions.defaults());
+            assertEquals("/v1/config/a/b", s.lastRequest().path(), "the canonical key reaches the server (A3-4)");
+            assertEquals(1, s.requestCount());
+        }
     }
 
     @Test

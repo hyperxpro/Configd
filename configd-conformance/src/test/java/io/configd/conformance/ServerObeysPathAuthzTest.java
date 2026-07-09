@@ -102,38 +102,21 @@ class ServerObeysPathAuthzTest {
     // ---------------------------------------------------------------- path grammar (server-obeys)
 
     @Test
-    @Tag("clause:A3-1..A3-3")
-    void serverRejectsASegCharViolationBeforeAnyDataFrame() throws Exception {
-        // A3-2/A3-3: a path byte outside the seg-char set [A-Za-z0-9._-] (other than the '/' delimiter) is
-        // illegal. The reference client's WatchTarget does NOT screen seg-char, so these targets reach the
-        // wire — the live server MUST reject them BAD_SUBSCRIBE (a 400-class subscription reject) with no data
-        // frame first. (A space and a control byte are the two representative out-of-set bytes.) One permissive
-        // server serves every sub-case (each watch is a dedicated connection).
-        FanOutServer srv = newServer(PERMISSIVE);
-        try {
-            assertRejectedOn(srv, WatchTarget.key("/app/a b"), ErrorCode.BAD_SUBSCRIBE, BadSubscribeException.class);
-            assertRejectedOn(srv, WatchTarget.key("/app/a\tb"), ErrorCode.BAD_SUBSCRIBE, BadSubscribeException.class);
-            assertRejectedOn(srv, WatchTarget.key("/app/na:me"), ErrorCode.BAD_SUBSCRIBE, BadSubscribeException.class);
-            // A well-formed seg-char-only absolute path is accepted (positive control).
-            assertCreatedOn(srv, WatchTarget.key("/app/na-me_1.x"));
-        } finally {
-            srv.close();
-        }
-    }
-
-    @Test
     @Tag("clause:A3-4")
-    void serverRejectsNonCanonicalPaths() throws Exception {
-        // A3-4: `//` (empty segment) and the reserved whole-segment forms `.` / `..` are non-canonical and
-        // MUST be rejected, never silently collapsed/normalized. The client's WatchTarget does not canonicalize,
-        // so the server is the enforcement point — BAD_SUBSCRIBE, zero data frames.
+    void serverIndependentlyEnforcesKeyCanonicalityDefenseInDepth() throws Exception {
+        // A3-4 server-side (defense-in-depth). The shared client grammar (PathGrammar) now rejects seg-char /
+        // `//` / `.`/`..` spellings at WatchTarget CONSTRUCTION, so a CONFORMING client can no longer put them on
+        // the wire (those are proven client-side in ClausePathGrammarTest). PathGrammar tolerates ONE trailing
+        // slash generically (the `/a/` subtree form), so `WatchTarget.key("/a/b/")` still CONSTRUCTS and reaches
+        // the wire — but a concrete KEY MUST be canonical (no trailing slash), and the live server enforces that
+        // INDEPENDENTLY, rejecting it BAD_SUBSCRIBE with zero data frames. This proves the server does not rely on
+        // client validation for KEY canonicality — the one non-canonical spelling that still traverses the
+        // conforming client. (Full seg-char / `//` / `.`/`..` server-side enforcement would need a hostile
+        // raw-frame client to bypass PathGrammar — see the report; the WatchTargetValidator control still exists.)
         FanOutServer srv = newServer(PERMISSIVE);
         try {
-            assertRejectedOn(srv, WatchTarget.key("/a//b"), ErrorCode.BAD_SUBSCRIBE, BadSubscribeException.class);
-            assertRejectedOn(srv, WatchTarget.key("/a/./b"), ErrorCode.BAD_SUBSCRIBE, BadSubscribeException.class);
-            assertRejectedOn(srv, WatchTarget.key("/a/../b"), ErrorCode.BAD_SUBSCRIBE, BadSubscribeException.class);
             assertRejectedOn(srv, WatchTarget.key("/a/b/"), ErrorCode.BAD_SUBSCRIBE, BadSubscribeException.class);
-            // A canonical concrete key is accepted (positive control).
+            // The canonical concrete key is accepted (positive control).
             assertCreatedOn(srv, WatchTarget.key("/a/b"));
         } finally {
             srv.close();

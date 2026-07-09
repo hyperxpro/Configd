@@ -16,7 +16,7 @@ suppliers in [`ConfigdServer.java`](../../../configd-server/src/main/java/io/con
 (the read GET lambda :946–959 and the write proposer hint :793–797 → `ConfigWriteService.mapOutcome` :332–342
 — the read supplier comment notes it "mirrors the scope-aware write redirect"), the server-side `shardFor` in
 `StaticShardMap`, the `--api-port` / `--bind-port` / `--peers` / `--peer-addresses` configuration in
-`ServerConfig.java`, and the absence of any topology endpoint in `AdminApiHandler.handle` (:130–145). Where
+`ServerConfig.java`, and the absence of any topology endpoint in `AdminApiHandler.handle` (:214–233). Where
 this section and a prior RFC claim disagree, **the code wins**. This section is **normative**; it **composes
 with**:
 
@@ -110,7 +110,7 @@ hint) go (`ConfigdServer` starts the HTTP API on `config.apiPort()`, :952).
 > builds its map from the Raft addresses resolves every hint to the wrong port and every follow fails.
 
 **R3-2 (no topology / shard-map / membership discovery endpoint).** v1 exposes **no** `/shards`, `/topology`,
-`/members`, `/peers`, or membership endpoint (none in `AdminApiHandler.handle`, :130–145; only `/health/*`,
+`/members`, `/peers`, or membership endpoint (none in `AdminApiHandler.handle`, :214–233; only `/health/*`,
 `/metrics`, `/v1/config/`, and — when its seam is wired — the leadership-transfer **control** route
 `/v1/admin/groups/…/transfer-leadership`, §04 D2-2a). A driver **CANNOT** discover the cluster map, the shard
 count `N`, or peer endpoints from the wire: the leadership-transfer route is a **control** operation that

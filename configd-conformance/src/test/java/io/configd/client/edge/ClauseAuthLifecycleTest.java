@@ -130,8 +130,9 @@ class ClauseAuthLifecycleTest {
         // single AUTH without a round-trip. Here the server sends NOTHING — yet the SUBSCRIBE still arrives,
         // proving the client does not wait on an ack it will never receive. The invariant asserted is that the
         // credential is FIRST (a frame before it, or a second AUTH, would be the PROTOCOL_VIOLATION — not the
-        // pipelining). RFC gap: AU4-5's literal "any frame other than AUTH before authentication is a
-        // PROTOCOL_VIOLATION" reads as forbidding this legitimate pipeline-behind (investigation DRIFT §7.3).
+        // pipelining), exactly as §03 AU4-5 specifies: the PROTOCOL_VIOLATION is an ordering fault (a frame
+        // BEFORE the AUTH, a second AUTH, or more than 8 frames pipelined behind it), never the pipeline-behind
+        // this exercises. (The investigation flagged a wording drift here; §03 was corrected in Gate 1.)
         try (MockEdgeServer server = MockEdgeServer.startPlaintext(conn -> {
             conn.readFrame();                                   // the AUTH
             conn.parkUntilClosed();                             // reads the pipelined SUBSCRIBE; sends no ack

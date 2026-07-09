@@ -1,5 +1,6 @@
 package io.configd.client.edge;
 
+import io.configd.client.PathGrammar;
 import io.configd.distribution.wire.EdgeFrame;
 
 import java.nio.charset.StandardCharsets;
@@ -128,5 +129,9 @@ public record WatchTarget(int scope, Kind kind, String path, EnumSet<Flag> flags
             throw new IllegalArgumentException(
                     "watch path exceeds " + MAX_PATH_BYTES + " bytes: " + bytes.length);
         }
+        // §01 A3: reject a non-canonical / non-seg-char path client-side. A PREFIX subtree target's trailing
+        // slash is tolerated (kept for startsWith matching); '.'/'..'/'//' and illegal bytes are rejected so the
+        // driver never puts an aliasing key on the wire.
+        PathGrammar.validateCanonical(path);
     }
 }

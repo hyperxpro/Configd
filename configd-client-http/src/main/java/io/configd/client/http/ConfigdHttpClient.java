@@ -1,6 +1,7 @@
 package io.configd.client.http;
 
 import io.configd.client.CredentialSource;
+import io.configd.client.PathGrammar;
 import io.configd.client.ProtocolViolationException;
 import io.configd.client.RetryPolicy;
 import io.configd.client.tls.ClientTls;
@@ -115,17 +116,20 @@ public final class ConfigdHttpClient implements AutoCloseable {
     // -----------------------------------------------------------------------
 
     private GetResult doGet(String key, GetOptions options) {
+        PathGrammar.validateCanonical(key); // §01 A3: reject a non-canonical/illegal key client-side, before the wire
         String path = "/v1/config/" + encodeKeyPath(key) + readQuery(options);
         HttpResponse<byte[]> resp = router.execute(new LeaderRouter.Request("GET", path, null, false, false));
         if (resp.statusCode() == 404) {
             return GetResult.absent(options.consistency());
         }
-        long version = resp.headers().firstValue("X-Config-Version").map(Long::parseLong).orElse(-1L);
+        long version = resp.headers().firstValue("X-Config-Version")
+                .map(ConfigdHttpClient::parseVersionHeader).orElse(-1L);
         boolean strongRead = resp.headers().firstValue("X-Strong-Read").map("true"::equals).orElse(false);
         return GetResult.present(resp.body(), version, strongRead, options.consistency());
     }
 
     private WriteOutcome doWrite(String method, String key, byte[] body, WriteOptions options) {
+        PathGrammar.validateCanonical(key); // §01 A3: reject a non-canonical/illegal key client-side, before the wire
         String path = "/v1/config/" + encodeKeyPath(key) + scopeQuery(options.scope());
         HttpResponse<byte[]> resp = router.execute(new LeaderRouter.Request(method, path, body, true, true));
         String text = new String(resp.body(), StandardCharsets.UTF_8);
@@ -135,7 +139,24 @@ public final class ConfigdHttpClient implements AutoCloseable {
             throw new ProtocolViolationException(
                     "write returned 200 but the body was not 'Committed: seq=<N>' (§04 D4-2)");
         }
-        return new WriteOutcome(Long.parseLong(m.group(1)));
+        try {
+            return new WriteOutcome(Long.parseLong(m.group(1)));
+        } catch (NumberFormatException overflow) {
+            // The regex guarantees digits, but an out-of-range seq overflows a long — a hostile/broken server.
+            // Surface it as a typed protocol violation, never a raw NumberFormatException (§04 D4-2 / §07).
+            throw new ProtocolViolationException(
+                    "write returned 200 but the committed seq '" + m.group(1) + "' is not a valid long (§04 D4-2)");
+        }
+    }
+
+    /** Parse the {@code X-Config-Version} header, failing closed to a typed protocol violation on garbage. */
+    private static long parseVersionHeader(String raw) {
+        try {
+            return Long.parseLong(raw);
+        } catch (NumberFormatException e) {
+            throw new ProtocolViolationException(
+                    "server returned a non-numeric X-Config-Version: '" + raw + "' (§04)");
+        }
     }
 
     /** The read query: scope (omitted when GLOBAL) + the EXACT {@code consistency=linearizable} literal (D3-4). */
