@@ -150,8 +150,40 @@ public final class HttpApiServer {
                          ReplayGuard replayGuard,
                          AdminApiHandler.LeadershipAdmin leadershipAdmin,
                          AuthenticatorChain chain) throws IOException {
+        // Historical signature, preserved byte-identically: a null bindAddress binds the wildcard.
+        this(null, port, sslContext, healthService, prometheusExporter, configStore, writeService,
+                readService, authInterceptor, aclService, strongReadPolicy, leaderHintSupplier,
+                auditLog, replayGuard, leadershipAdmin, chain);
+    }
+
+    /**
+     * As the chain constructor, plus an explicit {@code bindAddress} for the listener so the admin
+     * read/write API honours the SAME interface as the Raft + edge planes. {@code null} binds the wildcard,
+     * byte-identical to the historical {@code new InetSocketAddress(port)}. Mirrors
+     * {@code NettyHttpApiServer}'s bindAddress constructor so the drop-in adapter swap keeps an identical
+     * arg list.
+     */
+    public HttpApiServer(String bindAddress,
+                         int port,
+                         SSLContext sslContext,
+                         HealthService healthService,
+                         PrometheusExporter prometheusExporter,
+                         VersionedConfigStore configStore,
+                         ConfigWriteService writeService,
+                         ConfigReadService readService,
+                         AuthInterceptor authInterceptor,
+                         AclService aclService,
+                         StrongReadPolicy strongReadPolicy,
+                         BiFunction<ConfigScope, String, NodeId> leaderHintSupplier,
+                         AuditLog auditLog,
+                         ReplayGuard replayGuard,
+                         AdminApiHandler.LeadershipAdmin leadershipAdmin,
+                         AuthenticatorChain chain) throws IOException {
+        InetSocketAddress bindAddr = bindAddress == null
+                ? new InetSocketAddress(port)                 // wildcard, byte-identical to before
+                : new InetSocketAddress(bindAddress, port);
         if (sslContext != null) {
-            HttpsServer httpsServer = HttpsServer.create(new InetSocketAddress(port), 0);
+            HttpsServer httpsServer = HttpsServer.create(bindAddr, 0);
             // mTLS mode: request (optionally) a client certificate so the mtls authenticator can identify
             // the caller by its verified cert. wantClientAuth (not need) keeps bearer/basic clients working
             // in a mixed chain. Gated on the chain actually including mtls, so non-mtls TLS is byte-identical.
@@ -168,7 +200,7 @@ public final class HttpApiServer {
             });
             this.server = httpsServer;
         } else {
-            this.server = HttpServer.create(new InetSocketAddress(port), 0);
+            this.server = HttpServer.create(bindAddr, 0);
         }
 
         AdminApiHandler handler = new AdminApiHandler(healthService, prometheusExporter, configStore,
@@ -192,6 +224,11 @@ public final class HttpApiServer {
      */
     public int port() {
         return server.getAddress().getPort();
+    }
+
+    /** The actual bound host (test-visible): distinguishes a loopback bind from the wildcard 0.0.0.0. */
+    String boundHost() {
+        return server.getAddress().getAddress().getHostAddress();
     }
 
     /**

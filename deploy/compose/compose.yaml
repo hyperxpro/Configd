@@ -40,6 +40,16 @@ networks:
 x-cp-common: &cp-common
   image: configd-e2e-server:latest
   pull_policy: never
+  # B5 acknowledgment: these CP nodes bind --bind-address 0.0.0.0 with app-layer auth OFF (the mTLS here is
+  # wantClientAuth=optional, so a certless client is NOT authenticated). ConfigdServer's fail-closed guard
+  # (enforceBindNotSilentlyPublic) REFUSES to start an unauthenticated public bind unless the operator
+  # explicitly acknowledges it. This is a TRUSTED-NETWORK lab posture (a private compose network on host
+  # loopback). A PRODUCTION deployment MUST instead enable real auth (configd.auth.mode=basic|oidc|
+  # mtls-with-real-client-auth, or --auth-token) rather than rely on this override. Passed as a -D via
+  # JAVA_TOOL_OPTIONS because the override key is camelCase (the systematic CONFIGD_* env mapping lowercases
+  # and cannot express it).
+  environment:
+    JAVA_TOOL_OPTIONS: "-Dconfigd.security.allowInsecurePublicBind=true"
   volumes:
     - ./secrets:/secrets:ro
 

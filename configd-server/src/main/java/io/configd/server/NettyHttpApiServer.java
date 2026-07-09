@@ -110,6 +110,11 @@ public final class NettyHttpApiServer {
     private static final int MAX_CHUNK = 8192;
 
     private final int port;
+    // The interface to bind. null = the wildcard (all interfaces), byte-identical to the historical
+    // `new InetSocketAddress(port)`. ConfigdServer passes ServerConfig.bindAddress() so the admin
+    // read/write API honours the SAME bind as the Raft + edge planes - otherwise the B5 guard keys on a
+    // value the most security-sensitive plane ignores (the API would sit on all interfaces regardless).
+    private final String bindAddress;
     private final SSLContext sslContext; // nullable: plain HTTP when null
     private final AdminApiHandler handler;
     // true when the auth chain includes mtls: the admin TLS then requests (optionally) a client cert so the
@@ -192,6 +197,36 @@ public final class NettyHttpApiServer {
                               ReplayGuard replayGuard,
                               AdminApiHandler.LeadershipAdmin leadershipAdmin,
                               AuthenticatorChain chain) {
+        // Historical signature, preserved byte-identically: a null bindAddress binds the wildcard
+        // (all interfaces) exactly as before. ConfigdServer uses the bindAddress overload below.
+        this(null, port, sslContext, healthService, prometheusExporter, configStore, writeService,
+                readService, authInterceptor, aclService, strongReadPolicy, leaderHintSupplier,
+                auditLog, replayGuard, leadershipAdmin, chain);
+    }
+
+    /**
+     * As the chain constructor, plus an explicit {@code bindAddress} for the listener so the admin
+     * read/write API honours the SAME interface as the Raft + edge planes. {@code null} binds the wildcard,
+     * byte-identical to the historical {@code new InetSocketAddress(port)}. Mirrors {@code HttpApiServer}'s
+     * bindAddress constructor so the drop-in adapter swap keeps an identical arg list.
+     */
+    public NettyHttpApiServer(String bindAddress,
+                              int port,
+                              SSLContext sslContext,
+                              HealthService healthService,
+                              PrometheusExporter prometheusExporter,
+                              VersionedConfigStore configStore,
+                              ConfigWriteService writeService,
+                              ConfigReadService readService,
+                              AuthInterceptor authInterceptor,
+                              AclService aclService,
+                              StrongReadPolicy strongReadPolicy,
+                              BiFunction<ConfigScope, String, NodeId> leaderHintSupplier,
+                              AuditLog auditLog,
+                              ReplayGuard replayGuard,
+                              AdminApiHandler.LeadershipAdmin leadershipAdmin,
+                              AuthenticatorChain chain) {
+        this.bindAddress = bindAddress;
         this.port = port;
         this.sslContext = sslContext;
         this.handler = new AdminApiHandler(healthService, prometheusExporter, configStore, writeService,
@@ -268,7 +303,9 @@ public final class NettyHttpApiServer {
                 });
         boolean bound = false;
         try {
-            serverChannel = b.bind(new InetSocketAddress(port)).sync().channel();
+            serverChannel = b.bind(bindAddress == null
+                    ? new InetSocketAddress(port)                       // wildcard, byte-identical to before
+                    : new InetSocketAddress(bindAddress, port)).sync().channel();
             bound = true;
         } finally {
             if (!bound) {
@@ -284,6 +321,11 @@ public final class NettyHttpApiServer {
     /** The actual bound port (resolves an ephemeral port 0 after {@link #start()}). */
     public int port() {
         return ((InetSocketAddress) serverChannel.localAddress()).getPort();
+    }
+
+    /** The actual bound host (test-visible): distinguishes a loopback bind from the wildcard 0.0.0.0. */
+    String boundHost() {
+        return ((InetSocketAddress) serverChannel.localAddress()).getAddress().getHostAddress();
     }
 
     /** Bounded graceful shutdown. */

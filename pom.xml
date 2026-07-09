@@ -233,6 +233,13 @@
                                  Production runs the shaded jar WITHOUT this property and gets
                                  fail-closed; the dedicated negative test sets it false explicitly. -->
                             <configd.security.allowColocatedSigningKey>true</configd.security.allowColocatedSigningKey>
+                            <!-- B7 (Class-B): the shutdown() drain quiet-period is a production graceful-drain
+                                 nicety (it pauses N>1 shutdown so an LB observes the readiness 503 before the
+                                 listener closes). Tests are a dev context and shut servers down repeatedly, so
+                                 pause 0ms module-wide to keep the suite fast; production runs without this
+                                 property and gets the couple-second default. The dedicated drain test drives
+                                 the readiness flip directly, not through the pause. -->
+                            <configd.shutdown.drainQuietMs>0</configd.shutdown.drainQuietMs>
                         </systemPropertyVariables>
                     </configuration>
                 </plugin>

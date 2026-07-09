@@ -41,6 +41,13 @@ spec:
             - "-XX:+LogVMOutput"
             - "-XX:LogFile=/data/jvm.log"
             - "-Djava.security.egd=file:/dev/urandom"
+            # B5 acknowledgment: this pod binds --bind-address 0.0.0.0 with app-layer auth OFF, and
+            # ConfigdServer's fail-closed guard (enforceBindNotSilentlyPublic) REFUSES to start an
+            # unauthenticated public bind unless the operator explicitly acknowledges it. This example
+            # assumes a TRUSTED private pod network. A PRODUCTION deployment MUST instead enable real auth
+            # (configd.auth.mode=basic|oidc|mtls-with-real-client-auth, or --auth-token) and drop this flag,
+            # rather than serve an unauthenticated store to the pod network.
+            - "-Dconfigd.security.allowInsecurePublicBind=true"
             - "-jar"
             - "configd-server.jar"
             - "--node-id"
