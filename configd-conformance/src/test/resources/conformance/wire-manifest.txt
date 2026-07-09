@@ -76,3 +76,16 @@ poison.inner.subscribe-prefix-count | REJECT:FRAME_CORRUPT
 poison.inner.subscribe-topology-epoch-zero | REJECT:FRAME_CORRUPT
 poison.inner.notify-blob-length | REJECT:FRAME_CORRUPT
 poison.inner.subscribe-ok-mode-ordinal | REJECT:FRAME_CORRUPT
+
+# ---- clause-directed field-range + error-taxonomy cases (§06 F5 u64 ranges, F6-9 ERROR_CLOSE message) ----
+# F6-9: the codec preserves an untrusted control-byte message verbatim (sanitize is the driver's job).
+error-close.control-bytes-in-message | ACCEPT
+# F6-9: an ERROR_CLOSE code byte outside the 1..13 taxonomy is FRAME_CORRUPT.
+poison.inner.error-close-unknown-code | REJECT:FRAME_CORRUPT
+# F5-1: high-bit-set client-emitted CURSOR_ACK.seq / SUBSCRIBE.resumeCursor are FRAME_CORRUPT.
+poison.inner.cursor-ack-seq-high-bit | REJECT:FRAME_CORRUPT
+poison.inner.subscribe-resume-cursor-high-bit | REJECT:FRAME_CORRUPT
+# F5-2: a non-sentinel high-bit SUBSCRIBE.failoverResumeCursor (only 0xFFFF..FF is legal) is FRAME_CORRUPT.
+poison.inner.subscribe-failover-cursor-nonsentinel | REJECT:FRAME_CORRUPT
+# F5-3 / F8-2 / W3-5: cursor-vector topologyEpoch 0 is reserved-illegal ⇒ FRAME_CORRUPT via decodeCursor.
+poison.inner.watch-cursor-topology-epoch-zero | REJECT:FRAME_CORRUPT

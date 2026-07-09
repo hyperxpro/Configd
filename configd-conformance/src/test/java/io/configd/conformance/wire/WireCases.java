@@ -4,6 +4,7 @@ import io.configd.distribution.wire.EdgeFrameCodec.CodecException;
 import io.configd.distribution.wire.EdgeFrame;
 import io.configd.distribution.wire.EdgeFrameCodec;
 import io.configd.distribution.wire.EdgeFrameGoldenBytes;
+import io.configd.distribution.wire.ErrorCode;
 
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -47,6 +48,7 @@ final class WireCases {
         List<Case> cases = new ArrayList<>();
         cases.addAll(goldenRoundTrips());
         cases.addAll(poison());
+        cases.addAll(boundsAndSanitizeCases());
         return cases;
     }
 
@@ -144,6 +146,71 @@ final class WireCases {
         cases.add(decodeCase("poison.inner.subscribe-ok-mode-ordinal", subU8(subOk, 8, (byte) 0x7F)));
 
         return cases;
+    }
+
+    // -------- Clause-directed additions: F5 numeric-range + F6-9 error-message handling --------
+
+    /**
+     * The §06 F5 (u64 field ranges) and F6-9 (ERROR_CLOSE message) reject/passthrough paths, on top of the
+     * base poison corpus. Each field-range case mutates ONE inner u64 of a valid golden to a high-bit / zero
+     * value (recomputing the outer CRC) and asserts the SPECIFIC reject the record constructor / cursor codec
+     * yields; the ERROR_CLOSE passthrough case proves the codec preserves an untrusted control-byte message
+     * byte-for-byte (sanitization is the driver's job, not the codec's — F6-9).
+     */
+    private static List<Case> boundsAndSanitizeCases() {
+        Map<String, byte[]> v1 = EdgeFrameGoldenBytes.forVersion(1);
+        Map<String, byte[]> v2 = EdgeFrameGoldenBytes.forVersion(2);
+        byte[] cursorAck = pick(v1, "cursor_ack", firstValue(v1));
+        byte[] subFull = pick(v1, "subscribe_full_store", firstValue(v1));
+        byte[] errClose = pick(v1, "error_frame_corrupt", firstValue(v1));
+        byte[] watchCreate = pick(v2, "watch_create", firstValue(v2));
+
+        List<Case> cases = new ArrayList<>();
+
+        // F6-9 (passthrough): the codec preserves an ERROR_CLOSE message carrying control bytes (newline, ANSI
+        // ESC, NUL) byte-for-byte through decode→re-encode — it does NOT sanitize or reject it. A round-trip of
+        // a control-byte message is the wire-observable fact that makes sanitize-before-display the DRIVER's job.
+        String controlBytes = "boom\n" + (char) 0x1B + "[31mY" + (char) 0x00 + "Z"; // newline + ANSI ESC + NUL
+        byte[] hostileMsg = EdgeFrameCodec.encode(
+                new EdgeFrame.ErrorClose(ErrorCode.PROTOCOL_VIOLATION, controlBytes));
+        cases.add(new Case("error-close.control-bytes-in-message", () -> roundTrip(hostileMsg, (byte) 1)));
+
+        // F6-9 (reject): an ERROR_CLOSE code byte outside the 1..13 taxonomy decodes as FRAME_CORRUPT
+        // (ErrorCode.fromCode rejects it; the code is payload offset 0).
+        cases.add(decodeCase("poison.inner.error-close-unknown-code", subU8(errClose, 0, (byte) 0xFF)));
+
+        // F5-1 (client-emitted seq): a CURSOR_ACK.seq with the high bit set (≥ 2^63) decodes as FRAME_CORRUPT
+        // (the CursorAck ctor validates non-negative; seq is payload offset 0).
+        cases.add(decodeCase("poison.inner.cursor-ack-seq-high-bit", subU8(cursorAck, 0, (byte) 0x80)));
+
+        // F5-1 (client-emitted resumeCursor): a SUBSCRIBE.resumeCursor with the high bit set decodes as
+        // FRAME_CORRUPT (payload offset 13 = fullStore u8 + prefixCount u32(0) + topologyEpoch u64).
+        cases.add(decodeCase("poison.inner.subscribe-resume-cursor-high-bit", subU8(subFull, 13, (byte) 0x80)));
+
+        // F5-2 (failover sentinel): SUBSCRIBE.failoverResumeCursor's ONLY legal high-bit value is
+        // 0xFFFF…FF ("none"); any other high-bit pattern decodes as FRAME_CORRUPT. Overwrite the golden's
+        // sentinel with 0x8000…0 (payload offset 21 = after resumeCursor u64).
+        cases.add(decodeCase("poison.inner.subscribe-failover-cursor-nonsentinel",
+                subU64(subFull, 21, 0x8000000000000000L)));
+
+        // F5-3 / F8-2 / W3-5 (cursor epoch): the cursor vector's topologyEpoch 0 is reserved-illegal ⇒
+        // FRAME_CORRUPT via decodeCursor — a DISTINCT code path from the SUBSCRIBE-inline epoch check.
+        // Zero the WATCH_CREATE cursor epoch (payload offset 21 = watchId u64 + scope u8 + targetKind u8 +
+        // path[len u32 = 7 + 7 bytes]).
+        cases.add(decodeCase("poison.inner.watch-cursor-topology-epoch-zero", subU64Zero(watchCreate, 21)));
+
+        return cases;
+    }
+
+    /** Overwrite a big-endian u64 at {@code payloadOffset} with {@code value} + recompute CRC. */
+    private static byte[] subU64(byte[] frame, int payloadOffset, long value) {
+        byte[] c = frame.clone();
+        int i = EdgeFrameCodec.HEADER_SIZE + payloadOffset;
+        for (int k = 0; k < 8; k++) {
+            c[i + k] = (byte) (value >>> (56 - 8 * k));
+        }
+        recomputeCrc(c);
+        return c;
     }
 
     /** Overwrite a u8 at {@code payloadOffset} (i.e. frame offset HEADER_SIZE+payloadOffset) + recompute CRC. */

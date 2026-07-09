@@ -26,7 +26,11 @@ import static org.junit.jupiter.api.Assertions.fail;
 // Runner I genuinely exercises these codec clauses: the golden ACCEPT corpus proves the frame layouts, the
 // version pin, the vector cursor, the auth frames, and the error taxonomy encode/decode byte-for-byte; the
 // poison REJECT corpus proves the CRC / cap / trailing-bytes / unknown-type / type-version / version-pin
-// reject paths with their specific ErrorCode.
+// reject paths with their specific ErrorCode. The clause-directed additions (WireCases.boundsAndSanitizeCases)
+// extend that to the §06 F5 u64 field-range rejects (high-bit CURSOR_ACK.seq / SUBSCRIBE.resumeCursor ⇒
+// FRAME_CORRUPT; the failover-cursor sentinel; the cursor-vector topologyEpoch-0 reject via decodeCursor) and
+// the F6-9 ERROR_CLOSE message contract (unknown code ⇒ FRAME_CORRUPT; an untrusted control-byte message is
+// preserved byte-for-byte through decode→re-encode — the codec never sanitizes it).
 @Tag("clause:OV5-5")
 @Tag("clause:OV7-4_3")
 @Tag("clause:A9-1")
@@ -35,7 +39,12 @@ import static org.junit.jupiter.api.Assertions.fail;
 @Tag("clause:F2-3")
 @Tag("clause:F3-1")
 @Tag("clause:F3-2")
+@Tag("clause:F4-1")
+@Tag("clause:F4-2")
 @Tag("clause:F4-3")
+@Tag("clause:F5-1")
+@Tag("clause:F5-2")
+@Tag("clause:F5-3")
 @Tag("clause:F6-1")
 @Tag("clause:F6-1a")
 @Tag("clause:F6-2_F6-2a")
@@ -43,12 +52,18 @@ import static org.junit.jupiter.api.Assertions.fail;
 @Tag("clause:F6-4..F6-6")
 @Tag("clause:F6-7")
 @Tag("clause:F6-8_F6-8a")
+@Tag("clause:F6-9")
 @Tag("clause:F6A-1..F6A-2")
 @Tag("clause:F6A-3")
 @Tag("clause:F6A-4")
+@Tag("clause:AU3-3")
 @Tag("clause:F7-1")
 @Tag("clause:F7-2")
 @Tag("clause:F8-1_F8-2")
+@Tag("clause:W1-1")
+@Tag("clause:W3-1")
+@Tag("clause:W3-3")
+@Tag("clause:W3-5")
 @Tag("clause:F11-1")
 @Tag("clause:F11-2")
 @Tag("clause:F11-3")

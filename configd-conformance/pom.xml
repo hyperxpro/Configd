@@ -26,6 +26,14 @@
             <artifactId>configd-client-edge</artifactId>
             <version>${project.version}</version>
         </dependency>
+        <!-- Test-only: reuse MockEdgeServer + StreamFixtures for the edge (0x02 watch) client-conforms direction. -->
+        <dependency>
+            <groupId>io.configd</groupId>
+            <artifactId>configd-client-edge</artifactId>
+            <version>${project.version}</version>
+            <type>test-jar</type>
+            <scope>test</scope>
+        </dependency>
         <dependency>
             <groupId>io.configd</groupId>
             <artifactId>configd-client-http</artifactId>
