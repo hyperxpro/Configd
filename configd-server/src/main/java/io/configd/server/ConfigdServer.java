@@ -755,6 +755,9 @@ public final class ConfigdServer {
         // covers every group. Registered AFTER every group's owner bind and BEFORE start() publishes the
         // accept loop, so an inbound frame marshals behind the binds. At N=1 every frame is group 0.
         if (tcpTransport != null) {
+            // Export the transport's outbound-drop / inbound-refuse saturation counters (counted inside
+            // the transport, previously never surfaced at /metrics).
+            registerTransportSaturationGauges(metricsRegistry, tcpTransport);
             primaryGroup.adapter().registerInboundHandler(raftDemuxInboundHandler(driver, configdMetrics));
             try {
                 tcpTransport.start();
@@ -2436,6 +2439,18 @@ public final class ConfigdServer {
             registry.gauge("raft.shard.current_term." + gid, shardGauge(driver, gid, RaftMetrics::currentTerm));
             registry.gauge("raft.shard.leader." + gid,
                     shardGauge(driver, gid, v -> v.role() == RaftRole.LEADER ? 1L : 0L));
+            // The wedge/saturation signals for this shard: max replication lag across peers (the
+            // "follower stuck / snapshot could not install" proxy) plus the three otherwise-silent
+            // codec-reject / reassembly-refuse drop tallies. Monotonic-count gauges read off the same
+            // monitorView snapshot; register(increase()) over them behaves like a counter.
+            registry.gauge("raft.shard.replication_lag_max." + gid,
+                    shardGauge(driver, gid, RaftMetrics::replicationLagMax));
+            registry.gauge("raft.shard.append_send_rejected." + gid,
+                    shardGauge(driver, gid, RaftMetrics::appendSendRejected));
+            registry.gauge("raft.shard.snapshot_chunk_send_rejected." + gid,
+                    shardGauge(driver, gid, RaftMetrics::snapshotChunkSendRejected));
+            registry.gauge("raft.shard.snapshot_reassembly_refused." + gid,
+                    shardGauge(driver, gid, RaftMetrics::snapshotReassemblyRefused));
         }
         // Node-level: how many shards THIS node currently leads (the leader-count-per-node view).
         registry.gauge("raft.node.leader_count", () -> {
@@ -2448,6 +2463,20 @@ public final class ConfigdServer {
             }
             return leaders;
         });
+    }
+
+    /**
+     * Registers the node-level consensus-transport saturation gauges - outbound {@code frames_dropped}
+     * (bounded-queue overflow / no-connection drop) and inbound {@code connections_refused} (admission
+     * cap) - as pull gauges over the endpoint's monotonic accessors. These are counted inside the
+     * transport (JDK or Netty) but were never exported. Registered only when a consensus transport is
+     * configured; the accessors are cheap volatile reads, safe on the scrape thread. Package-private
+     * static so {@code PerShardMetricsTest} can drive it directly with a stub endpoint.
+     */
+    static void registerTransportSaturationGauges(MetricsRegistry registry, RaftTransportEndpoint endpoint) {
+        registry.gauge(ConfigdMetrics.NAME_RAFT_TRANSPORT_FRAMES_DROPPED, endpoint::framesDropped);
+        registry.gauge(ConfigdMetrics.NAME_RAFT_TRANSPORT_INBOUND_CONNECTIONS_REFUSED,
+                endpoint::inboundConnectionsRefused);
     }
 
     /** A null-safe per-shard gauge: reads {@code fn} off the group's {@link RaftNode#monitorView()}, or

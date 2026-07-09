@@ -21,6 +21,7 @@ import io.configd.replication.OwnerExecutorPool;
 import io.configd.replication.StaticShardMap;
 import io.configd.store.CommandCodec;
 import io.configd.store.ConfigStateMachine;
+import io.configd.transport.RaftTransport;
 
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
@@ -69,6 +70,13 @@ class PerShardMetricsTest {
             assertNotNull(snap.metrics().get("raft.shard.last_applied." + gid));
             assertNotNull(snap.metrics().get("raft.shard.apply_lag." + gid));
             assertNotNull(snap.metrics().get("raft.shard.current_term." + gid));
+            // The Gate 2 wedge/saturation gauges render for every shard from the first scrape (each is 0
+            // on a healthy single-node leader - no replication lag, no codec rejects, no reassembly refusal).
+            assertNotNull(snap.metrics().get("raft.shard.replication_lag_max." + gid),
+                    "replication_lag_max series missing for shard " + gid);
+            assertNotNull(snap.metrics().get("raft.shard.append_send_rejected." + gid));
+            assertNotNull(snap.metrics().get("raft.shard.snapshot_chunk_send_rejected." + gid));
+            assertNotNull(snap.metrics().get("raft.shard.snapshot_reassembly_refused." + gid));
             // Each group is its own single-node LEADER => leader gauge == 1, term > 0.
             assertEquals(1L, snap.metrics().get("raft.shard.leader." + gid).value(),
                     "shard " + gid + " must report itself LEADER");
@@ -114,7 +122,47 @@ class PerShardMetricsTest {
                 "N=1 must register NO shard-1 series (purely the single group)");
     }
 
+    @Test
+    void transportSaturationGaugesRenderAtZeroAndMoveWithTheEndpointCounters() {
+        // A4/A5: the outbound-drop and inbound-refuse counters live on the transport endpoint and were
+        // never exported. registerTransportSaturationGauges pull-gauges them; they must render at 0 on the
+        // first scrape and reflect the endpoint's counters as they advance.
+        MetricsRegistry registry = new MetricsRegistry();
+        MutableEndpoint endpoint = new MutableEndpoint();
+        ConfigdServer.registerTransportSaturationGauges(registry, endpoint);
+
+        assertEquals(0L, registry.snapshot().metrics().get("configd.raft.transport.frames_dropped").value(),
+                "frames_dropped must render at 0 on the first scrape");
+        assertEquals(0L, registry.snapshot().metrics()
+                        .get("configd.raft.transport.inbound_connections_refused").value(),
+                "inbound_connections_refused must render at 0 on the first scrape");
+
+        endpoint.framesDropped = 7;
+        endpoint.inboundConnectionsRefused = 3;
+        assertEquals(7L, registry.snapshot().metrics().get("configd.raft.transport.frames_dropped").value(),
+                "the frames_dropped gauge must track the endpoint's drop counter");
+        assertEquals(3L, registry.snapshot().metrics()
+                        .get("configd.raft.transport.inbound_connections_refused").value(),
+                "the inbound_connections_refused gauge must track the endpoint's refusal counter");
+    }
+
     // ---- helpers ----------------------------------------------------------------------------
+
+    /** A {@link io.configd.transport.RaftTransportEndpoint} whose saturation counters are settable, so the
+     *  pull gauges can be driven off a known value without standing up a real socket transport. */
+    private static final class MutableEndpoint implements io.configd.transport.RaftTransportEndpoint {
+        volatile long framesDropped;
+        volatile long inboundConnectionsRefused;
+
+        @Override public void send(NodeId target, Object message) { }
+        @Override public void registerHandler(RaftTransport.MessageHandler handler) { }
+        @Override public void start() { }
+        @Override public int localPort() { return 0; }
+        @Override public io.configd.transport.TlsManager tlsManager() { return null; }
+        @Override public long framesDropped() { return framesDropped; }
+        @Override public long inboundConnectionsRefused() { return inboundConnectionsRefused; }
+        @Override public void close() { }
+    }
 
     private record Fixture(MultiRaftDriver driver, StaticShardMap shardMap,
                            List<ConfigdServer.RaftGroupRuntime> runtimes) {}

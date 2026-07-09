@@ -94,6 +94,15 @@ public final class PrometheusExporter {
     }
 
     /**
+     * The backing registry this exporter reads. Exposed so a component that already receives the exporter
+     * (e.g. the HTTP server, for its own reject counters) can register/increment on the same shared
+     * registry without threading a second handle through its constructor.
+     */
+    public MetricsRegistry registry() {
+        return registry;
+    }
+
+    /**
      * Exports all metrics in Prometheus text format.
      *
      * @return the metrics text (UTF-8, newline-terminated)

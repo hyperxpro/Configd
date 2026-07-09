@@ -29,6 +29,11 @@ final class ServerRaftTransportMetrics implements RaftTransportMetrics {
     }
 
     @Override
+    public void onInboundConnectionDropped() {
+        metrics.raftConnectionDecodeDropped().increment();
+    }
+
+    @Override
     public void onInboundFrameDropped() {
         metrics.raftDecodeDropped().increment();
     }

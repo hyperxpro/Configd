@@ -35,6 +35,18 @@ public interface RaftTransportMetrics {
      */
     default void onInboundFrameDropped() {}
 
+    /**
+     * Records a peer connection dropped at the frame-envelope decode boundary: a frame whose declared
+     * length is out of range, whose wire version is unrecognised ({@link FrameCodec.UnsupportedWireVersionException}),
+     * or whose CRC / type / reserved-field check failed ({@link IllegalArgumentException} from
+     * {@link FrameCodec#decode}). Distinct from {@link #onInboundFrameDropped()}: that keeps the
+     * connection (a decodable-but-undispatchable message at a higher layer), whereas this desync closes
+     * the peer connection outright. Backs the {@code configd_raft_transport_connection_decode_dropped}
+     * series so the version-skew / hostile-peer drop rate is observable while the log line is rate-limited.
+     * Default no-op so existing sinks need not change.
+     */
+    default void onInboundConnectionDropped() {}
+
     /** No-op sink - used by tests and bootstraps with no registry. */
     RaftTransportMetrics NOOP = new RaftTransportMetrics() {};
 }

@@ -28,6 +28,7 @@ import io.netty.channel.EventLoopGroup;
 import io.netty.channel.IoHandlerFactory;
 import io.netty.channel.MultiThreadIoEventLoopGroup;
 import io.netty.channel.SimpleChannelInboundHandler;
+import io.netty.handler.codec.CorruptedFrameException;
 import io.netty.handler.ssl.SslHandler;
 import io.netty.handler.ssl.SslHandshakeCompletionEvent;
 import io.netty.handler.timeout.IdleStateEvent;
@@ -560,7 +561,12 @@ public final class NettyRaftTransport implements RaftTransportEndpoint {
 
         @Override
         public void exceptionCaught(ChannelHandlerContext ctx, Throwable cause) {
-            // Decode desync (CorruptedFrameException) or transport error - drop the connection.
+            // Decode desync (CorruptedFrameException) or transport error - drop the connection. Count only
+            // the decode-desync so the series stays "connection dropped because a frame did not decode",
+            // not a catch-all for transport errors (which are their own class of event).
+            if (cause instanceof CorruptedFrameException) {
+                transportMetrics.onInboundConnectionDropped();
+            }
             ctx.close();
         }
     }
@@ -822,6 +828,11 @@ public final class NettyRaftTransport implements RaftTransportEndpoint {
 
             @Override
             public void exceptionCaught(ChannelHandlerContext ctx, Throwable cause) {
+                // The frame decoder is shared with the inbound pipeline (a peer may reply on the
+                // connection we dialed), so a corrupt reply desyncs here too - count it the same way.
+                if (cause instanceof CorruptedFrameException) {
+                    transportMetrics.onInboundConnectionDropped();
+                }
                 ctx.close(); // decode desync / transport error - drop; reconnect on the next send
             }
         }

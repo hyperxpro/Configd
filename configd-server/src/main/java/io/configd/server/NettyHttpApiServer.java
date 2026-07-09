@@ -11,6 +11,8 @@ import io.configd.api.ReplayGuard;
 import io.configd.common.ConfigScope;
 import io.configd.common.NodeId;
 import io.configd.netty.NettyTransport;
+import io.configd.observability.ConfigdMetrics;
+import io.configd.observability.MetricsRegistry;
 import io.configd.observability.PrometheusExporter;
 import io.configd.store.VersionedConfigStore;
 import io.netty.bootstrap.ServerBootstrap;
@@ -34,6 +36,7 @@ import io.netty.handler.codec.http.FullHttpResponse;
 import io.netty.handler.codec.http.HttpHeaderNames;
 import io.netty.handler.codec.http.HttpHeaderValues;
 import io.netty.handler.codec.http.HttpHeaders;
+import io.netty.handler.codec.http.HttpMessage;
 import io.netty.handler.codec.http.HttpObjectAggregator;
 import io.netty.handler.codec.http.HttpResponseStatus;
 import io.netty.handler.codec.http.HttpServerCodec;
@@ -118,6 +121,10 @@ public final class NettyHttpApiServer {
     private final long requestTimeoutNanos;
     private final long idleTimeoutMillis;
     private final int maxRequestBytes;
+    // Ingress-reject counters (400 malformed / 413 oversize) on the shared metrics registry the exporter
+    // reads. Previously these rejects were silent (only the 429 write-overload shed was counted).
+    private final MetricsRegistry.Counter rejectedBadRequest;
+    private final MetricsRegistry.Counter rejectedPayloadTooLarge;
 
     private EventLoopGroup boss;
     private EventLoopGroup worker;
@@ -197,6 +204,14 @@ public final class NettyHttpApiServer {
         this.requestTimeoutNanos = TimeUnit.MILLISECONDS.toNanos(requestTimeoutMillis);
         this.idleTimeoutMillis = Long.getLong("configd.server.netty.idleTimeoutMillis", 60_000L);
         this.maxRequestBytes = Integer.getInteger("configd.server.netty.maxRequestBytes", 1 << 20);
+        // Bind the reject counters to the exporter's shared registry (ConfigdMetrics eager-creates them,
+        // so counter() returns the same instances; null exporter in a degenerate test falls back to a
+        // throwaway registry so the increments never NPE).
+        MetricsRegistry registry = prometheusExporter != null ? prometheusExporter.registry() : new MetricsRegistry();
+        this.rejectedBadRequest = registry.counter(
+                ConfigdMetrics.NAME_HTTP_REQUEST_REJECTED_BASE + "." + ConfigdMetrics.HTTP_REJECT_REASON_BAD_REQUEST);
+        this.rejectedPayloadTooLarge = registry.counter(
+                ConfigdMetrics.NAME_HTTP_REQUEST_REJECTED_BASE + "." + ConfigdMetrics.HTTP_REJECT_REASON_PAYLOAD_TOO_LARGE);
         this.transport = NettyTransport.select();
     }
 
@@ -234,7 +249,16 @@ public final class NettyHttpApiServer {
                         ch.pipeline().addLast(
                                 new HttpServerCodec(MAX_INITIAL_LINE, MAX_HEADER_SIZE, MAX_CHUNK));
                         // Assembles the full request (incl. the PUT body); auto-responds 413 on oversize.
-                        ch.pipeline().addLast(new HttpObjectAggregator(maxRequestBytes));
+                        // The subclass counts the 413 before delegating to the identical default handling,
+                        // so the reject is observable without changing the response behaviour.
+                        ch.pipeline().addLast(new HttpObjectAggregator(maxRequestBytes) {
+                            @Override
+                            protected void handleOversizedMessage(ChannelHandlerContext ctx, HttpMessage oversized)
+                                    throws Exception {
+                                rejectedPayloadTooLarge.increment();
+                                super.handleOversizedMessage(ctx, oversized);
+                            }
+                        });
                         if (idleTimeoutMillis > 0) {
                             ch.pipeline().addLast(new IdleStateHandler(
                                     0, 0, idleTimeoutMillis, TimeUnit.MILLISECONDS));
@@ -377,6 +401,7 @@ public final class NettyHttpApiServer {
         protected void channelRead0(ChannelHandlerContext ctx, FullHttpRequest req) {
             if (req.decoderResult().isFailure()) {
                 // Oversize initial line / header block, or malformed framing.
+                rejectedBadRequest.increment();
                 failAndClose(ctx, HttpResponseStatus.BAD_REQUEST);
                 return;
             }
@@ -384,6 +409,7 @@ public final class NettyHttpApiServer {
             try {
                 uri = new URI(req.uri());
             } catch (URISyntaxException e) {
+                rejectedBadRequest.increment();
                 failAndClose(ctx, HttpResponseStatus.BAD_REQUEST);
                 return;
             }

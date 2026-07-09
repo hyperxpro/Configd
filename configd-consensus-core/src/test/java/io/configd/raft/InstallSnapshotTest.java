@@ -31,12 +31,23 @@ class InstallSnapshotTest {
 
     static final class TestTransport implements RaftTransport {
         private final List<SentMessage> messages = new ArrayList<>();
+        private java.util.function.BiConsumer<NodeId, RaftMessage> sendInterceptor;
 
         record SentMessage(NodeId target, RaftMessage message) {}
 
         @Override
         public void send(NodeId target, RaftMessage message) {
             messages.add(new SentMessage(target, message));
+            if (sendInterceptor != null) {
+                sendInterceptor.accept(target, message);
+            }
+        }
+
+        /** Installs a hook consulted after each send captures its message; it may throw to model the
+         *  production wire codec rejecting a frame - the IllegalArgumentException the outbound-drop
+         *  tallies count. Null (the default) leaves send a plain capture. */
+        void interceptSend(java.util.function.BiConsumer<NodeId, RaftMessage> interceptor) {
+            this.sendInterceptor = interceptor;
         }
 
         List<SentMessage> messages() { return messages; }

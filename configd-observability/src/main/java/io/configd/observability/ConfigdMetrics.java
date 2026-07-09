@@ -4,6 +4,7 @@ import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Objects;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.LongSupplier;
 
 /**
@@ -120,6 +121,53 @@ public final class ConfigdMetrics {
      */
     public static final String NAME_ACL_POLICY_LOAD_FAILED = "configd.acl.policy.load.failed";
     public static final String NAME_ACL_POLICY_RELOAD = "configd.acl.policy.reload";
+    /**
+     * Last-produced snapshot size, in bytes (gauge). Set on every {@code ConfigStateMachine.snapshot()}
+     * via the state-machine metrics bridge. Lets an operator watch the committed state approach the 4 MiB
+     * per-chunk InstallSnapshot wire cap as capacity discipline, rather than discovering it only when a
+     * transfer starts chunking. Eager-registered against {@link #lastSnapshotBytes} so it renders
+     * {@code configd_snapshot_bytes 0} from the first scrape.
+     */
+    public static final String NAME_SNAPSHOT_BYTES = "configd.snapshot.bytes";
+    /**
+     * Consensus-transport connection-decode-drop counter. Incremented when a peer connection is dropped
+     * at the frame-envelope decode boundary - an out-of-range frame length, an unrecognised wire version,
+     * or a CRC / type / reserved-field failure - in either the JDK or Netty transport (bridged through
+     * {@code ServerRaftTransportMetrics}). Distinct from {@link #NAME_RAFT_DECODE_DROPPED} (WH-10), which
+     * keeps the connection: this desync CLOSES it. A sustained non-zero value is a version-skew or
+     * hostile-peer signal worth alerting on; eager-created so it emits {@code _total 0} from the first scrape.
+     */
+    public static final String NAME_RAFT_TRANSPORT_CONNECTION_DECODE_DROPPED =
+            "configd.raft.transport.connection.decode.dropped";
+    /**
+     * Consensus-transport outbound-frame drop gauge (saturation). The transport drops a frame when no
+     * connection is established or the bounded per-peer queue is full (Raft tolerates loss - re-sent on the
+     * next heartbeat). The count lives on the transport endpoint; a pull gauge over
+     * {@code RaftTransportEndpoint.framesDropped()} is registered in {@code ConfigdServer} (only when a
+     * consensus transport is configured). The name is catalogued here for a single canonical home.
+     */
+    public static final String NAME_RAFT_TRANSPORT_FRAMES_DROPPED = "configd.raft.transport.frames_dropped";
+    /**
+     * Consensus-transport inbound connection-refusal gauge (slowloris / FD-exhaustion guard). The transport
+     * refuses an inbound connection once the accepted live-set reaches the admission cap. A pull gauge over
+     * {@code RaftTransportEndpoint.inboundConnectionsRefused()} is registered in {@code ConfigdServer}.
+     */
+    public static final String NAME_RAFT_TRANSPORT_INBOUND_CONNECTIONS_REFUSED =
+            "configd.raft.transport.inbound_connections_refused";
+    /**
+     * Base name for the control-plane HTTP ingress-reject counter family. The concrete series carry a
+     * {@code reason} suffix pseudo-encoded into the name ({@code base.reason}) because {@link MetricsRegistry}
+     * has no native labels. The reasons are a fixed internal set ({@code bad_request} / {@code payload_too_large}),
+     * not adversary-chosen, so no cardinality guard is needed. Both are eager-created here (no field - the
+     * {@code NettyHttpApiServer} increments them on the shared registry) so they emit {@code _total 0} from
+     * the first scrape. This is the currently-silent 400 / 413 ingress path (the counted 429 write-overload
+     * shed is {@link #NAME_WRITE_REJECTED_OVERLOADED}).
+     */
+    public static final String NAME_HTTP_REQUEST_REJECTED_BASE = "configd.http.request.rejected";
+    /** Reason suffix: a malformed request line / header block or an invalid request target (HTTP 400). */
+    public static final String HTTP_REJECT_REASON_BAD_REQUEST = "bad_request";
+    /** Reason suffix: a request body over the ingress size ceiling (HTTP 413). */
+    public static final String HTTP_REJECT_REASON_PAYLOAD_TOO_LARGE = "payload_too_large";
 
     private final MetricsRegistry registry;
 
@@ -137,6 +185,10 @@ public final class ConfigdMetrics {
     private final MetricsRegistry.Counter raftDecodeDropped;
     private final MetricsRegistry.Counter writeRejectedOverloaded;
     private final MetricsRegistry.Counter raftElections;
+    private final MetricsRegistry.Counter raftConnectionDecodeDropped;
+
+    /** Backs the {@link #NAME_SNAPSHOT_BYTES} gauge; last-writer-wins across shards (a node-level view). */
+    private final AtomicLong lastSnapshotBytes = new AtomicLong();
 
     /**
      * Eagerly registers all SLO metrics in {@code registry}. The optional
@@ -158,6 +210,12 @@ public final class ConfigdMetrics {
         this.raftDecodeDropped = registry.counter(NAME_RAFT_DECODE_DROPPED);
         this.writeRejectedOverloaded = registry.counter(NAME_WRITE_REJECTED_OVERLOADED);
         this.raftElections = registry.counter(NAME_RAFT_ELECTIONS);
+        this.raftConnectionDecodeDropped = registry.counter(NAME_RAFT_TRANSPORT_CONNECTION_DECODE_DROPPED);
+        // HTTP ingress-reject counters -- incremented by NettyHttpApiServer on this same registry. Eager
+        // so the two known-reason series emit "_total 0" from the first scrape; no field (never incremented
+        // here). Mirrors the ACL-loader pattern below.
+        registry.counter(NAME_HTTP_REQUEST_REJECTED_BASE + "." + HTTP_REJECT_REASON_BAD_REQUEST);
+        registry.counter(NAME_HTTP_REQUEST_REJECTED_BASE + "." + HTTP_REJECT_REASON_PAYLOAD_TOO_LARGE);
         // ACL config-policy loader counters -- PRODUCED and incremented by AclConfigPolicyLoader on this
         // same registry (idempotent re-registration). Catalogued and eager-created here so they emit
         // "_total 0" from the first scrape even before the loader runs; no field (this class never
@@ -177,6 +235,10 @@ public final class ConfigdMetrics {
         if (raftPendingSupplier != null) {
             registry.gauge(NAME_RAFT_PENDING_APPLY, raftPendingSupplier);
         }
+
+        // Last-snapshot-size gauge - eager over an AtomicLong seeded at 0 so it renders from the first
+        // scrape; recordSnapshotBytes() updates it whenever the state machine produces a snapshot.
+        registry.gauge(NAME_SNAPSHOT_BYTES, lastSnapshotBytes::get);
     }
 
     /** Registers the gauge after construction. Useful when the supplier
@@ -210,6 +272,16 @@ public final class ConfigdMetrics {
     public MetricsRegistry.Counter raftDecodeDropped() { return raftDecodeDropped; }
     public MetricsRegistry.Counter writeRejectedOverloaded() { return writeRejectedOverloaded; }
     public MetricsRegistry.Counter raftElections() { return raftElections; }
+    public MetricsRegistry.Counter raftConnectionDecodeDropped() { return raftConnectionDecodeDropped; }
+
+    /**
+     * Records the byte length of the snapshot just produced by a state machine (backs the
+     * {@link #NAME_SNAPSHOT_BYTES} gauge). Called from the state-machine metrics bridge on the
+     * snapshot-producing thread; last-writer-wins is the intended node-level "most recent snapshot" view.
+     */
+    public void recordSnapshotBytes(long bytes) {
+        lastSnapshotBytes.set(bytes);
+    }
 
     /**
      * Increments the tick-loop unhandled-throwable counter for the given throwable's
