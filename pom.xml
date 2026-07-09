@@ -11,6 +11,7 @@
 
     <modules>
         <module>configd-common</module>
+        <module>configd-wire</module>
         <module>configd-transport</module>
         <module>configd-netty</module>
         <module>configd-consensus-core</module>
@@ -26,6 +27,11 @@
         <module>configd-server</module>
         <module>configd-edge-node</module>
         <module>configd-linz</module>
+        <module>configd-client-core</module>
+        <module>configd-client-edge</module>
+        <module>configd-client-http</module>
+        <module>configd-client</module>
+        <module>configd-conformance</module>
         <module>configd-jcstress</module>
     </modules>
 

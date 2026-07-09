@@ -640,6 +640,15 @@
     },
     {
       "type" : "library",
+      "bom-ref" : "pkg:maven/io.configd/configd-wire@0.1.0-SNAPSHOT?type=jar",
+      "group" : "io.configd",
+      "name" : "configd-wire",
+      "version" : "0.1.0-SNAPSHOT",
+      "licenses" : [ ],
+      "purl" : "pkg:maven/io.configd/configd-wire@0.1.0-SNAPSHOT?type=jar"
+    },
+    {
+      "type" : "library",
       "bom-ref" : "pkg:maven/io.configd/configd-transport@0.1.0-SNAPSHOT?type=jar",
       "group" : "io.configd",
       "name" : "configd-transport",
@@ -2615,6 +2624,51 @@
     },
     {
       "type" : "library",
+      "bom-ref" : "pkg:maven/io.configd/configd-client-core@0.1.0-SNAPSHOT?type=jar",
+      "group" : "io.configd",
+      "name" : "configd-client-core",
+      "version" : "0.1.0-SNAPSHOT",
+      "licenses" : [ ],
+      "purl" : "pkg:maven/io.configd/configd-client-core@0.1.0-SNAPSHOT?type=jar"
+    },
+    {
+      "type" : "library",
+      "bom-ref" : "pkg:maven/io.configd/configd-client-edge@0.1.0-SNAPSHOT?type=jar",
+      "group" : "io.configd",
+      "name" : "configd-client-edge",
+      "version" : "0.1.0-SNAPSHOT",
+      "licenses" : [ ],
+      "purl" : "pkg:maven/io.configd/configd-client-edge@0.1.0-SNAPSHOT?type=jar"
+    },
+    {
+      "type" : "library",
+      "bom-ref" : "pkg:maven/io.configd/configd-client-http@0.1.0-SNAPSHOT?type=jar",
+      "group" : "io.configd",
+      "name" : "configd-client-http",
+      "version" : "0.1.0-SNAPSHOT",
+      "licenses" : [ ],
+      "purl" : "pkg:maven/io.configd/configd-client-http@0.1.0-SNAPSHOT?type=jar"
+    },
+    {
+      "type" : "library",
+      "bom-ref" : "pkg:maven/io.configd/configd-client@0.1.0-SNAPSHOT?type=jar",
+      "group" : "io.configd",
+      "name" : "configd-client",
+      "version" : "0.1.0-SNAPSHOT",
+      "licenses" : [ ],
+      "purl" : "pkg:maven/io.configd/configd-client@0.1.0-SNAPSHOT?type=jar"
+    },
+    {
+      "type" : "library",
+      "bom-ref" : "pkg:maven/io.configd/configd-conformance@0.1.0-SNAPSHOT?type=jar",
+      "group" : "io.configd",
+      "name" : "configd-conformance",
+      "version" : "0.1.0-SNAPSHOT",
+      "licenses" : [ ],
+      "purl" : "pkg:maven/io.configd/configd-conformance@0.1.0-SNAPSHOT?type=jar"
+    },
+    {
+      "type" : "library",
       "bom-ref" : "pkg:maven/io.configd/configd-jcstress@0.1.0-SNAPSHOT?type=jar",
       "group" : "io.configd",
       "name" : "configd-jcstress",
@@ -2893,6 +2947,7 @@
       "ref" : "pkg:maven/io.configd/configd@0.1.0-SNAPSHOT?type=pom",
       "dependsOn" : [
         "pkg:maven/io.configd/configd-common@0.1.0-SNAPSHOT?type=jar",
+        "pkg:maven/io.configd/configd-wire@0.1.0-SNAPSHOT?type=jar",
         "pkg:maven/io.configd/configd-transport@0.1.0-SNAPSHOT?type=jar",
         "pkg:maven/io.configd/configd-netty@0.1.0-SNAPSHOT?type=jar",
         "pkg:maven/io.configd/configd-consensus-core@0.1.0-SNAPSHOT?type=jar",
@@ -2908,6 +2963,11 @@
         "pkg:maven/io.configd/configd-edge-node@0.1.0-SNAPSHOT?type=jar",
         "pkg:maven/io.configd/configd-testkit@0.1.0-SNAPSHOT?type=jar",
         "pkg:maven/io.configd/configd-linz@0.1.0-SNAPSHOT?type=jar",
+        "pkg:maven/io.configd/configd-client-core@0.1.0-SNAPSHOT?type=jar",
+        "pkg:maven/io.configd/configd-client-edge@0.1.0-SNAPSHOT?type=jar",
+        "pkg:maven/io.configd/configd-client-http@0.1.0-SNAPSHOT?type=jar",
+        "pkg:maven/io.configd/configd-client@0.1.0-SNAPSHOT?type=jar",
+        "pkg:maven/io.configd/configd-conformance@0.1.0-SNAPSHOT?type=jar",
         "pkg:maven/io.configd/configd-jcstress@0.1.0-SNAPSHOT?type=jar"
       ]
     },
@@ -2920,6 +2980,12 @@
     {
       "ref" : "pkg:maven/org.agrona/agrona@1.23.1?type=jar",
       "dependsOn" : [ ]
+    },
+    {
+      "ref" : "pkg:maven/io.configd/configd-wire@0.1.0-SNAPSHOT?type=jar",
+      "dependsOn" : [
+        "pkg:maven/io.configd/configd-common@0.1.0-SNAPSHOT?type=jar"
+      ]
     },
     {
       "ref" : "pkg:maven/io.configd/configd-transport@0.1.0-SNAPSHOT?type=jar",
@@ -3068,6 +3134,7 @@
       "ref" : "pkg:maven/io.configd/configd-config-store@0.1.0-SNAPSHOT?type=jar",
       "dependsOn" : [
         "pkg:maven/io.configd/configd-common@0.1.0-SNAPSHOT?type=jar",
+        "pkg:maven/io.configd/configd-wire@0.1.0-SNAPSHOT?type=jar",
         "pkg:maven/io.configd/configd-consensus-core@0.1.0-SNAPSHOT?type=jar",
         "pkg:maven/org.agrona/agrona@1.23.1?type=jar"
       ]
@@ -3111,6 +3178,7 @@
       "ref" : "pkg:maven/io.configd/configd-distribution-service@0.1.0-SNAPSHOT?type=jar",
       "dependsOn" : [
         "pkg:maven/io.configd/configd-common@0.1.0-SNAPSHOT?type=jar",
+        "pkg:maven/io.configd/configd-wire@0.1.0-SNAPSHOT?type=jar",
         "pkg:maven/io.configd/configd-config-store@0.1.0-SNAPSHOT?type=jar",
         "pkg:maven/io.configd/configd-transport@0.1.0-SNAPSHOT?type=jar",
         "pkg:maven/org.agrona/agrona@1.23.1?type=jar",
@@ -3327,6 +3395,46 @@
       "ref" : "pkg:maven/io.configd/configd-linz@0.1.0-SNAPSHOT?type=jar",
       "dependsOn" : [
         "pkg:maven/org.junit.jupiter/junit-jupiter@5.11.4?type=jar"
+      ]
+    },
+    {
+      "ref" : "pkg:maven/io.configd/configd-client-core@0.1.0-SNAPSHOT?type=jar",
+      "dependsOn" : [
+        "pkg:maven/io.configd/configd-wire@0.1.0-SNAPSHOT?type=jar",
+        "pkg:maven/io.configd/configd-common@0.1.0-SNAPSHOT?type=jar",
+        "pkg:maven/io.configd/configd-transport@0.1.0-SNAPSHOT?type=jar"
+      ]
+    },
+    {
+      "ref" : "pkg:maven/io.configd/configd-client-edge@0.1.0-SNAPSHOT?type=jar",
+      "dependsOn" : [
+        "pkg:maven/io.configd/configd-client-core@0.1.0-SNAPSHOT?type=jar"
+      ]
+    },
+    {
+      "ref" : "pkg:maven/io.configd/configd-client-http@0.1.0-SNAPSHOT?type=jar",
+      "dependsOn" : [
+        "pkg:maven/io.configd/configd-client-core@0.1.0-SNAPSHOT?type=jar"
+      ]
+    },
+    {
+      "ref" : "pkg:maven/io.configd/configd-client@0.1.0-SNAPSHOT?type=jar",
+      "dependsOn" : [
+        "pkg:maven/io.configd/configd-client-edge@0.1.0-SNAPSHOT?type=jar",
+        "pkg:maven/io.configd/configd-client-http@0.1.0-SNAPSHOT?type=jar"
+      ]
+    },
+    {
+      "ref" : "pkg:maven/io.configd/configd-conformance@0.1.0-SNAPSHOT?type=jar",
+      "dependsOn" : [
+        "pkg:maven/io.configd/configd-client-edge@0.1.0-SNAPSHOT?type=jar",
+        "pkg:maven/io.configd/configd-client-http@0.1.0-SNAPSHOT?type=jar",
+        "pkg:maven/io.configd/configd-client-core@0.1.0-SNAPSHOT?type=jar",
+        "pkg:maven/io.configd/configd-server@0.1.0-SNAPSHOT?type=jar",
+        "pkg:maven/io.configd/configd-distribution-service@0.1.0-SNAPSHOT?type=jar",
+        "pkg:maven/io.configd/configd-observability@0.1.0-SNAPSHOT?type=jar",
+        "pkg:maven/io.configd/configd-common@0.1.0-SNAPSHOT?type=jar",
+        "pkg:maven/io.configd/configd-wire@0.1.0-SNAPSHOT?type=jar"
       ]
     },
     {

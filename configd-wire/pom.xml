@@ -1,0 +1,52 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <parent>
+        <groupId>io.configd</groupId>
+        <artifactId>configd</artifactId>
+        <version>0.1.0-SNAPSHOT</version>
+    </parent>
+
+    <artifactId>configd-wire</artifactId>
+
+    <!--
+      The frozen edge wire contract, as a thin dependency-light artifact a driver/SDK can depend on
+      without pulling the server. Holds the transport-free EdgeFrame family + EdgeFrameCodec (and its
+      EdgeSnapshotCodec), the ErrorCode/FrameType/WatchCursor types, the FrameSink abstraction, the
+      CommitNotification the NOTIFY frame carries, and the JDK-only config value types the codec
+      serializes (CommandCodec/ConfigDelta/ConfigMutation/ConfigSnapshot/VersionedValue). Depends only
+      on configd-common; config-store and distribution-service depend back on it. The golden fixtures
+      live here and re-prove byte-identity after the relocation.
+    -->
+    <dependencies>
+        <dependency>
+            <groupId>io.configd</groupId>
+            <artifactId>configd-common</artifactId>
+            <version>${project.version}</version>
+        </dependency>
+    </dependencies>
+
+    <build>
+        <plugins>
+            <!--
+              Publish a test-jar so the configd-conformance suite reuses EdgeFrameGoldenBytes (the pinned
+              wire vectors) as the SINGLE source of truth for its golden round-trip oracle — no
+              re-declaration, so the conformance vectors can never drift from the wire module's own.
+            -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-jar-plugin</artifactId>
+                <executions>
+                    <execution>
+                        <goals>
+                            <goal>test-jar</goal>
+                        </goals>
+                    </execution>
+                </executions>
+            </plugin>
+        </plugins>
+    </build>
+</project>

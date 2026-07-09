@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <parent>
+        <groupId>io.configd</groupId>
+        <artifactId>configd</artifactId>
+        <version>0.1.0-SNAPSHOT</version>
+    </parent>
+
+    <artifactId>configd-client-http</artifactId>
+
+    <!--
+      The HTTP control plane of the reference client: ConfigdHttpClient (get/put/delete + the leadership-transfer
+      admin op) over the JDK HttpClient, the LeaderRouter (X-Leader-Hint follow + bounded backoff-retry, REQUIRED
+      even at N=1), the HTTP status→reaction classifier, and the optional ReplayGuardSigner. Depends only on
+      configd-client-core (credential/TLS/retry/exception primitives) — NO edge, NO Netty, NO server. A pure-HTTP
+      user pulls only core + this module.
+    -->
+    <dependencies>
+        <dependency>
+            <groupId>io.configd</groupId>
+            <artifactId>configd-client-core</artifactId>
+            <version>${project.version}</version>
+        </dependency>
+    </dependencies>
+
+    <build>
+        <plugins>
+            <!-- Publish a test-jar so the conformance suite reuses MockControlPlane (the scriptable HTTP
+                 control-plane double) for the client-conforms direction, without duplicating the harness. -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-jar-plugin</artifactId>
+                <executions>
+                    <execution>
+                        <goals>
+                            <goal>test-jar</goal>
+                        </goals>
+                    </execution>
+                </executions>
+            </plugin>
+        </plugins>
+    </build>
+</project>

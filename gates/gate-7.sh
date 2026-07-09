@@ -51,7 +51,7 @@ LOGDIR="${GATE7_LOG_DIR:-$(mktemp -d /tmp/gate7-XXXXXX)}"
 mkdir -p "$LOGDIR"
 
 # Modules whose security tests gate-7 exercises.
-MODULES="configd-common,configd-consensus-core,configd-transport,configd-netty,configd-distribution-service,configd-control-plane-api,configd-server,configd-edge-node"
+MODULES="configd-wire,configd-common,configd-consensus-core,configd-transport,configd-netty,configd-distribution-service,configd-control-plane-api,configd-server,configd-edge-node"
 
 echo "=== GATE-7 (Session 7: security & supply chain) — logs in $LOGDIR ==="
 

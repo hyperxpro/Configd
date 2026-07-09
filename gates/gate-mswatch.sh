@@ -39,7 +39,7 @@ LOGDIR="${GATE_MSWATCH_LOG_DIR:-$(mktemp -d /tmp/gate-mswatch-XXXXXX)}"
 mkdir -p "$LOGDIR"
 
 # The two modules whose multi-shard watch tests this gate exercises.
-MODULES="configd-distribution-service,configd-server"
+MODULES="configd-wire,configd-distribution-service,configd-server"
 
 echo "=== gate-mswatch (multi-shard client-facing WATCH seal) — logs in $LOGDIR ==="
 

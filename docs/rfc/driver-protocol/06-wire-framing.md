@@ -392,6 +392,24 @@ fixture pinned by `goldenCrc()`):
 mismatched snapshot — it **MUST NOT** apply a partial snapshot as complete (silent store divergence). Chunk
 `index` is sequential and frames arrive in order over TCP, but a driver **SHOULD** order by `index` defensively.
 
+**F6-6a (the hydration snapshot is transport-authenticated, not signed — a normative trust boundary).** The
+reassembled snapshot body (F7-2) carries **no per-snapshot signature or MAC** — unlike the `NOTIFY` delta chain,
+whose per-delta Ed25519 signatures (F6-3) are end-to-end authenticity **above** the transport. A driver
+hydrating from a snapshot therefore **trusts the server's base-state bytes on the strength of the authenticated
+transport** (the mTLS server identity, F9) plus the frame CRC (transport integrity, F2-2) — **not** a
+cryptographic signature. The signed delta chain is the tamper-evidence on every **increment** applied over that
+trusted base. Three consequences a conforming driver **MUST** internalize:
+
+1. Signature verification (`full_chain_verify` / a configured verifier) applies to the **delta chain**, **not**
+   the snapshot: a verifying driver verifies deltas and **trusts** the snapshot base — this is **correct and
+   deliberate**, not an unverified-input gap.
+2. The snapshot's authenticity is **only as strong as the transport**. A driver **MUST NOT** accept and rely on
+   a hydration snapshot over an unauthenticated / plaintext transport (F9, OV7-1) — nothing else binds the base
+   state to the real leader.
+3. A driver **MUST** still bound the snapshot **structurally** (exactly `chunkCount` chunks, reassembled length
+   == `totalBytes`, and its own accumulation ceilings) so a hostile or buggy server cannot amplify allocation —
+   even though it cannot **forge** the base state without also defeating mTLS.
+
 **F6-7 `CURSOR_ACK` (`0x07`)** — *client→server*; golden `cursor_ack.bin`: `[8 u64] seq` (`[0,2^63)` — F5-1;
 **client-emitted**). This is **mandatory flow-control**, not optional progress: see F10-3.
 
@@ -521,6 +539,23 @@ The credential itself is size-policed **before** verification: a bearer token > 
 (`EdgeAuthConfig.credentialWithinCaps` :137–146). These are **deployment policy bounds** (not frozen golden
 wire constants like `MAX_EDGE_FRAME_SIZE`); a conformant driver keeps its credential well within them and treats
 an over-cap rejection as `AUTH_FAIL` (pre-auth) / `CREDENTIAL_EXPIRED` (on a `REFRESH_AUTH`; §07).
+
+**F6A-6 (pipelining a business frame behind `AUTH` — the invariant is ordering, not a round-trip).** The `AUTH`
+frame is **not acknowledged** — there is **no `AUTH-OK` frame** — so a certificate-less driver **MAY pipeline**
+its first business frame(s) (`SUBSCRIBE` / `WATCH_CREATE`) **immediately behind** its single `AUTH`, without
+waiting for a round-trip. While the **first** authentication is still resolving (credential verification runs
+off the accept path), the server **buffers** up to **`MAX_PENDING_PREAUTH_FRAMES` = 8** such pipelined non-`AUTH`
+frames — each already bounded by the pre-auth frame ceiling (F6A-5) — and **replays them into the session once
+authentication succeeds**; if authentication **fails**, the buffered frames are **discarded** with the
+`AUTH_FAIL` close (`EdgeAuthGateHandler.channelRead` / `bufferPendingFrame` / `replayPendingFrames`). What is a
+`PROTOCOL_VIOLATION` (§07 code 10) is therefore an **ordering** fault, **not** the pipelining itself: a frame
+sent **before** the `AUTH` (i.e. `AUTH` is not the first routed frame), a **second `AUTH`** (while the first is
+resolving or after it has succeeded), or **more than 8** frames pipelined behind the `AUTH` before it resolves.
+A driver **MUST** make `AUTH` its **first** routed frame and **MUST NOT** pipeline more than a small handful of
+frames behind it before authentication completes; it **MAY** rely on this buffer to avoid an auth round-trip.
+This **refines §03 AU4-5 / AU4-7**: "no business frame **before** `AUTH`" is the invariant — a business frame
+**pipelined behind** `AUTH` is buffered-and-replayed, not a violation. (An **mTLS** edge has no `AUTH` frame and
+no pre-auth window at all; this clause is the token/basic path only.)
 
 ---
 
@@ -740,9 +775,11 @@ draining are therefore **liveness-critical**, not optional "progress." A driver 
 
 **F10-4 (quarantine is identity-stateful across reconnects).** Quarantine is keyed to the **certificate
 identity (DN)** and persists **across** connections: a reconnect by a quarantined identity is **refused** with
-`QUARANTINED` (the message carries the remaining cooldown). After a `QUARANTINED` teardown a driver **MUST**
-back off the indicated cooldown **before** reconnecting/re-`CREATE`ing — an immediate reconnect-storm is
-refused. ("No resumption token" (F10-1) does **not** mean reconnect is stateless: the quarantine state is.)
+`QUARANTINED`. The terminal message MAY carry a human-readable remaining cooldown, but that text is **advisory
+diagnostic only** — a driver **MUST NOT** machine-parse it (§07 E6, the untrusted-message rule). Instead, after
+a `QUARANTINED` teardown a driver **MUST** back off with its **own bounded backoff** **before** reconnecting/re-
+`CREATE`ing — an immediate reconnect-storm is refused regardless of the advisory value. ("No resumption token"
+(F10-1) does **not** mean reconnect is stateless: the quarantine state is.)
 
 ---
 

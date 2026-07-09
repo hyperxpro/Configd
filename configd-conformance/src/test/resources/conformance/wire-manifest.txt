@@ -1,0 +1,91 @@
+# Configd wire-format conformance — expected-results manifest (Runner I).
+#
+# The frozen contract's teeth: WireConformanceRatchetTest asserts the ACTUAL outcome of every case in
+# WireCases equals the line here. An unexpected FAIL (a codec regression) AND an unexpected PASS (a silently
+# changed reject, or a stale line) BOTH fail the build. Regenerate + commit ONLY for a deliberate wire change
+# (the test writes target/conformance/wire-manifest.generated.txt when this file is absent).
+#
+# Format:  <case-id> | ACCEPT | REJECT:<ErrorCode>
+#   ACCEPT              — a pinned golden frame decodes and re-encodes byte-for-byte identically.
+#   REJECT:<ErrorCode>  — a poison frame is rejected with that specific taxonomy code.
+
+# ---- ACCEPT: golden round-trips (the cross-language wire oracle, one per pinned fixture) ----
+golden.v1.subscribe_full_store.bin | ACCEPT
+golden.v1.subscribe_prefixes.bin | ACCEPT
+golden.v1.subscribe_ok_tail.bin | ACCEPT
+golden.v1.subscribe_ok_snapshot_first.bin | ACCEPT
+golden.v1.notify_single_unsigned.bin | ACCEPT
+golden.v1.notify_batch_signed.bin | ACCEPT
+golden.v1.notify_empty.bin | ACCEPT
+golden.v1.snapshot_begin.bin | ACCEPT
+golden.v1.snapshot_chunk_small.bin | ACCEPT
+golden.v1.snapshot_end.bin | ACCEPT
+golden.v1.cursor_ack.bin | ACCEPT
+golden.v1.heartbeat.bin | ACCEPT
+golden.v1.error_bad_wire_version.bin | ACCEPT
+golden.v1.error_frame_too_large.bin | ACCEPT
+golden.v1.error_frame_corrupt.bin | ACCEPT
+golden.v1.error_auth_fail.bin | ACCEPT
+golden.v1.error_bad_subscribe.bin | ACCEPT
+golden.v1.error_gap_unrecoverable.bin | ACCEPT
+golden.v1.error_demoted_to_catchup.bin | ACCEPT
+golden.v1.error_quarantined.bin | ACCEPT
+golden.v1.error_server_shutdown.bin | ACCEPT
+golden.v1.error_protocol_violation.bin | ACCEPT
+golden.v2.watch_create.bin | ACCEPT
+golden.v2.watch_create_fromnow.bin | ACCEPT
+golden.v2.watch_create_full.bin | ACCEPT
+golden.v2.watch_cancel.bin | ACCEPT
+golden.v2.watch_created.bin | ACCEPT
+golden.v2.watch_event.bin | ACCEPT
+golden.v2.watch_event_batch.bin | ACCEPT
+golden.v2.watch_progress.bin | ACCEPT
+golden.v2.watch_canceled_gap.bin | ACCEPT
+golden.v2.watch_canceled_not_authorized.bin | ACCEPT
+golden.v2.watch_snapshot_begin.bin | ACCEPT
+golden.v2.watch_snapshot_chunk.bin | ACCEPT
+golden.v2.watch_snapshot_end.bin | ACCEPT
+golden.v2.notify_reused.bin | ACCEPT
+golden.v2.error_not_authorized.bin | ACCEPT
+golden.v2.error_stale_topology.bin | ACCEPT
+golden.v2.error_credential_expired.bin | ACCEPT
+golden.v3.subscribe_full_store.bin | ACCEPT
+golden.v3.subscribe_prefixes_filtered.bin | ACCEPT
+golden.v3.subscribe_ok_filtered.bin | ACCEPT
+golden.v3.subscribe_ok_unfiltered.bin | ACCEPT
+golden.v4.auth_bearer.bin | ACCEPT
+golden.v4.auth_basic.bin | ACCEPT
+golden.v4.refresh_auth_bearer.bin | ACCEPT
+
+# ---- REJECT: the poison-frame corpus (one per distinct codec reject path) ----
+poison.too-short | REJECT:FRAME_CORRUPT
+poison.length-over-cap | REJECT:FRAME_TOO_LARGE
+poison.length-mismatch | REJECT:FRAME_CORRUPT
+poison.crc-mismatch | REJECT:FRAME_CORRUPT
+poison.bad-version | REJECT:BAD_WIRE_VERSION
+poison.version-pin-mismatch | REJECT:BAD_WIRE_VERSION
+poison.unknown-type | REJECT:FRAME_CORRUPT
+poison.watch-type-on-v1 | REJECT:FRAME_CORRUPT
+poison.auth-type-on-v1 | REJECT:FRAME_CORRUPT
+poison.trailing-bytes | REJECT:FRAME_CORRUPT
+
+# ---- inner-payload bounds rejects (reject-before-allocate; §06 F3-2 amplification/underflow defense) ----
+poison.inner.auth-unknown-scheme | REJECT:FRAME_CORRUPT
+poison.inner.notify-count-over-cap | REJECT:FRAME_CORRUPT
+poison.inner.subscribe-prefix-count | REJECT:FRAME_CORRUPT
+poison.inner.subscribe-topology-epoch-zero | REJECT:FRAME_CORRUPT
+poison.inner.notify-blob-length | REJECT:FRAME_CORRUPT
+poison.inner.subscribe-ok-mode-ordinal | REJECT:FRAME_CORRUPT
+
+# ---- clause-directed field-range + error-taxonomy cases (§06 F5 u64 ranges, F6-9 ERROR_CLOSE message) ----
+# F6-9: the codec preserves an untrusted control-byte message verbatim (sanitize is the driver's job).
+error-close.control-bytes-in-message | ACCEPT
+# F6-9: an ERROR_CLOSE code byte outside the 1..13 taxonomy is FRAME_CORRUPT.
+poison.inner.error-close-unknown-code | REJECT:FRAME_CORRUPT
+# F5-1: high-bit-set client-emitted CURSOR_ACK.seq / SUBSCRIBE.resumeCursor are FRAME_CORRUPT.
+poison.inner.cursor-ack-seq-high-bit | REJECT:FRAME_CORRUPT
+poison.inner.subscribe-resume-cursor-high-bit | REJECT:FRAME_CORRUPT
+# F5-2: a non-sentinel high-bit SUBSCRIBE.failoverResumeCursor (only 0xFFFF..FF is legal) is FRAME_CORRUPT.
+poison.inner.subscribe-failover-cursor-nonsentinel | REJECT:FRAME_CORRUPT
+# F5-3 / F8-2 / W3-5: cursor-vector topologyEpoch 0 is reserved-illegal ⇒ FRAME_CORRUPT via decodeCursor.
+poison.inner.watch-cursor-topology-epoch-zero | REJECT:FRAME_CORRUPT

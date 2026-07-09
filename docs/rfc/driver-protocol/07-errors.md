@@ -49,7 +49,10 @@ is **normative**.
 ## 2. HTTP control-plane status codes
 
 **E2-1.** The complete set of statuses the HTTP data plane returns (`AdminApiHandler`), with the required
-reaction:
+reaction. (The conditional leadership-transfer control route — `POST /v1/admin/groups/…/transfer-leadership`,
+§04 D2-2a — reuses these same status **codes** with route-specific meanings: a `200` is an **asynchronous
+transfer-initiated**, not "moved"; a `409` is a **precondition** failure; a hintless `503` is a **timeout with
+an unknown outcome**, distinct from the `409`. See §04 D2-2a for that route's per-status contract.)
 
 | Status | When (code site) | Distinguishing headers / body | Driver reaction |
 |---|---|---|---|
@@ -76,9 +79,11 @@ disambiguate:
 - **no header** — leader unknown (election; the normal N = 1 case) **or** node unhealthy. Reaction: back off +
   retry the same endpoint (§05 R4-2).
 
-> *(The deployed control plane maps authentication only to `401`/`403`; a `503`-class authentication outcome is
-> a **forward** behavior of a pluggable external authenticator, §03 AU5-2 — listed in the `401` row for
-> completeness, not currently emitted by the in-core auth.)*
+> *(The in-core authenticators — static bearer, HTTP Basic — map authentication only to `401`/`403`. A
+> `503`-class authentication outcome arises when a **pluggable external authenticator** cannot verify because
+> its backend is unreachable — e.g. an **OIDC issuer / JWKS outage** — a fail-closed `AuthResult.Unavailable`
+> the driver **SHOULD** treat as retryable (§03 AU5-2). This is the HTTP plane; the **edge** plane collapses the
+> same condition into `AUTH_FAIL` (see E4-2).)*
 
 ---
 
@@ -149,6 +154,23 @@ on **(code, carrier frame)**.
 A driver **MUST** map both planes to the same logical reactions: a `401`/`AUTH_FAIL` ⇒ **(re)authenticate**; a
 `403`/`NOT_AUTHORIZED` ⇒ **permanently forbidden, do not retry unchanged**. (This consolidates §01 §7, §03 §5,
 and §02 §7 — those sections point here, E5.)
+
+**E4-2 (the edge has no retryable auth code — `AUTH_FAIL` absorbs "authenticator unavailable").** The two planes
+are **asymmetric** on the *authenticator-unavailable* condition (a configured external authenticator — e.g. OIDC
+— cannot verify because its backend is unreachable, a fail-closed `AuthResult.Unavailable`). On the **HTTP**
+plane it is a **`503`/`401`-class**, retryable outcome (E2-1, §03 AU5-2). On the **edge** plane the streaming
+taxonomy is **frozen at 13 codes** — there is **no** retryable auth `ErrorCode` — so the server surfaces it on
+the wire as **`AUTH_FAIL` (4)** (`EdgeAuthGateHandler`: an `Unavailable` closes `AUTH_FAIL`, metered server-side
+as a distinct `AUTH_UNAVAILABLE` series; the diagnostic `message` may read "temporarily unavailable", but the
+**machine signal is `AUTH_FAIL`** — branch on the code, not the message, E6). **Consequence for a driver:** an
+edge `AUTH_FAIL` is **not** provably permanent — it **may** be a transient issuer outage wearing the same code.
+A driver **MUST NOT** hot-loop it, but it **SHOULD NOT** treat it as terminal either: recover with a **bounded
+reconnect-with-backoff**, re-presenting the **same** (valid) credential on a **fresh** connection — this both
+respects "a rejected pre-auth `AUTH` costs a fresh connection" (E3-1 code 4) and rides out a transient
+authenticator outage. A genuinely invalid credential is exhausted by the bounded attempt ceiling (it never
+succeeds); a transient outage recovers when the issuer does. (Adding a distinct retryable edge auth code is a
+named forward extension — it would be a new `ErrorCode` value, a wire-taxonomy change; v1 deliberately keeps the
+13-code set frozen and absorbs the condition into `AUTH_FAIL`.)
 
 ---
 

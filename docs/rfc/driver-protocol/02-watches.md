@@ -379,8 +379,17 @@ or progress frame for it. `watch_id` **MUST** be unique per connection (W2-8). F
   state; **cursor `0` alone means "from now per shard," not "replay"** (W3-4). A driver that wants a
   watch-plus-current-state **MUST** set this bit (the v1-mandated snapshot-then-tail path).
 
-A server **MUST** reject (or ignore, per the bit's rule above) a flag bit it does not recognize per the
-fail-closed-on-unknown discipline (W1-3); a driver **MUST NOT** set a flag it has not negotiated.
+An **unrecognized** flag bit — one outside the three defined above — is a **fail-closed reject, not an
+ignore**: the server **MUST** reject a `WATCH_CREATE` carrying an **undefined** bit with **`BAD_SUBSCRIBE`**
+(W1-3). The earlier "reject **or** ignore" phrasing was ambiguous; it conflated two distinct cases — a
+**defined** bit the server does not **support** (only `prev_value` today) is **ignored** per its own rule
+above, whereas an **undefined** bit is **rejected**. This fail-closed check is enforced at the **session
+layer**, **not** the wire codec: `WatchTargetValidator` rejects `(flags & ~KNOWN_FLAGS_MASK) != 0` as
+`BAD_SUBSCRIBE`, while the codec (`EdgeFrame.WatchCreate`) accepts any `flags` byte `[0,255]`. The same session
+layer — not the codec — enforces the path grammar (`MAX_PATH_BYTES = 1024`, canonical segments; W2-4) and the
+`scope` / `target_kind` range checks, all as `BAD_SUBSCRIBE`. A driver **MUST NOT** set a flag it has not
+negotiated; and because a driver only ever **sends** `WATCH_CREATE` flags (it never receives a flags byte), it
+validates its own request **client-side** before sending and needs no receive-side flag handling.
 
 **W5-4b (multi-shard initial snapshot is per-shard, not a consistent cut).** With `with_initial_snapshot`
 at N > 1, each covered shard delivers its state as of its **own** `snapshot_seq`, captured independently
@@ -618,9 +627,18 @@ compaction (`ErrCompacted`) and the client re-lists everything — `prior-art.md
 source cannot cover the needed range **at all** (not even via snapshot), the server **MUST** terminate that
 watch with `WATCH_CANCELED(watch_id, GAP_UNRECOVERABLE, oldest=<per-shard oldestRetainedSeq>)` (in v1 the
 `oldest` vector is **not yet populated** — the server sends `has_oldest = 0`; W5-9a). The driver
-**MUST** then **re-list current state** (per §1's paginated `list`, §1
-[§4.2](01-paths-and-access.md#42-the-list-operation), using the **same** cursor-vector type) and
-**re-create** the watch from the new frontier. This is the only case where a driver rebuilds its baseline
+**MUST** then **rebuild its baseline and re-create the watch from the new frontier**, by **one** of two
+equivalent means:
+
+- **(a) the watch-plane-native path** — re-`CREATE` the watch with `with_initial_snapshot` set (a fresh
+  per-shard catch-up snapshot, §5.8) and tail forward from it. A **watch-only** driver (no HTTP plane) **MUST**
+  use this path; it stays entirely on the edge plane and needs no `list` op.
+- **(b) the HTTP-plane path** — re-`list` current state (per §1's paginated `list`, §1
+  [§4.2](01-paths-and-access.md#42-the-list-operation), using the **same** cursor-vector type) and re-`CREATE`
+  the watch from the listed frontier.
+
+Both rebuild the identical baseline (the current committed state) and re-establish the watch; a driver
+implementing both planes **MAY** use either. This is the only case where a driver rebuilds its baseline
 (the etcd `ErrCompacted` fallback, `prior-art.md` §1.4) — the common too-old case is self-healing (W6-3).
 *(`WATCH_CANCELED(GAP_UNRECOVERABLE)` is a **new per-watch terminal**: the connection and sibling watches
 survive. The built plane has only a **connection-level** `ERROR_CLOSE(GAP_UNRECOVERABLE)`, so this is new
@@ -835,6 +853,30 @@ blocking, inherent to one shared mTLS transport). A driver **MUST** tolerate a `
 cooldown), and **MUST NOT** assume per-watch isolation of flow-control or fairness in v1. The mismatch — a
 **scalar** `CURSOR_ACK` vs the per-watch cursor **vector** — is real and acknowledged; **per-watch
 flow-control / fairness is a named v2 extension (W10-8)**.
+
+**W8-6a (the single shared DRAIN — one connection per independently-resumed watch; a normative MUST, not a
+footnote).** Beyond the shared *backpressure* fate (W8-6), the v1 fan-out connection has a **single shared
+drain**: only the **first** authorized watch/subscription's resume cursor positions that drain; **every
+subsequent watch created on the same connection is started TAIL-from-the-current-frontier and its requested
+resume cursor is silently DISCARDED** (§06 F10-1b; `FanOutConnectionDriver`). **Consequence — a silent
+data-loss footgun:** a driver that re-`CREATE`s N **independently-resumed** watches (each carrying its own
+persisted cursor) on **one** reconnected connection resumes **only watch #1**; watches #2…N start at "now" and
+**drop every event between their cursor and the live frontier**. Therefore a driver that needs **independent**
+per-watch resume/backfill **MUST** open **one connection per independently-resumed watch**. Two clarifications
+keep this tractable:
+
+- a **single multi-shard watch** (one `watch_id`, one vector cursor spanning gids) **is** the drain-positioning
+  watch and resumes correctly on **one** connection — the multi-shard fan-in (§4) happens **within** that one
+  watch (the aggregating endpoint scatter-gathers; the driver UNION-merges the `(gid, S)`-tagged events, W4-2),
+  so it is **not** the footgun;
+- watches that share a single **live tail** with **no** independent backfill (all from-now, empty cursor) **MAY**
+  share a connection.
+
+A conforming driver **MUST NOT** silently place a second **cursored** (non-from-now) watch on a drain-positioned
+connection; it either opens a fresh connection or **refuses the share loudly** (a clean error, never a silent
+frontier-resume). **This is a REQUIRED negative conformance case:** the suite (§00 OV5-5) **MUST** assert that a
+driver re-`CREATE`ing a second independently-cursored watch on an already-positioned connection either uses a
+distinct connection or fails loudly — it **MUST NOT** silently resume that watch from the live frontier.
 
 **W8-7 (metadata side-channel — acknowledged; not an INV-WATCH-READ violation).** The per-shard sequence
 `S` exposed in `WATCH_CREATED.latest_seq` (W5-5), `WATCH_PROGRESS` (W5-7), and `WATCH_CANCELED.oldest`

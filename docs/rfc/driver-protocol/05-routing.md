@@ -16,7 +16,7 @@ suppliers in [`ConfigdServer.java`](../../../configd-server/src/main/java/io/con
 (the read GET lambda :946–959 and the write proposer hint :793–797 → `ConfigWriteService.mapOutcome` :332–342
 — the read supplier comment notes it "mirrors the scope-aware write redirect"), the server-side `shardFor` in
 `StaticShardMap`, the `--api-port` / `--bind-port` / `--peers` / `--peer-addresses` configuration in
-`ServerConfig.java`, and the absence of any topology endpoint in `AdminApiHandler.handle` (:130–145). Where
+`ServerConfig.java`, and the absence of any topology endpoint in `AdminApiHandler.handle` (:214–233). Where
 this section and a prior RFC claim disagree, **the code wins**. This section is **normative**; it **composes
 with**:
 
@@ -110,10 +110,14 @@ hint) go (`ConfigdServer` starts the HTTP API on `config.apiPort()`, :952).
 > builds its map from the Raft addresses resolves every hint to the wrong port and every follow fails.
 
 **R3-2 (no topology / shard-map / membership discovery endpoint).** v1 exposes **no** `/shards`, `/topology`,
-`/members`, `/peers`, or membership endpoint (none in `AdminApiHandler.handle`, :130–145; only `/health/*`,
-`/metrics`, `/v1/config/`). A driver **CANNOT** discover the cluster map, the shard count `N`, or peer
-endpoints from the wire. A driver **MUST** be configured with the set of `NodeId → api-endpoint` entries it
-may be redirected to. *(A discovery endpoint is a named **v2** candidate — see R7; do not assume it.)*
+`/members`, `/peers`, or membership endpoint (none in `AdminApiHandler.handle`, :214–233; only `/health/*`,
+`/metrics`, `/v1/config/`, and — when its seam is wired — the leadership-transfer **control** route
+`/v1/admin/groups/…/transfer-leadership`, §04 D2-2a). A driver **CANNOT** discover the cluster map, the shard
+count `N`, or peer endpoints from the wire: the leadership-transfer route is a **control** operation that
+**discloses nothing** about membership (it takes a `NodeId` the operator already configured and returns only a
+transfer status), so this no-**discovery** guarantee holds. A driver **MUST** be configured with the set of
+`NodeId → api-endpoint` entries it may be redirected to (and that it may name as a leadership-transfer target).
+*(A discovery endpoint is a named **v2** candidate — see R7; do not assume it.)*
 
 **R3-3 (an unresolvable hint degrades to hintless).** If a `503` hints a `NodeId` the driver's map does **not**
 contain, the driver **MUST** treat it as a **hintless `503`** (R2-3): it cannot resolve an endpoint, so it
@@ -138,6 +142,16 @@ retry the same endpoint** — **subject to the bounded attempt/deadline budget o
 a node that never wins election terminates as a bounded failure, not an infinite hang) — until the node
 becomes leader. **A v1 driver therefore MUST implement the `503` → backoff-retry loop** even when it only ever
 talks to one node.
+
+**R4-2a (multi-endpoint hintless rotation — N > 1).** R4-2 describes the single-node case ("no *other* node to
+follow"). When a driver is configured with **more than one** endpoint, a **hintless `503`** means the *current*
+endpoint is not serving (mid-election or unhealthy) and offers no hint. Such a driver **MAY** — and a reference
+driver **SHOULD** — **rotate to the next configured endpoint** on each hintless-`503` retry (under the same
+bounded backoff / R6-3 budget) rather than hammer the endpoint that just `503`'d: another node may be the leader
+or may return a followable `X-Leader-Hint` (R4-3), so rotation + hint-following converges on the leader faster
+than retrying one non-serving endpoint. At **N = 1** this is a no-op — the driver necessarily retries the same
+endpoint (R4-2). Either way the loop stays finite (R6-3). A driver **MUST NOT** rotate to any endpoint outside
+its configured `NodeId → api-endpoint` map (anti-SSRF — R3-2 / R8).
 
 **R4-3 (follow-once — `hop < 2` — to avoid redirect ping-pong).** On a `503` **with** a hint, a driver
 **SHOULD** follow the hinted node **at most once per logical attempt** (a bounded `hop < 2`): if the hinted

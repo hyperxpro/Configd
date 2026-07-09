@@ -20,6 +20,11 @@
         </dependency>
         <dependency>
             <groupId>io.configd</groupId>
+            <artifactId>configd-wire</artifactId>
+            <version>${project.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>io.configd</groupId>
             <artifactId>configd-config-store</artifactId>
             <version>${project.version}</version>
         </dependency>

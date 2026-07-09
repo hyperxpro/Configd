@@ -182,7 +182,11 @@ and **MUST NOT** downgrade to plaintext in production.
 (at-rest confidentiality is a **server-side deployment choice** the driver cannot observe: **at-rest encryption
 is available** — opt-in AES-256-GCM, **off by default** — so a driver **MUST NOT** rely on values being
 encrypted at rest on the strength of the protocol — §04 D3-5b); the optional **replay guard** is
-**passive-replay-only**, not request integrity (§04 D11-3). A driver **MUST NOT** over-rely on any of these.
+**passive-replay-only**, not request integrity (§04 D11-3); the **edge hydration snapshot** is
+**transport-authenticated (mTLS), not cryptographically signed** — only the incremental delta chain carries
+per-delta Ed25519 tamper-evidence, so a driver trusts the snapshot base state on the strength of the
+authenticated transport and **MUST NOT** accept a hydration snapshot over an unauthenticated transport (§06
+F6-6a). A driver **MUST NOT** over-rely on any of these.
 
 **OV7-3 (fail closed on unknown — normative, all surfaces).** A driver **MUST** fail closed on anything it
 does not recognize: an unknown HTTP status / header / `?scope=` value; an unknown edge wire version, frame

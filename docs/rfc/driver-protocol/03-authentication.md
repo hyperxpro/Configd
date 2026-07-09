@@ -189,8 +189,13 @@ invalid or over-cap credential) closes the connection with **`AUTH_FAIL`** (§07
 **AU4-5 (the pre-auth window — frame ceiling + first-frame deadline).** While unauthenticated, the connection is
 held under a **pre-auth frame-size ceiling** (§06 F6A-5) and the **pre-SUBSCRIBE first-frame deadline** (§06
 F10-1d, default **10 s**), which covers the `AUTH` frame: a driver that connects then never sends `AUTH` is
-**reaped**. Any frame **other than `AUTH`** before authentication is a **`PROTOCOL_VIOLATION`** close (§07 code
-10). A driver **MUST** send its `AUTH` frame promptly after the connection is established.
+**reaped**. The **first routed frame MUST be the `AUTH`** — a non-`AUTH` first frame is a **`PROTOCOL_VIOLATION`**
+close (§07 code 10). Because `AUTH` is **not** acknowledged (there is no `AUTH-OK` frame), a driver **MAY
+pipeline** its first business frame(s) **immediately behind** the `AUTH` without a round-trip: while the first
+authentication resolves, the server **buffers** up to **8** such frames and **replays** them once it succeeds
+(or discards them on `AUTH_FAIL`) — §06 F6A-6. The `PROTOCOL_VIOLATION` is an **ordering** fault, not the
+pipelining: a frame **before** the `AUTH`, a **second `AUTH`**, or **more than 8** frames pipelined behind it.
+A driver **MUST** send its `AUTH` frame **first** and promptly after the connection is established.
 
 **AU4-6 (`REFRESH_AUTH` renews the SAME identity, only when authenticated).** After authentication a driver
 **MAY** send a **`REFRESH_AUTH`** frame (§06 §6A) to **extend the session lifetime**. `REFRESH_AUTH` is valid
@@ -201,9 +206,13 @@ resolves to a **different identity** is **`AUTH_FAIL`**; an over-cap or otherwis
 **`PROTOCOL_VIOLATION`**. A driver **MUST NOT** attempt to switch identity by `REFRESH_AUTH` — it opens a new
 connection instead.
 
-**AU4-7 (business frames only after auth).** A driver **MUST NOT** send a business frame
-(`SUBSCRIBE`/`WATCH_CREATE`/`CURSOR_ACK`/…) before its `AUTH` frame is accepted (certificate-less path) or the
-handshake completes (mTLS path). A business frame presented pre-auth is a **`PROTOCOL_VIOLATION`**.
+**AU4-7 (business frames after — or pipelined behind — auth).** A driver **MUST NOT** send a business frame
+(`SUBSCRIBE`/`WATCH_CREATE`/`CURSOR_ACK`/…) **before** its `AUTH` frame (certificate-less path) or **before** the
+handshake completes (mTLS path) — a business frame that **precedes** the credential is a **`PROTOCOL_VIOLATION`**.
+On the certificate-less path a driver **MAY**, however, **pipeline** business frames **immediately behind** the
+single `AUTH` (there is no `AUTH-OK` ack to wait for): the server buffers up to **8** and replays them on success,
+discards them on `AUTH_FAIL` (§06 F6A-6, AU4-5). The invariant is that the credential is the **first** frame —
+not that the driver must await an ack it will never receive.
 
 ---
 
@@ -227,7 +236,10 @@ this section **extends** it with an authentication-specific **"authenticator una
 an OIDC issuer/JWKS is unreachable), the server **MUST** reject the request (a `401`- or `503`-class outcome)
 and **MUST NOT** silently fall through to a weaker authenticator or to anonymous access
 ([`authenticator-spi.md`](../../archive/design/auth-spi/authenticator-spi.md) §5, RA-1). A driver **SHOULD** treat a
-`503`-class auth outcome as **retryable** (the issuer may recover) and a `401` as **(re)authenticate**.
+`503`-class auth outcome as **retryable** (the issuer may recover) and a `401` as **(re)authenticate**. This
+retryable signal exists **only on the HTTP plane**: the **edge** streaming taxonomy is frozen at 13 codes, so an
+`AuthResult.Unavailable` there is surfaced as **`AUTH_FAIL`** (§07 E4-2) and the driver recovers a transient
+outage through a **bounded reconnect-with-backoff** rather than a distinct retryable code.
 
 **AU5-3 (never echo the credential).** A `401` response **MUST NOT** echo the presented credential, and a
 driver **MUST NOT** log a credential. The server does not
