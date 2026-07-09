@@ -1427,12 +1427,14 @@ public final class ConfigdServer {
         // Start the consensus tick loop on each owner thread.
         // ---------------------------------------------------------------
         // Drain quiet-period (B7): the bounded pause shutdown() takes after flipping `draining` so an LB
-        // observes the 503 before the listener closes. Applied only at N>1 (a sharded cluster fronted by
-        // an LB doing rolling restarts); at N=1 there is nothing to pause for, so it is 0 (this also keeps
-        // single-node tests instant). Bounded either way - shutdown never blocks unboundedly. Tests set
-        // configd.shutdown.drainQuietMs=0 module-wide (parent pom) so the suite never pauses; the
-        // dedicated drain test exercises the flip directly.
-        long drainQuietMs = shardCount > 1 ? cfg.getLong("configd.shutdown.drainQuietMs", 2000L) : 0L;
+        // observes the 503 before the listener closes. The DEFAULT is 2000ms at N>1 (a sharded cluster
+        // fronted by an LB doing rolling restarts) and 0 at N=1 (a single node with no LB in front has
+        // nothing to pause for). An EXPLICIT configd.shutdown.drainQuietMs is honoured at ANY N, so a
+        // single-node deployment that IS behind an LB - or the drain-flip test - can request a window.
+        // Bounded either way (interruptible sleep) - shutdown never blocks unboundedly. Tests set
+        // configd.shutdown.drainQuietMs=0 module-wide (parent pom) so the suite never pauses unless a test
+        // explicitly opts in.
+        long drainQuietMs = cfg.getLong("configd.shutdown.drainQuietMs", shardCount > 1 ? 2000L : 0L);
         ConfigdServer server = new ConfigdServer(
                 config, driver, stateMachine,
                 ownerPool, readDispatchExecutor, tlsReloadExecutor, nodeAnchorExecutor, nodeAnchor,
@@ -2187,7 +2189,16 @@ public final class ConfigdServer {
      */
     private static boolean isAuthEnabled(ConfigSource cfg, ServerConfig config) {
         List<String> providers = AuthenticatorChain.configuredProviders(cfg);
-        boolean spiAuthEnabled = !providers.isEmpty() && !providers.equals(List.of("none"));
+        // configd.auth.mode=none explicitly disables auth: the noAuthMode boot branch wires NO chain,
+        // interceptor, or ACL (the open gate), which supersedes the legacy static --auth-token. A leftover
+        // token is therefore inert on this posture, so the store is genuinely open. Counting the token here
+        // would let the B5 no-silent-public-bind guard believe the store is authenticated when it is fully
+        // open on every interface - the exact footgun that guard exists to catch. So `none` is auth-off
+        // regardless of any --auth-token, keeping this predicate equal to "an ACL/interceptor was wired".
+        if (providers.equals(List.of("none"))) {
+            return false;
+        }
+        boolean spiAuthEnabled = !providers.isEmpty();
         return spiAuthEnabled || config.authEnabled();
     }
 

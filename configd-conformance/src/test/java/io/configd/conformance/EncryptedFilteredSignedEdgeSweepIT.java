@@ -67,12 +67,17 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  *       tear the connection down fail-closed). Because the connection subscribes to an empty store it
  *       TAILs from cursor 0, so the deltas chain contiguously and are delivered as verified change
  *       events — not folded into an unsigned hydration snapshot.</li>
- *   <li><b>Out-of-prefix dropped on the live tail</b> (the {@code 0x03} filter, cell 3). An out-of-prefix
- *       key (also the at-rest canary) is committed, followed by an in-prefix sentinel. The change-event
- *       stream — which is <b>not</b> filtered on the client (only the materialized view is) — never
- *       carries the out-of-prefix key, proving the SERVER dropped the whole signed delta before it
- *       reached the wire (the {@code 0x03} confirm). Single-key commits keep this delta-granular filter
- *       key-granular.</li>
+ *   <li><b>Out-of-prefix dropped on the live tail, in-prefix sentinel delivered live</b> (the {@code 0x03}
+ *       filter, cell 3). An out-of-prefix key (also the at-rest canary) is committed, followed by an
+ *       in-prefix sentinel. The change-event stream — which is <b>not</b> filtered on the client (only the
+ *       materialized view is) — never carries the out-of-prefix key, proving the SERVER dropped the whole
+ *       signed delta before it reached the wire (the {@code 0x03} confirm). The interleaved drop opens a
+ *       forward jump in the delivered chain (the server's covered-S cursor advanced past the skipped
+ *       position, ADR-0045 carve-out 2); the sentinel must arrive as exactly ONE live change event
+ *       forward-applied over that jump, NOT re-hydrated by a re-bootstrap — the proof the reference client
+ *       honours the filtered forward-only apply contract rather than misreading the jump as a gap and
+ *       re-bootstrapping on every interleaved out-of-prefix commit. Single-key commits keep this
+ *       delta-granular filter key-granular.</li>
  *   <li><b>0x01 back-compat</b> (cell 19). A second reference client subscribes full-store with
  *       {@code SubscribeOptions.defaults()} (wire {@code 0x01}) against the SAME encrypted server and
  *       hydrates the WHOLE store — including the out-of-prefix key the {@code 0x03} client never saw —
@@ -201,6 +206,19 @@ class EncryptedFilteredSignedEdgeSweepIT {
                 http.blocking().put(PREFIX + "tier", "gold".getBytes(UTF_8), WriteOptions.defaults());
                 assertTrue(await(DELIVER_MS, () -> viewHas(sub, PREFIX + "tier", "gold")),
                         "the in-prefix sentinel committed after the canary must reach the filtered view");
+                // The decisive live-tail-filter proof. `tier` was committed AFTER the interleaved out-of-prefix
+                // canary, so the server dropped the canary's whole signed delta and opened a FORWARD jump in the
+                // delivered chain (its covered-S cursor advanced past the skipped position, ADR-0045 carve-out
+                // 2). `tier` must therefore arrive as exactly ONE live CHANGE EVENT, forward-applied over that
+                // jump — NOT re-hydrated by a re-bootstrap. A client that misread the forward jump as a chain
+                // gap would re-SUBSCRIBE at 0 and re-hydrate `tier` through the prefix SNAPSHOT, which emits NO
+                // change event: this exact count is what fails if the re-bootstrap storm ever returns. It is what
+                // turns the leg from "tier eventually visible" (a snapshot re-hydrate also satisfies that) into
+                // "tier arrived live over the filtered tail".
+                assertTrue(await(DELIVER_MS, () -> count(changes, PREFIX + "tier") == 1),
+                        "tier must arrive as exactly one live change event over the filtered tail (forward-applied "
+                                + "over the dropped out-of-prefix delta) — a re-bootstrap re-hydration would deliver "
+                                + "it via the snapshot with no change event, failing this");
                 // The change-event stream is NOT client-filtered (only the view is), so an out-of-prefix key
                 // in it would mean the server sent it. Its absence == the server dropped the whole signed
                 // delta before the wire: the 0x03 server-side prefix filter is genuinely engaged.
@@ -208,8 +226,9 @@ class EncryptedFilteredSignedEdgeSweepIT {
                         "the 0x03 server-side prefix filter must drop the out-of-prefix delta — never delivered");
                 assertFalse(sub.view().get(CANARY_KEY).isPresent(),
                         "the filtered view must never contain the out-of-prefix canary");
-                System.out.println("[GD-FILTER-0x03] verified in-prefix tail delivered; out-of-prefix delta "
-                        + "dropped server-side (never a change event, never in the view)");
+                System.out.println("[GD-FILTER-0x03] verified in-prefix tail delivered live over the forward jump "
+                        + "(tier as one change event, not a re-bootstrap re-hydrate); out-of-prefix delta dropped "
+                        + "server-side (never a change event, never in the view)");
             }
 
             // The out-of-prefix canary IS committed and readable via HTTP — it was FILTERED from the edge,

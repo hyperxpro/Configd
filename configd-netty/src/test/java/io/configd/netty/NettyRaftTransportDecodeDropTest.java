@@ -5,6 +5,7 @@ import io.configd.transport.FrameCodec;
 import io.configd.transport.MessageType;
 import io.configd.transport.PeerIdentityPolicy;
 import io.configd.transport.RaftTransportMetrics;
+import io.configd.transport.RaftWireProtocol;
 
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
@@ -12,6 +13,7 @@ import org.junit.jupiter.api.Timeout;
 
 import java.io.OutputStream;
 import java.net.InetSocketAddress;
+import java.net.ServerSocket;
 import java.net.Socket;
 import java.util.Map;
 import java.util.concurrent.TimeUnit;
@@ -60,6 +62,28 @@ class NettyRaftTransportDecodeDropTest {
 
         assertEquals(0, inbound.get(), "a frame that fails to decode must never be dispatched as a message");
         assertTrue(drops.get() >= 1, "a corrupt frame must increment the connection-decode-drop counter");
+    }
+
+    @Test
+    void outboundQueueOverflowToDownPeerIncrementsFramesDropped() throws Exception {
+        // A free-then-closed port: nothing listens, so the connect is refused and the peer's bounded
+        // outbound queue never drains. Overfilling it makes the real drop-oldest site (enqueueOrDrop) fire.
+        int deadPort;
+        try (ServerSocket free = new ServerSocket(0)) {
+            deadPort = free.getLocalPort();
+        }
+        NodeId peer = NodeId.of(2);
+        server = new NettyRaftTransport(NodeId.of(1), new InetSocketAddress("127.0.0.1", 0),
+                Map.of(peer, new InetSocketAddress("127.0.0.1", deadPort)), null, msg -> { });
+        server.start();
+
+        int sends = RaftWireProtocol.OUTBOUND_QUEUE_CAPACITY + 64; // overfill the 1024-deep bounded queue
+        for (int i = 0; i < sends; i++) {
+            server.send(peer, new FrameCodec.Frame(MessageType.HEARTBEAT, 1, i, new byte[8]));
+        }
+
+        assertTrue(server.framesDropped() >= 1,
+                "overflowing the bounded outbound queue to a down peer must increment framesDropped");
     }
 
     /** A wire buffer {@code [4B senderId][frame]} whose CRC trailer is flipped: the length prefix stays

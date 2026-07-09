@@ -119,6 +119,34 @@ class InsecurePublicBindFailClosedTest {
     }
 
     @Test
+    void modeNoneWithLeftoverAuthTokenStillRefusesPublicBind() {
+        // The bypass B5 must catch: configd.auth.mode=none disables auth entirely (the open gate wires no
+        // chain/interceptor/ACL) and supersedes the legacy --auth-token. If isAuthEnabled counted the now-inert
+        // token, the guard would believe the store is authenticated and permit an unauthenticated public bind.
+        // mode=none is auth-off regardless of the token, so the guard must still refuse.
+        String savedOverride = System.getProperty(OVERRIDE);
+        String savedAuth = System.getProperty(AUTH_MODE);
+        try {
+            System.setProperty(OVERRIDE, "false");   // no acknowledgement
+            System.setProperty(AUTH_MODE, "none");    // auth explicitly disabled - the open gate
+            ServerConfig config = ServerConfig.parse(new String[]{
+                    "--node-id", "0", "--data-dir", tempDir.resolve("modenone").toString(),
+                    "--peers", "1,2", "--api-port", "0",
+                    "--auth-token", "leftover-inert-token", // superseded by mode=none; must NOT count as auth
+                    "--bind-address", "0.0.0.0"
+            });
+            SecurityException ex = assertThrows(SecurityException.class,
+                    () -> ConfigdServer.start(config));
+            assertTrue(ex.getMessage().contains("B5"),
+                    "mode=none plus a leftover --auth-token on a public bind must still be refused by B5: "
+                            + ex.getMessage());
+        } finally {
+            restore(OVERRIDE, savedOverride);
+            restore(AUTH_MODE, savedAuth);
+        }
+    }
+
+    @Test
     void serverStartsOnPublicBindWithExplicitOverride() {
         String savedOverride = System.getProperty(OVERRIDE);
         String savedAuth = System.getProperty(AUTH_MODE);

@@ -47,6 +47,14 @@ import java.util.concurrent.atomic.AtomicReference;
  * down); re-bootstrap on a chain gap or a truncated snapshot ({@link GapUnrecoverableException} — the client
  * reconnects and re-{@code SUBSCRIBE}s from scratch). Reconnect/resume are driven by {@link ConfigdEdgeClient}:
  * {@link #onConnected(EdgeConnection)} (re)sends the {@code SUBSCRIBE} at the persisted cursor.
+ *
+ * <p><b>Server-side filtered ({@code 0x03}) sessions (ADR-0045).</b> When the {@code SUBSCRIBE_OK} confirms
+ * filtering, the delivered chain is intentionally non-contiguous (the server drops whole out-of-prefix signed
+ * deltas), so gap detection relaxes to <b>forward-only</b>: a delta whose {@code fromVersion} jumps <i>ahead</i>
+ * of the applied version is the expected shape and is applied, and the cursor tracks a dense covered-S advanced
+ * by the {@code HEARTBEAT}; only a position that <i>regresses below</i> the applied version is a genuine gap.
+ * Every filtered behaviour is gated on the confirm bit, so a classic ({@code 0x01}/{@code 0x02}) session — or a
+ * {@code 0x03} edge whose server is not filtering — keeps the strict-contiguity path byte-for-byte.
  */
 public final class Subscription implements InboundFrameHandler, Flow.Publisher<ConfigChange>, AutoCloseable {
 
@@ -67,6 +75,7 @@ public final class Subscription implements InboundFrameHandler, Flow.Publisher<C
     private volatile long latestServerSeq;      // server frontier, from SUBSCRIBE_OK/HEARTBEAT (staleness)
     private volatile boolean forceRebootstrap;  // re-SUBSCRIBE at 0 after a gap / truncated snapshot
     private volatile boolean snapshotExpected;  // a snapshot flow is coming (SNAPSHOT_FIRST or DEMOTED_TO_CATCHUP)
+    private volatile boolean filtered;          // 0x03 server-side-filtered session (ADR-0045): forward-only gap
 
     private final CompletableFuture<Long> hydrated = new CompletableFuture<>();
     private final AtomicBoolean closed = new AtomicBoolean(false);
@@ -266,6 +275,21 @@ public final class Subscription implements InboundFrameHandler, Flow.Publisher<C
     @Override
     public void onHeartbeat(EdgeFrame.Heartbeat heartbeat) {
         this.latestServerSeq = heartbeat.latestSeq();
+        // On a filtered (0x03) session HEARTBEAT.latestSeq is the DRAINED-THROUGH covered-S — everything
+        // matching this edge's prefixes through it has been delivered or filtered (ADR-0045 carve-out 2), not
+        // the raw buffer tip. Advance the dense covered/resume cursor MONOTONICALLY so a reconnect resumes near
+        // head (the forward-only apply bridges the view when the next in-prefix delta lands) and the ack
+        // watermark climbs past the filtered-out skips, so a correctly-filtered narrow edge is not demoted for
+        // ack-lag while only out-of-prefix commits pass. A regressed covered-S is ignored — the covered cursor
+        // never moves backward. The ack itself stays demand-gated through drainToSubscriber, so the reactive
+        // backpressure holds unchanged: a stalled subscriber that is not draining still stalls its own ack
+        // watermark (and, once its delivery buffer fills, parks the reader — no further heartbeats, no acks).
+        // On the classic (0x01/0x02) path this is a no-op: filtered is false, matching the legacy contract.
+        if (filtered && heartbeat.latestSeq() > cursor) {
+            cursor = heartbeat.latestSeq();
+            persistCursor();
+            sendCursorAck(drainToSubscriber());
+        }
     }
 
     @Override
@@ -301,6 +325,12 @@ public final class Subscription implements InboundFrameHandler, Flow.Publisher<C
 
     private void handleSubscribeOk(EdgeFrame.SubscribeOk ok) {
         this.latestServerSeq = ok.latestSeq();
+        // ADR-0045: the server's confirm selects the filtered-stream apply mode — a dense covered-S resume
+        // cursor and forward-only gap detection. A 0x01/0x02 SUBSCRIBE_OK always decodes filtered=false, and a
+        // 0x03 edge talking to a filter-OFF server also gets filtered=false, so both stay on the strict classic
+        // path. Gate every filtered behaviour on this bit (not on the negotiated wire version) so the byte-for-
+        // byte classic contract holds whenever the server is not actually filtering this session.
+        this.filtered = ok.filtered();
         if (ok.mode() == EdgeFrame.Mode.TAIL) {
             // Resume-from-cursor: the current view IS the hydrated state (for a fresh subscribe it is empty at
             // cursor 0). A snapshot does not follow.
@@ -340,10 +370,24 @@ public final class Subscription implements InboundFrameHandler, Flow.Publisher<C
             if (delta.toVersion() <= currentVersion) {
                 continue; // stale / re-delivered — idempotent, cursor unchanged (INV-M1)
             }
-            if (delta.fromVersion() != currentVersion) {
+            // Gap detection. The classic (0x01/0x02) chain is contiguous, so any fromVersion other than the
+            // applied version is a gap. On a server-side-filtered (0x03) session the delivered chain is
+            // intentionally non-contiguous — the server drops whole out-of-prefix signed deltas and advances a
+            // dense covered-S cursor (ADR-0045 carve-out 2) — so a FORWARD jump (fromVersion > applied) is the
+            // expected shape of an interleaved out-of-prefix commit and must be APPLIED, not re-bootstrapped;
+            // only a REGRESSION below the applied version is a genuine gap. The forward jump applies cleanly
+            // because LocalConfigView.applyDelta stamps the store to delta.toVersion() regardless of fromVersion
+            // (it does not require contiguity), so no separate bridged-apply is needed. Per-delta signature
+            // verification already ran above, so a forward-applied delta is verified exactly like a contiguous
+            // one — the filtered relaxation touches only the position check, never the crypto.
+            boolean gap = filtered
+                    ? delta.fromVersion() < currentVersion
+                    : delta.fromVersion() != currentVersion;
+            if (gap) {
                 forceRebootstrap = true;
                 throw new GapUnrecoverableException("chain gap: delta.fromVersion " + delta.fromVersion()
-                        + " != applied version " + currentVersion + " — re-bootstrapping");
+                        + (filtered ? " < applied version " : " != applied version ") + currentVersion
+                        + " — re-bootstrapping");
             }
             view.applyDelta(delta, notification.commitTimestampMillis());
             verifier.recordApplied(delta);

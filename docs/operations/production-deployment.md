@@ -183,11 +183,11 @@ The `BurnRateAlertEvaluator` computes multi-window burn rates:
 
 | Metric | Type | Description |
 |--------|------|-------------|
-| `configd_raft_commit_total` | Counter | Total committed entries |
-| `configd_raft_term` | Gauge | Current Raft term |
-| `configd_edge_read_latency_ns` | Histogram | Edge read latency |
-| `configd_propagation_lag` | Gauge | Leader commit -> edge applied gap |
-| `configd_propagation_violations_total` | Counter | LIVE-1 violations |
+| `configd_write_commit_total` | Counter | Total committed writes |
+| `raft_shard_current_term_<gid>` | Gauge | Current Raft term, per shard |
+| `configd_edge_read_seconds` | Histogram | Edge read latency (seconds) |
+| `configd_propagation_delay_seconds` | Histogram | Leader-commit -> edge-applied delay (seconds) |
+| `configd_edge_staleness_violation_total` | Counter | Edge staleness-bound (INV-S1) violations |
 
 ## Troubleshooting
 
