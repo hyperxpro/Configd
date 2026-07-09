@@ -45,7 +45,7 @@ mkdir -p "$LOGDIR"
 PROM_VER="2.53.2"
 
 # Modules whose source/tests gate-6 exercises.
-MODULES="configd-observability,configd-config-store,configd-transport,configd-distribution-service,configd-server,configd-edge-node"
+MODULES="configd-wire,configd-observability,configd-config-store,configd-transport,configd-distribution-service,configd-server,configd-edge-node"
 
 echo "=== GATE-6 (Session 6: operability & deployment readiness) — logs in $LOGDIR ==="
 
