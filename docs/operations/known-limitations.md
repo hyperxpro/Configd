@@ -235,16 +235,19 @@ GREEN against a `main`-identical server (register section 11.12). The honest res
   three modes, RTO **4.2 s** (WAL) / **5.9 s** (snapshot) (`docs/archive/measurement/ec2-2026-06-30/02-dr-drills.md`;
   register section 7.5). **Caveat:** single-box 3-co-located topology - cross-machine failover adds network RTT,
   but the correctness (no loss, bounded election) is topology-independent.
-- **Faulted linearizability - GREEN under a real Jepsen-grade matrix on the release bytes (E1).** The
+- **Faulted linearizability - a real Jepsen-grade matrix that FOUND and FIXED a bug (E1).** The
   earlier evidence was a 15-second, N=1, quorum-preserving *smoke* (`run-gate.sh`, 4 seeds). E1
-  (2026-07-10) replaced it with a real **adversarial combination-nemesis matrix** on the release bytes of
-  `299ba14`: `kill -9`+restart, `iptables -j REJECT` partitions (single + multi-node **quorum-breaking**),
-  `SIGSTOP`/`SIGCONT` pauses, `iptables -m statistic` packet loss, `libfaketime` clock skew, and
-  overlapping combinations, on **N=3 and N=5** across at-rest-encryption / auth / clock-skew / **multi-shard**
-  postures — **every recorded history LINEARIZABLE**, checked by the trusted Porcupine checker, with the
-  harness's own discrimination re-proven (both seeded bugs turn the checker RED on HEAD). Results pinned
-  under `docs/measurement/e1-faulted-linz-2026-07-10/`; the standing CI job now runs this matrix, not the
-  smoke. **Residual (honest):** asymmetric / partial (bridge, non-transitive) partitions need per-pair
+  (2026-07-10) replaced it with a real **adversarial combination-nemesis matrix**: `kill -9`+restart,
+  `iptables -j REJECT` partitions (single + multi-node **quorum-breaking**), `SIGSTOP`/`SIGCONT` pauses,
+  `iptables -m statistic` packet loss, `libfaketime` clock skew, and overlapping combinations, on **N=3 and
+  N=5** across at-rest-encryption / auth / clock-skew / **multi-shard** postures, checked by the trusted
+  Porcupine checker, discrimination re-proven (both seeded bugs turn the checker RED on HEAD). **The matrix
+  found a real linearizability bug** on the pre-fix bytes (`299ba14`): a phantom-absent linearizable read
+  (404/absent for a committed-and-acked present key) served by a fresh leader whose ReadIndex omitted the
+  current-term-no-op gate (Raft §6.4). It was **fixed in this arc** (`RaftNode.readIndex()` gate, commit
+  `5a0e20f`; regression `ReadIndexNoOpBeforeServeTest`) and the full matrix re-ran
+  **every-history-LINEARIZABLE on the fixed code**. Results pinned under
+  `docs/measurement/e1-faulted-linz-2026-07-10/`; the standing CI job now runs this matrix, not the smoke. **Residual (honest):** asymmetric / partial (bridge, non-transitive) partitions need per-pair
   source-addressed cuts and remain a **netns follow-up** (the single-host loopback substrate cannot do them);
   the same safety edge is already stressed by pauses + isolation + quorum-breaking combinations. Endurance
   (E2, the ≥72 h soak) is a separate, still-pending arc — see the soak note below.

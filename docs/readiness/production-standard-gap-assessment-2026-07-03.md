@@ -19,13 +19,16 @@
 > mixed-version story, unversioned edge/etc. formats, leadership auto-balance) are NOT frozen-format
 > items and remain as assessed.
 
-> **E1 UPDATE (2026-07-10) — Class E items E1–E4 CLOSED (§2.2).** The faulted-linearizability gaps are
-> closed by the E1 arc on the release bytes of `299ba14`. The 15-second, N=1, quorum-preserving smoke is
-> replaced by a real **Jepsen-grade adversarial matrix**: `kill -9`+restart, `iptables -j REJECT`
-> partitions (single + multi-node **quorum-breaking**), `SIGSTOP`/`SIGCONT` pauses, `iptables -m statistic`
-> packet loss, `libfaketime` clock skew, and **overlapping combinations**, on **N=3 and N=5** across
-> at-rest-encryption / auth / clock-skew / **multi-shard** postures — every history LINEARIZABLE, checked
-> by Porcupine, with the harness's discrimination re-proven on HEAD (both seeded bugs RED). This closes
+> **E1 UPDATE (2026-07-10) — Class E items E1–E4 CLOSED (§2.2); a real bug was found and fixed.** The
+> 15-second, N=1, quorum-preserving smoke is replaced by a real **Jepsen-grade adversarial matrix**:
+> `kill -9`+restart, `iptables -j REJECT` partitions (single + multi-node **quorum-breaking**),
+> `SIGSTOP`/`SIGCONT` pauses, `iptables -m statistic` packet loss, `libfaketime` clock skew, and
+> **overlapping combinations**, on **N=3 and N=5** across at-rest-encryption / auth / clock-skew /
+> **multi-shard** postures, checked by Porcupine, discrimination re-proven (both seeded bugs RED). **The
+> matrix found a real linearizability bug** on the pre-fix bytes (`299ba14`): a phantom-absent linearizable
+> read from a fresh leader whose ReadIndex omitted the current-term-no-op gate (Raft §6.4). It was **fixed
+> in this arc** (`RaftNode.readIndex()` gate, commit `5a0e20f`) and the full matrix re-ran
+> **every-history-LINEARIZABLE on the fixed code**. This closes
 > **2.2-2** (nemesis breadth — E2), **2.2-3** (Jepsen-grade duration/intensity — E3), **2.2-4** (release-SHA
 > evidence + the standing CI job now runs the real matrix — E1), and **2.2-5** (per-shard linearizability
 > at N>1 shards — E4). Residual: **asymmetric / partial (bridge) partitions** need per-pair source-addressed
