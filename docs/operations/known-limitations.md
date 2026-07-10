@@ -235,14 +235,19 @@ GREEN against a `main`-identical server (register section 11.12). The honest res
   three modes, RTO **4.2 s** (WAL) / **5.9 s** (snapshot) (`docs/archive/measurement/ec2-2026-06-30/02-dr-drills.md`;
   register section 7.5). **Caveat:** single-box 3-co-located topology - cross-machine failover adds network RTT,
   but the correctness (no loss, bounded election) is topology-independent.
-- **Faulted linearizability (C3) - GREEN, re-run pending on the release bytes.** The faulted-linz harness
-  was fixed this arc (each test node's signing key mounted OUTSIDE its data dir, satisfying the real D-1
-  co-location guard rather than disabling it); the multi-process iptables-faulted matrix then ran GREEN
-  (8/8 LINEARIZABLE, reproducibility gate iv byte-identical) on the arc's intermediate commit
-  (`docs/measurement/ec2-drive-to-green-2026-07-02/README.md`). Because later gates changed consensus and
-  storage code, the definitive C3 was re-captured on the release SHA. **DONE: GREEN on release SHA
-  eb9b293** - 8/8 LINEARIZABLE (3- and 5-node, faults active), reproducibility gate iv byte-identical
-  (`docs/measurement/ec2-drive-to-green-2026-07-02/gate7-final/`). Condition C3 closed on the shipped bytes.
+- **Faulted linearizability - GREEN under a real Jepsen-grade matrix on the release bytes (E1).** The
+  earlier evidence was a 15-second, N=1, quorum-preserving *smoke* (`run-gate.sh`, 4 seeds). E1
+  (2026-07-10) replaced it with a real **adversarial combination-nemesis matrix** on the release bytes of
+  `299ba14`: `kill -9`+restart, `iptables -j REJECT` partitions (single + multi-node **quorum-breaking**),
+  `SIGSTOP`/`SIGCONT` pauses, `iptables -m statistic` packet loss, `libfaketime` clock skew, and
+  overlapping combinations, on **N=3 and N=5** across at-rest-encryption / auth / clock-skew / **multi-shard**
+  postures — **every recorded history LINEARIZABLE**, checked by the trusted Porcupine checker, with the
+  harness's own discrimination re-proven (both seeded bugs turn the checker RED on HEAD). Results pinned
+  under `docs/measurement/e1-faulted-linz-2026-07-10/`; the standing CI job now runs this matrix, not the
+  smoke. **Residual (honest):** asymmetric / partial (bridge, non-transitive) partitions need per-pair
+  source-addressed cuts and remain a **netns follow-up** (the single-host loopback substrate cannot do them);
+  the same safety edge is already stressed by pauses + isolation + quorum-breaking combinations. Endurance
+  (E2, the ≥72 h soak) is a separate, still-pending arc — see the soak note below.
 - **Edge-staleness distribution (INV-S2) - re-run pending with the gap-quarantine fix.** The on-metal
   INV-S2 distribution run this arc surfaced a real edge-fan-out bug: a perfectly caught-up edge
   (`cursor == lastAckedSeq`) under any sustained write stream past the fan-out buffer capacity was

@@ -50,6 +50,13 @@ removed. The whole-system format-compatibility contract (C0-C9) is
 
 ### Changed
 
+- **Faulted-linearizability is now a real Jepsen-grade matrix (E1), not a 15-second smoke.** The
+  `configd-linz` harness gained `SIGSTOP`/`SIGCONT` pauses, packet loss, multi-node quorum-breaking
+  partitions, clock skew, and overlapping combination faults (a new ADVERSARIAL schedule), plus
+  at-rest-encryption / auth / clock-skew / multi-shard postures. The matrix ran on the release bytes
+  with every history LINEARIZABLE; both discrimination seeds were re-authored against the evolved code
+  and turn the checker RED. The standing CI faulted-linz job now runs this matrix. Results:
+  `docs/measurement/e1-faulted-linz-2026-07-10/`. (Endurance — the ≥72 h soak — remains pending.)
 - **Default bind is loopback (`127.0.0.1`).** Binding a non-loopback interface while auth is OFF is refused
   unless `--allow-insecure-public-bind` is set (a footgun-fix, not "auth required by default").
 - **Write-admission control ON by default** (`configd.write.maxInflightProposals`, conservative value; 429 +
