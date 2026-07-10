@@ -95,6 +95,7 @@ posture_args() {   # echoes the extra HarnessMain args for a posture
     encrypt) echo "--encrypt-at-rest true";;
     auth)    echo "--auth-token e1-matrix-secret-token";;
     skew)    echo "--clock-skew 3 --faketime-lib $FAKETIME_LIB";;
+    shards)  echo "--shards 4";;   # multi-Raft: per-key check == per-shard linearizability (2.2-5)
   esac
 }
 

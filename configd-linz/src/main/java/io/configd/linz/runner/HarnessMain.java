@@ -65,8 +65,9 @@ public final class HarnessMain {
         boolean encryptAtRest = Boolean.parseBoolean(a.getOrDefault("encrypt-at-rest", "false"));
         long clockSkew = Long.parseLong(a.getOrDefault("clock-skew", "0"));
         Path faketimeLib = a.containsKey("faketime-lib") ? Path.of(a.get("faketime-lib")) : null;
-        ClusterNode.Posture base = new ClusterNode.Posture(authToken, encryptAtRest, 0, null);
-        ClusterNode.Posture skewed = new ClusterNode.Posture(authToken, encryptAtRest, clockSkew, faketimeLib);
+        int shardCount = Integer.parseInt(a.getOrDefault("shards", "1"));
+        ClusterNode.Posture base = new ClusterNode.Posture(authToken, encryptAtRest, 0, null, shardCount);
+        ClusterNode.Posture skewed = new ClusterNode.Posture(authToken, encryptAtRest, clockSkew, faketimeLib, shardCount);
         final boolean applySkew = clockSkew != 0 && faketimeLib != null;
 
         Schedule schedule = mode == Schedule.Mode.ADVERSARIAL
@@ -77,7 +78,8 @@ public final class HarnessMain {
         System.out.println("[harness] seed=" + seed + " nodes=" + nodes + " clients=" + clients
                 + " keys=" + keys + " duration=" + duration + "ms mode=" + mode
                 + " posture{auth=" + (authToken != null) + " encrypt=" + encryptAtRest
-                + " clockSkew=" + (applySkew ? clockSkew + "s@n1" : "none") + "}");
+                + " clockSkew=" + (applySkew ? clockSkew + "s@n1" : "none")
+                + " shards=" + shardCount + "}");
         int totalOps = schedule.workload.stream().mapToInt(List::size).sum();
         System.out.println("[harness] schedule -> " + schedFile + " (" + schedule.faults.size()
                 + " faults, " + totalOps + " planned ops)");

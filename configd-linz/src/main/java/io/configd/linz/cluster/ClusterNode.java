@@ -59,9 +59,10 @@ public final class ClusterNode {
      * @param faketimeLib      absolute path to {@code libfaketime.so.1}, required only when
      *                         {@code clockSkewSeconds != 0}; null otherwise
      */
-    public record Posture(String authToken, boolean encryptAtRest, long clockSkewSeconds, Path faketimeLib) {
+    public record Posture(String authToken, boolean encryptAtRest, long clockSkewSeconds, Path faketimeLib,
+                          int shardCount) {
         public static Posture none() {
-            return new Posture(null, false, 0, null);
+            return new Posture(null, false, 0, null, 1);
         }
 
         public boolean authEnabled() {
@@ -70,6 +71,12 @@ public final class ClusterNode {
 
         public boolean clockSkewed() {
             return clockSkewSeconds != 0 && faketimeLib != null;
+        }
+
+        /** Multi-shard (multi-Raft) deploy: each key routes to one shard, so the per-key checker
+         *  verifies per-shard linearizability. shardCount<=1 is the single-group path (default). */
+        public boolean sharded() {
+            return shardCount > 1;
         }
     }
 
@@ -135,6 +142,11 @@ public final class ClusterNode {
             // System property read by ConfigdServer.encryptionAtRestEnabled -> the durability
             // envelope switches from term-versioned HMAC (algId=1) to AES-256-GCM (algId=2).
             cmd.add("-Dconfigd.raft.encryption.enabled=true");
+        }
+        if (posture.sharded()) {
+            // Static-N multi-Raft: N shard groups on this node; the HTTP API routes each key to its
+            // shard, so the per-key Porcupine check becomes a per-shard linearizability check.
+            cmd.add("-Dconfigd.raft.shardCount=" + posture.shardCount());
         }
         cmd.addAll(List.of(
                 "-jar", jar.toString(),
