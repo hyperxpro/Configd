@@ -1,28 +1,38 @@
 # configd-linz — Linearizability + Fault-Injection Harness (A3 / R-04)
 
 Drives a **real separate-JVM Configd cluster** (the shaded `configd-server` jar) over the
-**real `TcpRaftTransport`**, under **OS-level faults** (`iptables` partitions + `kill -9`), records a
+**real Netty consensus transport** (ADR-0043), under **OS-level faults**, records a
 **checker-neutral op-history**, and verifies it with a **trusted third-party checker — Porcupine**
 (the checker etcd uses). It deliberately does **not** use the in-process `SimulatedNetwork` — that is
-the single-threaded path that hid the R-01 race. Design: `docs/a3-harness-design.md`, ADR-0032.
+the single-threaded path that hid the R-01 race. Design: ADR-0032. The E1 measurement run and its
+methodology are pinned under `docs/measurement/e1-faulted-linz-*`.
+
+**Fault classes (the nemesis set).** `kill -9` + restart-into-the-live-cluster, symmetric
+`iptables -j REJECT` partitions (single-node and multi-node → quorum-breaking), `SIGSTOP`/`SIGCONT`
+process pauses (the stale-leader / stop-the-world nemesis), probabilistic packet loss
+(`iptables -m statistic`), clock skew (`libfaketime`, a timestamp perturbation — elections are
+tick-driven), and **overlapping combinations** of all of these. Two schedule modes: `SEQUENTIAL`
+(the original one-at-a-time, quorum-preserving smoke) and `ADVERSARIAL` (Jepsen-grade combination
+nemeses in quorum-breaking bursts). Postures on the consensus path: at-rest encryption, bearer-token
+auth, clock skew.
 
 ## Layout
 
 ```
 src/main/java/io/configd/linz/
-  cluster/   ClusterNode, Cluster        separate-JVM nodes (1..n) on distinct 127.0.0.1 ports
-  fault/     FaultInjector               iptables --dport DROP partitions + kill-9 (sudo -n), tracked + healed
-  client/    ConfigClient                JDK HttpClient; status -> {ok,info,fail}; follows X-Leader-Hint
+  cluster/   ClusterNode, Cluster        separate-JVM nodes (1..n); posture (auth/encrypt/skew); pause()/resume()
+  fault/     FaultInjector               iptables REJECT partitions + statistic-DROP packet loss (sudo -n), tracked+healed
+  client/    ConfigClient                JDK HttpClient (optional bearer token); status -> {ok,info,fail}; follows X-Leader-Hint
   history/   Op, HistoryRecorder, PorcupineHistoryWriter   recorder + the ack!=commit encoding
-  schedule/  Schedule, ScheduleJson      seeded fault+workload plan; reproducible schedule-<seed>.json
+  schedule/  Schedule, ScheduleJson      seeded SEQUENTIAL | ADVERSARIAL plan; reproducible schedule-<seed>.json
   check/     PorcupineChecker, Verdict   shells the Go checker; maps exit code -> verdict
-  runner/    HarnessMain                 gate (iii)/(iv) fault+workload run
-             LostWriteScenario           gate (ii) lost-acked-write discrimination
-             StaleReadScenario           gate (ii) stale-read discrimination
-src/main/go/porcupine-check/  main.go    ~150-line trusted checker (per-key linearizable register)
-src/test/java/.../CheckerSelfTest        gate (i): 8 synthetic histories, pinned verdicts (needs PORCUPINE_BIN)
+  runner/    HarnessMain                 fault+workload run (concurrent apply/heal fault scheduler)
+             LostWriteScenario           lost-acked-write discrimination
+             StaleReadScenario           stale-read discrimination
+src/main/go/porcupine-check/  main.go    trusted checker (per-key linearizable register)
+src/test/java/.../CheckerSelfTest        checker self-test: synthetic histories, pinned verdicts (needs PORCUPINE_BIN)
                  HistoryWriterUnitTest    pure-Java encoding coverage (runs in ./mvnw test)
-scripts/   build-porcupine.sh  run-discrimination.sh  run-gate.sh
+scripts/   build-porcupine.sh  run-discrimination.sh  run-gate.sh  run-matrix.sh   (run-matrix.sh = the E1 matrix)
 discrimination/  lost-acked-write.patch  stale-read.patch
 ```
 
@@ -56,14 +66,30 @@ On single-host loopback the kernel sources all outbound connections from `127.0.
 per-node **source-IP** partitions are impossible without network namespaces. We therefore partition by
 **destination Raft port** (`--dport`), which cleanly isolates one node's inbound socket. Consequences:
 
-- **F-E (isolate leader)** and **isolate/kill of any node** are faithful: isolating a leader's inbound
-  fails CheckQuorum -> it steps down (~500 ms) -> stops heartbeating -> the majority re-elects.
-- **F-F (bridge partition)** needs per-*pair* source-addressed cuts -> deferred to a netns-based
-  follow-up (recorded, not silently dropped).
+- **Isolate/kill/pause of any node** are faithful: isolating a leader's inbound fails CheckQuorum -> it
+  steps down (~500 ms) -> the majority re-elects. A `SIGSTOP` pause freezes a node with its sockets
+  open (the stale-leader window). **Quorum-breaking** partitions are exercised by isolating a *set* of
+  nodes at once (each becomes an isolated singleton) — a majority isolation drives total unavailability,
+  a minority isolation leaves the majority serving while the isolated nodes must never serve a stale
+  read. This is the safety property; a *connected*-minority-with-its-own-leader and true **asymmetric /
+  bridge (non-transitive) partitions** need per-pair source-addressed cuts and remain the **netns
+  follow-up** (recorded, not silently claimed) — the same safety edge is already stressed here by pauses
+  + isolation + quorum-breaking combinations.
 - **Stale-read discrimination** is adapted: a deposed-leader-still-serving is not single-host injectable
   (CheckQuorum + the heartbeat leak), so the same safety violation is injected as a **lagging isolated
   follower** serving a local read as if linearizable — exactly what `RaftNode.readIndex`/`isReadReady`
   exist to forbid.
+
+## Discrimination is re-proven on HEAD (the harness is not blind)
+
+Both seeded bugs in `discrimination/` are re-authored against the current code and turn the checker RED
+(controls GREEN) — see `run-discrimination.sh`. Re-authoring `lost-acked-write` surfaced a **strong
+positive property**: the raft-anchor durability kernel *fail-closes* a lost write. With only the WAL
+write no-opped, every node refuses to start (`WAL recovery head-rollback ... a committed-and-acked
+durable entry vanished - refusing, fail closed`), so a single-layer durability defeat is INDETERMINATE,
+never a silent loss. To exercise the checker's discrimination of the lost-write *shape*, the seed now
+defeats BOTH layers (the WAL write and the anchor head-rollback guard); the single-layer INDETERMINATE
+is itself the evidence the guard is load-bearing.
 
 ## Running
 
@@ -78,8 +104,14 @@ export PORCUPINE_BIN="$PWD/configd-linz/bin/porcupine-check"
 # GATE (ii): discrimination — both seeded bugs must turn the checker RED, controls GREEN
 bash configd-linz/scripts/run-discrimination.sh both
 
-# GATE (iii)+(iv): unmodified GREEN on 3- and 5-node + reproducibility
+# GATE (iii)+(iv): unmodified GREEN on 3- and 5-node + reproducibility (SEQUENTIAL smoke)
 bash configd-linz/scripts/run-gate.sh "1001 1002 1003"
+
+# The E1 MATRIX: real adversarial combination nemeses on N=3 + N=5 across postures. Every
+# recorded history must be LINEARIZABLE. --profile smoke is a quick local subset; --profile
+# full (the measurement run) needs a non-burstable box + libfaketime for the skew posture.
+bash configd-linz/scripts/run-matrix.sh --out /tmp/e1 --profile smoke --nodes "3 5" \
+  --postures "base encrypt auth" --adv-seeds 3 --adv-dur 45000 --keys 12 --shard 1/1
 
 # GATE (v): full build + suite (self-test auto-skips without PORCUPINE_BIN, so CI stays green)
 ./mvnw -fae test
