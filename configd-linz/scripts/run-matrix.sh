@@ -79,14 +79,15 @@ SHA="$(git rev-parse HEAD 2>/dev/null || echo unknown)"
 : > "$SUMMARY"
 printf 'sha\tmode\tnodes\tposture\tseed\tfaults\tops\tverdict\texit\n' >> "$SUMMARY"
 
-# base port per shard so parallel shards never collide on ports
-br=$((16000 + SHARD_I * 400))
-ba=$((15000 + SHARD_I * 400))
-CELL=0     # global cell counter for sharding
+# Ports are derived from the GLOBAL cell index (below), so every run - across all parallel
+# shards - gets a unique, non-overlapping port range. Two consequences: (1) parallel shards
+# never collide, and an orphaned server from a crashed run can never clash with a later run;
+# (2) we must NOT pkill between runs (that kills sibling shards' servers by jar path). Each
+# HarnessMain tears down its OWN nodes and iptables rules in its finally + shutdown-hook, and
+# `timeout` sends SIGTERM (which runs the hook), so a normal or timed-out run self-cleans. A
+# single global sweep after ALL shards finish is the orchestrator's job, never a shard's.
+CELL=0
 RED=0; INDET=0; RUN=0
-
-cleanup() { pkill -9 -f 'configd-server-0.1.0-SNAPSHOT.jar' 2>/dev/null; sleep 1; }
-trap 'cleanup; sudo -n iptables -F 2>/dev/null; sudo -n tc qdisc del dev lo root 2>/dev/null; true' EXIT
 
 posture_args() {   # echoes the extra HarnessMain args for a posture
   case "$1" in
@@ -109,28 +110,27 @@ run_cell() { # mode nodes posture seed dur readpct
     printf '%s\t%s\t%s\t%s\t%s\t-\t-\tSKIPPED(no-faketime)\t-\n' "$SHA" "$mode" "$n" "$posture" "$seed" >> "$SUMMARY"
     return 0
   fi
-  br=$((br+8)); ba=$((ba+8))
+  # Globally-unique port range per cell (24 ports/cell covers N<=5 raft + api): no reuse ever.
+  local br=$((16000 + CELL * 24)); local ba=$((26000 + CELL * 24))
   local tag="$mode-n$n-$posture-$seed"
   local log="$OUT/run-$tag.log"
-  local want_exit code v faults ops
-  cleanup
+  local code v faults ops
   timeout 400 java --enable-preview -cp "$CP" io.configd.linz.runner.HarnessMain \
     --seed "$seed" --nodes "$n" --clients 6 --keys "$KEYS" --duration "$dur" \
     --mode "$mode" --max-concurrent 3 --read-pct "$readpct" $pargs \
     --base-raft "$br" --base-api "$ba" --jar "$JAR" --out "$OUT" > "$log" 2>&1
   code=$?
-  cleanup
   v=$(grep -oE 'VERDICT: [A-Z_]+' "$log" | tail -1 | awk '{print $2}')
   faults=$(grep -c '^\[fault\]' "$log")
   ops=$(grep -oE 'recorded [0-9]+ ops' "$log" | grep -oE '[0-9]+' | head -1)
   # one retry on INDETERMINATE (transient no-leader / checker timeout), never on RED
   if [ "$code" = "2" ]; then
-    cleanup
+    br=$((br + 12)); ba=$((ba + 12))  # fresh ports for the retry (avoid any orphan on the first range)
     timeout 400 java --enable-preview -cp "$CP" io.configd.linz.runner.HarnessMain \
       --seed "$seed" --nodes "$n" --clients 6 --keys "$KEYS" --duration "$dur" \
       --mode "$mode" --max-concurrent 3 --read-pct "$readpct" $pargs \
       --base-raft "$br" --base-api "$ba" --jar "$JAR" --out "$OUT" > "$log.retry" 2>&1
-    code=$?; cleanup
+    code=$?
     v=$(grep -oE 'VERDICT: [A-Z_]+' "$log.retry" | tail -1 | awk '{print $2}')
     faults=$(grep -c '^\[fault\]' "$log.retry")
     ops=$(grep -oE 'recorded [0-9]+ ops' "$log.retry" | grep -oE '[0-9]+' | head -1)
@@ -146,19 +146,24 @@ run_cell() { # mode nodes posture seed dur readpct
 echo "[matrix] shard $SHARD_I/$SHARD_N  sha=$SHA  profile=$PROFILE  nodes='$NODES'  postures='$POSTURES'"
 echo "[matrix] adv-seeds=$ADV_SEEDS seq-seeds=$SEQ_SEEDS adv-dur=${ADV_DUR}ms keys=$KEYS  out=$OUT"
 
+# Distinct seed range per posture so no two cells share a (seed,nodes) - HarnessMain names
+# history/schedule files by (seed,nodes), so a clash would overwrite a captured history.
+seed_base() { case "$1" in base) echo 8000;; encrypt) echo 12000;; auth) echo 16000;; skew) echo 20000;; *) echo 24000;; esac; }
+
 for n in $NODES; do
   # ADVERSARIAL cells across the requested postures
   for posture in $POSTURES; do
+    base=$(seed_base "$posture")
     s=0
     while [ "$s" -lt "$ADV_SEEDS" ]; do
-      run_cell adversarial "$n" "$posture" $((8000 + s)) "$ADV_DUR" 60
+      run_cell adversarial "$n" "$posture" $((base + s)) "$ADV_DUR" 60
       s=$((s+1))
     done
   done
   # SEQUENTIAL continuity cells (base posture only) — same schedule the CI gate uses, at depth
   s=0
   while [ "$s" -lt "$SEQ_SEEDS" ]; do
-    run_cell sequential "$n" base $((9000 + s)) 20000 72
+    run_cell sequential "$n" base $((30000 + s)) 20000 72
     s=$((s+1))
   done
 done
