@@ -1,18 +1,22 @@
 diff --git a/configd-common/src/main/java/io/configd/common/FileStorage.java b/configd-common/src/main/java/io/configd/common/FileStorage.java
-index 827d490..d9ff9ec 100644
+index 46801db..ef5d87b 100644
 --- a/configd-common/src/main/java/io/configd/common/FileStorage.java
 +++ b/configd-common/src/main/java/io/configd/common/FileStorage.java
-@@ -87,6 +87,13 @@ public final class FileStorage implements Storage {
+@@ -157,6 +157,17 @@ public final class FileStorage implements Storage {
  
      @Override
-     public void appendToLog(String logName, byte[] data) {
-+        // [A3-B DISCRIMINATION SEED — lost-acked-write] durability no-op: the WAL
-+        // entry is never written, so committed log entries are lost on crash+restart.
-+        // The in-memory RaftLog still works, so the cluster runs and a write is
-+        // confirmable by a read before the crash; the value vanishes only on restart.
+     public void appendToLogNoSync(String logName, byte[] data) {
++        // [A3-B DISCRIMINATION SEED - lost-acked-write] durability no-op on the CURRENT hot WAL
++        // path: RaftLog.append writes each entry via appendToLogNoSync + a group-commit syncLog, so
++        // no-opping this leaves the committed entry only in the in-memory RaftLog (RaftLog.append
++        // still runs entries.add after this call). The write commits and is confirmable by a read
++        // before the crash; a full-cluster kill -9 + restart then loses it because the bytes never
++        // reached the channel (not even the OS page cache). The older single-append appendToLog path
++        // is no longer where the leader's acked writes flow, which is why seeding appendToLog no
++        // longer discriminates.
 +        if (true) {
 +            return;
 +        }
-         Path file = directory.resolve(logName + ".wal");
-         try (FileChannel channel = FileChannel.open(file,
-                 StandardOpenOption.CREATE,
+         try {
+             FileChannel channel = appendChannel(logName);
+             ByteBuffer frame = frame(data);
