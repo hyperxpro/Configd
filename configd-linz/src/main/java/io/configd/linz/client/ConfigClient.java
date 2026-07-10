@@ -38,18 +38,29 @@ public final class ConfigClient {
 
     private final HttpClient http;
     private final Duration requestTimeout;
+    private final String authToken; // bearer token for the auth-on posture, or null
     private volatile int suspectedLeaderId = -1;
 
     public ConfigClient() {
-        this(Duration.ofSeconds(3));
+        this(Duration.ofSeconds(3), null);
     }
 
     public ConfigClient(Duration requestTimeout) {
+        this(requestTimeout, null);
+    }
+
+    public ConfigClient(Duration requestTimeout, String authToken) {
         this.http = HttpClient.newBuilder()
                 .version(HttpClient.Version.HTTP_1_1)
                 .connectTimeout(Duration.ofSeconds(2))
                 .build();
         this.requestTimeout = requestTimeout;
+        this.authToken = (authToken != null && !authToken.isBlank()) ? authToken : null;
+    }
+
+    /** Adds the {@code Authorization: Bearer} header when the auth-on posture supplied a token. */
+    private HttpRequest.Builder auth(HttpRequest.Builder b) {
+        return authToken == null ? b : b.header("Authorization", "Bearer " + authToken);
     }
 
     /** Result of one client operation, ready to hand to the recorder. */
@@ -79,9 +90,9 @@ public final class ConfigClient {
         long call = System.nanoTime();
         ClusterNode node = target;
         for (int hop = 0; hop < 2; hop++) {
-            HttpRequest.Builder b = HttpRequest.newBuilder()
+            HttpRequest.Builder b = auth(HttpRequest.newBuilder()
                     .uri(URI.create(node.apiBase() + CONFIG_PATH + key))
-                    .timeout(requestTimeout);
+                    .timeout(requestTimeout));
             HttpRequest req = (putBody == null)
                     ? b.DELETE().build()
                     : b.PUT(HttpRequest.BodyPublishers.ofString(putBody, StandardCharsets.UTF_8)).build();
@@ -139,9 +150,9 @@ public final class ConfigClient {
      */
     public OpResult linRead(ClusterNode target, String key) {
         long call = System.nanoTime();
-        HttpRequest req = HttpRequest.newBuilder()
+        HttpRequest req = auth(HttpRequest.newBuilder()
                 .uri(URI.create(target.apiBase() + CONFIG_PATH + key + "?consistency=linearizable"))
-                .timeout(requestTimeout)
+                .timeout(requestTimeout))
                 .GET()
                 .build();
         try {
@@ -187,9 +198,9 @@ public final class ConfigClient {
      * linearizable observation.
      */
     public String defaultGet(ClusterNode node, String key) {
-        HttpRequest req = HttpRequest.newBuilder()
+        HttpRequest req = auth(HttpRequest.newBuilder()
                 .uri(URI.create(node.apiBase() + CONFIG_PATH + key))
-                .timeout(requestTimeout)
+                .timeout(requestTimeout))
                 .GET()
                 .build();
         try {
@@ -208,10 +219,10 @@ public final class ConfigClient {
      */
     public int probeLeader(List<ClusterNode> all) {
         for (ClusterNode n : all) {
-            HttpRequest req = HttpRequest.newBuilder()
+            HttpRequest req = auth(HttpRequest.newBuilder()
                     .uri(URI.create(n.apiBase() + CONFIG_PATH + "__leader_probe__"))
                     .timeout(requestTimeout)
-                    .PUT(HttpRequest.BodyPublishers.ofString("probe"))
+                    .PUT(HttpRequest.BodyPublishers.ofString("probe")))
                     .build();
             try {
                 HttpResponse<String> resp = http.send(req, HttpResponse.BodyHandlers.ofString());

@@ -24,6 +24,7 @@ public final class ScheduleJson {
         sb.append("  \"clients\": ").append(s.clients).append(",\n");
         sb.append("  \"keys\": ").append(s.keys).append(",\n");
         sb.append("  \"durationMs\": ").append(s.durationMs).append(",\n");
+        sb.append("  \"mode\": \"").append(s.mode).append("\",\n");
 
         sb.append("  \"faults\": [");
         for (int i = 0; i < s.faults.size(); i++) {
@@ -32,7 +33,8 @@ public final class ScheduleJson {
             sb.append("    {\"offsetMs\": ").append(f.offsetMs())
               .append(", \"kind\": \"").append(f.kind())
               .append("\", \"nodeId\": ").append(f.nodeId())
-              .append(", \"durationMs\": ").append(f.durationMs()).append("}");
+              .append(", \"durationMs\": ").append(f.durationMs())
+              .append(", \"param\": ").append(f.param()).append("}");
         }
         sb.append(s.faults.isEmpty() ? "],\n" : "\n  ],\n");
 
