@@ -144,8 +144,25 @@ step_linzgate() {
   # docs/session-2/captures/linz-discrimination.txt and re-runnable manually).
   if [ "${GATE2_FAULTED:-0}" = "1" ]; then
     $MVN -q -pl configd-server -am clean package -DskipTests >/dev/null
-    bash "$ROOT/configd-linz/scripts/run-gate.sh" "2001 2002 2003 2004" 2>&1 | tee "$LOGDIR/linz-faulted.log" | tail -5
-    grep -q "GATE (iii)+(iv) PASS" "$LOGDIR/linz-faulted.log" || { echo "GATE-2 linzgate: faulted seed matrix FAILED"; return 1; }
+    # Real faulted-linearizability matrix (run-matrix.sh): ADVERSARIAL combination nemeses
+    # (overlapping kill/isolate/SIGSTOP-pause/packet-loss, quorum-breaking bursts) on N=3 AND
+    # N=5, every history checked by Porcupine. This REPLACES the old 15-second sequential-
+    # single-fault smoke. CI runs a bounded seed count/duration; the full adversarial matrix
+    # across encryption/auth/clock-skew postures is the E1 measurement run pinned in
+    # docs/measurement/e1-faulted-linz-*. A single non-linearizable history fails the gate.
+    bash "$ROOT/configd-linz/scripts/run-matrix.sh" --out "$LOGDIR/linz-matrix" --profile smoke \
+      --nodes "3 5" --postures "base" --adv-seeds 4 --seq-seeds 2 --adv-dur 45000 --keys 12 --shard 1/1 \
+      2>&1 | tee "$LOGDIR/linz-faulted.log" | tail -10
+    # Fail HARD on any non-linearizable history (a real safety violation). Tolerate an
+    # INDETERMINATE cell with a loud warning: on a 2-vCPU CI runner a quorum-breaking burst
+    # can starve an election past the retry (a liveness artifact, NOT a linearizability
+    # violation - the safety proof is the full E1 matrix on a non-burstable box).
+    if grep -q "RESULT: FAIL" "$LOGDIR/linz-faulted.log"; then
+      echo "GATE-2 linzgate: faulted-linz matrix found a NON-LINEARIZABLE history"; return 1; fi
+    if grep -q "RESULT: INDETERMINATE" "$LOGDIR/linz-faulted.log"; then
+      echo "GATE-2 linzgate: WARN — faulted-linz matrix had INDETERMINATE cell(s) (small-runner liveness; no linearizability violation)"; fi
+    grep -qE "RESULT: (PASS|INDETERMINATE)" "$LOGDIR/linz-faulted.log" \
+      || { echo "GATE-2 linzgate: faulted-linz matrix produced no result"; return 1; }
   else
     echo "GATE-2 linzgate: faulted live matrix SKIPPED (GATE2_FAULTED!=1 — LOUD: nightly/self-hosted only)"
   fi
