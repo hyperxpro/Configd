@@ -198,6 +198,14 @@ public final class RaftNode {
      */
     static final int SNAPSHOT_TRANSFER_STALL_HEARTBEATS = 3;
 
+    // Operational drop tallies for the otherwise silent codec-reject / reassembly-refuse paths. Each is
+    // written only on the owner thread (the send and message-handling paths that own these drops), so a
+    // single-writer increment on a volatile long is race-free; volatile lets the metrics scrape read them
+    // off-owner. Surfaced through buildMetrics() into the per-shard monitorView snapshot the server gauges.
+    private volatile long appendSendRejected;
+    private volatile long snapshotChunkSendRejected;
+    private volatile long snapshotReassemblyRefused;
+
     /** Tracks pending linearizable read requests. */
     private final ReadIndexState readIndexState;
 
@@ -1851,8 +1859,37 @@ public final class RaftNode {
                 log.lastIndex(),
                 log.snapshotIndex(),
                 log.size(),
-                replicationLagMax
+                replicationLagMax,
+                appendSendRejected,
+                snapshotChunkSendRejected,
+                snapshotReassemblyRefused
         );
+    }
+
+    /**
+     * Cumulative count of outbound AppendEntries frames dropped because the wire codec rejected them
+     * (an oversized encode). Monotonic since construction; owner-thread writer, safe to read off-owner.
+     */
+    public long appendSendRejected() {
+        return appendSendRejected;
+    }
+
+    /**
+     * Cumulative count of InstallSnapshot chunks dropped because the wire codec rejected a chunk that
+     * exceeded the per-chunk cap (a chunk-size misconfiguration). Monotonic; safe to read off-owner.
+     */
+    public long snapshotChunkSendRejected() {
+        return snapshotChunkSendRejected;
+    }
+
+    /**
+     * Cumulative count of follower-side InstallSnapshot reassembly refusals - a chunked transfer whose
+     * accumulated bytes would exceed the heap reassembly cap, dropped fail-closed rather than risking an
+     * OOM. A non-zero value means a follower cannot install a snapshot until the cap is raised (the
+     * wedge path). Monotonic; safe to read off-owner.
+     */
+    public long snapshotReassemblyRefused() {
+        return snapshotReassemblyRefused;
     }
 
     /**
@@ -2494,6 +2531,7 @@ public final class RaftNode {
         try {
             transport.send(peer, req);
         } catch (IllegalArgumentException e) {
+            appendSendRejected++;
             System.err.println("Dropping AppendEntries to " + peer
                     + " (codec rejected): " + e.getMessage());
             return;
@@ -2577,6 +2615,7 @@ public final class RaftNode {
         try {
             transport.send(peer, req);
         } catch (IllegalArgumentException e) {
+            snapshotChunkSendRejected++;
             System.err.println("Dropping InstallSnapshot chunk to " + peer
                     + " (codec rejected chunk at offset " + offset + "): " + e.getMessage());
             return;
@@ -2931,6 +2970,7 @@ public final class RaftNode {
             long base = inOrder ? accumulated : 0L;
             if (base + req.data().length > maxReassembledSnapshotBytes) {
                 snapshotReassembly = null;
+                snapshotReassemblyRefused++;
                 System.err.println("RaftNode: SEVERE: refusing InstallSnapshot reassembly for index "
                         + req.lastIncludedIndex() + " - " + (base + req.data().length)
                         + " bytes would exceed the reassembly cap " + maxReassembledSnapshotBytes

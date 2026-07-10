@@ -60,7 +60,8 @@ public record ServerConfig(
      *   --node-id         integer node ID (required)
      *   --data-dir        path to data directory (required)
      *   --peers           comma-separated peer node IDs, e.g. "2,3,4" (required)
-     *   --bind-address    bind address (default: 0.0.0.0)
+     *   --bind-address    bind address (default: 127.0.0.1 loopback; a real cluster sets a routable
+     *                     address explicitly)
      *   --bind-port       bind port (default: 9090)
      *   --api-port        HTTP API port (default: 8080)
      *   --tls-cert        path to TLS certificate store (optional)
@@ -83,7 +84,12 @@ public record ServerConfig(
         int nodeId = -1;
         String dataDir = null;
         String peersStr = null;
-        String bindAddress = "0.0.0.0";
+        // Default to loopback rather than the wildcard 0.0.0.0. Binding an unauthenticated store to a
+        // public interface by default is the Redis/etcd "default-open" footgun; a genuine multi-host
+        // cluster sets --bind-address to a routable address on purpose. When the effective bind is
+        // non-loopback while auth is off, ConfigdServer.enforceBindNotSilentlyPublic refuses to start
+        // unless the operator acknowledges it with configd.security.allowInsecurePublicBind.
+        String bindAddress = "127.0.0.1";
         int bindPort = 9090;
         int apiPort = 8080;
         String tlsCert = null;

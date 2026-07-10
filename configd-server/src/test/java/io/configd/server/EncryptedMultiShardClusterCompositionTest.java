@@ -259,6 +259,105 @@ class EncryptedMultiShardClusterCompositionTest {
         assertTrue(finalCommit > postDown0, "a post-recovery write commits + replicates across the whole cluster");
     }
 
+    /**
+     * The encrypted <b>leader-kill</b> failover fold (companion to the follower-restart composition above):
+     * on the SAME encrypted 3-node × 2-shard cluster, a genuine <b>shard leader</b> is killed (not a
+     * follower). This upgrades cell 5 (encryption × failover) from restart-recovery to a real leadership
+     * change, and folds cell 12's multi-shard residual (a leader-kill co-tested across two shards, where the
+     * single-shard {@code RealClusterFailoverIT} stops).
+     *
+     * <p>Proves, all under encryption at rest ON: (1) the two survivors <b>re-elect</b> a NEW leader for
+     * every shard the victim led; (2) <b>no committed data is lost</b> — each survivor still holds the
+     * pre-kill commit indexes (applied index never regresses); (3) a <b>post-kill write commits</b> on the
+     * new leader and replicates to the survivors at a higher index; (4) the killed leader, restarted from
+     * its own data dir, <b>recovers by decrypting</b> its term-versioned anchors + keyring (no fail-closed
+     * REFUSE) and catches BOTH shards up past the post-kill commits — then the whole restored cluster
+     * commits again. The mechanism is proven plaintext + single-shard by {@code RealClusterFailoverIT};
+     * this is its encrypted, multi-shard sibling.
+     */
+    @Test
+    void encryptedMultiShardLeaderKillReElectsCommitsWithNoLossAndRejoinDecrypts(@TempDir Path root)
+            throws Exception {
+        Path signingKey = root.resolve("secrets").resolve("signing-key.bin");
+        Files.createDirectories(signingKey.getParent());
+        SigningKeyStore.loadOrCreate(signingKey);
+
+        int[] bindPorts = reserveDistinctPorts(NODES);
+        ServerConfig[] configs = new ServerConfig[NODES];
+        for (int i = 0; i < NODES; i++) {
+            configs[i] = nodeConfig(i, bindPorts, root.resolve("node-" + i), signingKey);
+        }
+        ConfigdServer[] servers = new ConfigdServer[NODES];
+        for (int i = 0; i < NODES; i++) {
+            servers[i] = ConfigdServer.start(configs[i]);
+            running.add(servers[i]);
+        }
+
+        // --- elect a stable leader per shard, then commit a pre-kill write on each shard to all three ---
+        for (int gid = 0; gid < SHARDS; gid++) {
+            assertTrue(awaitStableLeader(servers, gid, STABILIZE_MS) >= 0,
+                    "shard " + gid + " must elect a stable leader before the kill: "
+                            + leadershipSnapshot(servers, gid));
+        }
+        long preKill0 = commitAndAwaitReplication(servers, 0, "cfg/kill-alpha", "v-alpha");
+        long preKill1 = commitAndAwaitReplication(servers, 1, "cfg/kill-beta", "v-beta");
+
+        // --- KILL the shard-0 LEADER (crash equivalent). Any shard it also led must re-elect too. ---
+        int victim = leaderFor(servers, 0);
+        assertTrue(victim >= 0, "shard 0 must have a single stable leader to kill: " + leadershipSnapshot(servers, 0));
+        servers[victim].shutdown();
+        running.remove(servers[victim]);
+
+        // --- the two survivors re-elect a NEW leader for shard 0 (and shard 1, whether or not the victim
+        //     led it) — a genuine leadership change, not just a follower rejoin ---
+        int newLeader0 = awaitStableLeaderExcluding(servers, 0, victim, STABILIZE_MS);
+        assertTrue(newLeader0 >= 0 && newLeader0 != victim,
+                "the two survivors must elect a NEW shard-0 leader after killing node " + victim + ": "
+                        + leadershipSnapshot(servers, 0));
+        int newLeader1 = awaitStableLeaderExcluding(servers, 1, victim, STABILIZE_MS);
+        assertTrue(newLeader1 >= 0 && newLeader1 != victim,
+                "shard 1 must have a live leader among the survivors after the kill: "
+                        + leadershipSnapshot(servers, 1));
+
+        // --- no committed data lost: each survivor still holds the pre-kill commits (applied index is
+        //     monotonic — a leadership change never rolls a committed entry back) ---
+        for (int i = 0; i < NODES; i++) {
+            if (i == victim) {
+                continue;
+            }
+            assertTrue(appliedIndex(servers[i], 0) >= preKill0,
+                    "survivor " + i + " must retain the pre-kill shard-0 commit (index " + preKill0
+                            + ", got " + appliedIndex(servers[i], 0) + ") — no data loss across the failover");
+            assertTrue(appliedIndex(servers[i], 1) >= preKill1,
+                    "survivor " + i + " must retain the pre-kill shard-1 commit (index " + preKill1
+                            + ", got " + appliedIndex(servers[i], 1) + ")");
+        }
+
+        // --- a post-kill write commits on the NEW leader and replicates to the two survivors ---
+        long postKill0 = commitAndAwaitReplicationExcluding(servers, 0, victim, "cfg/kill-gamma", "v-gamma");
+        long postKill1 = commitAndAwaitReplicationExcluding(servers, 1, victim, "cfg/kill-delta", "v-delta");
+        assertTrue(postKill0 > preKill0, "a post-kill shard-0 write must commit at a higher index on the new leader");
+        assertTrue(postKill1 > preKill1, "a post-kill shard-1 write must commit on the survivors");
+
+        // --- rejoin: restart the killed EX-LEADER from its data dir. Recovery through the encrypted
+        //     keyring + term-versioned anchors must NOT fail closed; it catches BOTH shards up past the
+        //     post-kill commits (proving it decrypted its persisted state and replayed the gap). ---
+        ConfigdServer rejoined = ConfigdServer.start(configs[victim]);
+        servers[victim] = rejoined;
+        running.add(rejoined);
+        assertTrue(awaitUntil(RESTART_MS, () -> appliedIndex(rejoined, 0) >= postKill0),
+                "the rejoined ex-leader must decrypt its state and catch shard 0 up to " + postKill0
+                        + " (got " + appliedIndex(rejoined, 0) + ")");
+        assertTrue(awaitUntil(RESTART_MS, () -> appliedIndex(rejoined, 1) >= postKill1),
+                "the rejoined ex-leader must catch shard 1 up to " + postKill1
+                        + " (got " + appliedIndex(rejoined, 1) + ")");
+
+        // --- the whole restored cluster commits again ---
+        long finalCommit = commitAndAwaitReplication(servers, 0, "cfg/kill-epsilon", "v-epsilon");
+        assertTrue(finalCommit > postKill0,
+                "a post-recovery write commits + replicates across the whole restored cluster");
+    }
+
     // =======================================================================
     // cluster helpers (deadline-polled; no sleep-as-sync)
     // =======================================================================
@@ -364,6 +463,47 @@ class EncryptedMultiShardClusterCompositionTest {
         return -1;
     }
 
+    /** {@link #leaderFor} but skipping {@code excluded} (a killed node whose stale monitorView still reads
+     *  LEADER after shutdown — reading it would manufacture a spurious split). {@code excluded == -1}
+     *  behaves exactly like {@link #leaderFor}. */
+    private static int leaderForExcluding(ConfigdServer[] servers, int gid, int excluded) {
+        int leader = -1;
+        for (int i = 0; i < servers.length; i++) {
+            if (i == excluded) {
+                continue;
+            }
+            RaftNode node = servers[i].driver().getGroup(gid);
+            if (node != null && node.monitorView().role() == RaftRole.LEADER) {
+                if (leader >= 0) {
+                    return -1; // two leaders observed (transient) — not stable
+                }
+                leader = i;
+            }
+        }
+        return leader;
+    }
+
+    /** {@link #awaitStableLeader} among the nodes other than {@code excluded} (the killed leader). */
+    private static int awaitStableLeaderExcluding(ConfigdServer[] servers, int gid, int excluded, long budgetMs)
+            throws InterruptedException {
+        long end = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(budgetMs);
+        int candidate = -1;
+        int stable = 0;
+        while (System.nanoTime() < end) {
+            int leader = leaderForExcluding(servers, gid, excluded);
+            if (leader >= 0 && leader == candidate) {
+                if (++stable >= 10) {
+                    return leader;
+                }
+            } else {
+                candidate = leader;
+                stable = (leader >= 0) ? 1 : 0;
+            }
+            Thread.sleep(POLL_MS);
+        }
+        return -1;
+    }
+
     private static String leadershipSnapshot(ConfigdServer[] servers, int gid) {
         StringBuilder sb = new StringBuilder("[gid=").append(gid).append(" roles=");
         for (int i = 0; i < servers.length; i++) {
@@ -387,9 +527,11 @@ class EncryptedMultiShardClusterCompositionTest {
         byte[] cmd = CommandCodec.encodePut(key, value.getBytes(StandardCharsets.UTF_8));
         long deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(REPLICATE_MS);
         long committed = -1;
-        // Propose on the current leader; retry across leadership changes until accepted + applied.
+        // Propose on the current leader; retry across leadership changes until accepted + applied. Exclude
+        // the intentionally-down node from the leader read: a killed leader's stale monitorView still reads
+        // LEADER, which would otherwise read as a permanent split and stall this loop.
         while (System.nanoTime() < deadline && committed < 0) {
-            int leader = leaderFor(servers, gid);
+            int leader = leaderForExcluding(servers, gid, excluded);
             if (leader < 0 || leader == excluded) {
                 Thread.sleep(POLL_MS);
                 continue;

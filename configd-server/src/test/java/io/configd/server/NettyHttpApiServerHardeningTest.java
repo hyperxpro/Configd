@@ -2,6 +2,7 @@ package io.configd.server;
 
 import io.configd.api.HealthService;
 import io.configd.common.NodeId;
+import io.configd.observability.ConfigdMetrics;
 import io.configd.observability.MetricsRegistry;
 import io.configd.observability.PrometheusExporter;
 import io.configd.store.VersionedConfigStore;
@@ -53,6 +54,7 @@ import static org.junit.jupiter.api.Assertions.fail;
 class NettyHttpApiServerHardeningTest {
 
     private NettyHttpApiServer server;
+    private MetricsRegistry meteredRegistry;
     private final String[] savedProps = new String[3];
 
     private void startServerWith(long requestTimeoutMs, long idleTimeoutMs, int maxRequestBytes) throws Exception {
@@ -72,6 +74,46 @@ class NettyHttpApiServerHardeningTest {
                 /* authInterceptor */ null, /* aclService */ null, StrongReadPolicy.defaultPolicy(),
                 (scope, key) -> NodeId.of(1), /* auditLog */ null, /* replayGuard */ null);
         server.start();
+    }
+
+    /**
+     * Starts a server whose exporter reads a registry pre-seeded with {@link ConfigdMetrics} (so the
+     * ingress-reject counters are eager-created), retaining the registry so a test can read the counters.
+     * The server pulls this same registry off the exporter to increment on the 400 / 413 paths.
+     */
+    private void startMeteredServerWith(long requestTimeoutMs, long idleTimeoutMs, int maxRequestBytes)
+            throws Exception {
+        savedProps[0] = System.getProperty("configd.server.netty.requestTimeoutMillis");
+        savedProps[1] = System.getProperty("configd.server.netty.idleTimeoutMillis");
+        savedProps[2] = System.getProperty("configd.server.netty.maxRequestBytes");
+        System.setProperty("configd.server.netty.requestTimeoutMillis", Long.toString(requestTimeoutMs));
+        System.setProperty("configd.server.netty.idleTimeoutMillis", Long.toString(idleTimeoutMs));
+        System.setProperty("configd.server.netty.maxRequestBytes", Integer.toString(maxRequestBytes));
+
+        meteredRegistry = new MetricsRegistry();
+        new ConfigdMetrics(meteredRegistry, () -> 0L); // eager-creates the ingress-reject counters
+        server = new NettyHttpApiServer(
+                0, /* sslContext */ null, new HealthService(), new PrometheusExporter(meteredRegistry),
+                new VersionedConfigStore(), /* writeService */ null, /* readService */ null,
+                /* authInterceptor */ null, /* aclService */ null, StrongReadPolicy.defaultPolicy(),
+                (scope, key) -> NodeId.of(1), /* auditLog */ null, /* replayGuard */ null);
+        server.start();
+    }
+
+    private long rejectCount(String reason) {
+        var mv = meteredRegistry.snapshot().metrics()
+                .get(ConfigdMetrics.NAME_HTTP_REQUEST_REJECTED_BASE + "." + reason);
+        return mv == null ? -1 : mv.value();
+    }
+
+    private long awaitRejectCount(String reason, long atLeast, long millis) throws InterruptedException {
+        long deadline = System.nanoTime() + java.util.concurrent.TimeUnit.MILLISECONDS.toNanos(millis);
+        long v = rejectCount(reason);
+        while (System.nanoTime() < deadline && v < atLeast) {
+            Thread.sleep(25);
+            v = rejectCount(reason);
+        }
+        return v;
     }
 
     @AfterEach
@@ -153,6 +195,58 @@ class NettyHttpApiServerHardeningTest {
                         "oversize body must be a 4xx rejection (413), got: " + status);
             }
         }
+    }
+
+    // -----------------------------------------------------------------------
+    // A9: the currently-silent 400 / 413 ingress rejects must increment their reason counters
+    // -----------------------------------------------------------------------
+
+    @Test
+    void malformedRequestTargetIncrementsBadRequestRejectCounter() throws Exception {
+        startMeteredServerWith(30_000, 60_000, 1 << 20);
+        assertEquals(0L, rejectCount(ConfigdMetrics.HTTP_REJECT_REASON_BAD_REQUEST),
+                "the bad_request reject counter must render at 0 before any reject");
+        try (Socket s = new Socket()) {
+            s.connect(new InetSocketAddress("127.0.0.1", port()), 2000);
+            s.setSoTimeout(5000);
+            OutputStream os = s.getOutputStream();
+            // A request target the codec accepts as a token but that is not a valid URI (a malformed
+            // percent-escape): new URI(...) throws in channelRead0 -> 400 + close (the bad_request path).
+            os.write("GET /bad%zz HTTP/1.1\r\nHost: x\r\n\r\n".getBytes(StandardCharsets.US_ASCII));
+            os.flush();
+            try {
+                new BufferedReader(new InputStreamReader(s.getInputStream(), StandardCharsets.US_ASCII)).readLine();
+            } catch (SocketException reset) {
+                // the server may reset instead of replying; the counter is the authoritative check
+            }
+        }
+        assertTrue(awaitRejectCount(ConfigdMetrics.HTTP_REJECT_REASON_BAD_REQUEST, 1, 3_000) >= 1,
+                "a malformed request target must increment the bad_request reject counter");
+    }
+
+    @Test
+    void oversizeBodyIncrementsPayloadTooLargeRejectCounter() throws Exception {
+        startMeteredServerWith(30_000, 60_000, 1024); // 1 KiB body ceiling
+        assertEquals(0L, rejectCount(ConfigdMetrics.HTTP_REJECT_REASON_PAYLOAD_TOO_LARGE),
+                "the payload_too_large reject counter must render at 0 before any reject");
+        try (Socket s = new Socket()) {
+            s.connect(new InetSocketAddress("127.0.0.1", port()), 2000);
+            s.setSoTimeout(5000);
+            OutputStream os = s.getOutputStream();
+            int bodyLen = 64 * 1024; // >> ceiling
+            String head = "PUT /v1/config/app/feature HTTP/1.1\r\nHost: x\r\nContent-Length: "
+                    + bodyLen + "\r\n\r\n";
+            try {
+                os.write(head.getBytes(StandardCharsets.US_ASCII));
+                os.write(new byte[bodyLen]);
+                os.flush();
+                new BufferedReader(new InputStreamReader(s.getInputStream(), StandardCharsets.US_ASCII)).readLine();
+            } catch (SocketException reset) {
+                // the server closed the oversize upload mid-stream; the counter is the authoritative check
+            }
+        }
+        assertTrue(awaitRejectCount(ConfigdMetrics.HTTP_REJECT_REASON_PAYLOAD_TOO_LARGE, 1, 3_000) >= 1,
+                "an oversize body must increment the payload_too_large reject counter");
     }
 
     // -----------------------------------------------------------------------

@@ -10,7 +10,7 @@ follow a hint? re-authenticate? re-bootstrap?). The scattered taxonomies in §1 
 Every code is **validated against the deployed implementation**: the HTTP codes against
 [`AdminApiHandler.java`](../../../configd-server/src/main/java/io/configd/server/AdminApiHandler.java), the
 streaming codes against
-[`ErrorCode.java`](../../../configd-distribution-service/src/main/java/io/configd/distribution/wire/ErrorCode.java)
+[`ErrorCode.java`](../../../configd-wire/src/main/java/io/configd/distribution/wire/ErrorCode.java)
 (:14–116) and the fan-out close paths. Where this section and a prior RFC claim disagree, **the code wins**.
 This section is **normative**; it **composes with**:
 
@@ -134,6 +134,16 @@ the **carrier** names the **scope**. A driver **MUST** combine them:
 - **`CREDENTIAL_EXPIRED` (13)** is **always a framed `ERROR_CLOSE`** and connection-fatal — an aged-out session,
   distinct from `AUTH_FAIL` (E3-1 row 13). Only ever seen on a token/basic edge (an mTLS-only edge with no
   cert-`notAfter` enforcement never emits it).
+- **Pre-session framing is best-effort (E3-4).** A connection-fatal reject that occurs **before a session
+  exists** MAY arrive as a **bare transport close** (a reset with no `ERROR_CLOSE` frame) rather than a framed
+  code. In the common configuration the session is established eagerly at connect, so both edge transports frame
+  the close and parity holds; the bare-close window is narrow — on a **token/basic** edge, a malformed first
+  frame that arrives during the **pre-auth phase** (before the session is admitted) is bare-closed by the Netty
+  edge (the default), whereas the reference JDK edge frames it best-effort even then. This affects only the
+  connection-fatal first-frame codes (`BAD_WIRE_VERSION` 1, `FRAME_TOO_LARGE` 2, `FRAME_CORRUPT` 3), which **a
+  conforming driver never elicits** (it sends a well-formed first frame) — so a driver never depends on receiving
+  the diagnostic code here. A driver **MUST** treat a bare fatal close as connection-fatal and reconnect with
+  backoff, not assume a framed code always arrives.
 
 So a pure code-byte switch is insufficient for codes **4, 6, 7, 9, 11, 12**; a driver **MUST** key its reaction
 on **(code, carrier frame)**.

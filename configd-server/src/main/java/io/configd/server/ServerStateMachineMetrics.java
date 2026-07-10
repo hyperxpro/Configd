@@ -50,6 +50,11 @@ final class ServerStateMachineMetrics implements StateMachineMetrics {
     }
 
     @Override
+    public void onSnapshotTaken(int snapshotBytes) {
+        metrics.recordSnapshotBytes(snapshotBytes);
+    }
+
+    @Override
     public void onSnapshotRebuildSuccess() {
         metrics.snapshotRebuild().increment();
     }

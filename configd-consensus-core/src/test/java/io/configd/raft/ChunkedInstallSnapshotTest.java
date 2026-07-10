@@ -235,6 +235,13 @@ class ChunkedInstallSnapshotTest {
             List<InstallSnapshotResponse> r = transport.messagesOfType(InstallSnapshotResponse.class);
             assertEquals(0, r.getLast().nextExpectedOffset(), "the dropped partial is reported as position 0");
 
+            // The otherwise-silent wedge is now counted: the refusal tally moves and surfaces in the
+            // RaftMetrics snapshot the server per-shard gauge reads.
+            assertEquals(1, follower.snapshotReassemblyRefused(),
+                    "the reassembly refusal must increment the snapshot-reassembly-refused tally");
+            assertEquals(1, follower.metrics().snapshotReassemblyRefused(),
+                    "the tally must surface in the RaftMetrics snapshot");
+
             // The follower is not bricked: a snapshot that fits the cap still installs.
             byte[] small = blob(5);
             follower.handleMessage(chunk(11, 1, 0, small, 5, true, null));
@@ -497,8 +504,9 @@ class ChunkedInstallSnapshotTest {
     }
 
     /** Elects N1, commits+compacts so node 3 lags behind a snapshot, sets the chunk size, and
-     * returns the snapshot index. Leaves the leader in {@code cluster.nodes.get(N1)}. */
-    private static long setUpLaggingSnapshot(InstallSnapshotTest.TestCluster cluster, int chunkBytes) {
+     * returns the snapshot index. Leaves the leader in {@code cluster.nodes.get(N1)}. Package-visible
+     * so {@code RaftNodeDropMetricsTest} can reuse this proven sender setup. */
+    static long setUpLaggingSnapshot(InstallSnapshotTest.TestCluster cluster, int chunkBytes) {
         cluster.electLeader(N1);
         RaftNode leader = cluster.nodes.get(N1);
         leader.setSnapshotChunkBytesForTest(chunkBytes);

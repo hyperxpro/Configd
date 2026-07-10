@@ -28,9 +28,9 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * End-to-end watch veneer matrix driven through {@link FanOutConnectionDriver}. Exercises the
- * security gate (the crux), fail-closed behavior, {@code watch_id} no-reuse, multiplex
- * isolation, cursor resume, the behind-buffer catch-up, and the path-grammar (BAD_SUBSCRIBE)
- * surface. Uses a real {@link FanOutBuffer} + {@link SnapshotReplaySource}, a recording
+ * security gate (the crux), fail-closed behavior, {@code watch_id} no-reuse, the per-connection
+ * watch caps (W8-6), multiplex isolation, cursor resume, the behind-buffer catch-up, and the
+ * path-grammar (BAD_SUBSCRIBE) surface. Uses a real {@link FanOutBuffer} + {@link SnapshotReplaySource}, a recording
  * {@link RecordingTransportSink} (the transport delegate behind the veneer), a
  * {@link FakeClock}, and a lambda {@link WatchAuthorizer} - no threads, no I/O.
  *
@@ -194,6 +194,64 @@ class WatchVeneerDriverTest {
         feed(keyCreate(1, "/k/b")); // reuse id 1 -> BAD_SUBSCRIBE (W2-8)
         assertEquals(1, out.sent().size());
         assertReject(1, ErrorCode.BAD_SUBSCRIBE);
+    }
+
+    // ---- per-connection watch caps (W8-6 abuse control) --------------------
+
+    @Test
+    void liveWatchesAreAcceptedUpToTheCapThenTheNextIsRejected() {
+        setup(ALLOW); // empty buffer => watches TAIL, no data frames
+        // Every watch up to the live cap is accepted (distinct ids; the same target is fine). Driven at
+        // the real MAX_LIVE_WATCHES_PER_CONNECTION - no lowered constant, no seam.
+        int cap = FanOutConnectionDriver.MAX_LIVE_WATCHES_PER_CONNECTION;
+        for (int id = 1; id <= cap; id++) {
+            feed(keyCreate(id, "/k/a"));
+        }
+        assertEquals(cap, out.sentOfType(EdgeFrame.WatchCreated.class).size(),
+                "every watch at or below the live cap is acknowledged");
+        assertTrue(out.sentOfType(EdgeFrame.WatchCanceled.class).isEmpty(),
+                "nothing is rejected at or below the live cap");
+
+        // One more live watch exceeds the cap -> BAD_SUBSCRIBE, and no ack precedes the reject.
+        out.clear();
+        feed(keyCreate(cap + 1, "/k/a"));
+        assertEquals(1, out.sent().size(), "exactly one frame - the reject");
+        EdgeFrame.WatchCanceled reject = assertInstanceOf(EdgeFrame.WatchCanceled.class, out.sent().get(0));
+        assertEquals(cap + 1L, reject.watchId());
+        assertEquals(ErrorCode.BAD_SUBSCRIBE, reject.code());
+        assertTrue(reject.message().contains("too many live watches"),
+                "the reject names the live-watch cap: " + reject.message());
+        assertTrue(out.sentOfType(EdgeFrame.WatchCreated.class).isEmpty(), "no ack for the over-cap watch");
+    }
+
+    @Test
+    void watchIdBudgetIsAcceptedToTheCapThenExhausted() {
+        setup(ALLOW);
+        // Churn create+cancel so liveCount stays <= 1 (the live cap never trips) while the
+        // never-shrinking watch_id budget (everUsed, W2-8) climbs. Driven at the real
+        // MAX_WATCH_IDS_PER_CONNECTION.
+        int budget = FanOutConnectionDriver.MAX_WATCH_IDS_PER_CONNECTION;
+        for (int id = 1; id < budget; id++) {
+            feed(keyCreate(id, "/k/a"));
+            feed(cancel(id));
+        }
+        out.clear();
+
+        // The id at exactly the budget is still accepted (totalUsed == budget-1 < budget); leave it live.
+        feed(keyCreate(budget, "/k/a"));
+        assertEquals(1, out.sentOfType(EdgeFrame.WatchCreated.class).size(),
+                "the id at the budget boundary is accepted");
+        out.clear();
+
+        // The next id exhausts the budget (totalUsed == budget) -> BAD_SUBSCRIBE, no ack.
+        feed(keyCreate(budget + 1, "/k/a"));
+        assertEquals(1, out.sent().size());
+        EdgeFrame.WatchCanceled reject = assertInstanceOf(EdgeFrame.WatchCanceled.class, out.sent().get(0));
+        assertEquals(budget + 1L, reject.watchId());
+        assertEquals(ErrorCode.BAD_SUBSCRIBE, reject.code());
+        assertTrue(reject.message().contains("watch_id budget exhausted"),
+                "the reject names the watch_id budget: " + reject.message());
+        assertTrue(out.sentOfType(EdgeFrame.WatchCreated.class).isEmpty(), "no ack for the over-budget watch");
     }
 
     // ---- cursor resume (matrix 12) -----------------------------------------

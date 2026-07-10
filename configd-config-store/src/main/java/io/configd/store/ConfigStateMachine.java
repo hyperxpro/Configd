@@ -403,6 +403,7 @@ public final class ConfigStateMachine implements StateMachine {
         buf.putInt(trailerPayloadLen);
         buf.putLong(signingEpoch);
 
+        metrics.onSnapshotTaken(size);
         return buf.array();
     }
 

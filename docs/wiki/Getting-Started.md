@@ -48,18 +48,23 @@ See [Testing](Testing.md) for the deterministic simulation, linearizability, and
 
 ```
 configd/
-  configd-common/               Shared types: NodeId, Clock, HybridClock, ConfigScope, Storage
+  configd-common/               Shared types: NodeId, Clock, HybridClock, ConfigScope, Storage, KMS/auth SPIs
+  configd-wire/                 Frozen edge/driver wire codec + shared store value types (RFC byte-authority)
   configd-transport/            Transport abstraction, framing, TLS, JDK TCP baseline
   configd-netty/                Netty 4.2 transport implementation (all four surfaces)
-  configd-consensus-core/       Raft: RaftNode, RaftLog, elections, replication
+  configd-consensus-core/       Raft: RaftNode, RaftLog, elections, replication, NodeKeyring
   configd-config-store/         MVCC control-plane store, HAMT, state machine, signing
   configd-edge-cache/           Lock-free edge read store, staleness, cursors
   configd-replication-engine/   Multi-Raft driver, ShardMap, owner-executor pool, flow control
-  configd-distribution-service/ Fan-out (Plumtree/HyParView), edge frames, watches
-  configd-control-plane-api/    ACL, auth, audit, replay guard, rate limiter, write/read services
+  configd-distribution-service/ Fan-out (Plumtree/HyParView), watches, multi-shard aggregating coordinator
+  configd-control-plane-api/    ACL, auth chain, audit, replay guard, rate limiter, write/read services
+  configd-authn-oidc/           OIDC/JWT bearer authenticator (ServiceLoader)
+  configd-kms-vault/            External Vault Transit KMS provider (ServiceLoader)
   configd-observability/        Metrics, Prometheus exporter, SLO tracking, invariant monitor
   configd-server/               ConfigdServer -- the control-plane node (has a main)
   configd-edge-node/            EdgeNodeMain -- the standalone edge reader (has a main)
+  configd-client/ + -core/-http/-edge/  Conforming Java reference driver (hybrid API, both planes)
+  configd-conformance/          Driver conformance suite (CI-wired, both planes vs golden vectors)
   configd-testkit/              Deterministic simulation + JMH benchmarks (test only)
   configd-linz/                 Porcupine linearizability harness (test only)
   configd-jcstress/             Java Memory Model concurrency tests (test only)

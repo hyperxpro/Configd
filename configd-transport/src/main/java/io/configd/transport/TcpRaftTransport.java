@@ -561,6 +561,7 @@ public final class TcpRaftTransport implements RaftTransportEndpoint {
                 // Shared bounds-before-allocation check: identical to the Netty decoder's predicate,
                 // so a lying length prefix is rejected the same way by both transports.
                 if (!RaftWireProtocol.isValidFrameLength(frameLength)) {
+                    transportMetrics.onInboundConnectionDropped();
                     throw new IOException("Invalid frame length: " + frameLength);
                 }
 
@@ -582,6 +583,7 @@ public final class TcpRaftTransport implements RaftTransportEndpoint {
                 try {
                     frame = FrameCodec.decode(frameBytes);
                 } catch (FrameCodec.UnsupportedWireVersionException e) {
+                    transportMetrics.onInboundConnectionDropped();
                     if (running.get()) {
                         int observed = e.observedVersion();
                         String msg = e.getMessage();
@@ -591,6 +593,7 @@ public final class TcpRaftTransport implements RaftTransportEndpoint {
                     }
                     return;
                 } catch (IllegalArgumentException e) {
+                    transportMetrics.onInboundConnectionDropped();
                     if (running.get()) {
                         String cls = e.getClass().getSimpleName();
                         String msg = e.getMessage();

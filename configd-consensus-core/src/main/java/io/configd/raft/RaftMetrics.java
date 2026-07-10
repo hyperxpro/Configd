@@ -19,6 +19,12 @@ import io.configd.common.NodeId;
  * @param snapshotIndex    index of the last entry included in the most recent snapshot
  * @param logSize          number of entries currently stored in memory (excludes compacted)
  * @param replicationLagMax maximum replication lag across all peers (0 for non-leaders)
+ * @param appendSendRejected          cumulative outbound AppendEntries frames dropped because the wire
+ *                                    codec rejected them (oversized encode); monotonic since construction
+ * @param snapshotChunkSendRejected   cumulative InstallSnapshot chunks dropped because the wire codec
+ *                                    rejected a chunk exceeding the per-chunk cap; monotonic
+ * @param snapshotReassemblyRefused   cumulative follower-side reassembly refusals (a chunked
+ *                                    InstallSnapshot that would exceed the heap reassembly cap); monotonic
  */
 public record RaftMetrics(
         NodeId nodeId,
@@ -30,6 +36,9 @@ public record RaftMetrics(
         long lastLogIndex,
         long snapshotIndex,
         int logSize,
-        int replicationLagMax
+        int replicationLagMax,
+        long appendSendRejected,
+        long snapshotChunkSendRejected,
+        long snapshotReassemblyRefused
 ) {
 }

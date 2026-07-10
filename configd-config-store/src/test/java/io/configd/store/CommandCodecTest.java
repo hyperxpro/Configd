@@ -58,6 +58,27 @@ class CommandCodecTest {
         }
 
         @Test
+        void putAtExactlyMaxValueSizeRoundTripsAndOneOverIsRejected() {
+            // The 1 MiB value cap is a decode-side gate (decodePut): a value at exactly the cap must
+            // round-trip byte-identically, and one byte over must be refused. Pins the exact boundary,
+            // both sides - the largest value any other test drives is 10 KiB.
+            final int maxValueSize = 1_048_576; // CommandCodec.MAX_VALUE_SIZE (1 MiB)
+
+            byte[] atLimit = new byte[maxValueSize];
+            for (int i = 0; i < atLimit.length; i++) {
+                atLimit[i] = (byte) (i & 0xFF);
+            }
+            CommandCodec.DecodedCommand.Put put = (CommandCodec.DecodedCommand.Put)
+                    CommandCodec.decode(CommandCodec.encodePut("cap", atLimit));
+            assertEquals("cap", put.key());
+            assertArrayEquals(atLimit, put.value(), "a value at exactly the cap decodes byte-identically");
+
+            byte[] oneOver = CommandCodec.encodePut("cap", new byte[maxValueSize + 1]);
+            assertThrows(CommandCodec.MalformedCommandException.class, () -> CommandCodec.decode(oneOver),
+                    "a value one byte over the cap is refused at decode");
+        }
+
+        @Test
         void encodePutWithUnicodeKey() {
             byte[] encoded = CommandCodec.encodePut("config.日本語", bytes("value"));
             CommandCodec.DecodedCommand.Put put = (CommandCodec.DecodedCommand.Put) CommandCodec.decode(encoded);

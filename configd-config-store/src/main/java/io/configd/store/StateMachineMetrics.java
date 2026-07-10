@@ -66,6 +66,18 @@ public interface StateMachineMetrics {
      */
     default void onMalformedCommittedCommand() {}
 
+    /**
+     * Records the serialized byte length of a snapshot this node just produced via
+     * {@link ConfigStateMachine#snapshot()}. Backs a last-snapshot-size gauge so an operator can watch
+     * the state approach the per-chunk wire cap (capacity discipline) rather than discovering it only
+     * when a transfer starts chunking. Fired on the snapshot-producing thread (the Raft owner thread
+     * during compaction). Default no-op so existing sinks need not change; the production registry
+     * overrides it.
+     *
+     * @param snapshotBytes the length in bytes of the snapshot just serialized
+     */
+    default void onSnapshotTaken(int snapshotBytes) {}
+
     /** No-op metrics sink - used by tests and bootstraps with no registry. */
     StateMachineMetrics NOOP = new StateMachineMetrics() {
         @Override public void onWriteCommitSuccess(long applyDurationNanos) {}

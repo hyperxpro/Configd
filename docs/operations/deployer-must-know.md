@@ -6,9 +6,8 @@ you** -- distinct from the runsheet's server-side gates
 ([`../archive/readiness/v1-go-no-go-2026-07-01.md`](../archive/readiness/v1-go-no-go-2026-07-01.md),
 section 4, the MUST-KNOW list, and section 5.1, operability caveats).
 
-Read all six. Each is: **the requirement - why it matters (the concrete failure
-if ignored) - what to do.** Every claim cites a verified `file:line` or a
-measurement doc.
+Read all ten. Each is: **the requirement - why it matters (the concrete failure
+if ignored) - what to do.**
 
 ---
 
@@ -71,28 +70,24 @@ measurement doc.
   segment), set `-Dconfigd.raft.encryption.requireEncrypted=true` -- the reader then
   REFUSES any `algId=0/1` record. Set this **only after** the plaintext prefix has
   been compacted away, or the node will refuse to start.
-- **Signing-key rotation caveat + fate-sharing.** With the `local` provider the
-  encryption root is HKDF-derived from the cluster **signing key**, so **rotating
-  the signing key re-derives a different root and makes existing `algId=2` data
-  undecryptable.** **There is no supported in-place signing-key rotation once
-  `algId=2` data exists in v1.** The keyTerm / old-root-retention machinery in
-  `SegmentKeyManager` is present but **not wired** (`ConfigdServer` always boots
-  the root at `keyTerm=1` from the single current signing key and never installs a
-  prior key), and once the old signing key is replaced its root can never be
-  re-derived -- so re-snapshotting under the old key does **not** help: that
-  snapshot is still ciphertext under the old root and is undecryptable after the
-  rotation, and a cluster-wide signing-key change bricks every node's at-rest data
-  at once (no healthy peer to re-replicate from). **Treat the signing key as
-  permanent for the lifetime of an encrypted data directory**; changing it requires
-  a full, staging-validated re-provision of encrypted state, not an in-place
-  rotation. (The same HKDF coupling means rotating the signing key also orphans the
-  integrity-only `algId=1` WAL when encryption is off -- see the D-1 co-location
-  guard.) Confidentiality therefore **fate-shares with the signing key**:
-  a signing-key compromise decrypts all at-rest data, and the `local` provider gives
-  **no off-host key custody**. Off-host custody (a cloud KMS / HSM provider) is a
-  **v2** item: the KMS-provider SPI is built and `local` slots into it, but no cloud
-  provider ships in v1, and adding one currently needs a core edit (`ServiceLoader`
-  discovery is deferred).
+- **Key rotation is now NON-DESTRUCTIVE (but offline in v1) + fate-sharing.** The at-rest keys are held in
+  a persisted, dual-slot **keyring** (`NodeKeyring`, wired at boot from `ConfigdServer`) that keeps independent
+  random per-term roots, decoupled from the signing key. Rotation is **crash-atomic and non-destructive by
+  construction**: a **term** rotation (`rotateTerm`) appends a fresh root and **retains every old term** (new
+  writes stamp the new term; old data still decrypts under its retained root); a **signing-key** rotation
+  (`rewrapForNewSigningKey`) rewraps every retained root under the new signing key's KEK and writes the new
+  slot **before** the operator swaps `signing-key.bin`, so all prior data still verifies and a crash on either
+  side of the swap boots on the matching slot. This corrects the earlier "rotating the signing key orphans /
+  bricks all `algId=2` data" caveat. **The residual is that rotation is OFFLINE / operator-serialized in v1**
+  (there is no online admin trigger yet - do a term/signing-key rotation as an out-of-band maintenance action
+  on a stopped node). Confidentiality still **fate-shares with the signing key** under `local` (a signing-key
+  compromise decrypts all at-rest data), and key **loss** is still permanent: back up the signing key.
+  **Off-host key custody now ships:** an external **Vault Transit** KMS provider (`configd-kms-vault`) is
+  discovered via `ServiceLoader` and selected with `-Dconfigd.raft.encryption.kms.provider=vault-transit`; it
+  seals a per-node custody secret in a versioned `raft-kms-root` carrier (`KmsSealedRootStore`), moving the
+  root of trust off-host so confidentiality no longer fate-shares with a co-located signing key. Other cloud
+  KMS/HSM backends can be added behind the same SPI without a core edit; only `local` and `vault-transit` ship
+  in v1.
 - **Not covered by encryption at rest (v1).** The **audit log stays HMAC-only** --
   audit metadata (config key **names**, principals) is **not** encrypted at rest.
   The edge stays memoryless (no at-rest surface). A live-node RAM adversary is out
@@ -212,35 +207,52 @@ measurement doc.
   - The old **"snapshot too large for v1 wire"** stderr drop no longer occurs for
     total state above 4 MiB (chunking handles it); a codec reject now only means a
     single **chunk** exceeded the per-chunk cap (a chunk-size misconfiguration).
+- **What IS rolling-safe vs all-at-once (the format-compatibility contract).** This "upgrade together" rule
+  is specific to a **Raft frame-format (`WIRE_VERSION`) change** and to the pre-chunking→chunking transition
+  above. Per the whole-system upgrade contract (C0-C9,
+  [`../design/group-b/07-upgrade-capability-as-built.md`](../design/group-b/07-upgrade-capability-as-built.md)):
+  the **edge/client plane** (first-frame version pin), the **at-rest keyring/encryption** formats, and the
+  **`_acl/format` policy** version are all **rolling-safe** (every format is version-discriminated and fails
+  closed on an unknown version -- never a silent misparse). Only a **Raft node↔node frame-format bump** has no
+  in-band negotiation and therefore requires an all-at-once (blue/green or brief stop-the-world) upgrade. If
+  you are deploying this release fresh, the pre-chunking corruption case is historical (no pre-chunking build
+  exists in your cluster).
 
-## 5. Horizontal scale is OPERATOR-managed -- leadership is NOT auto-balanced
+## 5. Horizontal scale at N>1 -- leadership auto-balance ships (on by default); still monitor it
 
-- **Requirement.** If you deploy multiple machines for horizontal write scale, you
-  MUST **place and maintain one group-leader per box (1-1-1)** yourself. v1 has no
-  automatic leadership balancer.
+- **Requirement.** If you deploy multiple machines for horizontal write scale, aim for **one group-leader
+  per box (1-1-1)**. v1 ships a built-in **leadership auto-balancer** that maintains this for you, but you
+  should still monitor the distribution (the balancer is built and E2E-tested, not yet load-measured at
+  scale).
 - **Why it matters.** The proven **2.45x across 3 machines** (near-linear,
   656->1075->1607 w/s;
   [`../archive/measurement/ec2-horizontal-2026-07-01/02-scaling-curve.md`](../archive/measurement/ec2-horizontal-2026-07-01/02-scaling-curve.md))
-  **requires** exactly one leader per box. But:
-  - **`RaftNode.transferLeadership` exists in core** (`RaftNode.java:625`) **but is
-    NOT exposed on any admin HTTP route** -- the only routes are `/health/live`,
-    `/health/ready`, `/metrics`, and `/v1/config/` (`AdminApiHandler.java:132-144`)
-    -- **and is NOT invoked on shutdown.** (The `AdminService.transferLeadership`
-    interface exists but has **no wired implementation / no route** in the server.)
-    So there is **no runtime lever** to place a group's leader on a chosen node.
+  **requires** exactly one leader per box. That measurement was captured under **manual** placement, before
+  the balancer landed -- so treat the balancer as the mechanism that *maintains* the placement the 2.45x needs,
+  not as itself proven at that throughput. The drift the balancer corrects:
+  - **The built-in auto-balancer.** `LeaderBalanceLoop` (one per node, `configd.raft.autobalance.*`,
+    **enabled by default** at N>1; `dryRun=false`, base cadence 30 s with jitter) observes the cluster-wide
+    leader distribution and, when this node is over-owned, **sheds at most one** group's leadership per cycle
+    via `transferLeadership` (it sheds, never pulls), converging toward one-per-box without operator action.
+    Kill switch: `-Dconfigd.raft.autobalance.enabled=false`; observe-only: `-Dconfigd.raft.autobalance.dryRun=true`.
+  - **Manual transfer is also exposed.** `RaftNode.transferLeadership` is wired on the ADMIN-gated
+    `POST /v1/admin/groups/{groupId}/transfer-leadership?target=<nodeId>` route
+    (`AdminApiHandler.transferLeadership`; refused when auth is off or ADMIN cannot be evaluated) for a
+    deliberate placement or to drain a node before maintenance.
   - **Fresh simultaneous boot rarely lands 1-1-1 (~1 in 20):** whichever node is
     ready a beat sooner "sweeps" and wins **all** its groups, biasing to
     `3-0-0`/`2-1-0`
     ([`../archive/measurement/ec2-horizontal-2026-07-01/05-leadership-placement.md`](../archive/measurement/ec2-horizontal-2026-07-01/05-leadership-placement.md)).
+    The auto-balancer then sheds the sweep back toward balance over the next few cycles.
   - After a failover, leaders can **drift/pile onto one node**, collapsing
     aggregate throughput back toward the **single-box plateau (~1100 w/s)** -- or,
-    per group, the single-group knee (**~800 w/s**) -- until an operator
-    re-balances. (The aggregate is robust to *modest* imbalance -- a 2-1-0
+    per group, the single-group knee (**~800 w/s**) -- until the balancer (or an operator)
+    re-spreads. (The aggregate is robust to *modest* imbalance -- a 2-1-0
     placement still sustained ~1628 w/s -- but not to a full sweep.)
 - **What to do.**
-  - Reach 1-1-1 by **fresh-boot-until-balanced**: boot all nodes fresh in parallel,
-    check per-node `raft_shard_leader_*` counts, repeat until 1-1-1 (**~4-20 boots**,
-    stochastic but reliable; 1-1-1 is a **stable fixed point at rest**).
+  - **Leave the auto-balancer on** (the default) and **monitor `raft_node_leader_count` /
+    `raft_shard_leader_<gid>`** for a stuck imbalance (a full sweep the balancer has not yet corrected). If you
+    need immediate placement (e.g. draining a node for maintenance), use the manual transfer route above.
   - **N>1 thread and shard sizing.** The Raft owner pool must have at least as many
     threads as shards; if it does not, all shards serialize on one owner thread and
     throughput does not increase -- the server logs a startup warning when this
@@ -258,13 +270,13 @@ measurement doc.
     **only** the legacy `SUBSCRIBE` plane (WATCH is served regardless). Migration is safe --
     strictly more permissive: a config that set the flag keeps working, and one that did not
     now boots and serves WATCH instead of refusing to start.
-  - **Monitor leadership distribution continuously** and re-balance (by controlled
-    restart) after failovers.
-  - Do **not** rely on **sustained** multi-shard horizontal scale in v1 until the
-    leadership-balancing follow-up lands (expose `transferLeadership` on an admin
-    route / a balancer / transfer-on-graceful-shutdown -- see the readiness review,
-    section 3.2, the one horizontal-scale operability gap). At **N=1 (the v1
-    default)** this item does not apply.
+  - **Monitor leadership distribution continuously.** The auto-balancer corrects drift automatically, but
+    verify it is doing so (watch `raft_node_leader_count`); a persistent full sweep may need a manual transfer
+    or a controlled restart.
+  - The remaining leadership residual is **transfer-on-graceful-shutdown** (SIGTERM flips readiness to draining
+    -- item on B7 below -- but does not hand off a group's leadership first; recovery relies on the normal
+    election after the node leaves). At **N=1 (the v1 default)** the balancer is dormant and this item does not
+    apply.
 
 ## 6. Keep control-plane and edge identity policies consistent -- one person is two principals in v1
 
@@ -272,7 +284,8 @@ measurement doc.
   keep the bearer token (or OIDC) policy and the certificate-DN (mTLS) policy
   consistent for the same human operator.
 - **Why it matters.** In v1, the control-plane API authenticates with a **bearer
-  token** and the edge authenticates with **mTLS** client certificates -- so one
+  token or HTTP Basic (incl. OIDC-validated bearer)** and the edge authenticates with **mTLS** client
+  certificates **and/or** a token/basic `AUTH` frame (§06 §6A) -- so one
   person can hold two distinct principals: their bearer/token identity on the API
   and their certificate-DN identity on the edge. Watch authorization is evaluated
   **per-principal**: a person whose bearer-token identity is read-restricted on a
@@ -285,18 +298,76 @@ measurement doc.
   the `_acl/` policy for both identity types whenever you change access to sensitive
   keys.
 
+## 7. No silent unauthenticated PUBLIC bind (B5) -- default is loopback
+
+- **Requirement.** The default bind address is now **loopback (`127.0.0.1`)**, not `0.0.0.0`. If you bind a
+  **non-loopback** interface while **auth is OFF**, the server **refuses to start** unless you explicitly
+  acknowledge the risk with `--allow-insecure-public-bind` (sysprop
+  `configd.security.allowInsecurePublicBind=true`), which then logs a loud warning and continues.
+- **Why it matters.** This closes the Redis/etcd "default-open" footgun class: an unauthenticated store bound
+  to a public interface silently accepts writes/admin from anyone who can reach the port. This is a
+  **footgun-fix, NOT "auth required by default"** -- v1 remains **secure-by-config**: a deliberate no-auth,
+  public deployment stays fully possible, it just can no longer happen **by accident/silently**. (Auth and
+  encryption remain a workload choice, per the Group-B posture.)
+- **What to do.** For production, set `--auth-token` (or another authenticator) **and** bind the intended
+  interface -- auth-on public binds need no override. For a deliberate no-auth public deployment (e.g. a
+  private network segment you trust), pass `--allow-insecure-public-bind` **knowingly** and segregate the port
+  at the network boundary. Leave the flag unset otherwise.
+
+## 8. Write-admission control is ON by default (B6)
+
+- **Requirement.** Write-admission / overload control (`configd.write.maxInflightProposals`) is now **ON by
+  default** with a conservative tuned value, so the store protects itself from write floods out of the box.
+- **Why it matters.** On-by-default self-protection is the safe industry-standard posture: a burst of writes
+  is bounded (excess is shed with **HTTP 429 + `Retry-After`**, a pre-commit reject) rather than growing
+  unbounded leader memory. This composes with the always-on rate limiter (which sheds even earlier).
+- **What to do.** Accept the default unless you have measured headroom to raise it; tune via
+  `-Dconfigd.write.maxInflightProposals=N` (0 disables the bound). Watch `configd_write_rejected_overloaded_total`
+  and the election-churn signal (burn-in contract §2B) if you see sustained 429s.
+
+## 9. Readiness is shard-aware and drains on SIGTERM (B7)
+
+- **Requirement.** `/health/ready` now reflects **every shard this node should be serving**: a node that has
+  lost quorum on **any** hosted shard (not just group 0) reports **NOT-ready**. On **SIGTERM** the node flips
+  readiness to **NOT-ready (draining) BEFORE** it begins closing, so an orchestrator/LB stops routing and
+  in-flight work drains.
+- **Why it matters.** A group-0-blind readiness **lied** to the orchestrator at N>1 (it reported READY while
+  shards 1..N-1 had lost quorum), and a hard close without the drain-flip dropped in-flight requests on
+  restart. This is a pure correctness fix -- no policy change.
+- **What to do.** Wire your orchestrator's readiness probe to `/health/ready` (it already should) and give the
+  pod a graceful-termination window long enough to drain before SIGKILL. No configuration is required.
+
+## 10. Protect key material from core dumps and swap (F3)
+
+- **Requirement.** In-JVM zeroization of key material is **platform-bounded** (the JVM may copy heap bytes
+  during GC; `SecretKeySpec.destroy()` is a no-op on JDK 25 -- Configd uses `Destroyable` root-key types to
+  best-effort clear its own roots). Belt-and-braces custody therefore requires **deploy-level** controls the
+  server cannot enforce: disable core dumps for the process and disable swap (or encrypt it) on nodes that hold
+  the signing key or an encrypted data dir.
+- **Why it matters.** A core dump or a swapped-out page can persist raw key/root bytes to disk, defeating the
+  at-rest and audit integrity guarantees exactly as a co-located signing key would (threat A2/T3).
+- **What to do (tested boundary).** Set `ulimit -c 0` (or the systemd `LimitCORE=0`) for the Configd unit;
+  ensure `-XX:-HeapDumpOnOutOfMemoryError` (already the runsheet default -- heap dumps expose config values,
+  see [`security-heap-dump-policy.md`](security-heap-dump-policy.md)); run with swap off (`swapoff -a`) or
+  encrypted swap on key-bearing nodes. Treat these as part of the signing-key custody procedure alongside the
+  D-1 co-location guard.
+
 ---
 
 ## Quick reference
 
 | # | MUST-KNOW | The failure if ignored | Enforced by server? |
 |---|-----------|------------------------|---------------------|
-| 1 | At-rest encryption is OFF by default; enabling it is a one-way door | OFF: plaintext secrets readable from disk/snapshot/backup. ON: cannot disable/roll back; signing-key rotation OR loss = permanent, unrecoverable loss of all encrypted data (no in-place rotation -- back up the key before enabling) | No -- deployment choice (`-Dconfigd.raft.encryption.enabled`) |
+| 1 | At-rest encryption is OFF by default; enabling it is a one-way door | OFF: plaintext secrets readable from disk/snapshot/backup. ON: cannot disable/roll back; key rotation is non-destructive (but offline); signing-key **loss** = permanent, unrecoverable loss of all encrypted data (back up the key before enabling; off-host custody via Vault Transit KMS) | No -- deployment choice (`-Dconfigd.raft.encryption.enabled`) |
 | 2 | Grant edge hydration identity root READ | Edge SUBSCRIBE refused NOT_AUTHORIZED (auth on); whole-store read requires root READ | Yes -- gated at admission (auth on) |
 | 3 | `scope` is not tenant isolation | Cross-tenant read/write via scope-blind gate | No -- scope is metadata |
 | 4 | Upgrade all nodes together | Multi-chunk snapshot to an old node = silent state corruption; total snapshot bounded by heap/reassembly cap | No -- deploy-ordering is on you |
-| 5 | Place one leader per box | Aggregate collapses to single-box plateau | No -- no auto-balancer in v1 |
-| 6 | Keep cert-DN and bearer policies consistent | A person read-restricted by token can watch via cert identity | No -- operator must align both policies |
+| 5 | Monitor leadership distribution (auto-balancer maintains 1-per-box) | Full sweep the balancer has not yet corrected collapses aggregate to single-box plateau | Partly -- auto-balancer ON by default at N>1; manual transfer route also available |
+| 6 | Keep cert-DN and bearer/OIDC policies consistent | A person read-restricted by token can watch via cert identity | No -- operator must align both policies |
+| 7 | No silent unauthenticated PUBLIC bind (default loopback) | Auth-OFF public bind refuses to start unless `--allow-insecure-public-bind` | Yes -- fail-closed at boot (footgun-fix, not "auth required") |
+| 8 | Write-admission control is ON by default | Write floods bounded with 429 instead of unbounded leader memory | Yes -- `configd.write.maxInflightProposals` on by default |
+| 9 | Readiness is shard-aware + drains on SIGTERM | Group-0-blind readiness lies at N>1; hard close drops in-flight | Yes -- correctness fix |
+| 10 | Protect key material from core dumps/swap | Core dump / swapped page persists raw key bytes | No -- deploy-level (`ulimit -c 0`, swap off) |
 
 **Companion:** [`operator-runsheet.md`](operator-runsheet.md) -- the six server-side
 release gates (Auth - mTLS - Audit - Replay - Signing-key - Strong-reads) plus the

@@ -206,6 +206,68 @@ class MetricsWiringContractTest {
     }
 
     @Test
+    void laggingLeaderMovesReplicationLagMaxShardGauge() throws Exception {
+        // A8: the per-shard replication-lag gauge (the follower-stuck / snapshot-wedge proxy) must render
+        // AND move off zero when a leader outruns its followers. Drives the REAL registerPerShardMetrics
+        // path over a leader whose peers never ack.
+        ScheduledExecutorService exec = raftExecutor();
+        try {
+            RaftNode leader = forcedUncommittableLeader(exec, 1024);
+            // Grow the log past the followers' matchIndex (which stays 0), then publish a monitorView that
+            // reflects LEADER role + the lag (the gauge reads the group's monitorView on scrape).
+            exec.submit(() -> {
+                leader.propose(new byte[]{9});
+                leader.tick();
+            }).get(5, TimeUnit.SECONDS);
+
+            MetricsRegistry registry = new MetricsRegistry();
+            ConfigdServer.RaftGroupRuntime rt =
+                    new ConfigdServer.RaftGroupRuntime(GROUP, null, null, null, null, leader, null, null);
+            ConfigdServer.registerPerShardMetrics(registry, driverFor(leader), java.util.List.of(rt));
+
+            String scrape = scrape(registry);
+            assertTrue(seriesValue(scrape, "raft_shard_replication_lag_max_0") > 0.0,
+                    "a leader ahead of its un-acked followers must show a positive replication_lag_max:\n" + scrape);
+        } finally {
+            exec.shutdownNow();
+        }
+    }
+
+    @Test
+    void snapshotProducesSnapshotBytesGauge() {
+        // A7: the last-snapshot-size gauge must render at 0 on the first scrape and equal the byte length
+        // of the snapshot the state machine produces (driven through the ServerStateMachineMetrics bridge).
+        MetricsRegistry registry = new MetricsRegistry();
+        ConfigdMetrics metrics = new ConfigdMetrics(registry, () -> 0L);
+        assertEquals(0.0, seriesValue(scrape(registry), "configd_snapshot_bytes"),
+                "the snapshot-bytes gauge must render at 0 before any snapshot is taken");
+
+        VersionedConfigStore store = new VersionedConfigStore();
+        ConfigStateMachine sm = new ConfigStateMachine(store, Clock.system(), null, null,
+                new ServerStateMachineMetrics(metrics));
+        byte[] snapshot = sm.snapshot();
+
+        assertTrue(snapshot.length > 0, "even an empty store serializes a non-empty snapshot header");
+        assertEquals((double) snapshot.length, seriesValue(scrape(registry), "configd_snapshot_bytes"),
+                "the gauge must equal the last snapshot's byte length");
+    }
+
+    @Test
+    void connectionDecodeDropBridgeIncrementsCounter() {
+        // A6 (bridge half): the transport's decode-desync sink must surface as the control-plane counter.
+        // The transport-side call is proven on the real wire in the transport modules' decode-drop tests.
+        MetricsRegistry registry = new MetricsRegistry();
+        ConfigdMetrics metrics = new ConfigdMetrics(registry, () -> 0L);
+        assertEquals(0.0, seriesValue(scrape(registry), "configd_raft_transport_connection_decode_dropped_total"),
+                "the connection-decode-drop counter must render _total 0 on the first scrape");
+
+        new ServerRaftTransportMetrics(metrics).onInboundConnectionDropped();
+
+        assertEquals(1.0, seriesValue(scrape(registry), "configd_raft_transport_connection_decode_dropped_total"),
+                "a decode-desync connection drop must increment the counter");
+    }
+
+    @Test
     void gaugesAndElectionsCounterAreNotHardwiredToZero() {
         // Proves the raft_pending_apply_entries gauge reads its supplier (NOT the old () -> 0L), and
         // the elections counter + subscription gauge render real values - the dashboard panels 4/5/6.

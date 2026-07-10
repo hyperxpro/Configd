@@ -768,6 +768,59 @@ abstract class AbstractFanOutServerContract {
         }
     }
 
+    @Test
+    void unknownWireVersionFirstFrameIsRejectedAndTheServerSurvives() throws Exception {
+        int port = startPlaintextServer();
+        try (EdgeProtocolClient edge = EdgeProtocolClient.connectPlaintext(port, 10_000)) {
+            // A WELL-FORMED SUBSCRIBE (valid CRC) whose version byte is patched to an UNKNOWN value.
+            // Unlike garbageFirstFrame (a corrupt CRC -> FRAME_CORRUPT), this drives the version-
+            // validation path: the CRC is recomputed over the patched bytes so the server reaches the
+            // version check and rejects it as BAD_WIRE_VERSION, not the CRC check.
+            byte[] frame = firstFrameWithVersionByte(
+                    new EdgeFrame.Subscribe(true, List.of(), 0L, -1L, "edge-badver"), (byte) 0x7F);
+            edge.sendRaw(frame);
+            // The server must close the connection. Where a transport emits a final ERROR_CLOSE before
+            // closing (the JDK reader does even pre-session; the Netty transport only once a session
+            // exists - see the cross-pin leg), it MUST carry BAD_WIRE_VERSION, never a misleading code.
+            EdgeFrame bye = readErrorCloseOrClosed(edge);
+            if (bye != null) {
+                assertTrue(bye instanceof EdgeFrame.ErrorClose ec && ec.code() == ErrorCode.BAD_WIRE_VERSION,
+                        "an unknown wire version must be rejected as BAD_WIRE_VERSION, got: " + bye);
+            }
+            assertTrue(drainUntilClosed(edge),
+                    "the server must close a connection opened with an unknown wire version");
+        }
+        // The server survived the malformed-version connection: a fresh well-behaved subscriber works.
+        try (EdgeProtocolClient edge2 = EdgeProtocolClient.connectPlaintext(port, 10_000)) {
+            edge2.subscribeFullStore("edge-after-badver", 0L);
+            assertNotNull(readUntil(edge2, EdgeFrame.SubscribeOk.class),
+                    "server must still serve new subscribers after an unknown-version connection");
+        }
+    }
+
+    @Test
+    void crossVersionPinnedFrameIsRejectedWithBadWireVersionOverTheWire() throws Exception {
+        int port = startPlaintextServer();
+        try (EdgeProtocolClient edge = EdgeProtocolClient.connectPlaintext(port, 10_000)) {
+            // Open a legitimate 0x01 connection: the SUBSCRIBE pins the connection to 0x01 and creates a
+            // session server-side (its SUBSCRIBE_OK confirms the session exists).
+            edge.subscribeFullStore("edge-crosspin", 0L);
+            assertNotNull(readUntil(edge, EdgeFrame.SubscribeOk.class),
+                    "the 0x01 SUBSCRIBE must be accepted (it pins the connection version)");
+            // Now send a frame STAMPED 0x02 on the 0x01-pinned connection. The per-connection version pin
+            // (W5-11) rejects it as BAD_WIRE_VERSION over the wire - a mixed-version relay cannot feed a
+            // 0x02 frame onto a 0x01 connection. With a session established BOTH transports emit a final
+            // ERROR_CLOSE before closing, so the documented first-frame-pin code is assertable at the wire.
+            edge.sendRaw(EdgeFrameCodec.encode(new EdgeFrame.CursorAck(1L), EdgeFrameCodec.EDGE_WIRE_VERSION_V2));
+            EdgeFrame bye = readErrorCloseOrClosed(edge);
+            assertNotNull(bye, "a cross-version-pinned frame must draw a final ERROR_CLOSE over the wire");
+            assertTrue(bye instanceof EdgeFrame.ErrorClose ec && ec.code() == ErrorCode.BAD_WIRE_VERSION,
+                    "a frame stamped with a version other than the connection negotiated must close "
+                            + "BAD_WIRE_VERSION, got: " + bye);
+            assertTrue(drainUntilClosed(edge), "the server must close the cross-version-pinned connection");
+        }
+    }
+
     // -----------------------------------------------------------------------
     // server starters
     // -----------------------------------------------------------------------
@@ -1055,6 +1108,53 @@ abstract class AbstractFanOutServerContract {
             }
         }
         return false;
+    }
+
+    /**
+     * Reads forward, skipping benign frames (e.g. a HEARTBEAT on an idle subscription), until an
+     * {@link EdgeFrame.ErrorClose} arrives (returned) or the stream closes (returns {@code null}).
+     */
+    private static EdgeFrame readErrorCloseOrClosed(EdgeProtocolClient edge) throws IOException {
+        long deadline = System.nanoTime() + Duration.ofSeconds(15).toNanos();
+        while (System.nanoTime() < deadline) {
+            EdgeFrame f;
+            try {
+                f = edge.readFrame();
+            } catch (java.net.SocketTimeoutException e) {
+                continue;
+            } catch (IOException e) {
+                return null; // connection reset == closed, no ERROR_CLOSE observed
+            }
+            if (f == null) {
+                return null; // EOF == closed
+            }
+            if (f instanceof EdgeFrame.ErrorClose) {
+                return f;
+            }
+            // any other frame (a HEARTBEAT etc.) - keep reading toward the close
+        }
+        return null;
+    }
+
+    /**
+     * Encodes {@code frame} as a valid {@code 0x01} wire frame, then overwrites the version byte with
+     * {@code badVersion} and RECOMPUTES the CRC32C so the frame is well-formed save the version - the
+     * server therefore reaches the version check ({@link ErrorCode#BAD_WIRE_VERSION}) rather than failing
+     * at the CRC ({@link ErrorCode#FRAME_CORRUPT}). Wire layout:
+     * {@code [length:4][version:1][type:1][payload][CRC32C:4]}; the CRC covers {@code [0 .. len-4)}.
+     */
+    private static byte[] firstFrameWithVersionByte(EdgeFrame frame, byte badVersion) {
+        byte[] wire = EdgeFrameCodec.encode(frame);
+        wire[4] = badVersion; // the version byte, immediately after the 4-byte length prefix
+        java.util.zip.CRC32C crc = new java.util.zip.CRC32C();
+        crc.update(wire, 0, wire.length - EdgeFrameCodec.TRAILER_SIZE);
+        int value = (int) crc.getValue();
+        int t = wire.length - EdgeFrameCodec.TRAILER_SIZE;
+        wire[t] = (byte) (value >>> 24);
+        wire[t + 1] = (byte) (value >>> 16);
+        wire[t + 2] = (byte) (value >>> 8);
+        wire[t + 3] = (byte) value;
+        return wire;
     }
 
     // -----------------------------------------------------------------------

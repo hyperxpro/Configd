@@ -21,8 +21,8 @@ renegotiated (ADR-0031). None of it was built.
 What v1 actually runs:
 
 - **One region-local Raft group by default (N=1).** Hash-within-scope sharding is wired and
-  measured, but a multi-shard deployment (N>1) is a v2 operating mode because horizontal scale
-  is operator-managed, not automatic (see Sharding and Measured envelope, below).
+  measured; a multi-shard deployment (N>1) is supported, with leadership maintained by a built-in
+  auto-balancer (the measured 2.45x was under manual placement -- see Sharding and Measured envelope, below).
 - **Centralized writes, asynchronous edge reads.** All linearizable writes commit in the root
   group. Committed deltas fan out to edges that serve sequentially-consistent, bounded-stale reads.
 - **Single region.** Cross-region / WAN write consensus is explicitly out of scope for v1
@@ -175,20 +175,24 @@ The consensus core is a full, tick-driven Raft implementation:
 - Leader election with **PreVote** (avoids term inflation from partitioned nodes) and
   **CheckQuorum** (a leader without majority contact steps down).
 - Log replication with batching; **no early ack** -- commit requires a durable majority fsync.
-- **Leadership transfer** (TimeoutNow) exists in the core (`RaftNode.transferLeadership`) but is
-  not yet exposed on an admin route or invoked on shutdown -- so multi-shard leadership placement
-  is operator-managed in v1 (see Measured envelope and the v2 backlog).
+- **Leadership transfer** (TimeoutNow, `RaftNode.transferLeadership`) is exposed on the ADMIN-gated
+  `POST /v1/admin/groups/{gid}/transfer-leadership` route **and** driven automatically by a decentralized
+  **leadership auto-balance loop** (`LeaderBalanceLoop`, one per node, on by default at N>1, sheds one
+  over-owned leader per cycle). It is not yet invoked to hand off leadership on graceful shutdown (see
+  Measured envelope and the v2 backlog).
 - **Joint-consensus reconfiguration** and no-op commit on election.
 - At-rest durability artifacts (snapshot blob, WAL records, persistent Raft state) carry an
   integrity envelope (below).
 
-**Snapshot size cap.** A single InstallSnapshot blob is capped at 4 MiB on the v1 wire
-(`MAX_SNAPSHOT_BLOB_LEN`). A follower that needs a larger snapshot cannot bootstrap from it; the
-over-cap frame is dropped at the leader (`RaftNode.sendInstallSnapshot`) and logged to stderr with
-**no metric** -- detection is log-watch only, and the receiver-side `ConfigdSnapshotInstallStalled`
-alert does not cover it. Operational guidance: keep snapshot state under 4 MiB, log-watch the drop
-string, and track `matchIndex` lag as a proxy. Chunked InstallSnapshot (the cap-lift that makes the
-over-cap drop unreachable) is a later item.
+**Chunked snapshot transfer.** A large snapshot streams to a lagging follower as **ordered chunks**
+(each ≤ 4 MiB = `MAX_SNAPSHOT_CHUNK_BYTES`, default chunk 1 MiB), driven off the follower's echoed
+`nextExpectedOffset`; the follower installs only after the whole snapshot is reassembled in order. This
+lifts the old 4 MiB single-frame total-state ceiling. The total is now bounded by the follower's **heap**
+and a fail-closed cap (`configd.raft.maxReassembledSnapshotBytes`, default 512 MiB) that refuses an over-cap
+reassembly (drop the partial, log `SEVERE`, no install/OOM) rather than wedging silently. Observability
+(Gate-2): `configd_snapshot_bytes` (snapshot size vs the per-chunk cap),
+`raft_shard_snapshot_reassembly_refused_<gid>`, and `raft_shard_replication_lag_max_<gid>` (the follower-lag
+proxy). Disk-spilling reassembly is a later item.
 
 ## Fan-out distribution to the edge
 
@@ -241,14 +245,19 @@ live ACL reload.
 Guarantees to rely on: **per-key and per-shard order** (never cross-shard / global order);
 batch-atomic per shard-commit; **at-least-once with `(gid, seq)` dedup** (the driver drops
 `seq <= cursor[gid]`); bounded-staleness (edge-served, ordered, not linearizable -- use the strong
-path for read-after-write). Watches are **N=1** in v1; a cross-shard / global-order watch is v3.
+path for read-after-write). **Multi-shard (N>1) watches ship** -- a server-side aggregating coordinator runs
+one `FanOutSessionCore` per covered shard behind one connection, tagging every event `(gid, S)` with a
+per-shard cursor vector and independent per-shard resume. Ordering stays **per-shard, never cross-shard /
+global** (different `gid`s are concurrent); a globally-ordered cross-shard watch is out of scope by design (no
+global clock). The remaining watch deferral is the disjoint sharded-edge topology (edges serving shard
+subsets, driver-side merge).
 
-No conforming client driver ships in v1 -- the protocol is server-ready and the RFC
-([`../rfc/driver-protocol/`](../rfc/driver-protocol/)) is stand-alone implementable with golden
-byte vectors, so drivers are buildable on demand. Until one ships, clients poll (edge reads are
-in-process and sub-millisecond). See [`../operations/known-limitations.md`](../operations/known-limitations.md)
-for the watch deployment-security model (segregate watch clients from the legacy whole-store
-SUBSCRIBE path).
+A conforming **Java** reference client ships (`configd-client` + `-core`/`-http`/`-edge`), plus a
+`configd-conformance` suite (CI-wired, both planes, against the golden vectors). The RFC
+([`../rfc/driver-protocol/`](../rfc/driver-protocol/)) is stand-alone implementable with golden byte vectors,
+so drivers in other languages are buildable on demand and validate against the same goldens. See
+[`../operations/known-limitations.md`](../operations/known-limitations.md) for the watch
+deployment-security model (segregate watch clients from the legacy whole-store SUBSCRIBE path).
 
 ## Consistency contract
 
@@ -283,27 +292,42 @@ writes shed with 429 next; edge reads from the local HAMT are never shed.
 ## Security posture
 
 v1 has a real, code-wired security model. It is **secure-by-config, not secure-by-default**: except
-for rate limiting, every control is off until an operator enables it (each emits a loud startup
-warning when off). Enabling auth + TLS + audit + replay before production is a documented release
-gate ([`../operations/operator-runsheet.md`](../operations/operator-runsheet.md),
-[`../operations/deployer-must-know.md`](../operations/deployer-must-know.md)).
+for rate limiting (and write-admission control, now on by default), every control is off until an operator
+enables it (each emits a loud startup warning when off). Enabling auth + TLS + audit + replay before
+production is a documented release gate ([`../operations/operator-runsheet.md`](../operations/operator-runsheet.md),
+[`../operations/deployer-must-know.md`](../operations/deployer-must-know.md)). **The default bind is
+loopback (`127.0.0.1`)**, and binding a non-loopback interface while auth is OFF is **refused** unless the
+operator sets `--allow-insecure-public-bind` (a footgun-fix against silent unauthenticated public exposure --
+not "auth required by default"; a deliberate no-auth public deployment stays possible via the flag).
 
 - **Transport (mTLS per surface, but the surfaces differ).** The edge fan-out surface uses **mTLS
   with certificate-DN identity**. The Raft/admin control-plane API port is **HTTPS with a bearer
   token**, not client-certificate mTLS -- a bearer match authenticates as `root`. The client-facing
   edge-read HTTP surface is plaintext by design (ADR-0043). All four network surfaces run on Netty
   4.2.
+- **Authentication (pluggable SPI, four modes).** Authentication resolves through **one pluggable
+  authenticator chain** shared by both planes (`AuthenticatorChain`/`AuthenticatorFactory`, ServiceLoader),
+  supporting **No-Auth / HTTP Basic / Bearer (incl. OIDC-validated JWT via `configd-authn-oidc`) / mTLS**. The
+  edge accepts an mTLS client cert **and/or** a token/basic `AUTH` frame (RFC §06 §6A), with credential
+  expiry/revocation and proactive `REFRESH_AUTH`. Node-join (Raft interior) is mTLS-only, gated by a
+  per-node `PeerIdentityPolicy` allow-list (cert CN or SAN-URI/SPIFFE). Authorization stays in-core (next).
 - **Authorization (in-core RBAC, not pluggable).** `AclService` implements a
   `{READ, LIST, WRITE, WATCH, ADMIN}` capability model with union-of-ancestor grants, absolute
   deny-precedence, default-deny, roles, and policy-as-config under `_acl/`. `WATCH` is floored by
   `READ`. Reserved prefixes (`_acl/`, `_system/`) require `ADMIN` for every method. Empty `_acl/`
   in production is byte-identical to the default single `root -> ALL` grant.
-- **At-rest protection is integrity, NOT encryption.** The snapshot, WAL, and persistent Raft state
-  carry an **HMAC-SHA-256** integrity envelope (keyed) plus a keyless CRC32C, with constant-time MAC
-  comparison and fail-closed verify (ADR-0042). This is tamper detection. There is **no AES / no
-  `javax.crypto.Cipher` in production code** -- config values (including `secure/` keys) are stored
-  as plaintext bytes. Do not store secrets in Configd; use a dedicated secret manager. Encryption at
-  rest is a v2 item.
+- **At-rest protection is integrity by default; encryption is available (opt-in).** By default the
+  snapshot, WAL, and persistent Raft state carry an **HMAC-SHA-256** integrity envelope (keyed) plus a
+  keyless CRC32C, with constant-time MAC comparison and fail-closed verify (ADR-0042) -- tamper detection,
+  values (including `secure/` keys) stored as plaintext. **Opt-in `algId=2` node-local AES-256-GCM
+  encryption** at the same envelope seam can be enabled (`-Dconfigd.raft.encryption.enabled=true`); the GCM
+  tag replaces the HMAC, the CRC32C stays. The encryption root is custodied by a persisted, dual-slot
+  **keyring** (`NodeKeyring`) with independent per-term roots, so key rotation is non-destructive; the
+  provider is pluggable via a KMS SPI (`local` HKDF-from-signing-key, or an external **Vault Transit**
+  provider). Enabling is a **one-way door**. **With encryption OFF (the default), do not store secrets in
+  Configd** -- use a dedicated secret manager. `secure/` is a freshness class, not confidentiality (they are
+  orthogonal). See [`../operations/known-limitations.md`](../operations/known-limitations.md) §1 and
+  [`../operations/deployer-must-know.md`](../operations/deployer-must-know.md) §1.
 - **Signing key is fail-closed on co-location** (ADR-0044). The integrity and audit keys are
   HKDF-derived from the cluster signing key; if that key resolves inside the data directory the
   server refuses to start (a co-located key a storage-writer could read defeats the MAC). An
@@ -317,8 +341,11 @@ gate ([`../operations/operator-runsheet.md`](../operations/operator-runsheet.md)
   election timeout; PreVote prevents a partitioned node from inflating the term.
 - **Asymmetric partitions.** CheckQuorum plus PreVote keep an isolated leader from wedging the
   cluster; a majority partition continues.
-- **Clock skew.** Ordering is HLC-based (no TrueTime / hardware dependency); the logical counter
-  preserves causal order regardless of physical drift.
+- **Clock skew.** Ordering within a Raft group is by the **applied-mutation sequence** (a gap-free monotonic
+  per-group counter, ADR-0033), not a physical clock -- no TrueTime / hardware dependency. Edge staleness is
+  measured against the **leader-assigned commit timestamp** on each notification (ADR-0035/ADR-0039), bounded
+  operationally by NTP. (A per-entry HLC timestamp was descoped -- `LogEntry` carries no timestamp field, see
+  the consistency contract §4.)
 - **Disaster recovery (measured on hardware).** Leader-loss failover was measured at about
   **372 ms** with a single bounded election (no storm), **zero committed-write loss** across three
   fault modes (leader-kill under load, WAL-replay restart, wipe + InstallSnapshot), and recovery RTO
@@ -357,9 +384,11 @@ server; the full verdict is
 - **Horizontal scale:** near-linear across machines -- **656 -> 1075 -> 1607** committed w/s for
   N=1/2/3 leader-machines, a like-for-like **2.45x on 3 machines**, and it keeps rising with more
   machines. Cluster-bound by per-group consensus churn, not hardware.
-- **Leadership is operator-managed.** The 2.45x requires one group-leader per box; v1 has no
-  automatic balancer, so an operator achieves the placement (and `transferLeadership` is not yet
-  exposed). This is the one horizontal-scale operability follow-up (v2 backlog).
+- **Leadership auto-balances (on by default at N>1).** The 2.45x requires one group-leader per box; a
+  decentralized `LeaderBalanceLoop` maintains that placement automatically (it sheds one over-owned leader per
+  cycle), with an ADMIN transfer route for manual placement. The 2.45x itself was measured under **manual**
+  one-leader-per-box placement, so the balancer is built and E2E-tested but **not yet load-measured at scale**;
+  transfer-on-graceful-shutdown remains a follow-up (v2 backlog).
 - **Edge reads:** microsecond-scale in-process; about 53,600 req/s at 64 connections over the HTTP
   edge surface.
 - **Long-run stability:** a **6-hour** soak ran clean (flat file descriptors, stable heap floor, GC
@@ -367,15 +396,22 @@ server; the full verdict is
 
 ## What v1 does not do (v2 / v3)
 
-Stated scope, not gaps. See [`../v2-backlog.md`](../v2-backlog.md) for the full list.
+Stated scope, not gaps. See [`../v2-backlog.md`](../v2-backlog.md) for the full list. (Encryption at rest,
+the auth SPI + full auth system, the KMS SPI + Vault provider, the leadership balancer, chunked snapshot,
+multi-shard N>1 watches, and a Java reference client + conformance suite have all **shipped** since an earlier
+draft of this list called them deferred.)
 
-- **Encryption at rest** (v2) -- v1 is integrity-only; the AES-GCM build is designed at the ADR-0042
-  envelope seam.
-- **Client drivers** -- buildable from the stand-alone RFC ([`../rfc/driver-protocol/`](../rfc/driver-protocol/)),
-  not shipped; off the v1 critical path.
-- **Leadership balancer** (v2) -- horizontal scale is operator-managed until then.
-- **Multi-shard / cross-shard watches** (v3) -- v1 watches are per-key/per-shard ordered, N=1.
-- **Authentication and KMS provider SPIs** -- designed, not built; authorization stays in-core.
+- **Online/admin key rotation trigger** -- rotation is built and non-destructive but offline
+  (out-of-band on a stopped node) in v1.
+- **Transfer-on-graceful-shutdown** -- the leadership balancer and manual transfer route ship; a node does
+  not hand off leadership on SIGTERM (it flips readiness to draining).
+- **Additional-language client drivers** -- the Java reference client + conformance suite ship; Rust/Go/Python
+  drivers are buildable from the stand-alone RFC ([`../rfc/driver-protocol/`](../rfc/driver-protocol/)) on demand.
+- **Disjoint sharded-edge topology / globally-ordered cross-shard watch** -- v1 multi-shard watches are served
+  by one aggregating endpoint, per-key/per-shard ordered; a global cross-shard order is out of scope by design
+  (no global clock).
+- **Additional KMS backends** -- `local` and Vault Transit ship behind the KMS SPI; AWS/GCP/HSM providers can
+  be added without a core edit.
 - **Dynamic resharding, a `list` endpoint, a BATCH API, and cross-region / WAN** -- deferred.
 
 ## Where to go next

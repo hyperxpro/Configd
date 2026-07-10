@@ -168,7 +168,10 @@ class ServerConfigTest {
     class DefaultValues {
 
         @Test
-        void defaultBindAddressIsAllInterfaces() {
+        void defaultBindAddressIsLoopback() {
+            // B5: the default bind is loopback, not the wildcard 0.0.0.0. Binding an unauthenticated store
+            // to a public interface by default is the Redis/etcd "default-open" footgun; a real cluster
+            // sets --bind-address to a routable address on purpose.
             String[] args = {
                 "--node-id", "1",
                 "--data-dir", tempDir.toString(),
@@ -177,7 +180,7 @@ class ServerConfigTest {
 
             ServerConfig config = ServerConfig.parse(args);
 
-            assertEquals("0.0.0.0", config.bindAddress());
+            assertEquals("127.0.0.1", config.bindAddress());
         }
 
         @Test

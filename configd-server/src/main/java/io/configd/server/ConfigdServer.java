@@ -83,7 +83,9 @@ import io.configd.transport.TlsConfig;
 import io.configd.transport.TlsManager;
 
 import javax.net.ssl.SSLContext;
+import java.net.InetAddress;
 import java.net.InetSocketAddress;
+import java.net.UnknownHostException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
@@ -164,6 +166,20 @@ public final class ConfigdServer {
     // chosen >> worst-case re-election.
     private static final long WRITE_COMMIT_TIMEOUT_MS = 5_000;
 
+    // B6: write-admission cap - the number of proposals allowed concurrently in-flight (awaiting commit)
+    // before further writes are shed as Overloaded (HTTP 429) on the HTTP thread, BEFORE they reach an
+    // owner executor. This is self-protection: an unbounded write flood can no longer queue behind the
+    // periodic heartbeat and starve it into election churn. ON by default (was 0 = off).
+    //
+    // Value = the Raft-level maxPendingProposals depth (RaftConfig, 1024) so admission never sheds a write
+    // that Raft itself would have accepted - it just moves the same backpressure one hop earlier, off the
+    // owner thread. It is ~1000x the measured steady in-flight count (single-box throughput is ~800-1100
+    // writes/s and commit latency is single-digit ms, so only tens of proposals are ever in flight at
+    // once), so normal and bursty load never sheds; only a pathological flood of >1024 concurrent slow
+    // writes is bounded. Operators tune it with -Dconfigd.write.maxInflightProposals=N (0 disables).
+    // Package-private so WriteAdmissionDefaultTest can assert the on-by-default value + drive the cap.
+    static final int DEFAULT_MAX_INFLIGHT_PROPOSALS = 1024;
+
     private final ServerConfig config;
     // All RaftNode access for a group - ticks, inbound messages, proposals, and ReadIndex reads -
     // happens ONLY on that group's owner thread. Consensus runs through the owner-executor pool
@@ -218,6 +234,21 @@ public final class ConfigdServer {
     /** The decentralized leadership auto-balance loop; {@code null} at N=1 / single-node / when the kill
      *  switch is off (see the wiring gate). Owns its own dedicated executor; closed on shutdown. */
     private final LeaderBalanceLoop leaderBalanceLoop;
+    /**
+     * Drain flag (B7). Flipped to {@code true} by {@link #shutdown()} BEFORE anything is closed, so the
+     * readiness check reports NOT-ready (HTTP 503) and an LB/orchestrator stops routing while in-flight
+     * work drains. Shared with the readiness lambda (captured at wiring time), so the two references are
+     * the same {@link java.util.concurrent.atomic.AtomicBoolean} instance. {@code /health/live} is
+     * unaffected: liveness is not readiness.
+     */
+    private final java.util.concurrent.atomic.AtomicBoolean draining;
+    /**
+     * Bounded quiet-period (milliseconds) {@link #shutdown()} pauses AFTER flipping {@link #draining} and
+     * BEFORE closing anything, giving an LB one readiness-probe interval to observe the 503 and stop
+     * routing. {@code 0} disables it (the default at N=1 and in tests); the pause is always bounded so
+     * shutdown never blocks unboundedly. Configurable via {@code configd.shutdown.drainQuietMs}.
+     */
+    private final long drainQuietMs;
 
     private ConfigdServer(ServerConfig config, MultiRaftDriver driver,
                           ConfigStateMachine stateMachine,
@@ -239,7 +270,9 @@ public final class ConfigdServer {
                           SubscriptionManager subscriptionManager,
                           RolloutController rolloutController,
                           io.configd.observability.PrometheusExporter prometheusExporter,
-                          LeaderBalanceLoop leaderBalanceLoop) {
+                          LeaderBalanceLoop leaderBalanceLoop,
+                          java.util.concurrent.atomic.AtomicBoolean draining,
+                          long drainQuietMs) {
         this.config = config;
         this.driver = driver;
         this.stateMachine = stateMachine;
@@ -262,6 +295,8 @@ public final class ConfigdServer {
         this.rolloutController = rolloutController;
         this.prometheusExporter = prometheusExporter;
         this.leaderBalanceLoop = leaderBalanceLoop;
+        this.draining = draining;
+        this.drainQuietMs = drainQuietMs;
     }
 
     /**
@@ -310,6 +345,17 @@ public final class ConfigdServer {
 
     private static ConfigdServer startInternal(
             ServerConfig config, ConfigSource cfg, java.util.Deque<Runnable> bootTeardown) {
+        // B5 footgun guard: refuse to SILENTLY expose an unauthenticated store on a public interface
+        // (the Redis/etcd "default-open" class). Evaluated FIRST - before any directory creation or port
+        // bind - so a misconfigured deployment fails fast and cheaply. A loopback bind, an authenticated
+        // store, or the explicit acknowledgement all pass through; only a non-loopback bind with auth OFF
+        // and no acknowledgement refuses to start. This is NOT "auth required by default": a deliberate
+        // no-auth public deployment stays possible via the override, it just cannot happen by accident.
+        enforceBindNotSilentlyPublic(
+                config.bindAddress(),
+                isAuthEnabled(cfg, config),
+                cfg.anyLayerTrue("configd.security.allowInsecurePublicBind"));
+
         // Ensure data directory exists
         Path dataDir = config.dataDir();
         try {
@@ -732,7 +778,8 @@ public final class ConfigdServer {
         }
         ConfigStateMachine stateMachine = primaryGroup.stateMachine();
         VersionedConfigStore configStore = primaryGroup.configStore();
-        RaftNode raftNode = primaryGroup.raftNode();
+        // (The single-group `raftNode` local is gone: readiness is now shard-aware over `runtimes`/`driver`,
+        // and the read/write leader hints already resolve per (scope,key) shard via driver.getGroup(gid).)
         // gid -> RaftGroupRuntime for the sharded read path (per-shard configStore + scatter-gather
         // getPrefix). Built once, immutable thereafter, captured by the read closures. At N=1 it holds
         // the single primary entry.
@@ -755,6 +802,9 @@ public final class ConfigdServer {
         // covers every group. Registered AFTER every group's owner bind and BEFORE start() publishes the
         // accept loop, so an inbound frame marshals behind the binds. At N=1 every frame is group 0.
         if (tcpTransport != null) {
+            // Export the transport's outbound-drop / inbound-refuse saturation counters (counted inside
+            // the transport, previously never surfaced at /metrics).
+            registerTransportSaturationGauges(metricsRegistry, tcpTransport);
             primaryGroup.adapter().registerInboundHandler(raftDemuxInboundHandler(driver, configdMetrics));
             try {
                 tcpTransport.start();
@@ -940,13 +990,29 @@ public final class ConfigdServer {
         // Wire health service
         // ---------------------------------------------------------------
         HealthService healthService = new HealthService();
-        healthService.registerReadinessCheck(() -> {
-            NodeId leader = raftNode.leaderId();
-            if (leader != null) {
-                return HealthService.CheckResult.healthy("raft-leader");
-            }
-            return HealthService.CheckResult.unhealthy("raft-leader", "no leader elected");
-        });
+        // Drain flag (B7): shutdown() flips this to true BEFORE closing anything, so the readiness check
+        // reports 503 and an LB/orchestrator stops routing while in-flight work drains. Created here and
+        // handed to the ConfigdServer instance below, so the readiness lambda and shutdown() share the
+        // one AtomicBoolean. /health/live is unaffected (liveness is not readiness).
+        java.util.concurrent.atomic.AtomicBoolean draining =
+                new java.util.concurrent.atomic.AtomicBoolean(false);
+        // Shard-aware readiness (B7): this node hosts EVERY group in `runtimes` (static-N - each node runs
+        // all N shards). It is ready only when it is not draining AND every hosted group has a known leader
+        // (quorum exists). A group-0-blind check LIES at N>1: a node that lost quorum on shards 1..N-1 would
+        // still report READY. The per-group leader is read off `monitorView().leaderId()` - the same
+        // never-torn, <= one-tick-stale off-owner snapshot registerPerShardMetrics reads - so the health
+        // thread never touches RaftNode internals. At N=1 `runtimes` holds only group 0, so this is
+        // semantically the prior single-group "leader elected?" check under the same "raft-leader" name.
+        int[] hostedGroups = new int[runtimes.size()];
+        for (int i = 0; i < runtimes.size(); i++) {
+            hostedGroups[i] = runtimes.get(i).groupId();
+        }
+        healthService.registerReadinessCheck(() -> evaluateReadiness(
+                draining.get(), hostedGroups,
+                gid -> {
+                    RaftNode node = driver.getGroup(gid);
+                    return node != null ? node.monitorView().leaderId() : null;
+                }));
 
         // ---------------------------------------------------------------
         // Wire config write service
@@ -969,6 +1035,13 @@ public final class ConfigdServer {
         final int writeBurst = 10_000;
         RateLimiter rateLimiter = new RateLimiter(clock, writeRatePerSec, writeBurst);
         System.out.println("  Write rate   : " + writeRatePerSec + "/s (burst " + writeBurst + ")");
+        // B6: echo the effective write-admission cap at boot so operators can audit it. Read from the same
+        // source buildProposer uses (system properties), so the printed value matches the enforced one.
+        int admissionCap = ConfigSource.system()
+                .getInt("configd.write.maxInflightProposals", DEFAULT_MAX_INFLIGHT_PROPOSALS);
+        System.out.println("  Write admit  : " + (admissionCap > 0
+                ? "max " + admissionCap + " proposals in-flight (excess shed as 429 Overloaded)"
+                : "DISABLED (configd.write.maxInflightProposals=0)"));
         // Per-principal rate limiting: each authenticated principal gets its OWN token bucket (same
         // params as the global), so one noisy/hostile tenant cannot consume the whole write budget and
         // starve others. The global rateLimiter remains the fallback for unauthenticated / overflow
@@ -1211,7 +1284,7 @@ public final class ConfigdServer {
             // leader (a scopeless hint would loop at N>1). At N=1 every (scope, key) resolves to
             // group 0 -> raftNode.leaderId().
             httpApiServer = new NettyHttpApiServer(
-                    config.apiPort(), sslContext, healthService, prometheusExporter,
+                    config.bindAddress(), config.apiPort(), sslContext, healthService, prometheusExporter,
                     configStore, writeService, readService, authInterceptor, aclService,
                     strongReadPolicy,
                     (scope, key) -> {
@@ -1353,13 +1426,23 @@ public final class ConfigdServer {
         // ---------------------------------------------------------------
         // Start the consensus tick loop on each owner thread.
         // ---------------------------------------------------------------
+        // Drain quiet-period (B7): the bounded pause shutdown() takes after flipping `draining` so an LB
+        // observes the 503 before the listener closes. The DEFAULT is 2000ms at N>1 (a sharded cluster
+        // fronted by an LB doing rolling restarts) and 0 at N=1 (a single node with no LB in front has
+        // nothing to pause for). An EXPLICIT configd.shutdown.drainQuietMs is honoured at ANY N, so a
+        // single-node deployment that IS behind an LB - or the drain-flip test - can request a window.
+        // Bounded either way (interruptible sleep) - shutdown never blocks unboundedly. Tests set
+        // configd.shutdown.drainQuietMs=0 module-wide (parent pom) so the suite never pauses unless a test
+        // explicitly opts in.
+        long drainQuietMs = cfg.getLong("configd.shutdown.drainQuietMs", shardCount > 1 ? 2000L : 0L);
         ConfigdServer server = new ConfigdServer(
                 config, driver, stateMachine,
                 ownerPool, readDispatchExecutor, tlsReloadExecutor, nodeAnchorExecutor, nodeAnchor,
                 anchorWitness,
                 httpApiServer, tcpTransport, fanOutServer, aclPolicyLoader,
                 watchService, fanOutBuffer, compactor, plumtreeNode, hyParViewOverlay,
-                subscriptionManager, rolloutController, prometheusExporter, leaderBalanceLoop);
+                subscriptionManager, rolloutController, prometheusExporter, leaderBalanceLoop,
+                draining, drainQuietMs);
 
         // ---------------------------------------------------------------
         // Schedule the off-ack-path node-anchor refresh (audit head + shard-liveness digest). The write
@@ -1494,12 +1577,29 @@ public final class ConfigdServer {
     /**
      * Shuts down the server, stopping the HTTP API, owner pool, and releasing resources.
      * <p>
+     * B7: the readiness drain flag is flipped FIRST (before any close), then a bounded quiet-period lets
+     * an LB observe the 503 and stop routing, so in-flight work drains instead of being dropped on restart.
+     * <p>
      * Shutdown order matters. We must drain {@code readDispatchExecutor} FIRST so no new
      * read tasks are marshalled onto an owner thread. Then we shut the owner pool (each owner
      * also owns its groups' ReadIndexState + per-owner tick) so any in-flight reads complete.
      * Finally the {@code tlsReloadExecutor} is the slowest to drain and is stopped last.
      */
     public void shutdown() {
+        // B7 drain-flip: report NOT-ready BEFORE closing anything so an LB/orchestrator sees 503 and stops
+        // routing while in-flight work drains (no in-flight drop on restart). This MUST precede every close
+        // below. /health/live is untouched - a draining node is still alive, just not accepting new work.
+        draining.set(true);
+        // Bounded quiet-period: give the LB one readiness-probe interval to observe the 503 before the
+        // listener closes. 0 at N=1 / in tests (nothing to pause for). Interruptible and always bounded, so
+        // a SIGTERM hook thread cannot hang here.
+        if (drainQuietMs > 0) {
+            try {
+                Thread.sleep(drainQuietMs);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt(); // preserve the interrupt; proceed with teardown
+            }
+        }
         // Stop the leadership auto-balance loop FIRST so it initiates no new transfers against a driver /
         // owner pool that is about to be torn down. Its own executor drains independently; a null loop
         // (N=1 / single-node / kill switch off) is a no-op.
@@ -1875,6 +1975,82 @@ public final class ConfigdServer {
     }
 
     /**
+     * B5 fail-closed footgun guard against SILENTLY exposing an unauthenticated store on a public
+     * network interface - the Redis/etcd "default-open" compromise class. This is deliberately NOT
+     * "auth required by default": a no-auth deployment stays a legitimate workload choice. The one thing
+     * refused is doing it by ACCIDENT - binding a non-loopback interface with authentication off and no
+     * explicit acknowledgement.
+     * <p>
+     * Refuses only when ALL of: (1) authentication is off on the client-facing plane, AND (2) the bind is
+     * a non-loopback interface (0.0.0.0 / :: bind ALL interfaces incl. public, so they count as
+     * non-loopback), AND (3) the {@code configd.security.allowInsecurePublicBind} override is unset.
+     * When the override IS set the bind proceeds but a loud WARN is logged. An authenticated store, a
+     * loopback-only bind, or an unresolvable address that we cannot prove is loopback are handled up front.
+     * <p>
+     * Mirrors the {@link #enforceSigningKeyNotColocated} D-1 guard: package-private and parameterized on
+     * plain values (no {@link ServerConfig}/{@link ConfigSource}) so {@code InsecurePublicBindFailClosedTest}
+     * can drive it directly, and its opt-out has the same "production fails closed, dev opts out" shape.
+     *
+     * @param bindAddress              the configured bind address ({@link ServerConfig#bindAddress()})
+     * @param authEnabled              whether the client-facing plane authenticates requests (the
+     *                                 {@code configd.auth.*} chain or the legacy {@code --auth-token})
+     * @param allowInsecurePublicBind  operator acknowledgement; when {@code false} (the production
+     *                                 default) a non-loopback bind with auth off refuses to start
+     * @throws SecurityException if auth is off, the bind is non-loopback, and the override is unset
+     */
+    static void enforceBindNotSilentlyPublic(
+            String bindAddress, boolean authEnabled, boolean allowInsecurePublicBind) {
+        if (authEnabled) {
+            return; // an authenticated store may bind any interface - a legitimate operator choice
+        }
+        if (!isNonLoopbackBind(bindAddress)) {
+            return; // loopback-only bind: not reachable off-box, so auth-off is safe by construction
+        }
+        if (!allowInsecurePublicBind) {
+            throw new SecurityException(
+                    "B5 fail-closed: refusing to bind an UNAUTHENTICATED Configd store to the non-loopback"
+                            + " interface '" + bindAddress + "'. A store reachable off-box with authentication"
+                            + " off lets anyone on the network read and write every key (the Redis/etcd"
+                            + " default-open class). Choose one: (a) enable authentication (configd.auth.mode"
+                            + " or --auth-token); (b) bind loopback (--bind-address 127.0.0.1); or (c) if an"
+                            + " unauthenticated public bind is genuinely intended, acknowledge it explicitly"
+                            + " with -Dconfigd.security.allowInsecurePublicBind=true.");
+        }
+        // Override explicitly set: proceed, but warn loudly - an unauthenticated store is on a public
+        // interface by deliberate operator choice (front it with a trusted network boundary).
+        String banner = "************************************************************";
+        System.err.println("WARNING: " + banner);
+        System.err.println("WARNING: An UNAUTHENTICATED Configd store is bound to a NON-LOOPBACK interface:");
+        System.err.println("WARNING:   bind address : " + bindAddress);
+        System.err.println("WARNING: Anyone who can reach this interface can read and write every key.");
+        System.err.println("WARNING: Permitted only because configd.security.allowInsecurePublicBind=true.");
+        System.err.println("WARNING: Enable authentication or front it with a trusted network boundary.");
+        System.err.println("WARNING: " + banner);
+        LOG.log(Level.SEVERE,
+                "B5: unauthenticated store bound to non-loopback interface {0} — permitted only by the"
+                        + " explicit allowInsecurePublicBind override; enable auth or bind loopback for"
+                        + " production",
+                bindAddress);
+    }
+
+    /**
+     * True if {@code bindAddress} names an interface reachable off-box (non-loopback). The wildcard
+     * 0.0.0.0 / :: ({@link InetAddress#isAnyLocalAddress()}) binds ALL interfaces including public ones,
+     * so it counts as non-loopback; a genuine loopback literal/hostname (127.0.0.0/8, ::1, localhost)
+     * does not. An address that cannot be resolved is treated as non-loopback: we cannot prove it is
+     * loopback, so we fail closed rather than assume it is safe.
+     */
+    private static boolean isNonLoopbackBind(String bindAddress) {
+        try {
+            // getByName resolves a literal directly and a hostname via the name service; 0.0.0.0 / ::
+            // resolve to the wildcard address, whose isLoopbackAddress() is false (isAnyLocalAddress()).
+            return !InetAddress.getByName(bindAddress).isLoopbackAddress();
+        } catch (UnknownHostException e) {
+            return true; // unresolvable -> cannot prove loopback -> fail closed
+        }
+    }
+
+    /**
      * Derives the audit-log chain MAC key {@code K_audit} from the cluster signing key using the
      * SAME HKDF construction as {@link #deriveRaftIntegrityEnvelope} but with a DISTINCT
      * {@code info} string - {@code "configd/audit-log-integrity/v1"} vs the Raft
@@ -2013,7 +2189,16 @@ public final class ConfigdServer {
      */
     private static boolean isAuthEnabled(ConfigSource cfg, ServerConfig config) {
         List<String> providers = AuthenticatorChain.configuredProviders(cfg);
-        boolean spiAuthEnabled = !providers.isEmpty() && !providers.equals(List.of("none"));
+        // configd.auth.mode=none explicitly disables auth: the noAuthMode boot branch wires NO chain,
+        // interceptor, or ACL (the open gate), which supersedes the legacy static --auth-token. A leftover
+        // token is therefore inert on this posture, so the store is genuinely open. Counting the token here
+        // would let the B5 no-silent-public-bind guard believe the store is authenticated when it is fully
+        // open on every interface - the exact footgun that guard exists to catch. So `none` is auth-off
+        // regardless of any --auth-token, keeping this predicate equal to "an ACL/interceptor was wired".
+        if (providers.equals(List.of("none"))) {
+            return false;
+        }
+        boolean spiAuthEnabled = !providers.isEmpty();
         return spiAuthEnabled || config.authEnabled();
     }
 
@@ -2436,6 +2621,18 @@ public final class ConfigdServer {
             registry.gauge("raft.shard.current_term." + gid, shardGauge(driver, gid, RaftMetrics::currentTerm));
             registry.gauge("raft.shard.leader." + gid,
                     shardGauge(driver, gid, v -> v.role() == RaftRole.LEADER ? 1L : 0L));
+            // The wedge/saturation signals for this shard: max replication lag across peers (the
+            // "follower stuck / snapshot could not install" proxy) plus the three otherwise-silent
+            // codec-reject / reassembly-refuse drop tallies. Monotonic-count gauges read off the same
+            // monitorView snapshot; register(increase()) over them behaves like a counter.
+            registry.gauge("raft.shard.replication_lag_max." + gid,
+                    shardGauge(driver, gid, RaftMetrics::replicationLagMax));
+            registry.gauge("raft.shard.append_send_rejected." + gid,
+                    shardGauge(driver, gid, RaftMetrics::appendSendRejected));
+            registry.gauge("raft.shard.snapshot_chunk_send_rejected." + gid,
+                    shardGauge(driver, gid, RaftMetrics::snapshotChunkSendRejected));
+            registry.gauge("raft.shard.snapshot_reassembly_refused." + gid,
+                    shardGauge(driver, gid, RaftMetrics::snapshotReassemblyRefused));
         }
         // Node-level: how many shards THIS node currently leads (the leader-count-per-node view).
         registry.gauge("raft.node.leader_count", () -> {
@@ -2448,6 +2645,50 @@ public final class ConfigdServer {
             }
             return leaders;
         });
+    }
+
+    /**
+     * Evaluates shard-aware readiness (B7). Package-private static so {@code ReadinessDrainTest} can drive
+     * the decision directly with a stub leader source and a draining flag - no server, no RaftNode.
+     *
+     * <p>Order matters: {@code draining} is checked FIRST, so once {@link #shutdown()} flips the flag the
+     * node reports NOT-ready regardless of shard state (an LB then stops routing while in-flight work
+     * drains). When not draining, the node is ready only if EVERY hosted group has a known leader; the
+     * first group without one (quorum lost, or no leader yet elected) makes the whole node NOT-ready and
+     * names the offending shard.
+     *
+     * @param draining     whether shutdown has begun draining (readiness must report NOT-ready)
+     * @param hostedGroups the group ids this node hosts (all N shards under static-N)
+     * @param leaderOf     resolves a group's known leader, or {@code null} if none (quorum lost/unknown)
+     * @return a healthy result named {@code raft-leader} when ready; otherwise an unhealthy result naming
+     *         {@code draining} or {@code raft-leader} with the reason
+     */
+    static HealthService.CheckResult evaluateReadiness(
+            boolean draining, int[] hostedGroups, java.util.function.IntFunction<NodeId> leaderOf) {
+        if (draining) {
+            return HealthService.CheckResult.unhealthy("draining", "server is draining for shutdown");
+        }
+        for (int gid : hostedGroups) {
+            if (leaderOf.apply(gid) == null) {
+                return HealthService.CheckResult.unhealthy(
+                        "raft-leader", "shard " + gid + " has no known leader");
+            }
+        }
+        return HealthService.CheckResult.healthy("raft-leader");
+    }
+
+    /**
+     * Registers the node-level consensus-transport saturation gauges - outbound {@code frames_dropped}
+     * (bounded-queue overflow / no-connection drop) and inbound {@code connections_refused} (admission
+     * cap) - as pull gauges over the endpoint's monotonic accessors. These are counted inside the
+     * transport (JDK or Netty) but were never exported. Registered only when a consensus transport is
+     * configured; the accessors are cheap volatile reads, safe on the scrape thread. Package-private
+     * static so {@code PerShardMetricsTest} can drive it directly with a stub endpoint.
+     */
+    static void registerTransportSaturationGauges(MetricsRegistry registry, RaftTransportEndpoint endpoint) {
+        registry.gauge(ConfigdMetrics.NAME_RAFT_TRANSPORT_FRAMES_DROPPED, endpoint::framesDropped);
+        registry.gauge(ConfigdMetrics.NAME_RAFT_TRANSPORT_INBOUND_CONNECTIONS_REFUSED,
+                endpoint::inboundConnectionsRefused);
     }
 
     /** A null-safe per-shard gauge: reads {@code fn} off the group's {@link RaftNode#monitorView()}, or
@@ -2699,9 +2940,11 @@ public final class ConfigdServer {
             WriteRouter router) {
         // Admission control: bound the proposals concurrently in-flight so a sustained write flood cannot
         // starve the periodic heartbeat. Excess is shed as Overloaded (-> 429 + Retry-After) on the HTTP
-        // thread BEFORE the proposal reaches the executor. Default 0 = OFF (opt-in via
-        // -Dconfigd.write.maxInflightProposals=N); the permit is held only for the bounded wait.
-        int maxInflightProposals = ConfigSource.system().getInt("configd.write.maxInflightProposals", 0);
+        // thread BEFORE the proposal reaches the executor. ON by default at DEFAULT_MAX_INFLIGHT_PROPOSALS
+        // (B6); -Dconfigd.write.maxInflightProposals=N tunes it, 0 disables. The permit is held only for
+        // the bounded wait.
+        int maxInflightProposals = ConfigSource.system()
+                .getInt("configd.write.maxInflightProposals", DEFAULT_MAX_INFLIGHT_PROPOSALS);
         java.util.concurrent.Semaphore admission =
                 maxInflightProposals > 0 ? new java.util.concurrent.Semaphore(maxInflightProposals) : null;
         return (scope, keys, command) -> {

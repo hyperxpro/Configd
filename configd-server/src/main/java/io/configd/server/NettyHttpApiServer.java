@@ -11,6 +11,8 @@ import io.configd.api.ReplayGuard;
 import io.configd.common.ConfigScope;
 import io.configd.common.NodeId;
 import io.configd.netty.NettyTransport;
+import io.configd.observability.ConfigdMetrics;
+import io.configd.observability.MetricsRegistry;
 import io.configd.observability.PrometheusExporter;
 import io.configd.store.VersionedConfigStore;
 import io.netty.bootstrap.ServerBootstrap;
@@ -34,6 +36,7 @@ import io.netty.handler.codec.http.FullHttpResponse;
 import io.netty.handler.codec.http.HttpHeaderNames;
 import io.netty.handler.codec.http.HttpHeaderValues;
 import io.netty.handler.codec.http.HttpHeaders;
+import io.netty.handler.codec.http.HttpMessage;
 import io.netty.handler.codec.http.HttpObjectAggregator;
 import io.netty.handler.codec.http.HttpResponseStatus;
 import io.netty.handler.codec.http.HttpServerCodec;
@@ -107,6 +110,11 @@ public final class NettyHttpApiServer {
     private static final int MAX_CHUNK = 8192;
 
     private final int port;
+    // The interface to bind. null = the wildcard (all interfaces), byte-identical to the historical
+    // `new InetSocketAddress(port)`. ConfigdServer passes ServerConfig.bindAddress() so the admin
+    // read/write API honours the SAME bind as the Raft + edge planes - otherwise the B5 guard keys on a
+    // value the most security-sensitive plane ignores (the API would sit on all interfaces regardless).
+    private final String bindAddress;
     private final SSLContext sslContext; // nullable: plain HTTP when null
     private final AdminApiHandler handler;
     // true when the auth chain includes mtls: the admin TLS then requests (optionally) a client cert so the
@@ -118,6 +126,10 @@ public final class NettyHttpApiServer {
     private final long requestTimeoutNanos;
     private final long idleTimeoutMillis;
     private final int maxRequestBytes;
+    // Ingress-reject counters (400 malformed / 413 oversize) on the shared metrics registry the exporter
+    // reads. Previously these rejects were silent (only the 429 write-overload shed was counted).
+    private final MetricsRegistry.Counter rejectedBadRequest;
+    private final MetricsRegistry.Counter rejectedPayloadTooLarge;
 
     private EventLoopGroup boss;
     private EventLoopGroup worker;
@@ -185,6 +197,36 @@ public final class NettyHttpApiServer {
                               ReplayGuard replayGuard,
                               AdminApiHandler.LeadershipAdmin leadershipAdmin,
                               AuthenticatorChain chain) {
+        // Historical signature, preserved byte-identically: a null bindAddress binds the wildcard
+        // (all interfaces) exactly as before. ConfigdServer uses the bindAddress overload below.
+        this(null, port, sslContext, healthService, prometheusExporter, configStore, writeService,
+                readService, authInterceptor, aclService, strongReadPolicy, leaderHintSupplier,
+                auditLog, replayGuard, leadershipAdmin, chain);
+    }
+
+    /**
+     * As the chain constructor, plus an explicit {@code bindAddress} for the listener so the admin
+     * read/write API honours the SAME interface as the Raft + edge planes. {@code null} binds the wildcard,
+     * byte-identical to the historical {@code new InetSocketAddress(port)}. Mirrors {@code HttpApiServer}'s
+     * bindAddress constructor so the drop-in adapter swap keeps an identical arg list.
+     */
+    public NettyHttpApiServer(String bindAddress,
+                              int port,
+                              SSLContext sslContext,
+                              HealthService healthService,
+                              PrometheusExporter prometheusExporter,
+                              VersionedConfigStore configStore,
+                              ConfigWriteService writeService,
+                              ConfigReadService readService,
+                              AuthInterceptor authInterceptor,
+                              AclService aclService,
+                              StrongReadPolicy strongReadPolicy,
+                              BiFunction<ConfigScope, String, NodeId> leaderHintSupplier,
+                              AuditLog auditLog,
+                              ReplayGuard replayGuard,
+                              AdminApiHandler.LeadershipAdmin leadershipAdmin,
+                              AuthenticatorChain chain) {
+        this.bindAddress = bindAddress;
         this.port = port;
         this.sslContext = sslContext;
         this.handler = new AdminApiHandler(healthService, prometheusExporter, configStore, writeService,
@@ -197,6 +239,14 @@ public final class NettyHttpApiServer {
         this.requestTimeoutNanos = TimeUnit.MILLISECONDS.toNanos(requestTimeoutMillis);
         this.idleTimeoutMillis = Long.getLong("configd.server.netty.idleTimeoutMillis", 60_000L);
         this.maxRequestBytes = Integer.getInteger("configd.server.netty.maxRequestBytes", 1 << 20);
+        // Bind the reject counters to the exporter's shared registry (ConfigdMetrics eager-creates them,
+        // so counter() returns the same instances; null exporter in a degenerate test falls back to a
+        // throwaway registry so the increments never NPE).
+        MetricsRegistry registry = prometheusExporter != null ? prometheusExporter.registry() : new MetricsRegistry();
+        this.rejectedBadRequest = registry.counter(
+                ConfigdMetrics.NAME_HTTP_REQUEST_REJECTED_BASE + "." + ConfigdMetrics.HTTP_REJECT_REASON_BAD_REQUEST);
+        this.rejectedPayloadTooLarge = registry.counter(
+                ConfigdMetrics.NAME_HTTP_REQUEST_REJECTED_BASE + "." + ConfigdMetrics.HTTP_REJECT_REASON_PAYLOAD_TOO_LARGE);
         this.transport = NettyTransport.select();
     }
 
@@ -234,7 +284,16 @@ public final class NettyHttpApiServer {
                         ch.pipeline().addLast(
                                 new HttpServerCodec(MAX_INITIAL_LINE, MAX_HEADER_SIZE, MAX_CHUNK));
                         // Assembles the full request (incl. the PUT body); auto-responds 413 on oversize.
-                        ch.pipeline().addLast(new HttpObjectAggregator(maxRequestBytes));
+                        // The subclass counts the 413 before delegating to the identical default handling,
+                        // so the reject is observable without changing the response behaviour.
+                        ch.pipeline().addLast(new HttpObjectAggregator(maxRequestBytes) {
+                            @Override
+                            protected void handleOversizedMessage(ChannelHandlerContext ctx, HttpMessage oversized)
+                                    throws Exception {
+                                rejectedPayloadTooLarge.increment();
+                                super.handleOversizedMessage(ctx, oversized);
+                            }
+                        });
                         if (idleTimeoutMillis > 0) {
                             ch.pipeline().addLast(new IdleStateHandler(
                                     0, 0, idleTimeoutMillis, TimeUnit.MILLISECONDS));
@@ -244,7 +303,9 @@ public final class NettyHttpApiServer {
                 });
         boolean bound = false;
         try {
-            serverChannel = b.bind(new InetSocketAddress(port)).sync().channel();
+            serverChannel = b.bind(bindAddress == null
+                    ? new InetSocketAddress(port)                       // wildcard, byte-identical to before
+                    : new InetSocketAddress(bindAddress, port)).sync().channel();
             bound = true;
         } finally {
             if (!bound) {
@@ -260,6 +321,11 @@ public final class NettyHttpApiServer {
     /** The actual bound port (resolves an ephemeral port 0 after {@link #start()}). */
     public int port() {
         return ((InetSocketAddress) serverChannel.localAddress()).getPort();
+    }
+
+    /** The actual bound host (test-visible): distinguishes a loopback bind from the wildcard 0.0.0.0. */
+    String boundHost() {
+        return ((InetSocketAddress) serverChannel.localAddress()).getAddress().getHostAddress();
     }
 
     /** Bounded graceful shutdown. */
@@ -377,6 +443,7 @@ public final class NettyHttpApiServer {
         protected void channelRead0(ChannelHandlerContext ctx, FullHttpRequest req) {
             if (req.decoderResult().isFailure()) {
                 // Oversize initial line / header block, or malformed framing.
+                rejectedBadRequest.increment();
                 failAndClose(ctx, HttpResponseStatus.BAD_REQUEST);
                 return;
             }
@@ -384,6 +451,7 @@ public final class NettyHttpApiServer {
             try {
                 uri = new URI(req.uri());
             } catch (URISyntaxException e) {
+                rejectedBadRequest.increment();
                 failAndClose(ctx, HttpResponseStatus.BAD_REQUEST);
                 return;
             }
