@@ -22,10 +22,9 @@
 # request and is out of scope by design; do NOT point this gate at the HTTP
 # surface.
 #
-# ARTIFACT: the full raw JMH output is saved to
-#   docs/session-3/captures/ct34-jmh-gc-check.txt   (stable path; overwritten
-# per run, header carries the timestamp + git SHA so the contract map row can
-# cite a concrete, reproducible run).
+# ARTIFACT: the full raw JMH output is saved to target/ct34-jmh-gc-check.txt
+# (overwritten per run; the header carries the timestamp + git SHA so the
+# contract-map row can cite a concrete, reproducible run).
 #
 # NON-VACUITY (a gate that can pass while checking nothing is worse than no
 # gate): the script FAILS if either gated leg's summary line is absent from

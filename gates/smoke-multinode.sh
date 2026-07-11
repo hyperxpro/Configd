@@ -1,13 +1,10 @@
 #!/usr/bin/env bash
 # smoke-multinode.sh — CONTROL-PLANE-ONLY multi-node smoke gate
 #
-# SCOPE: control-plane only (steps 2,3,4,6 of the smoke deliverable).
-#   The EDGE propagation step (step 5) is DELIBERATELY OMITTED because it is
-#   NOT DEMONSTRABLE: the server exposes NO fan-out/watch/subscribe endpoint
-#   (only /health/*, /metrics, /v1/config/{key}), the FanOutBuffer is
-#   appended-to but never drained (ConfigdServer.java:360 is its only ref),
-#   and EdgeConfigClient has no network transport (applyDelta takes an
-#   in-process object).
+# SCOPE: control-plane only. Exercises election, commit, failover, and
+# no-committed-data-loss over a real 3-node localhost cluster; edge fan-out /
+# watch propagation is covered by the edge gates (gate-3 Compose E2E +
+# gate-mswatch), not here.
 #
 # WHAT IT PROVES (exits non-zero on ANY failure):
 #   - 3-node localhost cluster comes up, all /health/ready == 200

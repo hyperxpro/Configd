@@ -136,9 +136,8 @@ step_linzgate() {
     io.configd.linz.runner.SimHistoryCheck "$hist" 2>&1 | tee "$LOGDIR/linz-simhist.log" | tail -2
   grep -q "LINEARIZABLE" "$LOGDIR/linz-simhist.log" || { echo "GATE-2 linzgate: sim-history check not LINEARIZABLE"; return 1; }
   # (iii) live faulted seed-matrix (needs sudo iptables + a fresh shaded jar) —
-  # NIGHTLY variant, opt-in. Discrimination runs are deliberately NOT gated
-  # (they mutate source; they are harness verification, captured under
-  # docs/session-2/captures/linz-discrimination.txt and re-runnable manually).
+  # NIGHTLY variant, opt-in. Discrimination runs are deliberately NOT gated:
+  # they mutate source, so they are harness verification, run manually.
   if [ "${GATE2_FAULTED:-0}" = "1" ]; then
     $MVN -q -pl configd-server -am clean package -DskipTests >/dev/null
     # Real faulted-linearizability matrix (run-matrix.sh): adversarial combination nemeses
@@ -172,32 +171,19 @@ step_mutation() {
     return 0
   fi
   cd "$ROOT"
-  # PIT mutation thresholds, enforced per module by the -Pmutation profile. Each
-  # module pom sets `mutationThreshold`, so the pitest goal returns non-zero
-  # (BUILD FAILURE) when the module is UNDER target — that propagates out as
-  # the step failing. Three enforced bars, one per-module PIT run each
-  # (~25-40 min/module on 2 vCPU):
+  # PIT mutation thresholds, enforced per module by the -Pmutation profile: each
+  # module pom sets `mutationThreshold`, so the pitest goal returns BUILD FAILURE
+  # when a module is under target and the step fails. Three enforced bars, one
+  # per-module PIT run each (~25-40 min/module on 2 vCPU):
   #   (1) consensus-core module-wide        >= 70   (-Pmutation)
   #   (2) consensus-core SAFETY KERNEL       >= 70   (-Pmutation,mutation-kernel:
   #       RaftNode/RaftLog/DurableRaftState/ReadIndexState/ClusterConfig)
   #   (3) distribution-service control-plane >= 65   (-Pmutation; the dormant
   #       fan-out/gossip classes are excluded in that module's pom)
-  #
-  # FLOOR HISTORY (not a silent change): an earlier round raised the
-  # consensus-core floors from 60/60. Measured CLEAN scores (2026-06-11,
-  # RUN_ERROR=0): module-wide 73.1% (589/806) and kernel 72.8% (532/731). Module-
-  # wide now MEETS the 70% target with margin (eight new test classes, incl.
-  # MessageRecordCodecTest covering the record/DTO equals/hashCode that were
-  # 0% NO_COVERAGE and alone dragged the module under 70). The kernel reaches
-  # 72.8% — short of the 80% aspiration, with the remaining gap dominated by
-  # PROVABLY-EQUIVALENT mutants (earlier-guard-masked boundaries,
-  # WAL-cross-validation-masked recovery, crash-only persist-call removals,
-  # commit-outcome NO_COVERAGE machinery), itemized in
-  # docs/session-2/mutation-kill-list.md — not gamed. The floors sit JUST UNDER
-  # each verified score (70 < 73.1, 70 < 72.8) so the build FAILS on any
-  # regression without flaking on PIT run-to-run jitter. (An earlier "80%"
-  # module figure was a CONTAMINATED run — concurrent surefire forks ->
-  # RUN_ERRORs; discarded.)
+  # Floors sit just under the verified clean scores (module-wide 73.1%, kernel
+  # 72.8%) so a regression fails the build without flaking on PIT run-to-run
+  # jitter. The kernel's residual gap to the 80% aspiration is dominated by
+  # provably-equivalent mutants, not gaming.
   # The upstream main artifacts must be installed first so PIT's classpath
   # resolves them (sibling test sources are skipped, as in step_jcstress).
   $MVN -q -pl configd-consensus-core,configd-distribution-service -am \
@@ -227,17 +213,12 @@ step_jcstress() {
     return 0
   fi
   cd "$ROOT"
-  # Build the jcstress uber-jar against FRESH upstream sources, then run the
-  # curated subset (run-curated-subset.sh: the transport interleavings + the
-  # decisive read-path races, sanity mode, deterministic 2-actor tests only —
-  # the intentionally-forbidden harness self-test and the 3-actor test are
-  # excluded). Per docs/session-2/jcstress-results.md the clean 2-vCPU sanity
-  # pass is a SMOKE; the full multi-fork run is the operator's higher-confidence
-  # pass.
-  # maven.test.skip (not just -DskipTests) so a sibling module's in-progress,
-  # non-compiling TEST sources never block the harness build — jcstress only
-  # needs the upstream MAIN artifacts (multiple agents can work on one branch
-  # at once).
+  # Build the jcstress uber-jar against fresh upstream sources, then run the
+  # curated subset (run-curated-subset.sh: transport interleavings + the decisive
+  # read-path races, sanity mode, deterministic 2-actor tests only). The 2-vCPU
+  # sanity pass is a smoke; the full multi-fork run is the higher-confidence pass.
+  # Use maven.test.skip (not -DskipTests) so a sibling module's non-compiling test
+  # sources can't block the harness build — jcstress needs only the main artifacts.
   $MVN -q -o -pl configd-config-store,configd-distribution-service,configd-transport -am \
     install -Dmaven.test.skip=true 2>&1 | tee "$LOGDIR/jcstress-install.log" | tail -3
   # The offline uber-jar build below runs `clean`, but the runner's system-Maven

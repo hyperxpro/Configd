@@ -36,12 +36,12 @@
     <build>
         <plugins>
             <!--
-              B4 / RR-003 reuse seam: publish this module's TEST classes as a
-              test-jar so configd-testkit's adversarial simulation can consume the
-              crash-capable durability fixtures (CrashStorage, KvStateMachine)
-              without duplicating them. testkit(main/test) -> consensus-core(test-jar)
-              is acyclic; the reverse direction would cycle, so the test-jar must be
-              produced here and consumed there. Lead decision (S2 risky-point #1).
+              Publish this module's TEST classes as a test-jar so configd-testkit's
+              adversarial simulation can consume the crash-capable durability
+              fixtures (CrashStorage, KvStateMachine) without duplicating them.
+              testkit(main/test) -> consensus-core(test-jar) is acyclic; the reverse
+              direction would cycle, so the test-jar must be produced here and
+              consumed there.
             -->
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
@@ -60,21 +60,18 @@
 
     <profiles>
         <!--
-          B3 / RR-085: consensus-core mutation thresholds (charter §4.1).
+          Consensus-core mutation thresholds.
           Activated with the parent `-Pmutation` profile, which supplies the
           shared PIT/JaCoCo plugin config; this module adds the targetClasses
           split and the enforced thresholds.
 
           TWO enforced runs (gate-2 step (e) runs both):
-            * `mutation`        — MODULE-WIDE, enforced floor 60 over the whole
-                                  consensus package (charter ASPIRATION 70).
-            * `mutation-kernel` — the SAFETY KERNEL only, enforced floor 60
-                                  (charter ASPIRATION 80).
-          The floors are 60 (above S1's 58%); the measured S2 scores are 61%
-          module-wide and 64% kernel. The gap to the 70/80 aspiration is a
-          DOCUMENTED RESIDUAL (docs/session-2/mutation-kill-list.md SCORES) — the
-          named survivors are all killed, but RaftNode/RaftLog carry untargeted
-          mutants beyond the named list. See the per-profile comments below.
+            * `mutation`        — MODULE-WIDE, enforced floor 70 over the whole
+                                  consensus package.
+            * `mutation-kernel` — the SAFETY KERNEL only, enforced floor 70
+                                  (80 is the aspiration; see the per-profile comment).
+          See the per-profile comments below for the verified scores and the
+          provably-equivalent-mutant residual.
 
           SAFETY-KERNEL DEFINITION (the "election/log/commit/persistence"
           classes, by class because the whole module is one package
@@ -111,21 +108,12 @@
                                 <param>io.configd.raft.*</param>
                             </targetTests>
                             <!--
-                              ENFORCED FLOOR 70 (measured S2/mutation-gap = 73.1%,
-                              589/806 on a CLEAN run with RUN_ERROR=0, up from the 61%
-                              named-survivor round and S1's 58%). The charter §4.1
-                              target of 70 module-wide is now MET with margin: the
-                              gap-closing round added eight discriminating test classes
-                              (RaftLogUnitTest, KernelBoundaryUnitTest,
-                              ReconfigPathUnitTest, RaftNodeReplicationUnitTest,
-                              RaftNodeApiUnitTest, RaftNodeVoteAndSnapshotUnitTest,
-                              InvariantCallSiteTest, and MessageRecordCodecTest — the
-                              last covering the record/DTO equals/hashCode/toString that
-                              were 0% NO_COVERAGE and alone dragged the module under 70).
-                              The floor sits just under the verified 73.1% so it FAILS
-                              the build on any regression without flaking. (An earlier
-                              "80%" figure was a CONTAMINATED run — concurrent surefire
-                              forks produced RUN_ERRORs; always verify RUN_ERROR==0.)
+                              Enforced floor 70, module-wide (io.configd.raft.*). The
+                              floor sits just under the verified clean score (73.1%) so
+                              it fails the build on any regression without flaking on PIT
+                              run-to-run jitter. Verify RUN_ERROR==0 when re-measuring:
+                              concurrent surefire forks produce RUN_ERRORs that skew the
+                              score.
                             -->
                             <mutationThreshold>70</mutationThreshold>
                             <failWhenNoMutations>true</failWhenNoMutations>
@@ -153,20 +141,14 @@
                                 <param>io.configd.raft.*</param>
                             </targetTests>
                             <!--
-                              ENFORCED FLOOR 70 (measured S2/mutation-gap kernel =
-                              72.8%, 532/731, up from 64%). The charter ASPIRATION of
-                              80 for the safety kernel is NOT fully reached: after the
-                              gap-closing round the kernel sits at 72.8% (ClusterConfig
-                              100%, ReadIndexState 96%, DurableRaftState 95%, RaftLog
-                              77%, RaftNode 66%). The remaining gap to 80 is dominated
-                              by PROVABLY-EQUIVALENT mutants (earlier-guard-masked
-                              ConditionalsBoundary flips, the WAL-cross-validation-
-                              masked recovery legacy fallback, persist-call removals
-                              observable only under crash, and the commit-outcome
-                              NO_COVERAGE machinery) — itemized individually in
-                              docs/session-2/mutation-kill-list.md SCORES, NOT gamed.
-                              The floor sits just under the verified 72.8% so it fails
-                              on regression without flaking.
+                              Enforced floor 70 for the safety kernel (RaftNode/RaftLog/
+                              DurableRaftState/ReadIndexState/ClusterConfig). The floor
+                              sits just under the verified clean score (72.8%) so it
+                              fails on regression without flaking. The gap to the 80
+                              aspiration is dominated by provably-equivalent mutants
+                              (guard-masked boundary flips, WAL-cross-validation-masked
+                              recovery fallback, crash-only persist-call removals,
+                              commit-outcome NO_COVERAGE machinery), not gaming.
                             -->
                             <mutationThreshold>70</mutationThreshold>
                             <failWhenNoMutations>true</failWhenNoMutations>

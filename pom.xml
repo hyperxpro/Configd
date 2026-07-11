@@ -476,9 +476,8 @@
           finding, not by a blanket skipTestScope filter that could mask a
           build-time supply-chain risk.
 
-          CI invocation, run from repo root (see docs/session-7/supply-chain.md
-          for the copy-paste command; the leading double-dash flags are omitted
-          here because XML comments forbid a double-dash sequence):
+          CI invocation, run from repo root (the leading double-dash flags are
+          omitted here because XML comments forbid a double-dash sequence):
             ./mvnw -Pcve-scan org.owasp:dependency-check-maven:aggregate
               -DfailBuildOnCVSS=7 -Dformats=HTML,JSON,SARIF
               -DnvdApiKey=$NVD_API_KEY

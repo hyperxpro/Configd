@@ -136,9 +136,9 @@ echo "GATE-7 mtls: plaintext/expired/wrong-SAN/downgrade refused on both planes.
 ML="$LOGDIR/mtls.txt"
 run_tests mtls "RaftTransportMtlsAttackTest,JdkFanOutServerContractTest,NettyFanOutServerContractTest,NettyFanOutServerNioContractTest,EdgeTransportSanMismatchTest,EdgeTransportMtlsTest,TlsManagerTest" "$ML"
 assert_class_green "$ML" "RaftTransportMtlsAttackTest"  # control plane: plaintext/expired/downgrade
-# Data-plane fan-out mTLS: the FanOutServerMtls*Test classes were folded into the
-# AbstractFanOutServerContract, so the negatives (plaintext/no-cert/untrusted-CA/expired/downgrade
-# refused; trusted accepted) are gated on the JDK + production-Netty + forced-NIO transports.
+# Data-plane fan-out mTLS negatives (plaintext/no-cert/untrusted-CA/expired/downgrade
+# refused; trusted accepted) live in AbstractFanOutServerContract, gated on the JDK +
+# production-Netty + forced-NIO transports.
 assert_class_green "$ML" "JdkFanOutServerContractTest"        # data plane mTLS on the JDK transport
 assert_class_green "$ML" "NettyFanOutServerContractTest"      # ...re-proven on the production Netty transport
 assert_class_green "$ML" "NettyFanOutServerNioContractTest"   # ...and on the forced-NIO fallback tier
@@ -158,11 +158,10 @@ echo "GATE-7 fuzz: OK"
 # (d) API authn/authz + audit + replay
 echo "GATE-7 api: 401/403, verbatim-replay 409, keyed-HMAC tamper-evident audit, strong-read fail-closed (ADR-0043 M2: re-proven on JDK + Netty + forced-NIO)..."
 AP="$LOGDIR/api.txt"
-# ADR-0043: the admin HTTP controls (401/403, replay 409, audit completeness, strong-read
-# fail-closed incl. the path-normalization vectors) moved from ConfigHandler{Auth,Replay,Audit}Test
-# + StrongReadFailClosedTest into the single AbstractAdminApiServerContract, run on all three
-# transports by these subclasses. Gating ALL THREE proves the controls hold on the PRODUCTION (Netty)
-# transport, not just the JDK incumbent — a strengthening of this gate, not just a rename.
+# The admin HTTP controls (401/403, replay 409, audit completeness, strong-read
+# fail-closed incl. the path-normalization vectors) live in AbstractAdminApiServerContract,
+# run on all three transports by these subclasses. Gating all three proves the controls
+# hold on the production Netty transport, not just the JDK incumbent (ADR-0043).
 run_tests api "AuditLogTest,ReplayGuardTest,JdkAdminApiServerContractTest,NettyAdminApiServerContractTest,NettyAdminApiServerNioFallbackTest" "$AP"
 assert_class_green "$AP" "AuditLogTest"                          # keyed-HMAC chain defeats a log editor
 assert_class_green "$AP" "ReplayGuardTest"                       # nonce+window replay reject

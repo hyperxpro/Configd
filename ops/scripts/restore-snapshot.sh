@@ -32,9 +32,7 @@
 #     waits for pods to terminate, copies the snapshot into the data dir
 #     (operator-supplied; reference Job pattern documented in
 #     ops/runbooks/restore-from-snapshot.md Step 3), runs the conformance
-#     check, then scales back up to the original replica count. The legacy
-#     `systemctl stop configd.service` path has been removed; the only
-#     reference deployment is K8s.
+#     check, then scales back up to the original replica count.
 #
 # Exit codes:
 #   0  success (or successful dry-run)
@@ -224,10 +222,8 @@ fi
 # -----------------------------------------------------------------------------
 # Step 2 — scale the StatefulSet down before we touch the data volumes.
 #
-# This replaces the legacy `systemctl stop configd.service` call. The
-# reference deployment is K8s; the StatefulSet is the unit of lifecycle.
-# We scale to 0, then wait for pods to terminate, *before* any downstream
-# destructive PVC operation runs.
+# The StatefulSet is the unit of lifecycle: scale to 0, then wait for pods to
+# terminate, *before* any downstream destructive PVC operation runs.
 # -----------------------------------------------------------------------------
 log "step 2: scaling StatefulSet $NAMESPACE/$STATEFULSET to 0 replicas"
 

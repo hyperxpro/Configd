@@ -35,8 +35,8 @@
 #
 # NOT IN GATE-5 (the perf/soak nightly lane, captured, not blocking): the full
 # sustained 10k/s + 100k/s burst runs (ENV-BLOCKED end-to-end on the 2-vCPU box),
-# the 24h soak, the live Compose staleness run, the GC bake-off. Those are
-# docs/session-5 captures + the perf nightly lane, not the fast gate.
+# the 24h soak, the live Compose staleness run, the GC bake-off. Those live in
+# the perf nightly lane, not the fast gate.
 #
 # Environment knobs (CI must not set the skips on a full local run):
 #   GATE5_SKIP_GATE4=1   skip step (a) — reported LOUDLY (CI runs gate-4 as its
@@ -45,7 +45,7 @@
 #   GATE4_*/GATE3_*/...  forwarded to the underlying gates.
 # Runtime: gate-4 chain dominates; the gate-5-specific steps are ~3-5 min on the
 # 2-vCPU box (one fork, short JMH iterations — these are pass/fail asserts, not
-# the authoritative latency measurement, which lives in docs/session-5).
+# the authoritative latency measurement, which is the perf nightly lane).
 # Collector: ZGC (ADR-0041) for the JMH steps.
 set -euo pipefail
 
