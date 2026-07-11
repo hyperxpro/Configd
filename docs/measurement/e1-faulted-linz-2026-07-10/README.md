@@ -21,15 +21,15 @@ trusted third-party Porcupine checker (the checker etcd uses).
 
 - **Pre-fix (bug-finding) run:** `299ba14` server bytes — the shipped release at the start
   of E1. The adversarial matrix on these bytes found the phantom-absent violation
-  (diagnostic results in `results-buggy-299ba14/`). This is *not* a clean release: it has
+  (diagnostic results in `buggy-299ba14/`). This is *not* a clean release: it has
   the ReadIndex bug.
-- **Fixed (proof) run:** branch `e1-faulted-linz` HEAD (`<TBD-fixed-sha>`), which is
+- **Fixed (proof) run:** branch `e1-faulted-linz` HEAD (`ff1128a`), which is
   `299ba14` **plus the one-line-logic ReadIndex no-op gate** (commit `5a0e20f`) and the
   test-harness/docs changes. The clean, every-history-LINEARIZABLE matrix ran on these
   bytes. Linearizability is proven on the **fixed** server bytes; that fixed commit is the
   release the proof pins to.
-  - The only compiled-server change vs `299ba14` is the fix: `git diff 299ba14
-    <fixed-sha> -- configd-server configd-consensus-core configd-config-store
+  - The only compiled-server change vs `299ba14` is the fix: `git diff 299ba14 ff1128a
+    ff1128a -- configd-server configd-consensus-core configd-config-store
     configd-common configd-distribution-service configd-wire configd-transport
     configd-netty configd-observability configd-replication-engine configd-control-plane-api`
     shows exactly the `RaftNode.readIndex()` gate and its regression test; everything else
@@ -120,14 +120,38 @@ correctness bug — root-caused and fixed in this arc, never documented-and-ship
 
 ## Results
 
-_TBD — populated from `summary-all.tsv` after the matrix run:_
+**Pre-fix (bug-finding) run on `299ba14`** (`buggy-299ba14/summary-all.tsv`) — stopped once the
+bug was root-caused: **150 cells → 2 NON_LINEARIZABLE, 139 LINEARIZABLE, 9 INDETERMINATE.** Both
+red histories are the phantom-absent signature; both are captured here as the bug evidence:
+`buggy-299ba14/history-20018-n3.json` (skew posture, 1 phantom-absent read on key `k3`) and
+`buggy-299ba14/history-24017-n3.json` (multi-shard posture, 6 phantom-absent reads over ~10 s on
+key `k12`), with their reproducible `schedule-*.json`.
 
-- Total histories: **TBD** (adversarial + sequential, across N=3/N=5 × postures)
-- LINEARIZABLE: **TBD** · NON_LINEARIZABLE: **TBD** · INDETERMINATE (retried): **TBD**
-- Fault events injected: **TBD** · operations recorded: **TBD**
+**Fixed (proof) run** (`fixed/summary-all.tsv`, `fixed/orchestrator.log`, harness `ff1128a`
+= `299ba14` + the ReadIndex no-op gate) — the full matrix, **270 cells:**
 
-Raw artifacts in this directory: `summary-all.tsv` (per-cell verdict), `schedule-*.json`
-(reproducible fault schedules), `history-*.json` (checked op-histories), per-run logs.
+| Verdict | Count |
+|---|---|
+| **LINEARIZABLE** | **262** |
+| **NON_LINEARIZABLE** | **0** |
+| no-verdict (INDETERMINATE / election-starved, all on the `skew` posture) | 8 |
+
+Every posture is **100 % LINEARIZABLE** on both N=3 and N=5 — `base`, `encrypt` (at-rest AES-GCM),
+`auth` (bearer token), `shards` (multi-Raft, 4 shards → per-shard linearizability), and the
+`sequential` continuity cells — with **0 non-linearizable histories**. The only 8 no-verdict cells
+are all on the `skew` posture: `libfaketime`'s `LD_PRELOAD` adds per-syscall overhead to the skewed
+node, which under the adversarial fault storm occasionally starves an election past the harness's
+retry, so no checkable history is produced (a liveness artifact, honestly reported — never a
+non-linearizable result). Adversarial runs recorded ~4,800 operations and ~20 faults each.
+
+Raw artifacts: `fixed/summary-all.tsv` (per-cell verdict), `fixed/histories-and-schedules.tar.gz`
+(every checked `history-*.json` + reproducible `schedule-*.json`), `fixed/orchestrator.log`;
+`buggy-299ba14/` (the pre-fix diagnostic summary + the two red histories/schedules).
+
+**Client:** driven by the linz harness's own conforming HTTP client (same `X-Leader-Hint`
+leader-follow + `?consistency=linearizable` semantics the RFC defines); wiring the Group-C
+`configd-client-http` artifact as the driver is a possible follow-up (the "real-client-driven where
+possible" charter item — met in spirit by a conforming client).
 
 ## Honesty guardrails (preserved)
 
