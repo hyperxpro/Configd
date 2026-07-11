@@ -1,21 +1,35 @@
 diff --git a/configd-consensus-core/src/main/java/io/configd/raft/RaftNode.java b/configd-consensus-core/src/main/java/io/configd/raft/RaftNode.java
-index e009002..60ea051 100644
+index 31696b5..b15d96d 100644
 --- a/configd-consensus-core/src/main/java/io/configd/raft/RaftNode.java
 +++ b/configd-consensus-core/src/main/java/io/configd/raft/RaftNode.java
-@@ -390,16 +390,12 @@ public final class RaftNode {
-      * @return a read ID for tracking, or -1 if not leader
+@@ -1219,29 +1219,13 @@ public final class RaftNode {
       */
      public long readIndex() {
+         assertOwnerThread();
 -        if (role != RaftRole.LEADER) {
 -            return -1;
 -        }
--        // For single-node clusters, the read is immediately ready
--        // since we are trivially the leader with full quorum
-+        // [A3-B DISCRIMINATION SEED — stale-read] serve linearizable reads from local
-+        // state on ANY node and confirm leadership unconditionally — bypassing the
-+        // leader gate and the quorum-based ReadIndex confirmation. A lagging/isolated
-+        // node then serves a stale value as if linearizable.
-         long readId = readIndexState.startRead(log.commitIndex());
+-        // ReadIndex safety (Raft dissertation section 6.4, step 1; Ongaro, raft-dev 2015): a
+-        // newly-elected leader MUST commit an entry from its CURRENT term before it may serve a
+-        // linearizable read. Until this term's no-op commits, this leader's local commitIndex can
+-        // still lag the true committed index - prior-term entries only become committed transitively
+-        // once the current-term no-op commits (section 5.4.2, maybeAdvanceCommitIndex counts replicas
+-        // for current-term entries only). Capturing readIndex = commitIndex here would then serve a
+-        // read from an applied state that is BEHIND an already-committed-and-acked write, i.e. a
+-        // phantom-stale / phantom-absent linearizable read. Return -1 until the no-op commits; the
+-        // caller maps -1 to 503 + X-Leader-Hint and the client retries. This is the SAME gate
+-        // proposeConfigChange already enforces (see "Must commit no-op first" above); the read path
+-        // was missing it. At N=1 becomeLeader commits the no-op synchronously (self is a quorum), so
+-        // this gate is already satisfied before any client read arrives - N=1 behavior is unchanged.
+-        if (!noopCommittedInCurrentTerm) {
+-            return -1;
+-        }
++        // [A3-B DISCRIMINATION SEED - stale-read] serve linearizable reads from local state on ANY
++        // node, bypassing the leader gate, the current-term-no-op gate (Raft 6.4) AND the quorum
++        // ReadIndex confirmation. A lagging/isolated follower - or a fresh leader before its no-op
++        // commits - then serves a stale/phantom value as if linearizable, exactly what these gates
++        // plus the quorum ReadIndex confirm exist to forbid.
+         long readId = readIndexState.startRead(log.commitIndex(), currentTerm);
 -        if (clusterConfig.peersOf(config.nodeId()).isEmpty()) {
 -            // Single-node cluster: self is always a quorum
 -            readIndexState.confirmAllLeadership();
@@ -24,18 +38,17 @@ index e009002..60ea051 100644
          return readId;
      }
  
-@@ -415,12 +411,8 @@ public final class RaftNode {
-      * @return true if the read can be served with linearizable guarantees
+@@ -1258,11 +1242,8 @@ public final class RaftNode {
       */
      public boolean isReadReady(long readId) {
+         assertOwnerThread();
 -        // Re-verify leadership: a deposed leader must not serve reads.
--        // This closes the TOCTOU window between heartbeat confirmation
--        // and read serving (see FIND-0002).
+-        // This closes the TOCTOU window between heartbeat confirmation and read serving.
 -        if (role != RaftRole.LEADER) {
 -            return false;
 -        }
-+        // [A3-B DISCRIMINATION SEED — stale-read] no leadership re-check: the FIND-0002
-+        // guard (a deposed/non-leader node must not serve a read) is deleted.
++        // [A3-B DISCRIMINATION SEED - stale-read] no leadership re-check: the guard that a
++        // deposed/non-leader node must not serve a read is deleted (the FIND-0002 TOCTOU close).
          return readIndexState.isReady(readId, log.lastApplied());
      }
  

@@ -1,18 +1,42 @@
 diff --git a/configd-common/src/main/java/io/configd/common/FileStorage.java b/configd-common/src/main/java/io/configd/common/FileStorage.java
-index 827d490..d9ff9ec 100644
+index 46801db..8545f53 100644
 --- a/configd-common/src/main/java/io/configd/common/FileStorage.java
 +++ b/configd-common/src/main/java/io/configd/common/FileStorage.java
-@@ -87,6 +87,13 @@ public final class FileStorage implements Storage {
+@@ -157,6 +157,16 @@ public final class FileStorage implements Storage {
  
      @Override
-     public void appendToLog(String logName, byte[] data) {
-+        // [A3-B DISCRIMINATION SEED — lost-acked-write] durability no-op: the WAL
-+        // entry is never written, so committed log entries are lost on crash+restart.
-+        // The in-memory RaftLog still works, so the cluster runs and a write is
-+        // confirmable by a read before the crash; the value vanishes only on restart.
+     public void appendToLogNoSync(String logName, byte[] data) {
++        // [A3-B DISCRIMINATION SEED - lost-acked-write, layer 1] durability no-op on the hot WAL path
++        // (RaftLog.append -> appendToLogNoSync + group-commit syncLog): the committed entry stays only
++        // in the in-memory RaftLog and never reaches disk. Paired with layer 2 (the RaftLog anchor
++        // head-rollback guard, neutered below) so a confirmed committed write silently VANISHES on a
++        // full-cluster kill -9 + restart -> the checker must catch it (RED). With ONLY this layer, the
++        // anchor guard fail-closes the restart instead (INDETERMINATE), which is what proves that guard
++        // is load-bearing - the reason seeding durability alone no longer produces a silent lost write.
 +        if (true) {
 +            return;
 +        }
-         Path file = directory.resolve(logName + ".wal");
-         try (FileChannel channel = FileChannel.open(file,
-                 StandardOpenOption.CREATE,
+         try {
+             FileChannel channel = appendChannel(logName);
+             ByteBuffer frame = frame(data);
+diff --git a/configd-consensus-core/src/main/java/io/configd/raft/RaftLog.java b/configd-consensus-core/src/main/java/io/configd/raft/RaftLog.java
+index 12502ea..305eee4 100644
+--- a/configd-consensus-core/src/main/java/io/configd/raft/RaftLog.java
++++ b/configd-consensus-core/src/main/java/io/configd/raft/RaftLog.java
+@@ -970,9 +970,13 @@ public final class RaftLog {
+             // term already dominates, so no repair and no votedFor clear); rewrite the anchor forward.
+             anchor.writeDurableHead(walHead, walHeadTerm);
+         } else {
+-            throw new IntegrityException("WAL recovery head-rollback for gid " + gid
+-                    + ": WAL last index " + walHead + " is below anchor.lastDurableIndex " + anchorHead
+-                    + " (a committed-and-acked durable entry vanished - refusing, fail closed)");
++            // [A3-B DISCRIMINATION SEED - lost-acked-write, layer 2] the fail-closed head-rollback guard
++            // is NEUTERED: instead of refusing to start when the WAL returned below anchor.lastDurableIndex
++            // (a committed-and-acked durable entry vanished), silently adopt the short WAL and continue.
++            // Paired with the layer-1 WAL no-op, the confirmed committed write then stays lost and the
++            // node serves a rolled-back state -> the checker records the vanished value and goes RED,
++            // proving it discriminates the lost-acked-write shape. In the honest build this branch throws.
++            anchor.writeDurableHead(walHead, walHeadTerm);
+         }
+     }
+ 

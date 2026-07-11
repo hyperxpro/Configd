@@ -1222,8 +1222,21 @@ public final class RaftNode {
         if (role != RaftRole.LEADER) {
             return -1;
         }
-        // For single-node clusters, the read is immediately ready
-        // since we are trivially the leader with full quorum
+        // ReadIndex safety (Raft dissertation section 6.4, step 1; Ongaro, raft-dev 2015): a
+        // newly-elected leader MUST commit an entry from its CURRENT term before it may serve a
+        // linearizable read. Until this term's no-op commits, this leader's local commitIndex can
+        // still lag the true committed index - prior-term entries only become committed transitively
+        // once the current-term no-op commits (section 5.4.2, maybeAdvanceCommitIndex counts replicas
+        // for current-term entries only). Capturing readIndex = commitIndex here would then serve a
+        // read from an applied state that is BEHIND an already-committed-and-acked write, i.e. a
+        // phantom-stale / phantom-absent linearizable read. Return -1 until the no-op commits; the
+        // caller maps -1 to 503 + X-Leader-Hint and the client retries. This is the SAME gate
+        // proposeConfigChange already enforces (see "Must commit no-op first" above); the read path
+        // was missing it. At N=1 becomeLeader commits the no-op synchronously (self is a quorum), so
+        // this gate is already satisfied before any client read arrives - N=1 behavior is unchanged.
+        if (!noopCommittedInCurrentTerm) {
+            return -1;
+        }
         long readId = readIndexState.startRead(log.commitIndex(), currentTerm);
         if (clusterConfig.peersOf(config.nodeId()).isEmpty()) {
             // Single-node cluster: self is always a quorum

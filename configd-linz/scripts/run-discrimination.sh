@@ -16,7 +16,10 @@ export PORCUPINE_BIN="${PORCUPINE_BIN:-$ROOT/configd-linz/bin/porcupine-check}"
 CP="$ROOT/configd-linz/target/classes"
 WHICH="${1:-both}"
 
-build_jar() { ./mvnw -q -pl configd-server -am package -DskipTests >/tmp/disc-build.log 2>&1; }
+# clean is REQUIRED: `-pl configd-server -am package` without it can reuse a stale shaded jar
+# whose embedded upstream class (e.g. the patched FileStorage) is the OLD code, so the "mutated"
+# build silently contains no bug and the gate falsely reports the harness blind.
+build_jar() { ./mvnw -q -pl configd-server -am clean package -DskipTests >/tmp/disc-build.log 2>&1; }
 
 # run_scenario <MainClass> <baseRaft> <baseApi> <label> ; echoes exit code
 # (each scenario uses its own sensible node-count default: lost-write=3, stale-read=5)

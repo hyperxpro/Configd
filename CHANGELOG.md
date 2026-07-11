@@ -50,6 +50,14 @@ removed. The whole-system format-compatibility contract (C0-C9) is
 
 ### Changed
 
+- **Faulted-linearizability is now a real Jepsen-grade matrix (E1), not a 15-second smoke.** The
+  `configd-linz` harness gained `SIGSTOP`/`SIGCONT` pauses, packet loss, multi-node quorum-breaking
+  partitions, clock skew, and overlapping combination faults (a new ADVERSARIAL schedule), plus
+  at-rest-encryption / auth / clock-skew / multi-shard postures. The matrix **found a real
+  linearizability bug** (see Fixed below) on the pre-fix bytes and re-ran every-history-LINEARIZABLE on
+  the fixed code; both discrimination seeds were re-authored against the evolved code and turn the checker
+  RED. The standing CI faulted-linz job now runs this matrix. Results:
+  `docs/measurement/e1-faulted-linz-2026-07-10/`. (Endurance — the ≥72 h soak — remains pending.)
 - **Default bind is loopback (`127.0.0.1`).** Binding a non-loopback interface while auth is OFF is refused
   unless `--allow-insecure-public-bind` is set (a footgun-fix, not "auth required by default").
 - **Write-admission control ON by default** (`configd.write.maxInflightProposals`, conservative value; 429 +
@@ -67,6 +75,13 @@ removed. The whole-system format-compatibility contract (C0-C9) is
 
 ### Fixed
 
+- **Linearizable-read safety: ReadIndex now commits a current-term entry before serving reads (Raft
+  §6.4).** Found by the E1 faulted-linz matrix: a freshly-elected leader could serve a `?consistency=
+  linearizable` GET as 404/absent for a committed-and-acked present key, because `RaftNode.readIndex()`
+  captured `readIndex = commitIndex` before its current-term no-op had committed (the local commitIndex
+  can lag entries the log already holds). `readIndex()` now returns not-leader (→ 503 + `X-Leader-Hint`,
+  client retries) until `noopCommittedInCurrentTerm` — the same gate `proposeConfigChange` already
+  required. N=1 unaffected. Regression: `ReadIndexNoOpBeforeServeTest`.
 - `SigningKeyStore.writeForTest` now applies the 0600 restriction (previously a dormant test-only helper).
 
 ### Security

@@ -5,6 +5,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.function.IntFunction;
 import java.util.stream.Collectors;
 import java.util.stream.IntStream;
 
@@ -23,6 +24,24 @@ public final class Cluster implements AutoCloseable {
 
     public static Cluster create(int n, int raftBase, int apiBase, Path baseDir, Path jar,
                                  ClusterNode.TlsFiles tls) throws IOException {
+        return create(n, raftBase, apiBase, baseDir, jar, tls, ClusterNode.Posture.none());
+    }
+
+    /** Creates a cluster whose nodes ALL run under the same uniform {@code posture}. */
+    public static Cluster create(int n, int raftBase, int apiBase, Path baseDir, Path jar,
+                                 ClusterNode.TlsFiles tls, ClusterNode.Posture posture) throws IOException {
+        return create(n, raftBase, apiBase, baseDir, jar, tls, id -> posture);
+    }
+
+    /**
+     * Creates a cluster where each node's posture is supplied by {@code postureFor(nodeId)}.
+     * This is how the clock-skew cell skews a single node (only relative skew is meaningful):
+     * {@code id -> id == 1 ? skewed : base}. For uniform postures (encryption/auth) use the
+     * {@link #create(int, int, int, Path, Path, ClusterNode.TlsFiles, ClusterNode.Posture)} overload.
+     */
+    public static Cluster create(int n, int raftBase, int apiBase, Path baseDir, Path jar,
+                                 ClusterNode.TlsFiles tls,
+                                 IntFunction<ClusterNode.Posture> postureFor) throws IOException {
         String peerAddresses = IntStream.rangeClosed(1, n)
                 .mapToObj(k -> k + "=127.0.0.1:" + (raftBase + k))
                 .collect(Collectors.joining(","));
@@ -44,8 +63,9 @@ public final class Cluster implements AutoCloseable {
             Files.createDirectories(dataDir);
             Path signingKeyFile = secretsDir.resolve("n" + id + "-signing-key.bin");
             Path log = baseDir.resolve("n" + id + ".log");
+            ClusterNode.Posture posture = postureFor.apply(id);
             ns.add(new ClusterNode(id, raftBase + id, apiBase + id, dataDir, signingKeyFile, peers,
-                    peerAddresses, jar, log, tls));
+                    peerAddresses, jar, log, tls, posture));
         }
         return new Cluster(ns);
     }

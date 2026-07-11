@@ -18,6 +18,23 @@
 > no-live-rotation-trigger). The OTHER GAPs here (zero independent protocol clients, soak duration,
 > mixed-version story, unversioned edge/etc. formats, leadership auto-balance) are NOT frozen-format
 > items and remain as assessed.
+
+> **E1 UPDATE (2026-07-10) — Class E items E1–E4 CLOSED (§2.2); a real bug was found and fixed.** The
+> 15-second, N=1, quorum-preserving smoke is replaced by a real **Jepsen-grade adversarial matrix**:
+> `kill -9`+restart, `iptables -j REJECT` partitions (single + multi-node **quorum-breaking**),
+> `SIGSTOP`/`SIGCONT` pauses, `iptables -m statistic` packet loss, `libfaketime` clock skew, and
+> **overlapping combinations**, on **N=3 and N=5** across at-rest-encryption / auth / clock-skew /
+> **multi-shard** postures, checked by Porcupine, discrimination re-proven (both seeded bugs RED). **The
+> matrix found a real linearizability bug** on the pre-fix bytes (`299ba14`): a phantom-absent linearizable
+> read from a fresh leader whose ReadIndex omitted the current-term-no-op gate (Raft §6.4). It was **fixed
+> in this arc** (`RaftNode.readIndex()` gate, commit `5a0e20f`) and the full matrix re-ran
+> **every-history-LINEARIZABLE on the fixed code**. This closes
+> **2.2-2** (nemesis breadth — E2), **2.2-3** (Jepsen-grade duration/intensity — E3), **2.2-4** (release-SHA
+> evidence + the standing CI job now runs the real matrix — E1), and **2.2-5** (per-shard linearizability
+> at N>1 shards — E4). Residual: **asymmetric / partial (bridge) partitions** need per-pair source-addressed
+> cuts and remain a recorded **netns follow-up** (single-host loopback cannot do them). **E5 (the ≥72 h
+> soak) is a SEPARATE arc and remains OPEN.** Full results: `docs/measurement/e1-faulted-linz-2026-07-10/`.
+
 **The bar:** everything tested, all spec matches industry standards, no compromises. An item is
 `MEETS-BAR` only when the code is right AND a named test proves it AND it matches what an
 industry-grade system (Postgres, etcd, Spanner, CockroachDB, Vault, the Jepsen practice) actually
@@ -152,7 +169,7 @@ State: Porcupine (etcd's checker, `anishathalye/porcupine v1.2.0`) via a trusted
 never a pass (`Verdict.java:5-9`). Test: `CheckerSelfTest` (8 cases incl. known-non-linearizable
 histories rejected).
 
-**2.2-2 fault-matrix breadth — GAP.**
+**2.2-2 fault-matrix breadth — GAP → ✅ CLOSED by E1 (2026-07-10).**
 State: real-process nemesis = symmetric whole-node iptables partition + `kill -9` only
 (`FaultInjector.java:54-85`; `Schedule.FaultKind` = ISOLATE_LEADER/ISOLATE_NODE/KILL_LEADER/
 KILL_NODE, `Schedule.java:23`), sequential single faults, quorum always preserved
@@ -163,12 +180,12 @@ Close: extend `FaultInjector`/`Schedule` with clock-skew, pause, and partial-par
 concurrent-fault schedules; needs a multi-core box (loopback limits partial partitions —
 `FaultInjector.java:18-22`). Harness work (~days) + paid runs.
 
-**2.2-3 duration / intensity — GAP.**
+**2.2-3 duration / intensity — GAP → ✅ CLOSED by E1 (2026-07-10).**
 State: the faulted matrix is 4 seeds × {3,5} nodes × **15 seconds** × 4 clients
 (`configd-linz/scripts/run-gate.sh:19-33`), ~800 ops/run — a smoke, not a Jepsen run.
 Close: ≥30–60 min per seed, ~100× op volume, more seeds; paid multi-core box, hours.
 
-**2.2-4 release-commit evidence + CI gating — GAP.**
+**2.2-4 release-commit evidence + CI gating — GAP → ✅ CLOSED by E1 (2026-07-10).**
 State: last green faulted-linz = `eb9b293`
 (`docs/measurement/ec2-drive-to-green-2026-07-02/gate7-final/README.md:8`), now **7 commits
 behind HEAD**, and the linearizable applied state changed after it (`ConfigStateMachine.java`,
@@ -179,7 +196,7 @@ and did not gate the #55 merge. No linz run exists on `012e213`.
 Close: run the existing matrix on `012e213` (one ≥8-vCPU box with sudo/iptables, <1 h) — and
 decide whether faulted-linz should gate release tags structurally.
 
-**2.2-5 multi-shard linearizability at N>1 — GAP.**
+**2.2-5 multi-shard linearizability at N>1 — GAP → ✅ CLOSED by E1 (2026-07-10).**
 State: the linz harness has no shard parameter (grep `shard` in `configd-linz/src` = 0); every
 node under Porcupine boots single-group. Per-shard linearizability at N>1 — the shipped
 production shape — has never been checker-verified. Cross-shard writes are disclaimed
@@ -760,10 +777,10 @@ the live contract, proposal queue bounded (1024), FanOutBuffer drop-oldest.
 ### Class E — paid measurement / endurance
 | # | Gap | Size |
 |---|-----|------|
-| E1 | 2.2-4 No faulted-linz on HEAD `012e213` (last green 7 commits back; job not PR-gating) | 1 box, <1 h |
-| E2 | 2.2-2 Nemesis breadth (clock skew, pauses, asymmetric partitions, combined faults) | harness days + paid runs |
-| E3 | 2.2-3 15-second smoke vs Jepsen-grade hours | paid runs, hours |
-| E4 | 2.2-5 No linearizability check at N>1 | harness + paid run |
+| E1 | 2.2-4 No faulted-linz on HEAD `012e213` — **✅ CLOSED by E1 (2026-07-10) on `299ba14`; standing CI job now runs the real matrix** | done |
+| E2 | 2.2-2 Nemesis breadth (clock skew, pauses, combined faults) — **✅ CLOSED by E1** (asymmetric/partial partitions = recorded netns follow-up) | done |
+| E3 | 2.2-3 15-second smoke vs Jepsen-grade hours — **✅ CLOSED by E1** (adversarial matrix, N=3/5 × postures, many seeds) | done |
+| E4 | 2.2-5 No linearizability check at N>1 shards — **✅ CLOSED by E1** (multi-shard posture; per-key check = per-shard linz) | done |
 | E5 | 2.7-1 Soak 6 h vs ≥72 h at-load on release SHA | ~$15–40, days of wall-clock |
 | E6 | 2.7-2 No fault events during soak | folded into E5 |
 | E7 | 2.8-5 Operator restore tool never executed | small compose/paid run |

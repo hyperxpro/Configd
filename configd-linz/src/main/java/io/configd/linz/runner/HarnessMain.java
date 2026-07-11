@@ -16,17 +16,27 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.TimeUnit;
 
 /**
  * Brings up a real {@code n}-node cluster, drives a seeded concurrent workload over a
- * small keyspace while a seeded fault schedule runs continuously, records a faithful
- * client-side history, and checks it with the trusted Porcupine checker.
+ * small keyspace while a seeded fault schedule runs, records a faithful client-side
+ * history, and checks it with the trusted Porcupine checker.
  *
  * <pre>
  *   HarnessMain --seed S --nodes N [--clients C] [--keys K] [--duration MS]
- *               --jar path/to/configd-server.jar [--base-raft 9300] [--base-api 8300]
- *               [--out DIR]
+ *               [--mode sequential|adversarial] [--max-concurrent M]
+ *               [--auth-token T] [--encrypt-at-rest true] [--clock-skew SECS --faketime-lib PATH]
+ *               --jar path/to/configd-server.jar [--base-raft 9300] [--base-api 8300] [--out DIR]
  * </pre>
+ *
+ * <p><b>Fault execution.</b> Every fault is scheduled independently: its apply action fires at
+ * {@code offsetMs} and its heal action at {@code offsetMs + durationMs}. In the SEQUENTIAL
+ * schedule the offsets never overlap, so this reproduces the original one-at-a-time behavior; in
+ * the ADVERSARIAL schedule faults overlap, producing genuine combination nemeses (a paused leader
+ * while a follower is isolated and a third node drops packets) that can break quorum in bursts.
  *
  * Exit: 0 LINEARIZABLE, 1 NON-LINEARIZABLE, 2 INDETERMINATE/error.
  */
@@ -43,15 +53,33 @@ public final class HarnessMain {
         int baseApi = Integer.parseInt(a.getOrDefault("base-api", "8300"));
         int readPct = Integer.parseInt(a.getOrDefault("read-pct", "72"));
         int intervalMs = Integer.parseInt(a.getOrDefault("op-interval", "55"));
+        int maxConcurrent = Integer.parseInt(a.getOrDefault("max-concurrent", "3"));
+        Schedule.Mode mode = "adversarial".equalsIgnoreCase(a.getOrDefault("mode", "sequential"))
+                ? Schedule.Mode.ADVERSARIAL : Schedule.Mode.SEQUENTIAL;
         Path jar = Path.of(a.getOrDefault("jar", "configd-server/target/configd-server-0.1.0-SNAPSHOT.jar"));
         Path outDir = Path.of(a.getOrDefault("out", "configd-linz/runs"));
         Files.createDirectories(outDir);
 
-        Schedule schedule = Schedule.generate(seed, nodes, clients, keys, duration, readPct, intervalMs);
+        // Posture (uniform across the cluster, except clock skew which targets node 1 only).
+        String authToken = a.getOrDefault("auth-token", null);
+        boolean encryptAtRest = Boolean.parseBoolean(a.getOrDefault("encrypt-at-rest", "false"));
+        long clockSkew = Long.parseLong(a.getOrDefault("clock-skew", "0"));
+        Path faketimeLib = a.containsKey("faketime-lib") ? Path.of(a.get("faketime-lib")) : null;
+        int shardCount = Integer.parseInt(a.getOrDefault("shards", "1"));
+        ClusterNode.Posture base = new ClusterNode.Posture(authToken, encryptAtRest, 0, null, shardCount);
+        ClusterNode.Posture skewed = new ClusterNode.Posture(authToken, encryptAtRest, clockSkew, faketimeLib, shardCount);
+        final boolean applySkew = clockSkew != 0 && faketimeLib != null;
+
+        Schedule schedule = mode == Schedule.Mode.ADVERSARIAL
+                ? Schedule.generateAdversarial(seed, nodes, clients, keys, duration, readPct, intervalMs, maxConcurrent)
+                : Schedule.generate(seed, nodes, clients, keys, duration, readPct, intervalMs);
         Path schedFile = outDir.resolve("schedule-" + seed + "-n" + nodes + ".json");
         ScheduleJson.write(schedule, schedFile);
         System.out.println("[harness] seed=" + seed + " nodes=" + nodes + " clients=" + clients
-                + " keys=" + keys + " duration=" + duration + "ms");
+                + " keys=" + keys + " duration=" + duration + "ms mode=" + mode
+                + " posture{auth=" + (authToken != null) + " encrypt=" + encryptAtRest
+                + " clockSkew=" + (applySkew ? clockSkew + "s@n1" : "none")
+                + " shards=" + shardCount + "}");
         int totalOps = schedule.workload.stream().mapToInt(List::size).sum();
         System.out.println("[harness] schedule -> " + schedFile + " (" + schedule.faults.size()
                 + " faults, " + totalOps + " planned ops)");
@@ -63,7 +91,8 @@ public final class HarnessMain {
         }
 
         Path runDir = Files.createTempDirectory(outDir, "cluster-" + seed + "-n" + nodes + "-");
-        Cluster cluster = Cluster.create(nodes, baseRaft, baseApi, runDir, jar, null);
+        Cluster cluster = Cluster.create(nodes, baseRaft, baseApi, runDir, jar, null,
+                id -> (applySkew && id == 1) ? skewed : base);
         FaultInjector faults = new FaultInjector();
         HistoryRecorder recorder = new HistoryRecorder();
 
@@ -74,7 +103,7 @@ public final class HarnessMain {
 
         try {
             cluster.startAll();
-            int leader = awaitLeader(cluster, 25_000);
+            int leader = awaitLeader(cluster, 25_000, authToken);
             if (leader < 0) {
                 System.out.println("VERDICT: INDETERMINATE (no leader elected)");
                 System.exit(2);
@@ -89,30 +118,31 @@ public final class HarnessMain {
                 final int clientId = c;
                 final List<Schedule.WorkOp> plan = schedule.workload.get(c);
                 Thread t = Thread.ofVirtual().unstarted(
-                        () -> runClient(clientId, plan, cluster, recorder, t0, leader));
+                        () -> runClient(clientId, plan, cluster, recorder, t0, leader, authToken));
                 workers.add(t);
             }
 
-            // fault thread (sequential single faults)
-            Thread faultThread = Thread.ofPlatform().unstarted(
-                    () -> runFaults(schedule.faults, cluster, faults, t0));
+            // concurrent fault scheduler: each fault applies at its offset and heals at offset+duration
+            ScheduledExecutorService faultPool = Executors.newScheduledThreadPool(Math.max(4, nodes + 2));
+            scheduleFaults(schedule.faults, cluster, faults, faultPool, t0, authToken);
 
             workers.forEach(Thread::start);
-            faultThread.start();
-
             for (Thread t : workers) {
                 t.join();
             }
-            faultThread.join();
 
-            // settle: heal anything still active, then let the cluster quiesce briefly
+            // stop scheduling new faults, then settle: resume any paused node, heal all partitions/loss,
+            // restart any dead node, and let the cluster quiesce so a final read backbone is possible.
+            faultPool.shutdownNow();
+            faultPool.awaitTermination(10, TimeUnit.SECONDS);
             faults.healAll();
             for (ClusterNode n : cluster.nodes()) {
+                n.resume();               // idempotent: SIGCONT on a running process is harmless
                 if (!n.isAlive()) {
                     n.restart();
                 }
             }
-            Thread.sleep(500);
+            Thread.sleep(1500);
 
             // check
             List<Op> ops = recorder.ops();
@@ -125,20 +155,23 @@ public final class HarnessMain {
             if (!r.stderr().isBlank()) {
                 System.out.println("  checker stderr: " + r.stderr().strip());
             }
-            System.out.println("[harness] seed=" + seed + " nodes=" + nodes
+            System.out.println("[harness] seed=" + seed + " nodes=" + nodes + " mode=" + mode
                     + " faults=" + schedule.faults.size() + " ops=" + ops.size()
                     + " -> " + r.verdict());
             System.exit(r.verdict() == Verdict.LINEARIZABLE ? 0
                     : r.verdict() == Verdict.NON_LINEARIZABLE ? 1 : 2);
         } finally {
             faults.healAll();
+            for (ClusterNode n : cluster.nodes()) {
+                n.resume();
+            }
             cluster.close();
         }
     }
 
     private static void runClient(int clientId, List<Schedule.WorkOp> plan, Cluster cluster,
-                                  HistoryRecorder recorder, long t0, int initialLeader) {
-        ConfigClient client = new ConfigClient();
+                                  HistoryRecorder recorder, long t0, int initialLeader, String authToken) {
+        ConfigClient client = new ConfigClient(java.time.Duration.ofSeconds(3), authToken);
         client.probeLeader(cluster.nodes()); // seed leader guess
         for (Schedule.WorkOp op : plan) {
             sleepUntil(t0, op.offsetMs());
@@ -162,44 +195,86 @@ public final class HarnessMain {
         }
     }
 
-    private static void runFaults(List<Schedule.FaultEvent> events, Cluster cluster,
-                                  FaultInjector faults, long t0) {
-        ConfigClient probe = new ConfigClient();
+    /**
+     * Schedules every fault as an independent apply-at-offset / heal-at-offset+duration pair on the
+     * pool, so overlapping (combination) faults run concurrently. {@code *_LEADER} kinds resolve the
+     * target to the current leader at apply time and pin it so the matching heal targets the same node.
+     */
+    private static void scheduleFaults(List<Schedule.FaultEvent> events, Cluster cluster,
+                                       FaultInjector faults, ScheduledExecutorService pool,
+                                       long t0, String authToken) {
+        ConfigClient probe = new ConfigClient(java.time.Duration.ofSeconds(2), authToken);
         for (Schedule.FaultEvent f : events) {
-            sleepUntil(t0, f.offsetMs());
-            int targetId = f.nodeId();
-            if (targetId < 0) { // *_LEADER: resolve at injection time
-                targetId = probe.probeLeader(cluster.nodes());
-                if (targetId < 0) {
-                    continue; // no leader right now; skip this fault
-                }
-            }
-            ClusterNode node = cluster.node(clamp(targetId, cluster.size()));
-            try {
-                switch (f.kind()) {
-                    case ISOLATE_LEADER, ISOLATE_NODE -> {
-                        System.out.println("[fault] +" + f.offsetMs() + "ms isolate node " + node.id()
-                                + " for " + f.durationMs() + "ms");
-                        faults.isolate(node);
-                        sleepDur(f.durationMs());
-                        faults.heal(node);
-                    }
-                    case KILL_LEADER, KILL_NODE -> {
-                        System.out.println("[fault] +" + f.offsetMs() + "ms kill -9 node " + node.id()
-                                + ", restart in " + f.durationMs() + "ms");
-                        node.kill9();
-                        sleepDur(f.durationMs());
-                        node.restart();
-                    }
-                }
-            } catch (Exception e) {
-                System.err.println("[fault] error: " + e.getMessage());
-            }
+            long applyDelayMs = Math.max(0, f.offsetMs() - elapsedMs(t0));
+            pool.schedule(() -> applyFault(f, cluster, faults, probe, pool), applyDelayMs, TimeUnit.MILLISECONDS);
         }
     }
 
-    private static int awaitLeader(Cluster cluster, long timeoutMs) throws InterruptedException {
-        ConfigClient c = new ConfigClient();
+    private static void applyFault(Schedule.FaultEvent f, Cluster cluster, FaultInjector faults,
+                                   ConfigClient probe, ScheduledExecutorService pool) {
+        int targetId = f.nodeId();
+        if (targetId < 0) { // *_LEADER: resolve at apply time
+            targetId = probe.probeLeader(cluster.nodes());
+            if (targetId < 0) {
+                return; // no leader right now; skip this fault instance
+            }
+        }
+        final ClusterNode node = cluster.node(clamp(targetId, cluster.size()));
+        // The heal is a SEPARATE scheduled task (never blocks a pool thread for the fault duration).
+        // If the pool is shut down before it fires, the final settle sweeps the leftover.
+        try {
+            switch (f.kind()) {
+                case ISOLATE_LEADER, ISOLATE_NODE -> {
+                    log(f, "isolate node " + node.id());
+                    faults.isolate(node);
+                    scheduleHeal(pool, f.durationMs(), () -> faults.heal(node));
+                }
+                case KILL_LEADER, KILL_NODE -> {
+                    log(f, "kill -9 node " + node.id() + ", restart in " + f.durationMs() + "ms");
+                    node.kill9();
+                    scheduleHeal(pool, f.durationMs(), node::restart);
+                }
+                case PAUSE_LEADER, PAUSE_NODE -> {
+                    log(f, "SIGSTOP node " + node.id() + ", SIGCONT in " + f.durationMs() + "ms");
+                    node.pause();
+                    scheduleHeal(pool, f.durationMs(), node::resume);
+                }
+                case LOSS_NODE -> {
+                    log(f, "packet loss " + f.param() + "% on node " + node.id());
+                    faults.lossy(node, f.param());
+                    scheduleHeal(pool, f.durationMs(), () -> faults.healLossy(node, f.param()));
+                }
+            }
+        } catch (Exception e) {
+            System.err.println("[fault] error applying " + f.kind() + ": " + e.getMessage());
+        }
+    }
+
+    private static void scheduleHeal(ScheduledExecutorService pool, long durationMs, ThrowingRunnable heal) {
+        try {
+            pool.schedule(() -> {
+                try {
+                    heal.run();
+                } catch (Exception e) {
+                    System.err.println("[fault] heal error: " + e.getMessage());
+                }
+            }, durationMs, TimeUnit.MILLISECONDS);
+        } catch (java.util.concurrent.RejectedExecutionException e) {
+            // pool already shutting down: the final settle heals what is left
+        }
+    }
+
+    @FunctionalInterface
+    private interface ThrowingRunnable {
+        void run() throws Exception;
+    }
+
+    private static void log(Schedule.FaultEvent f, String what) {
+        System.out.println("[fault] +" + f.offsetMs() + "ms " + what + " (dur " + f.durationMs() + "ms)");
+    }
+
+    private static int awaitLeader(Cluster cluster, long timeoutMs, String authToken) throws InterruptedException {
+        ConfigClient c = new ConfigClient(java.time.Duration.ofSeconds(2), authToken);
         long deadline = System.nanoTime() + timeoutMs * 1_000_000L;
         while (System.nanoTime() < deadline) {
             int l = c.probeLeader(cluster.nodes());
@@ -209,6 +284,10 @@ public final class HarnessMain {
             Thread.sleep(250);
         }
         return -1;
+    }
+
+    private static long elapsedMs(long t0) {
+        return (System.nanoTime() - t0) / 1_000_000L;
     }
 
     private static int clamp(int id, int size) {
@@ -227,14 +306,6 @@ public final class HarnessMain {
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
             }
-        }
-    }
-
-    private static void sleepDur(long ms) {
-        try {
-            Thread.sleep(ms);
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
         }
     }
 

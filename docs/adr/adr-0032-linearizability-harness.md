@@ -21,6 +21,22 @@ investigating independently then cross-examining). Closes the design half of ris
 > Accepted here. The section Context/section Decision/section Evidence sections below describe the repository at authoring time
 > (2026-06-06); their `file:line` references are historical.
 
+> **E1 measurement update (2026-07-10).** The harness was taken from a 15-second, N=1,
+> quorum-preserving *smoke* to a real **Jepsen-grade faulted-linearizability matrix** on the
+> release bytes of `299ba14`. The nemesis set now includes `SIGSTOP`/`SIGCONT` pauses,
+> `iptables -m statistic` packet loss, multi-node **quorum-breaking** partitions, `libfaketime`
+> clock skew, and **overlapping combinations** (the new ADVERSARIAL schedule), run on N=3 and
+> N=5 across at-rest-encryption / auth / clock-skew / multi-shard postures — every history
+> LINEARIZABLE, results pinned under `docs/measurement/e1-faulted-linz-2026-07-10/`. The standing
+> CI job (`gates/gate-2.sh` linzgate, `GATE2_FAULTED=1`) now runs the real adversarial matrix
+> (`configd-linz/scripts/run-matrix.sh`) rather than the smoke. Both discrimination seeds were
+> **re-authored** against the evolved code (they had bit-rotted); re-authoring `lost-acked-write`
+> surfaced that the raft-anchor durability kernel *fail-closes* a lost write (a single-layer
+> durability defeat now yields refuse-to-start, not silent loss). Asymmetric / partial (bridge,
+> non-transitive) partitions remain the recorded **netns follow-up** — the single-host loopback
+> substrate cannot source-address per-pair cuts. Endurance (E2, the ≥72 h soak) is a separate,
+> still-pending arc.
+
 ## Context
 
 `docs/consistency-contract.md section 1` claims control-plane **writes are linearizable** and **ReadIndex reads
