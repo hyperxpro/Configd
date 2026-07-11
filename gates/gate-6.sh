@@ -19,7 +19,7 @@
 #   (d) wire-compat      serialized messages are byte-stable within the wire version
 #                        (WireCompatGoldenBytesTest + EdgeFrameCodecGoldenFixtureTest)
 #                        — the N↔N+1 mixed-version interop proof (a wire change is
-#                        forced to bump the version; see docs/session-6/deployment.md).
+#                        forced to bump the version).
 #   (e) bootstrap        a TRUE zero-state cold start forms a cluster and self-elects
 #                        (BootstrapColdStartTest) — and the live exporter renders the
 #                        SLO histogram buckets the alerts query.

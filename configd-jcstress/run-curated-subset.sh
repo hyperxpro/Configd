@@ -105,7 +105,7 @@ rc=$?
 set -e
 check_run sanity "$LOG" "$rc"
 
-# (2) the M2b rehoming no-double-ownership proofs at -m quick — so a double-ownership regression is
+# (2) the rehoming no-double-ownership proofs at -m quick — so a double-ownership regression is
 # RELIABLY caught (sanity false-passes even the broken control ~20% of runs; see the comment above).
 QLOG="$RESULTS/run-rehoming-quick.log"
 set +e

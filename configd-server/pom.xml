@@ -22,14 +22,14 @@
         <dependency><groupId>io.configd</groupId><artifactId>configd-control-plane-api</artifactId><version>${project.version}</version></dependency>
         <dependency><groupId>io.configd</groupId><artifactId>configd-edge-cache</artifactId><version>${project.version}</version></dependency>
         <dependency><groupId>io.configd</groupId><artifactId>configd-observability</artifactId><version>${project.version}</version></dependency>
-        <!-- Netty 4.2 platform (ADR-0043 M2, DR-N6): the shared transport selector + the HTTP-transport
+        <!-- Netty 4.2 platform (ADR-0043): the shared transport selector + the HTTP-transport
              dep closure, used by the Netty admin-API adapter (NettyHttpApiServer). PRODUCTION scope. -->
         <dependency><groupId>io.configd</groupId><artifactId>configd-netty</artifactId><version>${project.version}</version></dependency>
-        <!-- Config-as-SPI (Group B): YAML parser for the operator-facing config file. Confined to
+        <!-- Config-as-SPI: YAML parser for the operator-facing config file. Confined to
              configd-server (the YamlConfigSource lives here) so it never enters the lower modules. -->
         <dependency><groupId>org.yaml</groupId><artifactId>snakeyaml</artifactId></dependency>
 
-        <!-- Group B §4 live E2E ONLY (EncryptedClusterVaultKmsIT): puts the optional Vault KMS module
+        <!-- Live E2E ONLY (EncryptedClusterVaultKmsIT): puts the optional Vault KMS module
              (its VaultKmsProviderFactory + META-INF/services entry) and a real Vault container on the
              TEST classpath so a full ConfigdServer cluster can seal/unseal its at-rest keyring through a
              real Vault Transit. TEST SCOPE: the core still never compile-depends on configd-kms-vault, so
@@ -113,21 +113,19 @@
 
     <profiles>
         <!--
-          B3 / RR-087: configd-server seam mutation MEASUREMENT. RR-087 is a
-          COVERAGE finding (the deployable artifact's correctness seams were at
-          61% line / 46% branch, the auth gate and the real network seam at
-          zero), so the primary before/after evidence is JaCoCo (parent
-          `-Pmutation` wires prepare-agent + report). This profile additionally
-          measures mutation strength over the correctness-bearing seam classes
-          — the HTTP handler + auth gate, arg parsing, the transport adapter,
-          and the wire codec — so the new HTTP-level / loopback tests can be
-          shown to KILL mutants, not just execute lines.
+          configd-server seam mutation MEASUREMENT. The primary before/after
+          evidence is JaCoCo coverage (parent `-Pmutation` wires prepare-agent +
+          report). This profile additionally measures mutation strength over the
+          correctness-bearing seam classes — the HTTP handler + auth gate, arg
+          parsing, the transport adapter, and the wire codec — so the new
+          HTTP-level / loopback tests can be shown to KILL mutants, not just
+          execute lines.
 
           No hard mutationThreshold gate here: configd-server is NOT one of the
-          three charter §4.1 gate-enforced bars (consensus-core 70/80,
-          distribution-service 65), and a full-module ConfigdServer PIT run is
-          heavy and starts background sockets/executors. We scope to the seam
-          classes and let gate-2 enforce the consensus/distribution bars.
+          three gate-enforced bars (consensus-core 70/80, distribution-service
+          65), and a full-module ConfigdServer PIT run is heavy and starts
+          background sockets/executors. We scope to the seam classes and let
+          gate-2 enforce the consensus/distribution bars.
         -->
         <profile>
             <id>mutation</id>
@@ -138,14 +136,13 @@
                         <artifactId>pitest-maven</artifactId>
                         <configuration>
                             <targetClasses>
-                                <!-- M2 (ADR-0043 DR-N2): the admin-API decision seam moved from
-                                     HttpApiServer's inner handlers into AdminApiHandler — the shared
+                                <!-- The admin-API decision seam is AdminApiHandler — the shared
                                      transport-agnostic logic both the JDK and Netty adapters delegate to.
                                      NettyHttpApiServer (like NettyEdgeHttpServer in configd-edge-node) is
                                      EXCLUDED: pure transport-IO orchestration whose per-mutant run needs a
-                                     live socket/event loop (the per-mutant-fork instability RR-085/092 forbid);
-                                     its decision content lives in AdminApiHandler and its IO + the slowloris/
-                                     size hardening are pinned by the contract + hardening tests. -->
+                                     live socket/event loop (per-mutant-fork instability); its decision
+                                     content lives in AdminApiHandler and its IO + the slowloris/size
+                                     hardening are pinned by the contract + hardening tests. -->
                                 <param>io.configd.server.AdminApiHandler*</param>
                                 <param>io.configd.server.HttpApiServer*</param>
                                 <param>io.configd.server.ServerConfig*</param>

@@ -46,10 +46,6 @@
 #                   SeedSweepTest already runs in the build-and-test job; not
 #                   duplicated here.
 #
-# gate-4 covers partition (C), overload (D), and mini-Jepsen (E) — the
-# partition/overload steps run in the CI subset (steps g/h above), mini-Jepsen
-# runs nightly (step f).
-#
 # Environment knobs (CI must not set the skips on the nightly full run):
 #   GATE4_SKIP_GATE3=1    skip step (a) — reported LOUDLY (CI runs gate-3 as its
 #                         own job; local iteration only)

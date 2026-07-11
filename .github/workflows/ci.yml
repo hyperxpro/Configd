@@ -6,12 +6,8 @@ on:
   pull_request:
     branches: [main]
   schedule:
-    # Nightly full run at 03:17 UTC. The full path adds the heavy work that is
-    # skipped for fast pull-request feedback: mutation testing, the integrated
-    # chaos and consistency sweeps, the large deterministic seed sweeps, and the
-    # security supply-chain scans (CVE, secret, and byte-for-byte reproducibility).
-    # GitHub fires `schedule` only from the default branch; use the
-    # workflow_dispatch input below to run the same full path on demand.
+    # Nightly full path at 03:17 UTC. GitHub fires `schedule` only from the
+    # default branch; use workflow_dispatch below to run it on demand.
     - cron: '17 3 * * *'
   workflow_dispatch:
     inputs:
@@ -20,26 +16,19 @@ on:
         type: boolean
         default: false
 
-# Least privilege: read-only token by default. Jobs that need more request it
-# per job (none here do; the release workflow grants write scopes).
+# Least-privilege read-only default; the release workflow requests write scopes per job.
 permissions:
   contents: read
 
-# Cancel superseded in-progress runs for the same pull request; a new push
-# obsoletes the old run. Scoped to pull_request only so push-to-main and the
-# nightly schedule always run to completion and every landed commit gets a full,
-# uncancelled result.
+# Cancel superseded PR runs; scoped to pull_request only so push-to-main and the
+# nightly schedule always run to completion.
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
-# Parallel fan-out. Every verification job runs independently and concurrently;
-# there is deliberately no serial dependency chain between them. Each job runs
-# only its own unique work on a fresh, isolated runner and reports its own
-# status. The cumulative "everything passed" guarantee is provided by the
-# ci-success job at the bottom, which depends on every pull-request-gating job
-# and fails unless all of them succeeded. Make ci-success the single required
-# status check in branch protection.
+# Verification jobs fan out in parallel with no serial chain. The cumulative
+# "all passed" guarantee is the ci-success job at the bottom — make that the
+# single required status check in branch protection.
 jobs:
   build-and-test:
     runs-on: ubuntu-latest
@@ -77,7 +66,6 @@ jobs:
           retention-days: 7
 
   tlc-model-check:
-    # Model-check the three TLA+ specifications with TLC at their full configs.
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4.3.1
@@ -99,26 +87,19 @@ jobs:
         timeout-minutes: 30
 
   gate:
-    # One matrixed job covering the homogeneous verification gates. Each leg
-    # invokes its own gates/gate-*.sh script; those scripts are the source of
-    # truth for what is checked and are not modified here. Per-event flag
-    # selection runs the fast subset on push/pull_request and the full path on
-    # the nightly schedule or a manual full-nightly dispatch, matching each
-    # script's own fast/nightly contract. Two verification jobs that need extra
-    # setup are intentionally kept out of this matrix so they read clearly:
-    # security-and-supply-chain (gitleaks install + NVD secret) and
-    # multiraft-merge-seal (a fast artifact-existence seal that needs no JDK).
+    # Matrixed verification gates: each leg runs its own gates/gate-*.sh. FLAGS
+    # (below) selects the fast subset on push/PR and the full path on nightly.
+    # security-and-supply-chain and multiraft-merge-seal are kept out of this
+    # matrix because they need extra setup (gitleaks/NVD, git history).
     #
-    # Flag selection uses the GitHub Actions `cond && A || B` idiom. Keep every
-    # nightly_flags value non-empty whenever it differs from fast_flags: an empty
-    # string is falsy and would silently fall through to fast_flags on the nightly
-    # path, which would be a coverage downgrade. The only leg with empty flags is
-    # verify-and-selftest, whose fast and nightly runs are identical anyway.
+    # A nightly_flags that differs from fast_flags must be non-empty: an empty
+    # string is falsy in the `cond && A || B` selection and silently falls back
+    # to fast_flags (a coverage downgrade). Empty flags are correct only where
+    # fast and nightly are identical (verify-and-selftest).
     name: ${{ matrix.name }}
     runs-on: ubuntu-latest
     strategy:
-      # Never cancel sibling gates when one fails: each gate is an independent
-      # signal, exactly as when they were separate jobs.
+      # Each gate is an independent signal — don't cancel siblings when one fails.
       fail-fast: false
       matrix:
         include:
@@ -216,8 +197,6 @@ jobs:
             timeout_fast: 30
             timeout_nightly: 30
     steps:
-      # None of the matrixed gates need git history; the two verification jobs
-      # that do (security-and-supply-chain, multiraft-merge-seal) are separate.
       - uses: actions/checkout@v4.3.1
 
       - name: Set up JDK 25
@@ -241,8 +220,8 @@ jobs:
           SCRIPT: ${{ matrix.script }}
           LOG_ENV: ${{ matrix.log_env }}
           LOG_DIR: ${{ runner.temp }}/gate-logs
-          # Fast subset on push/pull_request; full path on the nightly schedule
-          # or a manual full-nightly dispatch. See the empty-string caveat above.
+          # Fast subset on push/PR; full path on nightly/manual. See the
+          # empty-string caveat above.
           FLAGS: ${{ (github.event_name == 'schedule' || github.event.inputs.run_full_nightly == 'true') && matrix.nightly_flags || matrix.fast_flags }}
         # `env ${FLAGS} ...` (not a bare `${FLAGS} ...`) because the shell only
         # recognizes VAR=val assignment prefixes at parse time; assignments that
@@ -261,12 +240,10 @@ jobs:
           retention-days: 7
 
   security-and-supply-chain:
-    # Security and supply chain, proven by negative tests (attack performed,
-    # refusal asserted): at-rest integrity, mTLS on both planes, wire fuzzing,
-    # API authn/authz, replay, keyed-HMAC audit, SBOM match, reproducible-build
-    # config. Kept as its own job because the nightly path adds a gitleaks binary
-    # install and an NVD-keyed CVE scan. On push/pull_request the CVE scan, the
-    # secret scan, and the two-build reproducibility proof loudly skip.
+    # Security/supply-chain gate, proven by negative tests (attack performed,
+    # refusal asserted): at-rest integrity, mTLS both planes, wire fuzzing, API
+    # authn/authz, replay, keyed-HMAC audit, SBOM match, reproducible-build. Its
+    # own job because the nightly path adds a gitleaks install and NVD CVE scan.
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4.3.1
@@ -314,11 +291,10 @@ jobs:
           retention-days: 7
 
   multiraft-merge-seal:
-    # Non-vacuity seal for the multi-Raft milestone: asserts the milestone
-    # artifacts (contracts, gates, coalescing classes) still exist, so a deletion
-    # fails the build instead of silently passing. Runs the same gates/gate-B.sh;
-    # the cumulative test chain is supplied by the other jobs (SKIP_CHAIN), so
-    # this is a fast check that needs no JDK.
+    # Non-vacuity seal: asserts the multi-Raft artifacts (contracts, gates,
+    # coalescing classes) still exist, so a deletion fails the build instead of
+    # silently passing. SKIP_CHAIN because the other jobs supply the test chain,
+    # so this is a fast check needing no JDK.
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4.3.1
@@ -366,15 +342,12 @@ jobs:
             echo "GoldenFixtures.java changed in $DIFF_RANGE:"
             git diff --stat "$DIFF_RANGE" -- "$FIXTURE_PATH"
 
-            # Distinguish a purely-ADDITIVE change (a golden entry for a NEW MessageType added,
-            # with no existing golden bytes touched) from a MODIFICATION of existing golden bytes.
-            # Adding a new message type within the SAME frame layout is additive by construction -
-            # the frame WIRE_VERSION is unchanged and every existing fixture is byte-identical, so it
-            # is not a wire-format change and needs no WIRE_VERSION bump (ADR-0029 §8.10; the raft
-            # witness types 0x12/0x13 are exactly this case). Only a change/removal of an EXISTING
-            # golden line (a silent wire-byte change) must be paired with a WIRE_VERSION bump. A
-            # deleted content line (^- but not the ^--- file header) means an existing fixture was
-            # touched; zero of them = a pure addition.
+            # An additive change (a golden entry for a NEW MessageType, no existing golden bytes
+            # touched) needs no WIRE_VERSION bump: the frame layout is unchanged and every existing
+            # fixture is byte-identical (ADR-0029 §8.10; the raft witness types 0x12/0x13). Only a
+            # change/removal of an EXISTING golden line is a silent wire-byte change and must be
+            # paired with a bump. A removed content line (^- but not the ^--- header) means an
+            # existing fixture was touched; zero removed = a pure addition.
             REMOVED_LINES="$(git diff "$DIFF_RANGE" -- "$FIXTURE_PATH" | grep -E '^-' | grep -vcE '^---' || true)"
             if [[ "$REMOVED_LINES" -eq 0 ]]; then
               echo "OK: GoldenFixtures.java change is purely additive (new fixture entries only, no existing golden bytes modified) — an additive MessageType within the frozen frame; no WIRE_VERSION bump required."
@@ -390,21 +363,17 @@ jobs:
           fi
 
   linearizability-under-fault:
-    # Real faulted-linearizability MATRIX (run-matrix.sh via gate-2.sh linzgate): the
-    # unmodified server binary is driven through an adversarial schedule - overlapping
-    # combination nemeses (kill/isolate/SIGSTOP-pause/packet-loss) that break quorum in
-    # bursts - on both 3- and 5-node clusters, and every recorded history must check as
-    # linearizable by the Porcupine checker. The full adversarial matrix across
-    # encryption/auth/clock-skew postures is captured under docs/measurement/e1-faulted-linz-*;
-    # CI runs a bounded (seed count + duration) but genuinely adversarial subset. The fault
-    # injector shells out to `sudo -n iptables`, so the runner needs passwordless sudo and
-    # iptables, and the multi-node clusters want more than 2 vCPUs of headroom. GitHub-hosted
-    # ubuntu-latest provides passwordless sudo and iptables; if a larger or self-hosted
-    # runner is available, swap the label below for more cores.
+    # Live faulted-linearizability matrix (run-matrix.sh via gate-2.sh linzgate):
+    # the unmodified server is driven through combination nemeses (kill/isolate/
+    # SIGSTOP/packet-loss) that break quorum on 3- and 5-node clusters; every
+    # recorded history must check linearizable. CI runs a bounded but adversarial
+    # subset; the full encryption/auth/clock-skew matrix lives under
+    # docs/measurement/e1-faulted-linz-*.
     #
-    # Scheduled or manual only (never on push or pull_request) because of the
-    # privileged, resource-heavy setup, and deliberately excluded from the
-    # ci-success seal so it can never fail or block a pull request.
+    # Needs a privileged runner: the fault injector shells out to `sudo -n
+    # iptables` and the multi-node clusters want more than 2 vCPUs (swap runs-on
+    # for a larger runner if available). Scheduled/manual only and excluded from
+    # ci-success, so it can never block a PR.
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     steps:
@@ -423,8 +392,6 @@ jobs:
           go-version-file: configd-linz/src/main/go/porcupine-check/go.mod
           cache-dependency-path: configd-linz/src/main/go/porcupine-check/go.sum
 
-      # Runs the checker self-tests, the sim-history check, and the live ADVERSARIAL
-      # faulted-linz matrix (GATE2_FAULTED=1 -> run-matrix.sh) via gate-2.sh linzgate.
       - name: Run linearizability under injected network faults
         run: GATE2_FAULTED=1 bash gates/gate-2.sh --step linzgate
         env:
@@ -440,15 +407,12 @@ jobs:
           retention-days: 14
 
   ci-success:
-    # Required-check seal. With the verification jobs fanned out in parallel,
-    # this single job re-establishes the cumulative guarantee: it depends on
-    # every pull-request-gating job and fails unless all of them succeeded. Make
-    # THIS the sole required status check in branch protection. It deliberately
-    # does not depend on linearizability-under-fault, which runs only on the
-    # nightly schedule / manual dispatch and must never block a pull request.
-    # `if: always()` so a failed or cancelled upstream still yields a definitive
-    # red result here (a skipped aggregator would read as "no result" to branch
-    # protection and could let a broken build merge).
+    # Required-check seal: depends on every PR-gating job and fails unless all
+    # succeeded — make THIS the sole required status check in branch protection.
+    # Omits linearizability-under-fault (nightly/manual only; must never block a
+    # PR). `if: always()` so a failed/cancelled upstream still yields a red
+    # result — a skipped aggregator reads as "no result" and could let a broken
+    # build merge.
     name: CI Success (all gates green)
     if: always()
     needs:

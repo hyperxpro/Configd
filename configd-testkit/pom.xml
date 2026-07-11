@@ -24,8 +24,8 @@
             <version>${project.version}</version>
         </dependency>
         <!--
-          B4: consume consensus-core's test-jar so the adversarial simulation can
-          reuse the RR-003 crash-capable durability fixtures (CrashStorage,
+          Consume consensus-core's test-jar so the adversarial simulation can
+          reuse the crash-capable durability fixtures (CrashStorage,
           KvStateMachine) instead of duplicating them. Test scope: only the sim's
           own tests use these fixtures.
         -->
@@ -63,10 +63,9 @@
             <version>${project.version}</version>
         </dependency>
         <!--
-          C6/gate-3: LivePropagationProbeMain's edge mode starts a real in-process
-          EdgeNodeMain (the commit->edge-visibility leg of the V2 probe — the charter's
-          "both modes" requirement). Acyclic: configd-edge-node does not depend on
-          configd-testkit.
+          LivePropagationProbeMain's edge mode starts a real in-process
+          EdgeNodeMain (the commit->edge-visibility leg). Acyclic: configd-edge-node
+          does not depend on configd-testkit.
         -->
         <dependency>
             <groupId>io.configd</groupId>
@@ -74,7 +73,7 @@
             <version>${project.version}</version>
         </dependency>
         <!--
-          S3 Phase V2 (charter §3 V2): LivePropagationProbeMain starts an in-process
+          LivePropagationProbeMain starts an in-process
           single-node ConfigdServer and tails its ADR-0034 commit-notification boundary
           to measure live commit->boundary propagation. This is an internal reactor
           module (no new external dependency); configd-server does NOT depend on
@@ -92,7 +91,7 @@
             <version>${project.version}</version>
         </dependency>
         <!--
-          S3 Phase V2 (charter §3 V2): the synthetic propagation probe records
+          The synthetic propagation probe records
           staleness distributions via HdrHistogram (PropagationProbe, io.configd.probe).
           Version is pinned in the root pom dependencyManagement (2.2.2); this is an
           already-managed dependency, NOT a new external one. It is already present
@@ -108,7 +107,7 @@
             <artifactId>junit-jupiter</artifactId>
         </dependency>
         <!--
-          F-0043: JMH benchmarks live under src/main/java/io/configd/bench so
+          JMH benchmarks live under src/main/java/io/configd/bench so
           they can be bundled into an executable uber-jar (benchmarks.jar).
           JMH is therefore a compile-scope dependency. We mark it optional so
           consumers of the thin testkit jar do not pull it transitively.
@@ -125,7 +124,7 @@
         </dependency>
         <!--
           Netty 4.2 — JDK-vs-Netty head-to-head ONLY (docs/jdk-vs-netty/). Confined to this
-          bench module; NO production module depends on Netty (charter §7/§8: research, not a
+          bench module; NO production module depends on Netty (research, not a
           migration). Marked optional (like JMH) so the thin testkit jar does not leak Netty
           transitively; the shade plugin still bundles them into benchmarks.jar.
         -->
@@ -183,8 +182,8 @@
                 </configuration>
             </plugin>
             <!--
-              F-0043 fix: bundle benchmarks + jmh-core into an executable
-              uber-jar so CI and docs can run them via:
+              Bundle benchmarks + jmh-core into an executable uber-jar so CI and
+              docs can run them via:
                 java -jar configd-testkit/target/benchmarks.jar <regex>
             -->
             <plugin>

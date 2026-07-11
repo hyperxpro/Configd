@@ -1,19 +1,12 @@
 name: Release
 
-# Tag-driven release pipeline.
+# Tag-driven release pipeline: a `vX.Y.Z` tag push builds, signs, attests, and
+# publishes the container image + SBOM.
 #
-# Trigger: push of a `vX.Y.Z` tag.
-# Output:
-#   - Container image at ghcr.io/<owner>/<repo>:<version>
-#   - Cosign-signed manifest digest (keyless, GitHub OIDC)
-#   - SLSA build provenance attestation
-#   - CycloneDX SBOM attached to the GitHub release
+# Paging is not wired here — connect your paging service to ops/alerts/ separately.
 #
-# This pipeline does not handle paging integration; wire your paging service to
-# the alert rules under ops/alerts/ separately.
-#
-# Every action is pinned to a full commit SHA (with a trailing version comment)
-# because this workflow produces and signs published artifacts.
+# Actions are pinned to full commit SHAs (not tags) because this workflow signs
+# and publishes artifacts.
 
 on:
   push:
@@ -57,10 +50,9 @@ jobs:
       - name: Full reactor verify
         run: ./mvnw clean verify --no-transfer-progress
 
-      # The CycloneDX SBOM is attached to the GitHub release. Run over the full
-      # reactor (not `-N`): with `-N` (non-recursive) makeAggregateBom only sees
-      # the root aggregator POM and emits a 0-component SBOM, whereas the full
-      # reactor aggregates every module's dependency graph.
+      # Run over the full reactor, not `-N`: with `-N` (non-recursive)
+      # makeAggregateBom only sees the root POM and emits a 0-component SBOM;
+      # the full reactor aggregates every module's dependency graph.
       - name: Generate CycloneDX SBOM
         run: ./mvnw --no-transfer-progress org.cyclonedx:cyclonedx-maven-plugin:2.9.0:makeAggregateBom
 
@@ -98,13 +90,11 @@ jobs:
           provenance: true
           sbom: true
 
-      # Runtime-image vulnerability scan. The CI workflow only Trivy-scans the
-      # source filesystem; the release MUST also scan the just-built runtime
-      # image before signing, otherwise a CVE in a base-image layer would be
-      # signed and attested as "released" without ever being inspected. Mirrors
-      # the CI severity and exit code so a HIGH/CRITICAL CVE fails the release.
-      # Intentionally does NOT set ignore-unfixed: true, which would mask CVEs
-      # whose only mitigation is a base-image rebuild.
+      # Scan the just-built runtime image before signing: CI only scans the
+      # source filesystem, so without this a CVE in a base-image layer would be
+      # signed and attested as "released" without ever being inspected. Does NOT
+      # set ignore-unfixed: true — that would mask CVEs whose only mitigation is
+      # a base-image rebuild.
       - name: Trivy runtime image scan
         uses: aquasecurity/trivy-action@b2933f565dbc598b29947660e66259e3c7bc8561 # v0.20.0
         with:
@@ -113,8 +103,6 @@ jobs:
           severity: HIGH,CRITICAL
           exit-code: '1'
 
-      # Keyless cosign signing using GitHub OIDC.
-      # Verify with: cosign verify --certificate-identity-regexp=...
       - name: Install cosign
         uses: sigstore/cosign-installer@7e8b541eb2e61bf99390e1afd4be13a184e9ebc5 # v3.10.1
         with:
@@ -129,8 +117,6 @@ jobs:
             cosign sign --yes "${tag}@${DIGEST}"
           done
 
-      # SLSA Level 3 build provenance via GitHub Artifact Attestations.
-      # Verify with: gh attestation verify <image>@<digest> --owner <org>
       - name: Generate SLSA provenance attestation
         uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be # v2.4.0
         with:
@@ -163,12 +149,10 @@ jobs:
 
             See `ops/runbooks/release.md` for the full release verification protocol.
 
-  # Third-party re-verification. After build-and-publish has pushed, signed, and
-  # attested the image, this job re-pulls it as a consumer would and re-runs the
-  # exact verification commands the runbook documents. If either check fails the
-  # release is broken even if the publish job reported success, so this job must
-  # have run green against a real tag push before the signing/provenance claims
-  # can be trusted.
+  # Consumer-side re-verification: re-pull the published image and re-run the
+  # exact verify commands the runbook documents. A green publish job does not
+  # prove the signature/provenance actually verify, so this must run green
+  # against a real tag push before those claims can be trusted.
   verify-published:
     needs: build-and-publish
     runs-on: ubuntu-latest

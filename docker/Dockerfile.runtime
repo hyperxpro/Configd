@@ -59,11 +59,10 @@ USER configd
 HEALTHCHECK --interval=10s --timeout=3s CMD curl -f http://localhost:8080/health/live || exit 1
 
 # Notes:
-#  - -XX:+ZGenerational was removed in JDK 24 (generational ZGC is the only ZGC);
-#    passing it on JDK 25 only produces an "Ignoring option" warning -- dropped.
-#  - The original -Xms512m/-Xmx2g default was unrealistic for multi-JVM test
-#    topologies (the gate box is 2-vCPU/7.7GB); heap is now a MaxRAMPercentage
-#    default so `docker run -m` sizes it, and remains overridable via JAVA_OPTS.
+#  - Generational ZGC is the only ZGC on JDK 25; -XX:+ZGenerational is gone
+#    (passing it only produces an "Ignoring option" warning).
+#  - Heap is a MaxRAMPercentage default so `docker run -m` sizes it; override
+#    via JAVA_OPTS.
 #  - This image's default process is the control-plane server. The edge node
 #    (configd-edge-node shaded jar, main io.configd.edge.node.EdgeNodeMain) is
 #    also in /app/libs -- override the entrypoint to run it. The purpose-built
